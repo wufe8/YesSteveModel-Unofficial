@@ -13,6 +13,7 @@ import net.minecraft.util.MathHelper;
 
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
 
 import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
@@ -74,6 +75,7 @@ public class AnimationRegister {
     @SuppressWarnings("deprecation")
     public static void registerVariables() {
         MolangParser parser = GeckoLibCache.getInstance().parser;
+        parser.functions.put("query.position_delta", QueryPositionDeltaFunction.class);
         registerQueryVariables(parser);
         registerYsmVariables(parser);
     }
@@ -128,6 +130,8 @@ public class AnimationRegister {
         parser.register(new LazyVariable("query.vertical_speed", 0));
         parser.register(new LazyVariable("query.walk_distance", 0));
         parser.register(new LazyVariable("query.yaw_speed", 0));
+
+        parser.register(new LazyVariable("query.position_delta", 0));
     }
 
     private static void registerYsmVariables(MolangParser parser) {
@@ -201,6 +205,13 @@ public class AnimationRegister {
         parser.setValue("query.vertical_speed", () -> getVerticalSpeed(player));
         parser.setValue("query.walk_distance", () -> player.distanceWalkedOnStepModified);
         parser.setValue("query.yaw_speed", queryValues.yawSpeed());
+
+        parser.setValue("query.position_delta", () -> {
+            double dx = player.posX - player.prevPosX;
+            double dy = player.posY - player.prevPosY;
+            double dz = player.posZ - player.prevPosZ;
+            return Math.sqrt(dx*dx + dy*dy + dz*dz);
+        });
     }
 
     private static void setStateQueryValues(MolangParser parser, EntityPlayer player, Minecraft mc) {
