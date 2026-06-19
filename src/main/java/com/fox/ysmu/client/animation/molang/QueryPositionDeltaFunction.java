@@ -1,7 +1,7 @@
-package com.fox.ysmu.client.animation;
+package com.fox.ysmu.client.animation.molang;
 
 import com.eliotlash.mclib.math.IValue;
-import com.eliotlash.mclib.math.functions.Function; // 请根据 IDE 提示导入正确的 Function 类
+import com.eliotlash.mclib.math.functions.Function;
 
 public class QueryPositionDeltaFunction extends Function {
     // 定义三个静态变量，用于接收每帧动态传入的玩家位移

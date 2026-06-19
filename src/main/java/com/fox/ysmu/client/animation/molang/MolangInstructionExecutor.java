@@ -1,5 +1,7 @@
 package com.fox.ysmu.client.animation.molang;
 
+import com.eliotlash.mclib.math.IValue;
+
 import java.util.Collections;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -37,8 +39,12 @@ public final class MolangInstructionExecutor {
                 continue;
             }
             try {
-                parser.parseExpression(trimmed)
-                    .get();
+                IValue result = parser.parseExpression(trimmed);
+                if (result == null) {
+                    // 解析结果为 null，跳过，不执行 .get()，避免 NPE
+                    continue;
+                }
+                result.get();
             } catch (Exception e) {
                 warnOnce(trimmed, e);
             }

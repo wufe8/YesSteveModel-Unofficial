@@ -13,6 +13,8 @@ import net.minecraft.util.MathHelper;
 
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
+import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
 
 import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
@@ -75,6 +77,7 @@ public class AnimationRegister {
     public static void registerVariables() {
         MolangParser parser = GeckoLibCache.getInstance().parser;
         parser.functions.put("query.position_delta", QueryPositionDeltaFunction.class);
+        parser.functions.put("ctrl.hold", CtrlHoldFunction.class);
         registerQueryVariables(parser);
         registerYsmVariables(parser);
     }
