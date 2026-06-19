@@ -183,6 +183,15 @@ public class MathBuilder {
         if (ternary != null) {
             return ternary;
         }
+        // 防止非法的三元表达式导致 '?' 被当成二元运算符
+        if (symbols.contains("?")) {
+            return new IValue() {
+                @Override
+                public double get() {
+                    return 0;
+                }
+            };
+        }
         int size = symbols.size();
         // 常量、变量或组（括号）
         if (size == 1) {

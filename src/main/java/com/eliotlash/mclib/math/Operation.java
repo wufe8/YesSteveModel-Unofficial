@@ -118,6 +118,12 @@ public enum Operation {
         public double calculate(double a, double b) {
             return !equals(a, b) ? 1 : 0;
         }
+    },
+    ASSIGN("=", 5) {
+        @Override
+        public double calculate(double a, double b) {
+            return b;
+        }
     };
 
     public final static Set<String> OPERATORS = new HashSet<String>();
