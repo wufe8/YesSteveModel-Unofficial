@@ -31,6 +31,7 @@ public class AnimationProcessor<T extends IAnimatable> {
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
     private final IAnimatableModel animatedModel;
     private ResourceLocation currentAnimationId;
+    private static final java.util.Set<String> dbgOnce = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
     public AnimationProcessor(IAnimatableModel animatedModel) {
         this.animatedModel = animatedModel;
@@ -158,15 +159,13 @@ public class AnimationProcessor<T extends IAnimatable> {
 
                     dirtyTracker.hasScaleChanged = true;
                 }
-                // Mark bones animated by parallel controllers for visibility logic.
-                // Only count if the controller has left its initial state (not just
-                // playing the default/unconditional animation).
+                // Mark bones animated by parallel/legacy controllers for visibility.
                 if (controller.getName().startsWith("parallel_")) {
                     String ctrlName = controller.getName();
                     int idx = ctrlName.indexOf("parallel_");
                     if (idx >= 0 && currentAnimationId != null) {
                         try {
-                            String rest = ctrlName.substring(idx + 9); // "5_controller" or "5"
+                            String rest = ctrlName.substring(idx + 9);
                             int end = rest.indexOf('_');
                             int num = Integer.parseInt(end > 0 ? rest.substring(0, end) : rest);
                             if (com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
@@ -175,6 +174,9 @@ public class AnimationProcessor<T extends IAnimatable> {
                             }
                         } catch (Exception ignored) {}
                     }
+                } else {
+                    // Non-parallel (legacy/main) controller directly animates this bone
+                    dirtyTracker.animatedByLegacy = true;
                 }
             }
         }
@@ -267,17 +269,24 @@ public class AnimationProcessor<T extends IAnimatable> {
                 }
             }
         }
-        // Hide extra bones (weapons/overlays) when legacy handles body.
-        // Only if not animated by any active parallel controller (tracked via
-        // DirtyTracker.animatedByParallel, set only for parallel controllers).
+        // Hide model-specific bones (weapons, expressions, overlays) that are
+        // not animated by the legacy body system. A bone is "extra" if:
+        //  - NOT directly animated by legacy (animatedByLegacy=false), AND
+        //  - NOT animated (self or ancestor) by an active parallel controller.
+        // This avoids hardcoded bone name patterns and works across models.
         if (com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
             for (Map.Entry<String, DirtyTracker> tracker : modelTracker.entrySet()) {
-                String name = tracker.getValue().model.getName();
-                if (isExtraBone(name) && !isBoneOrAncestorAnimated(tracker.getValue().model, modelTracker)) {
-                    IBone model = tracker.getValue().model;
+                DirtyTracker dt = tracker.getValue();
+                if (!dt.animatedByLegacy
+                    && !isBoneOrAncestorAnimated(dt.model, modelTracker)) {
+                    IBone model = dt.model;
                     model.setScaleX(0f);
                     model.setScaleY(0f);
                     model.setScaleZ(0f);
+                    String dbgKey = "hide:" + model.getName();
+                    if (dbgOnce.add(dbgKey)) {
+                        System.out.println("[YSMU-DBG] hide extra: " + model.getName());
+                    }
                 }
             }
         }
@@ -300,29 +309,15 @@ public class AnimationProcessor<T extends IAnimatable> {
         }
     }
 
-    /**
-     * Returns true for bones that represent extra model features (weapons, overlays,
-     * expressions) that should be hidden by default when no controller animates them.
-     */
-    private static boolean isExtraBone(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.contains("weapon") || lower.contains("wpn")
-            || lower.startsWith("tac_") || lower.startsWith("tlm_")
-            || lower.contains("gun") || lower.contains("rifle")
-            || lower.contains("sword") || lower.contains("blade")
-            || lower.contains("expression") || lower.contains("emoji")
-            || lower.contains("overlay") || lower.contains("effect");
-    }
-
     private static boolean isBoneOrAncestorAnimated(IBone bone,
         HashMap<String, DirtyTracker> modelTracker) {
+        // Check self + 2 levels of ancestors: extra bones like weapons/expressions
+        // are typically children of locator bones, which are children of functional
+        // bones (RightForeArm, Head). We need to reach the functional bone level.
         IBone current = bone;
-        while (current != null) {
+        for (int depth = 0; depth < 3 && current != null; depth++) {
             DirtyTracker dt = modelTracker.get(current.getName());
-            if (dt != null && dt.animatedByParallel && !isStructuralBone(current.getName())) {
-                return true;
-            }
+            if (dt != null && dt.animatedByParallel) return true;
             if (current instanceof software.bernie.geckolib3.geo.render.built.GeoBone) {
                 current = ((software.bernie.geckolib3.geo.render.built.GeoBone) current).parent;
             } else {
@@ -330,15 +325,6 @@ public class AnimationProcessor<T extends IAnimatable> {
             }
         }
         return false;
-    }
-
-    private static boolean isStructuralBone(String name) {
-        if (name == null) return false;
-        String lower = name.toLowerCase();
-        return lower.equals("root") || lower.equals("allbody")
-            || lower.equals("upbody") || lower.equals("body")
-            || lower.equals("hips") || lower.equals("spine")
-            || lower.equals("waist") || lower.equals("chest");
     }
 
     /**
