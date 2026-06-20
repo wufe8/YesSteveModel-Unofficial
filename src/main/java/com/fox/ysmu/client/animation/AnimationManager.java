@@ -110,10 +110,6 @@ public final class AnimationManager {
             .isGamePaused()) {
             return PlayState.STOP;
         }
-        // When legacy handles sneak, prevent parallel_5 from overriding it.
-        if (legacySneaking && "parallel_5_controller".equals(event.getController().getName())) {
-            return PlayState.STOP;
-        }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         if (controllerState != null) {
             return controllerState;

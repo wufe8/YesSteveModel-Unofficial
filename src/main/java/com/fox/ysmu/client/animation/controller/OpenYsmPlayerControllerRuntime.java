@@ -167,6 +167,11 @@ public final class OpenYsmPlayerControllerRuntime {
         if (SWING_CONTROLLER.equals(geckoControllerName) && "attack_empty".equals(animationName)) {
             return null;
         }
+        // When legacy handles body, block parallel "_sky" sneak (stationary
+        // crouch overrides legacy movement blending). Allow "_start" transitions.
+        if ("sneaking_sky".equals(animationName) && com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
+            return null;
+        }
         if (state.blendTransitionTicks >= 0f) {
             event.getController().transitionLengthTicks = state.blendTransitionTicks;
         }
