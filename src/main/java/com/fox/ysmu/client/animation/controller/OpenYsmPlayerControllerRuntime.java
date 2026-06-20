@@ -9,8 +9,10 @@ import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,6 +27,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
+import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -111,6 +114,26 @@ public final class OpenYsmPlayerControllerRuntime {
             state = nextState;
         }
 
+        // If the current state (after transitions) still has no animations but the
+        // controller has transitions that didn't fire, force the first transition
+        // to give the controller an active state to play, fixing the "stuck in
+        // default" issue for models with condition-based animations.
+        if (state.animations.isEmpty() && !match.controller.getStatesWithAnimations().isEmpty()) {
+            for (Transition transition : state.transitions) {
+                State target = match.controller.states.get(transition.targetState);
+                if (target != null && !target.animations.isEmpty()) {
+                    OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
+                    runtimeState.currentState = target.name;
+                    runtimeState.enteredTick = event.getAnimationTick();
+                    runtimeState.lastSelectedAnimationState = "";
+                    runtimeState.lastSelectedAnimation = "";
+                    OpenYsmControllerExpressionEvaluator.executeStatements(target.onEntry, context);
+                    state = target;
+                    break;
+                }
+            }
+        }
+
         String animationName = selectAnimation(state, match.preferredAnimationIndex, context);
         if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
             return null;
@@ -161,7 +184,9 @@ public final class OpenYsmPlayerControllerRuntime {
             if (target == null) {
                 continue;
             }
-            if (!OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context)) {
+            boolean conditionMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context);
+            if (!conditionMet) {
+                debugTransOnce("condFail", controller.name, transition);
                 continue;
             }
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
@@ -311,6 +336,15 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
         matches.add(new ControllerMatch(controller, preferredAnimationIndex));
+    }
+
+    private static final Set<String> DEBUG_TRANS_ONCE = Collections.newSetFromMap(new ConcurrentHashMap<>());
+    private static void debugTransOnce(String reason, String ctrlName, Transition t) {
+        String key = ctrlName + "/" + reason + "/" + t.targetState;
+        if (DEBUG_TRANS_ONCE.add(key)) {
+            ysmu.LOG.info("OpenYSM trans: ctrl={}, reason={}, target={}, cond={}",
+                ctrlName, reason, t.targetState, t.condition);
+        }
     }
 
     private static int getParallelIndex(String geckoControllerName) {

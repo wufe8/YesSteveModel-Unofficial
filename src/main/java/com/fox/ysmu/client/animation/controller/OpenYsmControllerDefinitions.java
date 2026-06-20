@@ -24,6 +24,16 @@ final class OpenYsmControllerDefinitions {
             }
             return states.isEmpty() ? null : states.values().iterator().next();
         }
+
+        List<State> getStatesWithAnimations() {
+            List<State> result = new ArrayList<>();
+            for (State s : states.values()) {
+                if (!s.animations.isEmpty()) {
+                    result.add(s);
+                }
+            }
+            return result;
+        }
     }
 
     static final class State {
