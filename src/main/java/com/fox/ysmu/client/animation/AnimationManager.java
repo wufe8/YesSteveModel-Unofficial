@@ -82,14 +82,12 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        // tryApply returned null. Check if the model has a dedicated OpenYSM controller
-        // for this specific parallel slot. If it does, the controller exists but might
-        // need time for its state machine to transition — do NOT fall back to a named
-        // animation. Only fall back for slots without any matching controller.
+        // tryApply returned null. If this model has any OpenYSM controllers, do NOT
+        // fall back to named parallel animations — they would overlay face expressions.
+        // Only allow fallback for models without controllers (e.g. default models).
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
-        if (animId != null
-            && OpenYsmPlayerControllerRuntime.hasMatchingController(animId, event.getController().getName())) {
+        if (animId != null && OpenYsmPlayerControllerRuntime.hasAnyController(animId)) {
             return PlayState.STOP;
         }
         return playLoopAnimation(event, animationName);

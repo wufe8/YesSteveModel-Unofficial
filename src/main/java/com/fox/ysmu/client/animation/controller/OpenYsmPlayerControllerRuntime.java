@@ -84,6 +84,13 @@ public final class OpenYsmPlayerControllerRuntime {
         STATES.clear();
     }
 
+    /**
+     * Returns true if the model at the given animation ID has any OpenYSM controllers registered.
+     */
+    public static boolean hasAnyController(ResourceLocation animationId) {
+        return animationId != null && OpenYsmAnimationControllerRegistry.get(animationId) != null;
+    }
+
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
