@@ -159,7 +159,7 @@ public class AnimationProcessor<T extends IAnimatable> {
 
                     dirtyTracker.hasScaleChanged = true;
                 }
-                // Mark bones animated by parallel/legacy controllers for visibility.
+                // Mark bones animated by parallel controllers for visibility logic.
                 if (controller.getName().startsWith("parallel_")) {
                     String ctrlName = controller.getName();
                     int idx = ctrlName.indexOf("parallel_");
@@ -174,9 +174,6 @@ public class AnimationProcessor<T extends IAnimatable> {
                             }
                         } catch (Exception ignored) {}
                     }
-                } else {
-                    // Non-parallel (legacy/main) controller directly animates this bone
-                    dirtyTracker.animatedByLegacy = true;
                 }
             }
         }
@@ -269,27 +266,11 @@ public class AnimationProcessor<T extends IAnimatable> {
                 }
             }
         }
-        // Hide model-specific bones (weapons, expressions, overlays) that are
-        // not animated by the legacy body system. A bone is "extra" if:
-        //  - NOT directly animated by legacy (animatedByLegacy=false), AND
-        //  - NOT animated (self or ancestor) by an active parallel controller.
-        // This avoids hardcoded bone name patterns and works across models.
-        if (com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
-            for (Map.Entry<String, DirtyTracker> tracker : modelTracker.entrySet()) {
-                DirtyTracker dt = tracker.getValue();
-                if (!dt.animatedByLegacy
-                    && !isBoneOrAncestorAnimated(dt.model, modelTracker)) {
-                    IBone model = dt.model;
-                    model.setScaleX(0f);
-                    model.setScaleY(0f);
-                    model.setScaleZ(0f);
-                    String dbgKey = "hide:" + model.getName();
-                    if (dbgOnce.add(dbgKey)) {
-                        System.out.println("[YSMU-DBG] hide extra: " + model.getName());
-                    }
-                }
-            }
-        }
+        //// Extra bone hiding disabled: without Molang-driven bone visibility
+        //// support (scale=0 from player.main controller), any bone-level
+        //// heuristic will either miss weapon/expression bones or falsely hide
+        //// cosmetic bones (hair, cape, etc.). Revisit when Molang visibility
+        //// is implemented.
         manager.isFirstTick = false;
     }
 
