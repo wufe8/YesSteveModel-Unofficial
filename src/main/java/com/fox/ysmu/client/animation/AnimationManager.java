@@ -63,6 +63,31 @@ public final class AnimationManager {
         return PlayState.CONTINUE;
     }
 
+    /**
+     * 只在动画存在时播放。防止 GeckoLib 的 setAnimation() 在动画不存在时静默失败
+     * （不设 animationQueue），导致控制器处于 Stopped 状态且模型冻结。
+     */
+    private static <P extends IAnimatable> PlayState playIfPresent(AnimationEvent<P> event, String animationName,
+        ILoopType loopType, ResourceLocation animId) {
+        if (animationExistsInFile(animId, animationName)) {
+            return playAnimation(event, animationName, loopType);
+        }
+        return PlayState.STOP;
+    }
+
+    private static boolean animationExistsInFile(ResourceLocation animId, String animationName) {
+        if (animId == null || animationName == null) {
+            return false;
+        }
+        AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
+        return file != null && file.animations.containsKey(animationName);
+    }
+
+    private static ResourceLocation getAnimationId(AnimationEvent<CustomPlayerEntity> event) {
+        return event.getAnimatable()
+            .getAnimation();
+    }
+
     public void register(AnimationState state) {
         if (data.containsKey(state.getPriority())) {
             data.get(state.getPriority())
@@ -136,6 +161,9 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
+        ResourceLocation animId = getAnimationId(event);
+        AnimationFile animFile = animId == null ? null
+            : GeckoLibCache.getInstance().getAnimations().get(animId);
         for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
             if (!data.containsKey(i)) {
                 continue;
@@ -144,10 +172,23 @@ public final class AnimationManager {
             for (AnimationState state : states) {
                 if (state.getPredicate().test(player, event)) {
                     String animationName = state.getAnimationName();
-                    ILoopType loopType = state.getLoopType();
-                    return playAnimation(event, animationName, loopType);
+                    // 验证动画存在性，防止 GeckoLib 的 setAnimation() 在动画不存在时静默失败
+                    if (animFile != null && animFile.animations.containsKey(animationName)) {
+                        ILoopType loopType = state.getLoopType();
+                        return playAnimation(event, animationName, loopType);
+                    }
+                    // 动画不存在，继续检查下一个状态
                 }
             }
+        }
+        // 所有传统动画状态均无可用动画时，尝试 idle 作为终极回退
+        if (animFile != null && !animFile.animations.isEmpty()) {
+            if (animFile.animations.containsKey("idle")) {
+                return playLoopAnimation(event, "idle");
+            }
+            // idle 也不存在时，播任何可用的动画避免模型静止
+            String firstAnim = animFile.animations.keySet().iterator().next();
+            return playLoopAnimation(event, firstAnim);
         }
         return PlayState.STOP;
     }
@@ -310,11 +351,6 @@ public final class AnimationManager {
             return playAnimation(event, defaultName, ILoopType.EDefaultLoopTypes.LOOP);
         }
         return PlayState.STOP;
-    }
-
-    private static ResourceLocation getAnimationId(AnimationEvent<CustomPlayerEntity> event) {
-        return event.getAnimatable()
-            .getAnimation();
     }
 
     private static PlayState playIfPresent(AnimationEvent<CustomPlayerEntity> event, String animationName) {

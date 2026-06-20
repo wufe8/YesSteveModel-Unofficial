@@ -133,22 +133,56 @@ public final class OpenYsmPlayerControllerRuntime {
                 runtimeState.lastSelectedAnimation = "";
                 OpenYsmControllerExpressionEvaluator.executeStatements(forcedTarget.onEntry, context);
                 state = forcedTarget;
+                // force transition 后 anim_time ≈ 0，条件化动画条目可能暂时不满足。
+                // 不依赖 selectAnimation() 的条件求值，直接取第一个动画条目名。
             }
         }
 
         String animationName = selectAnimation(state, match.preferredAnimationIndex, context);
+        // 如果 selectAnimation() 因条件不满足返回 null，但状态是被 force transition
+        // 进入的（state.animations 非空），则忽略条件直接使用第一个动画条目名
+        if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
+            animationName = state.animations.get(0).animationName;
+        }
         if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
-            // 当前状态的动画不存在，重置到初始状态以防状态机卡死
-            // （例如 transition 切换到了 run 但动画 "run" 不在动画文件中，
-            //  若不重置则后续帧永远卡在 run 状态，即使回到走路也无法恢复）
-            State initialState = match.controller.getInitialState();
-            if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
-                runtimeState.currentState = initialState.name;
-                runtimeState.enteredTick = event.getAnimationTick();
-                runtimeState.lastSelectedAnimationState = "";
-                runtimeState.lastSelectedAnimation = "";
+            // 遍历所有状态寻找任一有可用动画的状态
+            State fallbackState = null;
+            String fallbackAnimName = null;
+            for (State candidate : match.controller.states.values()) {
+                if (candidate.animations.isEmpty()) continue;
+                // 先尝试条件化选择
+                String name = selectAnimation(candidate, -1, context);
+                if (StringUtils.isBlank(name)) {
+                    // 条件不满足则取第一个动画条目名（无条件回退）
+                    name = candidate.animations.get(0).animationName;
+                }
+                if (animationExists(animationId, name)) {
+                    fallbackState = candidate;
+                    fallbackAnimName = name;
+                    break;
+                }
             }
-            return null;
+            if (fallbackState != null) {
+                if (!fallbackState.name.equals(state.name)) {
+                    OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
+                    runtimeState.currentState = fallbackState.name;
+                    runtimeState.enteredTick = event.getAnimationTick();
+                    runtimeState.lastSelectedAnimationState = "";
+                    runtimeState.lastSelectedAnimation = "";
+                    OpenYsmControllerExpressionEvaluator.executeStatements(fallbackState.onEntry, context);
+                }
+                state = fallbackState;
+                animationName = fallbackAnimName;
+            } else {
+                State initialState = match.controller.getInitialState();
+                if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
+                    runtimeState.currentState = initialState.name;
+                    runtimeState.enteredTick = event.getAnimationTick();
+                    runtimeState.lastSelectedAnimationState = "";
+                    runtimeState.lastSelectedAnimation = "";
+                }
+                return null;
+            }
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && "attack_empty".equals(animationName)) {
             return null;
