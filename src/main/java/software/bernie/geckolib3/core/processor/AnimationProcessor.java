@@ -5,8 +5,6 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-import net.minecraft.util.ResourceLocation;
-
 import org.apache.commons.lang3.tuple.Pair;
 
 import com.google.common.collect.Maps;
@@ -30,8 +28,6 @@ public class AnimationProcessor<T extends IAnimatable> {
     private List<IBone> modelRendererList = new ArrayList();
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
     private final IAnimatableModel animatedModel;
-    private ResourceLocation currentAnimationId;
-    private static final java.util.Set<String> dbgOnce = java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
     public AnimationProcessor(IAnimatableModel animatedModel) {
         this.animatedModel = animatedModel;
@@ -39,10 +35,6 @@ public class AnimationProcessor<T extends IAnimatable> {
 
     public void tickAnimation(IAnimatable entity, Integer uniqueID, double seekTime, AnimationEvent event,
         MolangParser parser, boolean crashWhenCantFindBone) {
-        // Capture animation ID from entity for parallel controller tracking
-        if (entity instanceof com.fox.ysmu.client.entity.CustomPlayerEntity) {
-            currentAnimationId = ((com.fox.ysmu.client.entity.CustomPlayerEntity) entity).getAnimation();
-        }
         AnimationRenderState renderState = AnimationRenderState.from(seekTime, event);
         if (renderState.equals(animatedEntities.get(uniqueID))) {
             return;
@@ -159,22 +151,6 @@ public class AnimationProcessor<T extends IAnimatable> {
 
                     dirtyTracker.hasScaleChanged = true;
                 }
-                // Mark bones animated by parallel controllers for visibility logic.
-                if (controller.getName().startsWith("parallel_")) {
-                    String ctrlName = controller.getName();
-                    int idx = ctrlName.indexOf("parallel_");
-                    if (idx >= 0 && currentAnimationId != null) {
-                        try {
-                            String rest = ctrlName.substring(idx + 9);
-                            int end = rest.indexOf('_');
-                            int num = Integer.parseInt(end > 0 ? rest.substring(0, end) : rest);
-                            if (com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
-                                .isParallelActive(currentAnimationId, num)) {
-                                dirtyTracker.animatedByParallel = true;
-                            }
-                        } catch (Exception ignored) {}
-                    }
-                }
             }
         }
 
@@ -266,11 +242,6 @@ public class AnimationProcessor<T extends IAnimatable> {
                 }
             }
         }
-        //// Extra bone hiding disabled: without Molang-driven bone visibility
-        //// support (scale=0 from player.main controller), any bone-level
-        //// heuristic will either miss weapon/expression bones or falsely hide
-        //// cosmetic bones (hair, cape, etc.). Revisit when Molang visibility
-        //// is implemented.
         manager.isFirstTick = false;
     }
 
@@ -288,24 +259,6 @@ public class AnimationProcessor<T extends IAnimatable> {
                 boneSnapshotCollection.put(bone.getName(), Pair.of(bone, new BoneSnapshot(bone.getInitialSnapshot())));
             }
         }
-    }
-
-    private static boolean isBoneOrAncestorAnimated(IBone bone,
-        HashMap<String, DirtyTracker> modelTracker) {
-        // Check self + 2 levels of ancestors: extra bones like weapons/expressions
-        // are typically children of locator bones, which are children of functional
-        // bones (RightForeArm, Head). We need to reach the functional bone level.
-        IBone current = bone;
-        for (int depth = 0; depth < 3 && current != null; depth++) {
-            DirtyTracker dt = modelTracker.get(current.getName());
-            if (dt != null && dt.animatedByParallel) return true;
-            if (current instanceof software.bernie.geckolib3.geo.render.built.GeoBone) {
-                current = ((software.bernie.geckolib3.geo.render.built.GeoBone) current).parent;
-            } else {
-                break;
-            }
-        }
-        return false;
     }
 
     /**

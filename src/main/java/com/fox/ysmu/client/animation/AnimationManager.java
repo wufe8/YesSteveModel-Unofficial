@@ -177,6 +177,7 @@ public final class AnimationManager {
             legacySneaking = false;
             return controllerState;
         }
+        ysmu.LOG.info("[YSMU-DBG] predicateMain: no controller, legacyBodyActive=true");
         legacyBodyActive = true;
         legacySneaking = false;
         ResourceLocation animId = getAnimationId(event);
@@ -192,8 +193,11 @@ public final class AnimationManager {
                     String animationName = state.getAnimationName();
                     legacySneaking = "sneak".equals(animationName) || "sneaking".equals(animationName);
                     if (animFile != null && animFile.animations.containsKey(animationName)) {
+                        ysmu.LOG.info("[YSMU-DBG] predicateMain: legacy anim={} sneakFlag={}", animationName, legacySneaking);
                         ILoopType loopType = state.getLoopType();
                         return playAnimation(event, animationName, loopType);
+                    } else {
+                        ysmu.LOG.info("[YSMU-DBG] predicateMain: legacy anim={} NOT in file (skipped)", animationName);
                     }
                 }
             }

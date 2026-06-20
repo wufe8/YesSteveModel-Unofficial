@@ -154,6 +154,11 @@ public final class OpenYsmPlayerControllerRuntime {
         if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
             animationName = state.animations.get(0).animationName;
         }
+        // Block sneaking_sky when legacy handles body.
+        if ("sneaking_sky".equals(animationName) && com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
+            ysmu.LOG.info("[YSMU-DBG] BLOCKED sneaking_sky (legacyBodyActive=true), returning null from sky");
+            return null;
+        }
         if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
             State initialState = match.controller.getInitialState();
             if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
@@ -167,22 +172,16 @@ public final class OpenYsmPlayerControllerRuntime {
         if (SWING_CONTROLLER.equals(geckoControllerName) && "attack_empty".equals(animationName)) {
             return null;
         }
-        // When legacy handles body, block parallel "_sky" sneak (stationary
-        // crouch overrides legacy movement blending). Allow "_start" transitions.
-        if ("sneaking_sky".equals(animationName) && com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
-            return null;
-        }
         if (state.blendTransitionTicks >= 0f) {
             event.getController().transitionLengthTicks = state.blendTransitionTicks;
         }
-        // Debug: log parallel controller state once
+        // Debug: log parallel controller state
         if (geckoControllerName.contains("parallel") && player == Minecraft.getMinecraft().thePlayer) {
+            // Always log state changes for parallel_5 (sneaking), once for others
+            boolean isP5 = "player.parallel_5".equals(match.controller.name);
             String dbgKey = match.controller.name + ":" + state.name + ":" + animationName;
-            if (debugOnce.add(dbgKey)) {
+            if (isP5 || debugOnce.add(dbgKey)) {
                 ysmu.LOG.info("[YSMU-DBG] {} state={} anim={}", match.controller.name, state.name, animationName);
-                for (AnimationEntry e : state.animations) {
-                    ysmu.LOG.info("[YSMU-DBG]   entry: {} cond={}", e.animationName, e.condition);
-                }
             }
         }
         applyAnimation(event, runtimeState, state, animationName);
@@ -228,6 +227,19 @@ public final class OpenYsmPlayerControllerRuntime {
             boolean conditionMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context);
             if (!conditionMet) {
                 continue;
+            }
+            // Let sneaking_start play for a minimum duration before allowing
+            // transition to sky (where sneaking_sky is blocked, handing off
+            // to the legacy system for sustained crouch with movement blend).
+            if (!target.animations.isEmpty()
+                && "sneaking_sky".equals(target.animations.get(0).animationName)
+                && com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
+                double elapsed = event.getAnimationTick() - runtimeState.enteredTick;
+                if (elapsed < 3.0) {
+                    ysmu.LOG.info("[YSMU-DBG] DELAY start->sky, elapsed={}", elapsed);
+                    continue;
+                }
+                ysmu.LOG.info("[YSMU-DBG] ALLOW start->sky after delay, elapsed={}", elapsed);
             }
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
             runtimeState.currentState = target.name;
