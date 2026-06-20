@@ -241,6 +241,19 @@ public class AnimationProcessor<T extends IAnimatable> {
                     saveSnapshot.scaleValueZ = model.getScaleZ();
                 }
             }
+            // Hide extra bones (weapons/overlays) not animated by any controller.
+            // OpenYSM hides these via Molang scale=0 from player.main; YSMU has none.
+            if (!tracker.getValue().hasRotationChanged
+                && !tracker.getValue().hasPositionChanged
+                && !tracker.getValue().hasScaleChanged
+                && isExtraBone(model.getName())) {
+                model.setScaleX(0f);
+                model.setScaleY(0f);
+                model.setScaleZ(0f);
+                saveSnapshot.scaleValueX = 0f;
+                saveSnapshot.scaleValueY = 0f;
+                saveSnapshot.scaleValueZ = 0f;
+            }
         }
         manager.isFirstTick = false;
     }
@@ -259,6 +272,21 @@ public class AnimationProcessor<T extends IAnimatable> {
                 boneSnapshotCollection.put(bone.getName(), Pair.of(bone, new BoneSnapshot(bone.getInitialSnapshot())));
             }
         }
+    }
+
+    /**
+     * Returns true for bones that represent extra model features (weapons, overlays,
+     * expressions) that should be hidden by default when no controller animates them.
+     */
+    private static boolean isExtraBone(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.contains("weapon") || lower.contains("wpn")
+            || lower.startsWith("tac_") || lower.startsWith("tlm_")
+            || lower.contains("gun") || lower.contains("rifle")
+            || lower.contains("sword") || lower.contains("blade")
+            || lower.contains("expression") || lower.contains("emoji")
+            || lower.contains("overlay") || lower.contains("effect");
     }
 
     /**

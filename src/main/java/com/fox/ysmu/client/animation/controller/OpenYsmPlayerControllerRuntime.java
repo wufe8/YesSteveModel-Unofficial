@@ -114,7 +114,7 @@ public final class OpenYsmPlayerControllerRuntime {
                     break;
                 }
             }
-            //// Global search fallback (commented: may pick wrong state)
+            //// Global search disabled: picks wrong state for all parallel controllers
             //if (forcedTarget == null) {
             //    for (State candidate : match.controller.states.values()) {
             //        if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {

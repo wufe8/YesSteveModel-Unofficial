@@ -79,6 +79,11 @@ public interface IGeoRenderer<T> {
         }
 
         if (!bone.isHidden()) {
+            // Match OpenYSM NativeModelRenderer behavior: scale (0,0,0) = hidden
+            if (bone.getScaleX() == 0f && bone.getScaleY() == 0f && bone.getScaleZ() == 0f) {
+                MATRIX_STACK.pop();
+                return;
+            }
             for (GeoCube cube : bone.childCubes) {
                 MATRIX_STACK.push();
                 GlStateManager.pushMatrix();
