@@ -1,9 +1,7 @@
 package com.fox.ysmu.client.animation;
 
-import java.util.Collections;
 import java.util.LinkedList;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -21,7 +19,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
-import com.fox.ysmu.ysmu;
 import com.google.common.collect.Lists;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -38,7 +35,6 @@ public final class AnimationManager {
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
-    private final Set<String> debugFallbackOnce = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -78,10 +74,6 @@ public final class AnimationManager {
         }
     }
 
-    public void clearDebugState() {
-        debugFallbackOnce.clear();
-    }
-
     public PlayState predicateParallel(AnimationEvent<CustomPlayerEntity> event, String animationName) {
         if (Minecraft.getMinecraft()
             .isGamePaused()) {
@@ -98,23 +90,7 @@ public final class AnimationManager {
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
         if (animId != null && OpenYsmAnimationControllerRegistry.get(animId) != null) {
-            String debugKey = animId + "/" + event.getController().getName() + "/predStop";
-            if (debugFallbackOnce.add(debugKey)) {
-                ysmu.LOG.info(
-                    "OpenYSM PARALLEL-STOP: gecko={}, model={} (controller exists, no animation)",
-                    event.getController().getName(),
-                    animId);
-            }
             return PlayState.STOP;
-        }
-        // Diagnostic: log fallback to direct animation name
-        String debugKey = (animId != null ? animId.toString() : "?") + "/" + event.getController().getName() + "/fallback";
-        if (debugFallbackOnce.add(debugKey)) {
-            ysmu.LOG.info(
-                "OpenYSM FALLBACK: gecko={}, anim={}, model={}",
-                event.getController().getName(),
-                animationName,
-                animId);
         }
         return playLoopAnimation(event, animationName);
     }
