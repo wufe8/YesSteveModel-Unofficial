@@ -73,18 +73,10 @@ public final class OpenYsmPlayerControllerRuntime {
                 return result;
             }
         }
-        // Diagnostic: log when no match found for parallel controllers
-        if (getParallelIndex(geckoControllerName) >= 0) {
-            String debugKey = animationId + "/" + geckoControllerName + "/nomatch";
-            if (DEBUG_ONCE.add(debugKey)) {
-                ysmu.LOG.info(
-                    "OpenYSM controller NO-MATCH: gecko={}, tried={}, available={}",
-                    geckoControllerName,
-                    matches.stream().map(m -> m.controller.name).toArray(),
-                    set.controllers.keySet());
-            }
-        }
-        return null;
+        // When the model has an OpenYSM controller set but no match produced an animation,
+        // return STOP (not null) to prevent callers from falling back to direct named animations.
+        // Only return null when there is no controller set at all.
+        return PlayState.STOP;
     }
 
     static void clear() {
@@ -102,6 +94,9 @@ public final class OpenYsmPlayerControllerRuntime {
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
         State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
+            debugOnce(animationId, geckoControllerName, "noInitialState",
+                "no initial state for oysm={}, currentState={}, states={}",
+                match.controller.name, runtimeState.currentState, match.controller.states.keySet());
             return null;
         }
         for (int i = 0; i < 4; i++) {
@@ -113,7 +108,16 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         String animationName = selectAnimation(state, match.preferredAnimationIndex, context);
-        if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
+        if (StringUtils.isBlank(animationName)) {
+            debugOnce(animationId, geckoControllerName, "noAnimation",
+                "no animation selected: oysm={}, state={}, animEntries={}, prefIdx={}",
+                match.controller.name, state.name, state.animations.size(), match.preferredAnimationIndex);
+            return null;
+        }
+        if (!animationExists(animationId, animationName)) {
+            debugOnce(animationId, geckoControllerName, "animMissing",
+                "animation not found: oysm={}, anim={}",
+                match.controller.name, animationName);
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && "attack_empty".equals(animationName)) {
@@ -332,6 +336,14 @@ public final class OpenYsmPlayerControllerRuntime {
             return Integer.parseInt(name.substring(prefix.length()));
         } catch (NumberFormatException e) {
             return -1;
+        }
+    }
+
+    private static void debugOnce(ResourceLocation animationId, String geckoName, String reason,
+        String fmt, Object... args) {
+        String key = animationId + "/" + geckoName + "/" + reason;
+        if (DEBUG_ONCE.add(key)) {
+            ysmu.LOG.info("OpenYSM controller FAIL({}): " + fmt, reason, args);
         }
     }
 
