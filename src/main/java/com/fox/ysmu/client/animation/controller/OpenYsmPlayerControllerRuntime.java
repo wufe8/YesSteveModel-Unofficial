@@ -73,10 +73,18 @@ public final class OpenYsmPlayerControllerRuntime {
                 return result;
             }
         }
-        // When the model has an OpenYSM controller set but no match produced an animation,
-        // return STOP (not null) to prevent callers from falling back to direct named animations.
-        // Only return null when there is no controller set at all.
-        return PlayState.STOP;
+        // Diagnostic: log when no match found for parallel controllers
+        if (getParallelIndex(geckoControllerName) >= 0) {
+            String debugKey = animationId + "/" + geckoControllerName + "/nomatch";
+            if (DEBUG_ONCE.add(debugKey)) {
+                ysmu.LOG.info(
+                    "OpenYSM controller NO-MATCH: gecko={}, tried={}, available={}",
+                    geckoControllerName,
+                    matches.stream().map(m -> m.controller.name).toArray(),
+                    set.controllers.keySet());
+            }
+        }
+        return null;
     }
 
     static void clear() {

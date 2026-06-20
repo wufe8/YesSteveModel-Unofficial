@@ -16,6 +16,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
 import com.fox.ysmu.client.animation.condition.*;
+import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
@@ -90,15 +91,28 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        // Diagnostic: log fallback to direct animation name
-        String geckoName = event.getController().getName();
+        // tryApply returned null. Check if the model has OpenYSM controllers.
+        // If it does, a null result means the controller exists but couldn't produce
+        // an animation for this slot. Do NOT fall back to a named animation, which
+        // would play all parallel animations simultaneously and break face rendering.
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
-        String debugKey = (animId != null ? animId.toString() : "?") + "/" + geckoName + "/fallback";
+        if (animId != null && OpenYsmAnimationControllerRegistry.get(animId) != null) {
+            String debugKey = animId + "/" + event.getController().getName() + "/predStop";
+            if (debugFallbackOnce.add(debugKey)) {
+                ysmu.LOG.info(
+                    "OpenYSM PARALLEL-STOP: gecko={}, model={} (controller exists, no animation)",
+                    event.getController().getName(),
+                    animId);
+            }
+            return PlayState.STOP;
+        }
+        // Diagnostic: log fallback to direct animation name
+        String debugKey = (animId != null ? animId.toString() : "?") + "/" + event.getController().getName() + "/fallback";
         if (debugFallbackOnce.add(debugKey)) {
             ysmu.LOG.info(
                 "OpenYSM FALLBACK: gecko={}, anim={}, model={}",
-                geckoName,
+                event.getController().getName(),
                 animationName,
                 animId);
         }
