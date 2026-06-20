@@ -13,6 +13,7 @@ public class DirtyTracker {
     public boolean hasScaleChanged;
     public boolean hasPositionChanged;
     public boolean hasRotationChanged;
+    public boolean animatedByParallel;
 
     public DirtyTracker(boolean hasScaleChanged, boolean hasPositionChanged, boolean hasRotationChanged, IBone model) {
         this.hasScaleChanged = hasScaleChanged;

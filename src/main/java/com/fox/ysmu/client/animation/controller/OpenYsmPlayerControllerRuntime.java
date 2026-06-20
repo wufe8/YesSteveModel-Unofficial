@@ -83,6 +83,21 @@ public final class OpenYsmPlayerControllerRuntime {
         return animationId != null && OpenYsmAnimationControllerRegistry.get(animationId) != null;
     }
 
+    /** Returns true if the parallel controller at the given index has transitioned away from its initial state. */
+    public static boolean isParallelActive(ResourceLocation animationId, int parallelIndex) {
+        if (animationId == null) return false;
+        for (StateKey key : STATES.keySet()) {
+            if (!animationId.equals(key.animationId)) continue;
+            String name = key.openYsmControllerName;
+            if ((name.equals("player.parallel_" + parallelIndex) || name.equals("parallel_" + parallelIndex))
+                && key.geckoControllerName.equals("parallel_" + parallelIndex + "_controller")) {
+                RuntimeState rs = STATES.get(key);
+                if (rs != null && rs.hasLeftInitial) return true;
+            }
+        }
+        return false;
+    }
+
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
@@ -126,6 +141,7 @@ public final class OpenYsmPlayerControllerRuntime {
             if (forcedTarget != null) {
                 OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
                 runtimeState.currentState = forcedTarget.name;
+                runtimeState.hasLeftInitial = true;
                 runtimeState.enteredTick = event.getAnimationTick();
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
@@ -210,6 +226,7 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
             runtimeState.currentState = target.name;
+            runtimeState.hasLeftInitial = true;
             runtimeState.enteredTick = event.getAnimationTick();
             runtimeState.lastSelectedAnimationState = "";
             runtimeState.lastSelectedAnimation = "";
@@ -380,6 +397,8 @@ public final class OpenYsmPlayerControllerRuntime {
 
     static final class RuntimeState {
         String currentState = "";
+        /** Whether the controller has ever transitioned away from its initial state. */
+        boolean hasLeftInitial = false;
         String lastAnimation = "";
         String lastSelectedAnimationState = "";
         String lastSelectedAnimation = "";

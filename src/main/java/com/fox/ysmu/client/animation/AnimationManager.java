@@ -119,10 +119,13 @@ public final class AnimationManager {
             if (geckoName != null && geckoName.startsWith("pre_parallel_")) {
                 return PlayState.STOP;
             }
-            AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
-            if (file != null && file.animations.containsKey(animationName)) {
-                return playLoopAnimation(event, animationName);
-            }
+            //// Fallback disabled: parallelN animation always runs even when
+            //// OpenYSM controller has no transition, marking bones as
+            //// animatedByParallel and preventing proper extra-bone hiding.
+            //AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
+            //if (file != null && file.animations.containsKey(animationName)) {
+            //    return playLoopAnimation(event, animationName);
+            //}
             return PlayState.STOP;
         }
         return playLoopAnimation(event, animationName);

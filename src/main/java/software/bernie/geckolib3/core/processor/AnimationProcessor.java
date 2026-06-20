@@ -5,6 +5,8 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+import net.minecraft.util.ResourceLocation;
+
 import org.apache.commons.lang3.tuple.Pair;
 
 import com.google.common.collect.Maps;
@@ -28,6 +30,7 @@ public class AnimationProcessor<T extends IAnimatable> {
     private List<IBone> modelRendererList = new ArrayList();
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
     private final IAnimatableModel animatedModel;
+    private ResourceLocation currentAnimationId;
 
     public AnimationProcessor(IAnimatableModel animatedModel) {
         this.animatedModel = animatedModel;
@@ -35,6 +38,10 @@ public class AnimationProcessor<T extends IAnimatable> {
 
     public void tickAnimation(IAnimatable entity, Integer uniqueID, double seekTime, AnimationEvent event,
         MolangParser parser, boolean crashWhenCantFindBone) {
+        // Capture animation ID from entity for parallel controller tracking
+        if (entity instanceof com.fox.ysmu.client.entity.CustomPlayerEntity) {
+            currentAnimationId = ((com.fox.ysmu.client.entity.CustomPlayerEntity) entity).getAnimation();
+        }
         AnimationRenderState renderState = AnimationRenderState.from(seekTime, event);
         if (renderState.equals(animatedEntities.get(uniqueID))) {
             return;
@@ -151,6 +158,24 @@ public class AnimationProcessor<T extends IAnimatable> {
 
                     dirtyTracker.hasScaleChanged = true;
                 }
+                // Mark bones animated by parallel controllers for visibility logic.
+                // Only count if the controller has left its initial state (not just
+                // playing the default/unconditional animation).
+                if (controller.getName().startsWith("parallel_")) {
+                    String ctrlName = controller.getName();
+                    int idx = ctrlName.indexOf("parallel_");
+                    if (idx >= 0 && currentAnimationId != null) {
+                        try {
+                            String rest = ctrlName.substring(idx + 9); // "5_controller" or "5"
+                            int end = rest.indexOf('_');
+                            int num = Integer.parseInt(end > 0 ? rest.substring(0, end) : rest);
+                            if (com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                                .isParallelActive(currentAnimationId, num)) {
+                                dirtyTracker.animatedByParallel = true;
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                }
             }
         }
 
@@ -243,10 +268,12 @@ public class AnimationProcessor<T extends IAnimatable> {
             }
         }
         // Hide extra bones (weapons/overlays) when legacy handles body.
-        // OpenYSM controls these via Molang scale=0 from player.main; YSMU has none.
+        // Only if not animated by any active parallel controller (tracked via
+        // DirtyTracker.animatedByParallel, set only for parallel controllers).
         if (com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
             for (Map.Entry<String, DirtyTracker> tracker : modelTracker.entrySet()) {
-                if (isExtraBone(tracker.getValue().model.getName())) {
+                String name = tracker.getValue().model.getName();
+                if (isExtraBone(name) && !isBoneOrAncestorAnimated(tracker.getValue().model, modelTracker)) {
                     IBone model = tracker.getValue().model;
                     model.setScaleX(0f);
                     model.setScaleY(0f);
@@ -293,10 +320,9 @@ public class AnimationProcessor<T extends IAnimatable> {
         IBone current = bone;
         while (current != null) {
             DirtyTracker dt = modelTracker.get(current.getName());
-            if (dt != null && (dt.hasRotationChanged || dt.hasPositionChanged || dt.hasScaleChanged)) {
+            if (dt != null && dt.animatedByParallel && !isStructuralBone(current.getName())) {
                 return true;
             }
-            // Walk up the parent chain (GeoBone has parent field)
             if (current instanceof software.bernie.geckolib3.geo.render.built.GeoBone) {
                 current = ((software.bernie.geckolib3.geo.render.built.GeoBone) current).parent;
             } else {
@@ -304,6 +330,15 @@ public class AnimationProcessor<T extends IAnimatable> {
             }
         }
         return false;
+    }
+
+    private static boolean isStructuralBone(String name) {
+        if (name == null) return false;
+        String lower = name.toLowerCase();
+        return lower.equals("root") || lower.equals("allbody")
+            || lower.equals("upbody") || lower.equals("body")
+            || lower.equals("hips") || lower.equals("spine")
+            || lower.equals("waist") || lower.equals("chest");
     }
 
     /**
