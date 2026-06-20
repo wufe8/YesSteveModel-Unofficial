@@ -110,10 +110,6 @@ public final class AnimationManager {
             .isGamePaused()) {
             return PlayState.STOP;
         }
-        PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
-        if (controllerState != null) {
-            return controllerState;
-        }
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
         String geckoName = event.getController().getName();
@@ -121,18 +117,16 @@ public final class AnimationManager {
             if (geckoName != null && geckoName.startsWith("pre_parallel_")) {
                 return PlayState.STOP;
             }
-            // When legacy handles sneak, prevent parallel_5 from overriding it
-            // with its own crouch animation (which lacks movement blending).
-            if (legacySneaking && "parallel_5_controller".equals(geckoName)) {
+            // When legacy handles the body, parallel_5's sneaking_sky
+            // (static crouch) overrides legacy sneaking (movement-blended).
+            // Stop it entirely so legacy sneaking has full control.
+            if (legacyBodyActive && "parallel_5_controller".equals(geckoName)) {
                 return PlayState.STOP;
             }
-            //// Fallback disabled: parallelN animation always runs even when
-            //// OpenYSM controller has no transition, marking bones as
-            //// animatedByParallel and preventing proper extra-bone hiding.
-            //AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
-            //if (file != null && file.animations.containsKey(animationName)) {
-            //    return playLoopAnimation(event, animationName);
-            //}
+            PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
+            if (controllerState != null) {
+                return controllerState;
+            }
             return PlayState.STOP;
         }
         return playLoopAnimation(event, animationName);
@@ -177,7 +171,6 @@ public final class AnimationManager {
             legacySneaking = false;
             return controllerState;
         }
-        ysmu.LOG.info("[YSMU-DBG] predicateMain: no controller, legacyBodyActive=true");
         legacyBodyActive = true;
         legacySneaking = false;
         ResourceLocation animId = getAnimationId(event);
@@ -193,11 +186,8 @@ public final class AnimationManager {
                     String animationName = state.getAnimationName();
                     legacySneaking = "sneak".equals(animationName) || "sneaking".equals(animationName);
                     if (animFile != null && animFile.animations.containsKey(animationName)) {
-                        ysmu.LOG.info("[YSMU-DBG] predicateMain: legacy anim={} sneakFlag={}", animationName, legacySneaking);
                         ILoopType loopType = state.getLoopType();
                         return playAnimation(event, animationName, loopType);
-                    } else {
-                        ysmu.LOG.info("[YSMU-DBG] predicateMain: legacy anim={} NOT in file (skipped)", animationName);
                     }
                 }
             }
