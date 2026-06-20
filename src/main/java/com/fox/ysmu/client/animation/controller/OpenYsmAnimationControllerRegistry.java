@@ -52,10 +52,11 @@ public final class OpenYsmAnimationControllerRegistry {
         }
         CONTROLLERS.put(animationId, set);
         ysmu.LOG.info(
-            "YSM client registered OpenYSM controllers for {}: files={}, controllers={}",
+            "YSM client registered OpenYSM controllers for {}: files={}, controllers={}, names={}",
             animationId,
             fileCount,
-            set.controllers.size());
+            set.controllers.size(),
+            set.controllers.keySet());
     }
 
     static ControllerSet get(ResourceLocation animationId) {

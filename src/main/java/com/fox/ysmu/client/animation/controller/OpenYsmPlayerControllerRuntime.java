@@ -9,8 +9,10 @@ import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
 
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,6 +27,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
+import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -35,6 +38,7 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public final class OpenYsmPlayerControllerRuntime {
 
     private static final Map<StateKey, RuntimeState> STATES = new ConcurrentHashMap<>();
+    private static final Set<String> DEBUG_ONCE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     private OpenYsmPlayerControllerRuntime() {}
 
@@ -54,10 +58,30 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         String geckoControllerName = event.getController().getName();
-        for (ControllerMatch match : resolveControllers(set, geckoControllerName)) {
+        List<ControllerMatch> matches = resolveControllers(set, geckoControllerName);
+        for (ControllerMatch match : matches) {
             PlayState result = tryApplyController(event, player, animationId, geckoControllerName, match);
             if (result != null) {
+                String debugKey = animationId + "/" + geckoControllerName + "/ok";
+                if (DEBUG_ONCE.add(debugKey)) {
+                    ysmu.LOG.info(
+                        "OpenYSM controller MATCH: gecko={}, oysm={}, anim={}",
+                        geckoControllerName,
+                        match.controller.name,
+                        result);
+                }
                 return result;
+            }
+        }
+        // Diagnostic: log when no match found for parallel controllers
+        if (getParallelIndex(geckoControllerName) >= 0) {
+            String debugKey = animationId + "/" + geckoControllerName + "/nomatch";
+            if (DEBUG_ONCE.add(debugKey)) {
+                ysmu.LOG.info(
+                    "OpenYSM controller NO-MATCH: gecko={}, tried={}, available={}",
+                    geckoControllerName,
+                    matches.stream().map(m -> m.controller.name).toArray(),
+                    set.controllers.keySet());
             }
         }
         return null;
@@ -65,6 +89,7 @@ public final class OpenYsmPlayerControllerRuntime {
 
     static void clear() {
         STATES.clear();
+        DEBUG_ONCE.clear();
     }
 
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
@@ -238,11 +263,11 @@ public final class OpenYsmPlayerControllerRuntime {
         int preferredIndex = getParallelIndex(geckoControllerName);
         if (preferredIndex >= 0) {
             if (geckoControllerName.startsWith("pre_parallel_")) {
-                addMatch(matches, set, "player.pre_parallel_0", preferredIndex);
-                addMatch(matches, set, "pre_parallel_0", preferredIndex);
+                addMatch(matches, set, "player.pre_parallel_" + preferredIndex, preferredIndex);
+                addMatch(matches, set, "pre_parallel_" + preferredIndex, preferredIndex);
             } else {
-                addMatch(matches, set, "player.parallel_0", preferredIndex);
-                addMatch(matches, set, "parallel_0", preferredIndex);
+                addMatch(matches, set, "player.parallel_" + preferredIndex, preferredIndex);
+                addMatch(matches, set, "parallel_" + preferredIndex, preferredIndex);
             }
         } else if (MAIN_CONTROLLER.equals(geckoControllerName)) {
             addMatch(matches, set, "player.main", -1);

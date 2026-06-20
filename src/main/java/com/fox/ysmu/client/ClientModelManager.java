@@ -330,6 +330,7 @@ public class ClientModelManager {
         EXTRA_ANIMATION_NAME.clear();
         ConditionManager.clear();
         OpenYsmAnimationControllerRegistry.clear();
+        AnimationManager.getInstance().clearDebugState();
         MolangPhysicsRuntime.clear();
         MolangInstructionExecutor.clearWarnings();
     }
