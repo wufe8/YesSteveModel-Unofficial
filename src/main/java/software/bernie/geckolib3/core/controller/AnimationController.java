@@ -228,6 +228,17 @@ public class AnimationController<T extends IAnimatable> {
                                 System.out
                                     .printf("Could not load animation: %s. Is it missing?", rawAnimation.animationName);
                                 encounteredError.set(true);
+                                try {
+                                    String fileKey = "?";
+                                    if (model instanceof software.bernie.geckolib3.model.AnimatedGeoModel) {
+                                        fileKey = String.valueOf(((software.bernie.geckolib3.model.AnimatedGeoModel) model)
+                                            .getAnimationFileLocation((Object) animatable));
+                                    }
+                                    com.fox.ysmu.ysmu.LOG.warn(
+                                        "[YSMU-DBG] ctrl={} model={} anim={} fileKey={} => NULL",
+                                        name, model.getClass().getSimpleName(),
+                                        rawAnimation.animationName, fileKey);
+                                } catch (Exception ignored) {}
                             }
                             if (animation != null && rawAnimation.loopType != null) {
                                 animation.loop = rawAnimation.loopType;
@@ -460,12 +471,19 @@ public class AnimationController<T extends IAnimatable> {
         createInitialQueues(modelRendererList);
 
         double actualTick = tick;
-        tick = adjustTick(tick);
-
-        // Transition period has ended, reset the tick and set the animation to running
+        // Transition period has ended, reset the tick and set the animation to running.
+        // Must check BEFORE adjustTick() because adjustTick may reset tick to 0
+        // (e.g. after first->third person switch where tick accumulated hugely).
         if (animationState == AnimationState.Transitioning && tick >= transitionLengthTicks) {
             this.shouldResetTick = true;
             animationState = AnimationState.Running;
+            // Ensure currentAnimation is set from the queue if not already
+            if (this.currentAnimation == null && this.animationQueue.size() != 0) {
+                this.currentAnimation = this.animationQueue.poll();
+            }
+        }
+        tick = adjustTick(tick);
+        if (animationState == AnimationState.Running) {
             tick = adjustTick(actualTick);
         }
 

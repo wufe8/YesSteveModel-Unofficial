@@ -55,8 +55,20 @@ public final class AnimationManager {
     @NotNull
     private static <P extends IAnimatable> PlayState playAnimation(AnimationEvent<P> event, String animationName,
         ILoopType loopType) {
+        software.bernie.geckolib3.core.controller.AnimationController<?> ctrl = event.getController();
+        boolean isMain = "main_controller".equals(ctrl.getName());
+        String prevState = isMain ? ctrl.getAnimationState().name() : "";
         event.getController()
             .setAnimation(new AnimationBuilder().addAnimation(animationName, loopType));
+        if (isMain) {
+            String newState = ctrl.getAnimationState().name();
+            boolean animOK = ctrl.getCurrentAnimation() != null;
+            String dbgKey = "ctrl:" + animationName + ":" + prevState + "->" + newState + ":animOK=" + animOK;
+            if (DEBUG_ONCE.add(dbgKey)) {
+                ysmu.LOG.info("[YSMU-DBG] main_controller setAnim({}) {}->{} curAnim={}",
+                    animationName, prevState, newState, animOK ? "OK" : "NULL");
+            }
+        }
         return PlayState.CONTINUE;
     }
 
