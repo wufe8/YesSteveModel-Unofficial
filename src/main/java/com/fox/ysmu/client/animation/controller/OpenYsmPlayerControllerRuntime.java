@@ -9,10 +9,8 @@ import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -27,7 +25,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
-import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -72,17 +69,6 @@ public final class OpenYsmPlayerControllerRuntime {
      * the model has a dedicated controller for this slot (even if its state machine
      * hasn't produced an animation yet).
      */
-    public static boolean hasMatchingController(ResourceLocation animationId, String geckoControllerName) {
-        if (animationId == null || geckoControllerName == null) {
-            return false;
-        }
-        ControllerSet set = OpenYsmAnimationControllerRegistry.get(animationId);
-        if (set == null) {
-            return false;
-        }
-        return !resolveControllers(set, geckoControllerName).isEmpty();
-    }
-
     static void clear() {
         STATES.clear();
     }
@@ -186,7 +172,6 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             boolean conditionMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context);
             if (!conditionMet) {
-                debugTransOnce("condFail", controller.name, transition);
                 continue;
             }
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
@@ -336,15 +321,6 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
         matches.add(new ControllerMatch(controller, preferredAnimationIndex));
-    }
-
-    private static final Set<String> DEBUG_TRANS_ONCE = Collections.newSetFromMap(new ConcurrentHashMap<>());
-    private static void debugTransOnce(String reason, String ctrlName, Transition t) {
-        String key = ctrlName + "/" + reason + "/" + t.targetState;
-        if (DEBUG_TRANS_ONCE.add(key)) {
-            ysmu.LOG.info("OpenYSM trans: ctrl={}, reason={}, target={}, cond={}",
-                ctrlName, reason, t.targetState, t.condition);
-        }
     }
 
     private static int getParallelIndex(String geckoControllerName) {
