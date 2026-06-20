@@ -63,6 +63,23 @@ public final class OpenYsmPlayerControllerRuntime {
         return null;
     }
 
+    /**
+     * Checks if the given GeckoLib controller name would match any OpenYSM controller
+     * in the model's controller set. Returns true only if a match exists, meaning
+     * the model has a dedicated controller for this slot (even if its state machine
+     * hasn't produced an animation yet).
+     */
+    public static boolean hasMatchingController(ResourceLocation animationId, String geckoControllerName) {
+        if (animationId == null || geckoControllerName == null) {
+            return false;
+        }
+        ControllerSet set = OpenYsmAnimationControllerRegistry.get(animationId);
+        if (set == null) {
+            return false;
+        }
+        return !resolveControllers(set, geckoControllerName).isEmpty();
+    }
+
     static void clear() {
         STATES.clear();
     }

@@ -59,7 +59,7 @@ public final class OpenYsmAnimationControllerRegistry {
             set.controllers.keySet());
     }
 
-    public static ControllerSet get(ResourceLocation animationId) {
+    static ControllerSet get(ResourceLocation animationId) {
         return CONTROLLERS.get(animationId);
     }
 

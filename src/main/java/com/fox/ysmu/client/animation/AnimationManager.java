@@ -14,7 +14,6 @@ import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
 import com.fox.ysmu.client.animation.condition.*;
-import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
@@ -83,13 +82,14 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        // tryApply returned null. Check if the model has OpenYSM controllers.
-        // If it does, a null result means the controller exists but couldn't produce
-        // an animation for this slot. Do NOT fall back to a named animation, which
-        // would play all parallel animations simultaneously and break face rendering.
+        // tryApply returned null. Check if the model has a dedicated OpenYSM controller
+        // for this specific parallel slot. If it does, the controller exists but might
+        // need time for its state machine to transition — do NOT fall back to a named
+        // animation. Only fall back for slots without any matching controller.
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
-        if (animId != null && OpenYsmAnimationControllerRegistry.get(animId) != null) {
+        if (animId != null
+            && OpenYsmPlayerControllerRuntime.hasMatchingController(animId, event.getController().getName())) {
             return PlayState.STOP;
         }
         return playLoopAnimation(event, animationName);
