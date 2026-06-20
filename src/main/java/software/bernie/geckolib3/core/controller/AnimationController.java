@@ -228,17 +228,6 @@ public class AnimationController<T extends IAnimatable> {
                                 System.out
                                     .printf("Could not load animation: %s. Is it missing?", rawAnimation.animationName);
                                 encounteredError.set(true);
-                                try {
-                                    String fileKey = "?";
-                                    if (model instanceof software.bernie.geckolib3.model.AnimatedGeoModel) {
-                                        fileKey = String.valueOf(((software.bernie.geckolib3.model.AnimatedGeoModel) model)
-                                            .getAnimationFileLocation((Object) animatable));
-                                    }
-                                    com.fox.ysmu.ysmu.LOG.warn(
-                                        "[YSMU-DBG] ctrl={} model={} anim={} fileKey={} => NULL",
-                                        name, model.getClass().getSimpleName(),
-                                        rawAnimation.animationName, fileKey);
-                                } catch (Exception ignored) {}
                             }
                             if (animation != null && rawAnimation.loopType != null) {
                                 animation.loop = rawAnimation.loopType;

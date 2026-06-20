@@ -2,10 +2,8 @@ package com.fox.ysmu.client.animation;
 
 import java.util.LinkedList;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.Collections;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
@@ -35,7 +33,6 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public final class AnimationManager {
 
     private static AnimationManager MANAGER;
-    private static final Set<String> DEBUG_ONCE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
@@ -55,20 +52,8 @@ public final class AnimationManager {
     @NotNull
     private static <P extends IAnimatable> PlayState playAnimation(AnimationEvent<P> event, String animationName,
         ILoopType loopType) {
-        software.bernie.geckolib3.core.controller.AnimationController<?> ctrl = event.getController();
-        boolean isMain = "main_controller".equals(ctrl.getName());
-        String prevState = isMain ? ctrl.getAnimationState().name() : "";
         event.getController()
             .setAnimation(new AnimationBuilder().addAnimation(animationName, loopType));
-        if (isMain) {
-            String newState = ctrl.getAnimationState().name();
-            boolean animOK = ctrl.getCurrentAnimation() != null;
-            String dbgKey = "ctrl:" + animationName + ":" + prevState + "->" + newState + ":animOK=" + animOK;
-            if (DEBUG_ONCE.add(dbgKey)) {
-                ysmu.LOG.info("[YSMU-DBG] main_controller setAnim({}) {}->{} curAnim={}",
-                    animationName, prevState, newState, animOK ? "OK" : "NULL");
-            }
-        }
         return PlayState.CONTINUE;
     }
 
@@ -180,7 +165,6 @@ public final class AnimationManager {
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
             : GeckoLibCache.getInstance().getAnimations().get(animId);
-        String dbgModel = animId == null ? "?" : animId.getResourcePath();
         for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
             if (!data.containsKey(i)) {
                 continue;
@@ -191,34 +175,17 @@ public final class AnimationManager {
                     String animationName = state.getAnimationName();
                     if (animFile != null && animFile.animations.containsKey(animationName)) {
                         ILoopType loopType = state.getLoopType();
-                        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
-                            && DEBUG_ONCE.add(dbgModel + ":legacy " + animationName)) {
-                            ysmu.LOG.info("[YSMU-DBG] legacy OK model={} anim={} priority={}", dbgModel, animationName, i);
-                        }
                         return playAnimation(event, animationName, loopType);
                     }
                 }
             }
         }
-        // Fallback
         if (animFile != null && !animFile.animations.isEmpty()) {
             if (animFile.animations.containsKey("idle")) {
-                if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
-                    && DEBUG_ONCE.add(dbgModel + ":legacy-fallback-idle")) {
-                    ysmu.LOG.info("[YSMU-DBG] legacy fallback=idle model={}", dbgModel);
-                }
                 return playLoopAnimation(event, "idle");
             }
             String firstAnim = animFile.animations.keySet().iterator().next();
-            if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
-                && DEBUG_ONCE.add(dbgModel + ":legacy-fallback-" + firstAnim)) {
-                ysmu.LOG.info("[YSMU-DBG] legacy fallback={} model={}", firstAnim, dbgModel);
-            }
             return playLoopAnimation(event, firstAnim);
-        }
-        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
-            && DEBUG_ONCE.add(dbgModel + ":legacy-stop")) {
-            ysmu.LOG.info("[YSMU-DBG] legacy STOP model={}", dbgModel);
         }
         return PlayState.STOP;
     }

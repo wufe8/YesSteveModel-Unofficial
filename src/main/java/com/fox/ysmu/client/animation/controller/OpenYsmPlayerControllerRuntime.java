@@ -37,6 +37,7 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public final class OpenYsmPlayerControllerRuntime {
 
     private static final Map<StateKey, RuntimeState> STATES = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> debugOnce = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
 
     private OpenYsmPlayerControllerRuntime() {}
 
@@ -56,43 +57,13 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         String geckoControllerName = event.getController().getName();
-        List<ControllerMatch> matches = resolveControllers(set, geckoControllerName);
-        for (ControllerMatch match : matches) {
+        for (ControllerMatch match : resolveControllers(set, geckoControllerName)) {
             PlayState result = tryApplyController(event, player, animationId, geckoControllerName, match);
             if (result != null) {
-                if (geckoControllerName.contains("main") || geckoControllerName.contains("parallel")) {
-                    debugLog(player, geckoControllerName, match.controller.name,
-                        result == PlayState.CONTINUE ? "OK" : "STOP");
-                }
                 return result;
             }
         }
-        if (geckoControllerName.contains("main") && !matches.isEmpty()) {
-            debugLog(player, geckoControllerName, matches.get(0).controller.name, "ALL_NULL");
-        } else if (geckoControllerName.contains("main") && matches.isEmpty() && set != null) {
-            if (player == Minecraft.getMinecraft().thePlayer
-                && debugOnce.add("no-match:" + animationId.getResourcePath())) {
-                String names = "";
-                for (String k : set.controllers.keySet()) {
-                    if (!names.isEmpty()) names += ",";
-                    names += k;
-                }
-                ysmu.LOG.info("[YSMU-DBG] main_controller NO MATCH model={} available=[{}]", animationId.getResourcePath(), names);
-            }
-        }
         return null;
-    }
-
-    private static final Map<UUID, String> lastDebugLine = new ConcurrentHashMap<>();
-    private static final java.util.Set<String> debugOnce = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
-
-    private static void debugLog(EntityPlayer player, String geckoName, String ysmName, String result) {
-        boolean isLocal = player == Minecraft.getMinecraft().thePlayer;
-        if (!isLocal) return;
-        String line = geckoName + "->" + ysmName + "=" + result;
-        if (debugOnce.add(line)) {
-            ysmu.LOG.info("[YSMU-DBG] " + line);
-        }
     }
 
     /**
@@ -131,25 +102,29 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         // If the current state has no animations, try to force transition to any
-        // state that has them. Use two-pass search: direct transitions first, then
-        // global search.
+        // state that has them. Only transition when the condition is met so we
+        // don't force the wrong state (e.g. play/holster based on weapon held).
         if (state.animations.isEmpty() && !match.controller.getStatesWithAnimations().isEmpty()) {
             State forcedTarget = null;
+            // Check transitions from the current state with condition matching
             for (Transition transition : state.transitions) {
                 State target = match.controller.states.get(transition.targetState);
-                if (target != null && !target.animations.isEmpty()) {
+                if (target != null && !target.animations.isEmpty()
+                    && OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context)) {
                     forcedTarget = target;
                     break;
                 }
             }
-            if (forcedTarget == null) {
-                for (State candidate : match.controller.states.values()) {
-                    if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {
-                        forcedTarget = candidate;
-                        break;
-                    }
-                }
-            }
+            //// If no condition-matched transition, search all states for the first
+            //// with animations that isn't the current state
+            //if (forcedTarget == null) {
+            //    for (State candidate : match.controller.states.values()) {
+            //        if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {
+            //            forcedTarget = candidate;
+            //            break;
+            //        }
+            //    }
+            //}
             if (forcedTarget != null) {
                 OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
                 runtimeState.currentState = forcedTarget.name;
@@ -162,21 +137,10 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         String animationName = selectAnimation(state, match.preferredAnimationIndex, context);
-        boolean bypassed = false;
         if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
             animationName = state.animations.get(0).animationName;
-            bypassed = true;
         }
         if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
-            // Debug: log when controller fails to find any playable animation
-            if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
-                && debugOnce.add("reset:" + match.controller.name + ":" + state.name)) {
-                ysmu.LOG.info("[YSMU-DBG] {}:{} state={} anim={} exists={} bypass={} reset",
-                    geckoControllerName, match.controller.name,
-                    state.name, animationName,
-                    StringUtils.isNotBlank(animationName) ? animationExists(animationId, animationName) : false,
-                    bypassed);
-            }
             State initialState = match.controller.getInitialState();
             if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
                 runtimeState.currentState = initialState.name;
@@ -191,6 +155,16 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         if (state.blendTransitionTicks >= 0f) {
             event.getController().transitionLengthTicks = state.blendTransitionTicks;
+        }
+        // Debug: log parallel controller state once
+        if (geckoControllerName.contains("parallel") && player == Minecraft.getMinecraft().thePlayer) {
+            String dbgKey = match.controller.name + ":" + state.name + ":" + animationName;
+            if (debugOnce.add(dbgKey)) {
+                ysmu.LOG.info("[YSMU-DBG] {} state={} anim={}", match.controller.name, state.name, animationName);
+                for (AnimationEntry e : state.animations) {
+                    ysmu.LOG.info("[YSMU-DBG]   entry: {} cond={}", e.animationName, e.condition);
+                }
+            }
         }
         applyAnimation(event, runtimeState, state, animationName);
         return PlayState.CONTINUE;
