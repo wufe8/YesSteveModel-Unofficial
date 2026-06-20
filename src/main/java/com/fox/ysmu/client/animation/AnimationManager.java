@@ -1,7 +1,9 @@
 package com.fox.ysmu.client.animation;
 
+import java.util.Collections;
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -35,6 +37,7 @@ public final class AnimationManager {
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
+    private static final Set<String> DEBUG_PARALLEL_ONCE = Collections.newSetFromMap(new ConcurrentHashMap<>());
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -85,8 +88,18 @@ public final class AnimationManager {
         }
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
+        String geckoName = event.getController().getName();
+        // Diagnostic: log once per model+controller combo
+        if (animId != null && geckoName != null) {
+            String debugKey = animId + "/" + geckoName + "/call";
+            if (DEBUG_PARALLEL_ONCE.add(debugKey)) {
+                boolean hasCtl = OpenYsmPlayerControllerRuntime.hasAnyController(animId);
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSMU PP called: gecko={}, model={}, hasControllers={}",
+                    geckoName, animId, hasCtl);
+            }
+        }
         if (animId != null && OpenYsmPlayerControllerRuntime.hasAnyController(animId)) {
-            String geckoName = event.getController().getName();
             // For regular parallel_N slots that have NO matching controller in the
             // set but DO have a named animation in the model, allow fallback.
             // This is needed e.g. for weapon positioning (parallel1) without
