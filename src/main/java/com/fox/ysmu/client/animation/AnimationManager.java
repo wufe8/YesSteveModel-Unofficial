@@ -2,8 +2,10 @@ package com.fox.ysmu.client.animation;
 
 import java.util.LinkedList;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.Collections;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
@@ -18,6 +20,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
+import com.fox.ysmu.ysmu;
 import com.google.common.collect.Lists;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -32,6 +35,7 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public final class AnimationManager {
 
     private static AnimationManager MANAGER;
+    private static final Set<String> DEBUG_ONCE = Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
@@ -164,6 +168,7 @@ public final class AnimationManager {
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
             : GeckoLibCache.getInstance().getAnimations().get(animId);
+        String dbgModel = animId == null ? "?" : animId.getResourcePath();
         for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
             if (!data.containsKey(i)) {
                 continue;
@@ -172,23 +177,36 @@ public final class AnimationManager {
             for (AnimationState state : states) {
                 if (state.getPredicate().test(player, event)) {
                     String animationName = state.getAnimationName();
-                    // 验证动画存在性，防止 GeckoLib 的 setAnimation() 在动画不存在时静默失败
                     if (animFile != null && animFile.animations.containsKey(animationName)) {
                         ILoopType loopType = state.getLoopType();
+                        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
+                            && DEBUG_ONCE.add(dbgModel + ":legacy " + animationName)) {
+                            ysmu.LOG.info("[YSMU-DBG] legacy OK model={} anim={} priority={}", dbgModel, animationName, i);
+                        }
                         return playAnimation(event, animationName, loopType);
                     }
-                    // 动画不存在，继续检查下一个状态
                 }
             }
         }
-        // 所有传统动画状态均无可用动画时，尝试 idle 作为终极回退
+        // Fallback
         if (animFile != null && !animFile.animations.isEmpty()) {
             if (animFile.animations.containsKey("idle")) {
+                if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
+                    && DEBUG_ONCE.add(dbgModel + ":legacy-fallback-idle")) {
+                    ysmu.LOG.info("[YSMU-DBG] legacy fallback=idle model={}", dbgModel);
+                }
                 return playLoopAnimation(event, "idle");
             }
-            // idle 也不存在时，播任何可用的动画避免模型静止
             String firstAnim = animFile.animations.keySet().iterator().next();
+            if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
+                && DEBUG_ONCE.add(dbgModel + ":legacy-fallback-" + firstAnim)) {
+                ysmu.LOG.info("[YSMU-DBG] legacy fallback={} model={}", firstAnim, dbgModel);
+            }
             return playLoopAnimation(event, firstAnim);
+        }
+        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
+            && DEBUG_ONCE.add(dbgModel + ":legacy-stop")) {
+            ysmu.LOG.info("[YSMU-DBG] legacy STOP model={}", dbgModel);
         }
         return PlayState.STOP;
     }

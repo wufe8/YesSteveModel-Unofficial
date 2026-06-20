@@ -9,13 +9,12 @@ import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
 
 import java.util.ArrayList;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
@@ -27,6 +26,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
+import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -56,13 +56,43 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         String geckoControllerName = event.getController().getName();
-        for (ControllerMatch match : resolveControllers(set, geckoControllerName)) {
+        List<ControllerMatch> matches = resolveControllers(set, geckoControllerName);
+        for (ControllerMatch match : matches) {
             PlayState result = tryApplyController(event, player, animationId, geckoControllerName, match);
             if (result != null) {
+                if (geckoControllerName.contains("main") || geckoControllerName.contains("parallel")) {
+                    debugLog(player, geckoControllerName, match.controller.name,
+                        result == PlayState.CONTINUE ? "OK" : "STOP");
+                }
                 return result;
             }
         }
+        if (geckoControllerName.contains("main") && !matches.isEmpty()) {
+            debugLog(player, geckoControllerName, matches.get(0).controller.name, "ALL_NULL");
+        } else if (geckoControllerName.contains("main") && matches.isEmpty() && set != null) {
+            if (player == Minecraft.getMinecraft().thePlayer
+                && debugOnce.add("no-match:" + animationId.getResourcePath())) {
+                String names = "";
+                for (String k : set.controllers.keySet()) {
+                    if (!names.isEmpty()) names += ",";
+                    names += k;
+                }
+                ysmu.LOG.info("[YSMU-DBG] main_controller NO MATCH model={} available=[{}]", animationId.getResourcePath(), names);
+            }
+        }
         return null;
+    }
+
+    private static final Map<UUID, String> lastDebugLine = new ConcurrentHashMap<>();
+    private static final java.util.Set<String> debugOnce = java.util.Collections.newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+
+    private static void debugLog(EntityPlayer player, String geckoName, String ysmName, String result) {
+        boolean isLocal = player == Minecraft.getMinecraft().thePlayer;
+        if (!isLocal) return;
+        String line = geckoName + "->" + ysmName + "=" + result;
+        if (debugOnce.add(line)) {
+            ysmu.LOG.info("[YSMU-DBG] " + line);
+        }
     }
 
     /**
@@ -84,87 +114,76 @@ public final class OpenYsmPlayerControllerRuntime {
 
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
-        Controller controller = match.controller;
-        int preferredAnimIndex = match.preferredAnimationIndex;
-        RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, controller.name);
+        RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
-        State state = ensureState(event, controller, runtimeState, context);
+        State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
             return null;
         }
-
-        // Follow OpenYSM's while(evaluateTransitions(...)){if(activeSlotCount!=0)break;}
-        // pattern: keep transitioning until we find a state with a playable animation,
-        // or no more transitions fire.
-        Set<String> visited = new HashSet<>();
-        visited.add(state.name);
-        boolean foundAnimation = hasSelectableAnimation(state, preferredAnimIndex, context, animationId);
-        while (!foundAnimation) {
-            boolean transitioned = false;
-            for (Transition transition : state.transitions) {
-                State target = controller.states.get(transition.targetState);
-                if (target == null) continue;
-                if (!OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context)) continue;
-                if (!visited.add(target.name)) continue; // cycle prevention, like OpenYSM's visitedEntries
-                OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
-                runtimeState.currentState = target.name;
-                runtimeState.enteredTick = event.getAnimationTick();
-                runtimeState.lastSelectedAnimationState = "";
-                runtimeState.lastSelectedAnimation = "";
-                OpenYsmControllerExpressionEvaluator.executeStatements(target.onEntry, context);
-                state = target;
-                transitioned = true;
+        for (int i = 0; i < 4; i++) {
+            State nextState = applyTransition(event, match.controller, state, runtimeState, context);
+            if (nextState == state) {
                 break;
             }
-            if (!transitioned) break;
-            foundAnimation = hasSelectableAnimation(state, preferredAnimIndex, context, animationId);
+            state = nextState;
         }
 
-        // Still no playable animation after all transitions: try any state with
-        // animations, ignoring conditions (last resort fallback)
-        if (!foundAnimation) {
-            for (State candidate : controller.states.values()) {
-                if (candidate.animations.isEmpty()) continue;
-                String name = selectAnimation(candidate, -1, context);
-                if (StringUtils.isBlank(name)) {
-                    name = candidate.animations.get(0).animationName; // ignore condition
-                }
-                if (animationExists(animationId, name)) {
-                    if (!candidate.name.equals(state.name)) {
-                        OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
-                        runtimeState.currentState = candidate.name;
-                        runtimeState.enteredTick = event.getAnimationTick();
-                        runtimeState.lastSelectedAnimationState = "";
-                        runtimeState.lastSelectedAnimation = "";
-                        OpenYsmControllerExpressionEvaluator.executeStatements(candidate.onEntry, context);
-                    }
-                    state = candidate;
-                    foundAnimation = true;
+        // If the current state has no animations, try to force transition to any
+        // state that has them. Use two-pass search: direct transitions first, then
+        // global search.
+        if (state.animations.isEmpty() && !match.controller.getStatesWithAnimations().isEmpty()) {
+            State forcedTarget = null;
+            for (Transition transition : state.transitions) {
+                State target = match.controller.states.get(transition.targetState);
+                if (target != null && !target.animations.isEmpty()) {
+                    forcedTarget = target;
                     break;
                 }
             }
+            if (forcedTarget == null) {
+                for (State candidate : match.controller.states.values()) {
+                    if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {
+                        forcedTarget = candidate;
+                        break;
+                    }
+                }
+            }
+            if (forcedTarget != null) {
+                OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
+                runtimeState.currentState = forcedTarget.name;
+                runtimeState.enteredTick = event.getAnimationTick();
+                runtimeState.lastSelectedAnimationState = "";
+                runtimeState.lastSelectedAnimation = "";
+                OpenYsmControllerExpressionEvaluator.executeStatements(forcedTarget.onEntry, context);
+                state = forcedTarget;
+            }
         }
 
-        // If even the fallback fails, reset to initial state so the controller
-        // can re-evaluate conditions next frame
-        if (!foundAnimation) {
-            State initial = controller.getInitialState();
-            if (initial != null && !runtimeState.currentState.equals(initial.name)) {
-                runtimeState.currentState = initial.name;
+        String animationName = selectAnimation(state, match.preferredAnimationIndex, context);
+        boolean bypassed = false;
+        if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
+            animationName = state.animations.get(0).animationName;
+            bypassed = true;
+        }
+        if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
+            // Debug: log when controller fails to find any playable animation
+            if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
+                && debugOnce.add("reset:" + match.controller.name + ":" + state.name)) {
+                ysmu.LOG.info("[YSMU-DBG] {}:{} state={} anim={} exists={} bypass={} reset",
+                    geckoControllerName, match.controller.name,
+                    state.name, animationName,
+                    StringUtils.isNotBlank(animationName) ? animationExists(animationId, animationName) : false,
+                    bypassed);
+            }
+            State initialState = match.controller.getInitialState();
+            if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
+                runtimeState.currentState = initialState.name;
                 runtimeState.enteredTick = event.getAnimationTick();
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
             }
-            return null;
-        }
-
-        String animationName = selectAnimation(state, preferredAnimIndex, context);
-        if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
-            animationName = state.animations.get(0).animationName;
-        }
-        if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && "attack_empty".equals(animationName)) {
@@ -175,16 +194,6 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         applyAnimation(event, runtimeState, state, animationName);
         return PlayState.CONTINUE;
-    }
-
-    private static boolean hasSelectableAnimation(State state, int preferredAnimIndex,
-        OpenYsmControllerExpressionEvaluator.Context context, ResourceLocation animationId) {
-        if (state.animations.isEmpty()) return false;
-        String name = selectAnimation(state, preferredAnimIndex, context);
-        if (StringUtils.isBlank(name)) {
-            name = state.animations.get(0).animationName;
-        }
-        return animationExists(animationId, name);
     }
 
     private static RuntimeState runtimeState(EntityPlayer player, ResourceLocation animationId,
