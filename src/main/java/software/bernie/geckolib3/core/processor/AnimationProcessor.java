@@ -241,18 +241,17 @@ public class AnimationProcessor<T extends IAnimatable> {
                     saveSnapshot.scaleValueZ = model.getScaleZ();
                 }
             }
-            // Hide extra bones (weapons/overlays) not animated by any controller.
-            // OpenYSM hides these via Molang scale=0 from player.main; YSMU has none.
-            if (!tracker.getValue().hasRotationChanged
-                && !tracker.getValue().hasPositionChanged
-                && !tracker.getValue().hasScaleChanged
-                && isExtraBone(model.getName())) {
-                model.setScaleX(0f);
-                model.setScaleY(0f);
-                model.setScaleZ(0f);
-                saveSnapshot.scaleValueX = 0f;
-                saveSnapshot.scaleValueY = 0f;
-                saveSnapshot.scaleValueZ = 0f;
+        }
+        // Hide extra bones (weapons/overlays) when legacy handles body.
+        // OpenYSM controls these via Molang scale=0 from player.main; YSMU has none.
+        if (com.fox.ysmu.client.animation.AnimationManager.legacyBodyActive) {
+            for (Map.Entry<String, DirtyTracker> tracker : modelTracker.entrySet()) {
+                if (isExtraBone(tracker.getValue().model.getName())) {
+                    IBone model = tracker.getValue().model;
+                    model.setScaleX(0f);
+                    model.setScaleY(0f);
+                    model.setScaleZ(0f);
+                }
             }
         }
         manager.isFirstTick = false;
@@ -287,6 +286,24 @@ public class AnimationProcessor<T extends IAnimatable> {
             || lower.contains("sword") || lower.contains("blade")
             || lower.contains("expression") || lower.contains("emoji")
             || lower.contains("overlay") || lower.contains("effect");
+    }
+
+    private static boolean isBoneOrAncestorAnimated(IBone bone,
+        HashMap<String, DirtyTracker> modelTracker) {
+        IBone current = bone;
+        while (current != null) {
+            DirtyTracker dt = modelTracker.get(current.getName());
+            if (dt != null && (dt.hasRotationChanged || dt.hasPositionChanged || dt.hasScaleChanged)) {
+                return true;
+            }
+            // Walk up the parent chain (GeoBone has parent field)
+            if (current instanceof software.bernie.geckolib3.geo.render.built.GeoBone) {
+                current = ((software.bernie.geckolib3.geo.render.built.GeoBone) current).parent;
+            } else {
+                break;
+            }
+        }
+        return false;
     }
 
     /**

@@ -33,6 +33,9 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public final class AnimationManager {
 
     private static AnimationManager MANAGER;
+    /** True when the main controller body animation is handled by the legacy system
+        (no player.main OpenYSM controller match). */
+    public static volatile boolean legacyBodyActive = false;
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
@@ -160,8 +163,10 @@ public final class AnimationManager {
         }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         if (controllerState != null) {
+            legacyBodyActive = false;
             return controllerState;
         }
+        legacyBodyActive = true;
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
             : GeckoLibCache.getInstance().getAnimations().get(animId);
