@@ -106,7 +106,6 @@ public final class OpenYsmPlayerControllerRuntime {
         // don't force the wrong state (e.g. play/holster based on weapon held).
         if (state.animations.isEmpty() && !match.controller.getStatesWithAnimations().isEmpty()) {
             State forcedTarget = null;
-            // Check transitions from the current state with condition matching
             for (Transition transition : state.transitions) {
                 State target = match.controller.states.get(transition.targetState);
                 if (target != null && !target.animations.isEmpty()
@@ -115,8 +114,7 @@ public final class OpenYsmPlayerControllerRuntime {
                     break;
                 }
             }
-            //// If no condition-matched transition, search all states for the first
-            //// with animations that isn't the current state
+            //// Global search fallback (commented: may pick wrong state)
             //if (forcedTarget == null) {
             //    for (State candidate : match.controller.states.values()) {
             //        if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {
