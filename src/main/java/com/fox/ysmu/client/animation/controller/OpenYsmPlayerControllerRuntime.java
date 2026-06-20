@@ -9,8 +9,10 @@ import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
 
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -82,107 +84,88 @@ public final class OpenYsmPlayerControllerRuntime {
 
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
-        RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
+        Controller controller = match.controller;
+        int preferredAnimIndex = match.preferredAnimationIndex;
+        RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, controller.name);
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
-            event,
-            player,
-            runtimeState);
+            event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
-        State state = ensureState(event, match.controller, runtimeState, context);
+        State state = ensureState(event, controller, runtimeState, context);
         if (state == null) {
             return null;
         }
-        for (int i = 0; i < 4; i++) {
-            State nextState = applyTransition(event, match.controller, state, runtimeState, context);
-            if (nextState == state) {
-                break;
-            }
-            state = nextState;
-        }
 
-        // If the current state (after transitions) still has no animations but the
-        // controller has states with animations that didn't fire, force a transition
-        // to give the controller an active state to play, fixing the "stuck in
-        // default" issue for models with condition-based animations.
-        if (state.animations.isEmpty() && !match.controller.getStatesWithAnimations().isEmpty()) {
-            // First pass: try transitions from the current state
-            State forcedTarget = null;
+        // Follow OpenYSM's while(evaluateTransitions(...)){if(activeSlotCount!=0)break;}
+        // pattern: keep transitioning until we find a state with a playable animation,
+        // or no more transitions fire.
+        Set<String> visited = new HashSet<>();
+        visited.add(state.name);
+        boolean foundAnimation = hasSelectableAnimation(state, preferredAnimIndex, context, animationId);
+        while (!foundAnimation) {
+            boolean transitioned = false;
             for (Transition transition : state.transitions) {
-                State target = match.controller.states.get(transition.targetState);
-                if (target != null && !target.animations.isEmpty()) {
-                    forcedTarget = target;
-                    break;
-                }
-            }
-            // Second pass: if the current state has no direct transitions to animated
-            // states (e.g. default state has no transitions at all), search all states
-            // for the first one with animations
-            if (forcedTarget == null) {
-                for (State candidate : match.controller.states.values()) {
-                    if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {
-                        forcedTarget = candidate;
-                        break;
-                    }
-                }
-            }
-            if (forcedTarget != null) {
+                State target = controller.states.get(transition.targetState);
+                if (target == null) continue;
+                if (!OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context)) continue;
+                if (!visited.add(target.name)) continue; // cycle prevention, like OpenYSM's visitedEntries
                 OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
-                runtimeState.currentState = forcedTarget.name;
+                runtimeState.currentState = target.name;
                 runtimeState.enteredTick = event.getAnimationTick();
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
-                OpenYsmControllerExpressionEvaluator.executeStatements(forcedTarget.onEntry, context);
-                state = forcedTarget;
-                // force transition 后 anim_time ≈ 0，条件化动画条目可能暂时不满足。
-                // 不依赖 selectAnimation() 的条件求值，直接取第一个动画条目名。
+                OpenYsmControllerExpressionEvaluator.executeStatements(target.onEntry, context);
+                state = target;
+                transitioned = true;
+                break;
+            }
+            if (!transitioned) break;
+            foundAnimation = hasSelectableAnimation(state, preferredAnimIndex, context, animationId);
+        }
+
+        // Still no playable animation after all transitions: try any state with
+        // animations, ignoring conditions (last resort fallback)
+        if (!foundAnimation) {
+            for (State candidate : controller.states.values()) {
+                if (candidate.animations.isEmpty()) continue;
+                String name = selectAnimation(candidate, -1, context);
+                if (StringUtils.isBlank(name)) {
+                    name = candidate.animations.get(0).animationName; // ignore condition
+                }
+                if (animationExists(animationId, name)) {
+                    if (!candidate.name.equals(state.name)) {
+                        OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
+                        runtimeState.currentState = candidate.name;
+                        runtimeState.enteredTick = event.getAnimationTick();
+                        runtimeState.lastSelectedAnimationState = "";
+                        runtimeState.lastSelectedAnimation = "";
+                        OpenYsmControllerExpressionEvaluator.executeStatements(candidate.onEntry, context);
+                    }
+                    state = candidate;
+                    foundAnimation = true;
+                    break;
+                }
             }
         }
 
-        String animationName = selectAnimation(state, match.preferredAnimationIndex, context);
-        // 如果 selectAnimation() 因条件不满足返回 null，但状态是被 force transition
-        // 进入的（state.animations 非空），则忽略条件直接使用第一个动画条目名
+        // If even the fallback fails, reset to initial state so the controller
+        // can re-evaluate conditions next frame
+        if (!foundAnimation) {
+            State initial = controller.getInitialState();
+            if (initial != null && !runtimeState.currentState.equals(initial.name)) {
+                runtimeState.currentState = initial.name;
+                runtimeState.enteredTick = event.getAnimationTick();
+                runtimeState.lastSelectedAnimationState = "";
+                runtimeState.lastSelectedAnimation = "";
+            }
+            return null;
+        }
+
+        String animationName = selectAnimation(state, preferredAnimIndex, context);
         if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
             animationName = state.animations.get(0).animationName;
         }
         if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
-            // 遍历所有状态寻找任一有可用动画的状态
-            State fallbackState = null;
-            String fallbackAnimName = null;
-            for (State candidate : match.controller.states.values()) {
-                if (candidate.animations.isEmpty()) continue;
-                // 先尝试条件化选择
-                String name = selectAnimation(candidate, -1, context);
-                if (StringUtils.isBlank(name)) {
-                    // 条件不满足则取第一个动画条目名（无条件回退）
-                    name = candidate.animations.get(0).animationName;
-                }
-                if (animationExists(animationId, name)) {
-                    fallbackState = candidate;
-                    fallbackAnimName = name;
-                    break;
-                }
-            }
-            if (fallbackState != null) {
-                if (!fallbackState.name.equals(state.name)) {
-                    OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
-                    runtimeState.currentState = fallbackState.name;
-                    runtimeState.enteredTick = event.getAnimationTick();
-                    runtimeState.lastSelectedAnimationState = "";
-                    runtimeState.lastSelectedAnimation = "";
-                    OpenYsmControllerExpressionEvaluator.executeStatements(fallbackState.onEntry, context);
-                }
-                state = fallbackState;
-                animationName = fallbackAnimName;
-            } else {
-                State initialState = match.controller.getInitialState();
-                if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
-                    runtimeState.currentState = initialState.name;
-                    runtimeState.enteredTick = event.getAnimationTick();
-                    runtimeState.lastSelectedAnimationState = "";
-                    runtimeState.lastSelectedAnimation = "";
-                }
-                return null;
-            }
+            return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && "attack_empty".equals(animationName)) {
             return null;
@@ -192,6 +175,16 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         applyAnimation(event, runtimeState, state, animationName);
         return PlayState.CONTINUE;
+    }
+
+    private static boolean hasSelectableAnimation(State state, int preferredAnimIndex,
+        OpenYsmControllerExpressionEvaluator.Context context, ResourceLocation animationId) {
+        if (state.animations.isEmpty()) return false;
+        String name = selectAnimation(state, preferredAnimIndex, context);
+        if (StringUtils.isBlank(name)) {
+            name = state.animations.get(0).animationName;
+        }
+        return animationExists(animationId, name);
     }
 
     private static RuntimeState runtimeState(EntityPlayer player, ResourceLocation animationId,
