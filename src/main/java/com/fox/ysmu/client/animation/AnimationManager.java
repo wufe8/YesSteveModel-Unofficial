@@ -26,6 +26,7 @@ import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
 import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
+import software.bernie.geckolib3.file.AnimationFile;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 
 public final class AnimationManager {
@@ -82,12 +83,31 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        // tryApply returned null. If this model has any OpenYSM controllers, do NOT
-        // fall back to named parallel animations — they would overlay face expressions.
-        // Only allow fallback for models without controllers (e.g. default models).
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
         if (animId != null && OpenYsmPlayerControllerRuntime.hasAnyController(animId)) {
+            String geckoName = event.getController().getName();
+            // For regular parallel_N slots that have NO matching controller in the
+            // set but DO have a named animation in the model, allow fallback.
+            // This is needed e.g. for weapon positioning (parallel1) without
+            // affecting face expressions controlled by other slots.
+            if (geckoName != null
+                && !geckoName.startsWith("pre_parallel_")
+                && !OpenYsmPlayerControllerRuntime.hasMatchingController(animId, geckoName)) {
+                AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
+                boolean animExists = file != null && file.animations.containsKey(animationName);
+                if (file != null && animExists) {
+                    return playLoopAnimation(event, animationName);
+                }
+                // Diagnostic: log when a named parallel animation would have been
+                // useful but doesn't exist in the model's animation cache.
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSMU parallel slot decision: gecko={}, animName={}, hasController={}, animExists={}, totalAnims={}",
+                    geckoName, animationName,
+                    OpenYsmPlayerControllerRuntime.hasMatchingController(animId, geckoName),
+                    animExists,
+                    file != null ? file.animations.size() : -1);
+            }
             return PlayState.STOP;
         }
         return playLoopAnimation(event, animationName);
