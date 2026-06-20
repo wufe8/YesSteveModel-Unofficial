@@ -17,6 +17,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
 import com.fox.ysmu.client.animation.condition.InnerClassify;
+import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.compat.BackhandCompat;
 
 import software.bernie.geckolib3.core.builder.Animation;
@@ -79,7 +80,13 @@ final class OpenYsmControllerExpressionEvaluator {
             String target = normalizeVariableName(trimmed.substring(0, equals).trim());
             String valueExpression = trimmed.substring(equals + 1).trim();
             if (target.startsWith("v.")) {
-                context.state.variables.put(target.substring(2), evaluateNumber(valueExpression, context));
+                String varName = target.substring(2);
+                double value = evaluateNumber(valueExpression, context);
+                context.state.variables.put(varName, value);
+                // 同步到 MolangPhysicsRuntime，使动画关键帧中的 Molang 表达式
+                // (通过 ScopedMolangVariable → MolangPhysicsRuntime.getVariable())
+                // 能够读取到控制器 onEntry/onExit 设置的 v.* 变量值
+                MolangPhysicsRuntime.setVariable(varName, value);
             }
         }
     }

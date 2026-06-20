@@ -101,27 +101,53 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         // If the current state (after transitions) still has no animations but the
-        // controller has transitions that didn't fire, force the first transition
+        // controller has states with animations that didn't fire, force a transition
         // to give the controller an active state to play, fixing the "stuck in
         // default" issue for models with condition-based animations.
         if (state.animations.isEmpty() && !match.controller.getStatesWithAnimations().isEmpty()) {
+            // First pass: try transitions from the current state
+            State forcedTarget = null;
             for (Transition transition : state.transitions) {
                 State target = match.controller.states.get(transition.targetState);
                 if (target != null && !target.animations.isEmpty()) {
-                    OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
-                    runtimeState.currentState = target.name;
-                    runtimeState.enteredTick = event.getAnimationTick();
-                    runtimeState.lastSelectedAnimationState = "";
-                    runtimeState.lastSelectedAnimation = "";
-                    OpenYsmControllerExpressionEvaluator.executeStatements(target.onEntry, context);
-                    state = target;
+                    forcedTarget = target;
                     break;
                 }
+            }
+            // Second pass: if the current state has no direct transitions to animated
+            // states (e.g. default state has no transitions at all), search all states
+            // for the first one with animations
+            if (forcedTarget == null) {
+                for (State candidate : match.controller.states.values()) {
+                    if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {
+                        forcedTarget = candidate;
+                        break;
+                    }
+                }
+            }
+            if (forcedTarget != null) {
+                OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
+                runtimeState.currentState = forcedTarget.name;
+                runtimeState.enteredTick = event.getAnimationTick();
+                runtimeState.lastSelectedAnimationState = "";
+                runtimeState.lastSelectedAnimation = "";
+                OpenYsmControllerExpressionEvaluator.executeStatements(forcedTarget.onEntry, context);
+                state = forcedTarget;
             }
         }
 
         String animationName = selectAnimation(state, match.preferredAnimationIndex, context);
         if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
+            // 当前状态的动画不存在，重置到初始状态以防状态机卡死
+            // （例如 transition 切换到了 run 但动画 "run" 不在动画文件中，
+            //  若不重置则后续帧永远卡在 run 状态，即使回到走路也无法恢复）
+            State initialState = match.controller.getInitialState();
+            if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
+                runtimeState.currentState = initialState.name;
+                runtimeState.enteredTick = event.getAnimationTick();
+                runtimeState.lastSelectedAnimationState = "";
+                runtimeState.lastSelectedAnimation = "";
+            }
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && "attack_empty".equals(animationName)) {
