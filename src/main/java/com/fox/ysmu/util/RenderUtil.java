@@ -409,22 +409,40 @@ public final class RenderUtil {
         }
     }
 
+    /**
+     * Renders the player model on the HUD overlay (selfie model).
+     * Uses default partialTicks = 1.0F (no frame interpolation).
+     * Prefer {@link #renderPlayerEntity(EntityPlayer, double, double, float, float, double, float)}
+     * which accepts partialTicks for smooth animation.
+     */
     public static void renderPlayerEntity(EntityPlayer player, double posX, double posY, float scale, float yawOffset, double z) {
-        if (player != Minecraft.getMinecraft().thePlayer) return;  // 不知道为什么如果不加这句，额外玩家会渲染串了
+        renderPlayerEntity(player, posX, posY, scale, yawOffset, z, 1.0F);
+    }
+
+    /**
+     * Renders the player model on the HUD overlay with frame interpolation.
+     *
+     * @param partialTicks 帧间插值系数 (0.0~1.0)，来自渲染事件，用于平滑旋转和动画更新
+     */
+    public static void renderPlayerEntity(EntityPlayer player, double posX, double posY, float scale, float yawOffset, double z, float partialTicks) {
+        if (player != Minecraft.getMinecraft().thePlayer) return;
         GL11.glEnable(GL11.GL_COLOR_MATERIAL);
         GL11.glPushMatrix();
         try {
+            // 对 rotationYaw 做帧间插值，避免每 tick 刷新的卡顿
+            float interpolatedYaw = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * partialTicks;
+
             GL11.glTranslatef((float) (posX + scale * 0.5), (float) (posY + scale * 2), (float) z);
             GL11.glScalef(-scale, scale, scale);
             GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F);
-            GL11.glRotatef(player.rotationYaw + yawOffset, 0.0F, 1.0F, 0.0F);
+            GL11.glRotatef(interpolatedYaw + yawOffset, 0.0F, 1.0F, 0.0F);
 
             GL11.glRotatef(135.0F, 0.0F, 1.0F, 0.0F);
             RenderHelper.enableStandardItemLighting();
             GL11.glRotatef(-135.0F, 0.0F, 1.0F, 0.0F);
 
             GL11.glTranslatef(0.0F, player.yOffset, 0.0F);
-            withGuiEntityLighting(() -> RenderManager.instance.renderEntityWithPosYaw(player, 0.0D, 0.0D, 0.0D, 0.0F, 1.0F));
+            withGuiEntityLighting(() -> RenderManager.instance.renderEntityWithPosYaw(player, 0.0D, 0.0D, 0.0D, 0.0F, partialTicks));
         } finally {
             GL11.glPopMatrix();
             RenderHelper.disableStandardItemLighting();

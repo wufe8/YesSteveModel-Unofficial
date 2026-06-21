@@ -64,7 +64,7 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
         }
 
         if (this.mc.thePlayer != null) {
-            RenderUtil.renderPlayerEntity(this.mc.thePlayer, this.posX, this.posY, this.scale, this.yawOffset, 50);
+            RenderUtil.renderPlayerEntity(this.mc.thePlayer, this.posX, this.posY, this.scale, this.yawOffset, 50, pPartialTick);
         }
     }
 

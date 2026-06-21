@@ -103,7 +103,7 @@ public class ClientEventHandler {
         event.setCanceled(true);
         CustomPlayerRenderer renderer = ClientProxy.getInstance();
         if ((mc.currentScreen != null || EXTRA_PLAYER) && player.equals(playerSelf)) {
-            renderSelfGuiPlayer(renderer, player);
+            renderSelfGuiPlayer(renderer, player, event.partialRenderTick);
         } else {
             float partialTicks = event.partialRenderTick;
             double ix = player.lastTickPosX + (player.posX - player.lastTickPosX) * partialTicks;
@@ -119,27 +119,19 @@ public class ClientEventHandler {
         }
     }
 
-    private static void renderSelfGuiPlayer(CustomPlayerRenderer renderer, EntityPlayer player) {
+    private static void renderSelfGuiPlayer(CustomPlayerRenderer renderer, EntityPlayer player, float partialTicks) {
         PlayerPreviousRotationSnapshot snapshot = PlayerPreviousRotationSnapshot.capture(player);
         try {
-            syncPreviousRotationsToPreview(player);
             RenderUtil.withGuiEntityLighting(() -> renderer.doRender(
                 player,
                 0,
                 0 - player.yOffset,
                 0,
                 player.rotationYaw,
-                1.0F));
+                partialTicks));
         } finally {
             snapshot.restore(player);
         }
-    }
-
-    private static void syncPreviousRotationsToPreview(EntityPlayer player) {
-        player.prevRenderYawOffset = player.renderYawOffset;
-        player.prevRotationYaw = player.rotationYaw;
-        player.prevRotationPitch = player.rotationPitch;
-        player.prevRotationYawHead = player.rotationYawHead;
     }
 
     @SubscribeEvent
@@ -166,7 +158,7 @@ public class ClientEventHandler {
         float scale = (float) Config.PLAYER_SCALE;
         float yawOffset = (float) Config.PLAYER_YAW_OFFSET;
         EXTRA_PLAYER = true;
-        RenderUtil.renderPlayerEntity(player, posX, posY, scale, yawOffset, -500);
+        RenderUtil.renderPlayerEntity(player, posX, posY, scale, yawOffset, -500, event.partialTicks);
         EXTRA_PLAYER = false;
     }
 

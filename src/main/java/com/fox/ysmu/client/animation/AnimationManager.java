@@ -18,6 +18,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
+import com.fox.ysmu.ysmu;
 import com.google.common.collect.Lists;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -178,6 +179,11 @@ public final class AnimationManager {
                     String animationName = state.getAnimationName();
                     if (animFile != null && animFile.animations.containsKey(animationName)) {
                         ILoopType loopType = state.getLoopType();
+                        // DEBUG: log ladder-related state transitions
+                        if (player.isOnLadder() && (animationName.startsWith("ladder") || animationName.startsWith("climb") || animationName.equals("idle") || animationName.equals("sneak") || animationName.equals("sneaking"))) {
+                            ysmu.LOG.info("[DEBUG] Ladder state → {} (onLadder={}, sneak={}, inWater={}, onGround={})",
+                                animationName, player.isOnLadder(), player.isSneaking(), player.isInWater(), player.onGround);
+                        }
                         return playAnimation(event, animationName, loopType);
                     }
                 }
@@ -206,7 +212,13 @@ public final class AnimationManager {
 
         // 修改为使用BackhandCompat兼容层
         ItemStack offhandItem = BackhandCompat.getOffhandItem(player);
-        if (offhandItem != null && checkSwingAndUse(player, false)) {
+        if (offhandItem != null) {
+            // 攻击/使用期间暂停持握动画，让挥砍/使用控制器接管；但不标记为空(-1)
+            // 这样攻击结束后持握控制器恢复时，last == hash 不会触发 markNeedsReload()，
+            // 避免了过渡动画重复播放
+            if (!checkSwingAndUse(player, false)) {
+                return PlayState.STOP;
+            }
             int hash = itemHash(offhandItem);
             Integer last = lastOffhandItemHash.put(player.getUniqueID(), hash);
             if (last == null || last != hash || last == -1) {
@@ -229,21 +241,15 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        if (!player.isSwingInProgress && !player.isUsingItem()) {
-            // ItemStack mainHandItem = player.getHeldItem();
-            // if (mainHandItem.is(Items.CROSSBOW) && CrossbowItem.isCharged(mainHandItem)) {
-            // return playAnimation(event, "hold_mainhand:charged_crossbow", ILoopType.EDefaultLoopTypes.LOOP);
-            // }
-            // ItemStack offhandItem = BackhandCompat.getOffhandItem(player);
-            // if (offhandItem != null && offhandItem.is(Items.CROSSBOW) && CrossbowItem.isCharged(offhandItem)) {
-            // return playAnimation(event, "hold_offhand:charged_crossbow", ILoopType.EDefaultLoopTypes.LOOP);
-            // }
-            if (player.fishEntity != null) {
-                return playAnimation(event, "hold_mainhand:fishing", ILoopType.EDefaultLoopTypes.LOOP);
-            }
+        if (player.fishEntity != null) {
+            return playAnimation(event, "hold_mainhand:fishing", ILoopType.EDefaultLoopTypes.LOOP);
         }
 
-        if (player.getHeldItem() != null && checkSwingAndUse(player, true)) {
+        if (player.getHeldItem() != null) {
+            // 攻击/使用期间暂停持握动画，让挥砍/使用控制器接管；但不标记为空(-1)
+            if (!checkSwingAndUse(player, true)) {
+                return PlayState.STOP;
+            }
             int hash = itemHash(player.getHeldItem());
             Integer last = lastMainhandItemHash.put(player.getUniqueID(), hash);
             // Reload when item changes OR when coming back from empty hand
@@ -403,6 +409,11 @@ public final class AnimationManager {
         return conditionArmor == null ? null : conditionArmor.doTest(player, slotIndex);
     }
 
+    /**
+     * 判断持握动画是否应暂停。
+     * 攻击/使用期间返回 false，让 swing/use 控制器接管；但不标记物品为空，
+     * 这样攻击结束后持握控制器恢复时不会触发 markNeedsReload()。
+     */
     private boolean checkSwingAndUse(EntityPlayer player, boolean isMainHand) {
         if (player.isSwingInProgress && BackhandCompat.swingingArm(player) == isMainHand) {
             return false;

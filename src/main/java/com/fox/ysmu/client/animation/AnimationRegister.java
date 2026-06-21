@@ -40,8 +40,10 @@ public class AnimationRegister {
         // TODO 睡觉站着睡——床的方向旋转与动画叠加可能不对，目前 applyRotations 已做 -90° 旋转
         register("sleep", Priority.HIGHEST, (player, event) -> player.isPlayerSleeping());
         register("swim", Priority.HIGHEST, (player, event) -> player.isInWater() && Math.abs(event.getLimbSwingAmount()) > MIN_SPEED);
-        // climb/climbing 是游泳/爬行姿态（Root rotation = [90,0,0]），不应绑定到 isOnLadder()
-        // 在 1.7.10 中没有 Pose.SWIMMING，改为通过水中非站立状态触发
+        // 注意：climb/climbing 动画定义 Root rotation = [90,0,0]（水平爬行/游泳姿态），
+        // 在 Modern YSM 中对应 Pose.SWIMMING，而非 isOnLadder()。
+        // 之前错误绑定到 isOnLadder() 导致玩家上梯时模型横躺（#1 楼梯俯仰翻转问题）。
+        // 1.7.10 无 Pose.SWIMMING，改为水中+离地触发，仅保留给有 swim 姿态动画的模型使用。
         register("climb", Priority.HIGHEST, (player, event) -> player.isInWater() && !isPlayerOnGround(player) && Math.abs(event.getLimbSwingAmount()) > MIN_SPEED);
         register("climbing", Priority.HIGHEST, (player, event) -> player.isInWater() && !isPlayerOnGround(player));
         register("ladder_up", Priority.HIGHEST, (player, event) -> player.isOnLadder() && motionYState(player, 0.1D) == 1);
