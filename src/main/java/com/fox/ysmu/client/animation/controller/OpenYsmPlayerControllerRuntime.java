@@ -100,14 +100,6 @@ public final class OpenYsmPlayerControllerRuntime {
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
-        runtimeState.stateFrames++;
-        boolean moving = event.isMoving();
-        if (!moving && runtimeState.wasMoving) {
-            runtimeState.stoppedMovingFrames = 0;
-        } else {
-            runtimeState.stoppedMovingFrames++;
-        }
-        runtimeState.wasMoving = moving;
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
@@ -136,15 +128,6 @@ public final class OpenYsmPlayerControllerRuntime {
                     break;
                 }
             }
-            //// Global search disabled: picks wrong state for all parallel controllers
-            //if (forcedTarget == null) {
-            //    for (State candidate : match.controller.states.values()) {
-            //        if (!candidate.animations.isEmpty() && !candidate.name.equals(state.name)) {
-            //            forcedTarget = candidate;
-            //            break;
-            //        }
-            //    }
-            //}
             if (forcedTarget != null) {
                 OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
                 runtimeState.currentState = forcedTarget.name;
@@ -221,24 +204,10 @@ public final class OpenYsmPlayerControllerRuntime {
             if (!conditionMet) {
                 continue;
             }
-            // Delay transitions into sky so the source animation has time to
-            // play out before switching to the stationary crouch pose.
-            // start->sky: use stateFrames (time in start, lets sneaking_start play).
-            // ground->sky: use stoppedMovingFrames (time since player stopped).
-            if (!target.animations.isEmpty()
-                && "sneaking_sky".equals(target.animations.get(0).animationName)) {
-                int delayFrames = "ground".equals(state.name)
-                    ? runtimeState.stoppedMovingFrames
-                    : runtimeState.stateFrames;
-                if (delayFrames < 5) {
-                    continue;
-                }
-            }
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
             runtimeState.currentState = target.name;
             runtimeState.hasLeftInitial = true;
             runtimeState.enteredTick = event.getAnimationTick();
-            runtimeState.stateFrames = 0;
             runtimeState.lastSelectedAnimationState = "";
             runtimeState.lastSelectedAnimation = "";
             OpenYsmControllerExpressionEvaluator.executeStatements(target.onEntry, context);
@@ -414,11 +383,6 @@ public final class OpenYsmPlayerControllerRuntime {
         String lastSelectedAnimationState = "";
         String lastSelectedAnimation = "";
         double enteredTick;
-        /** Frames in current state, reset on transition. */
-        int stateFrames;
-        /** Frames since the player last stopped moving. */
-        int stoppedMovingFrames;
-        boolean wasMoving;
         boolean lastSwingActive;
         int lastSwingProgress = -1;
         final Map<String, Double> variables = new ConcurrentHashMap<>();
