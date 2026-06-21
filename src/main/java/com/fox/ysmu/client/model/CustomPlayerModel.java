@@ -122,6 +122,17 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(offStack));
         }
         List<IBone> bones = getAnimationProcessor().getModelRendererList();
+        // Check if an extra animation (wheel animation) is currently playing.
+        com.fox.ysmu.eep.ExtendedModelInfo eep = null;
+        boolean extraAnimActive = false;
+        String extraAnimName = null;
+        try {
+            eep = com.fox.ysmu.eep.ExtendedModelInfo.get(player);
+            extraAnimActive = eep != null && eep.isPlayAnimation();
+            if (extraAnimActive) {
+                extraAnimName = eep.getAnimation();
+            }
+        } catch (Exception ignored) {}
         for (IBone bone : bones) {
             if (bone instanceof GeoBone) {
                 String name = ((GeoBone) bone).getName();
@@ -136,6 +147,49 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                         : isLeftHand ? hasOffhandItem
                         : hasMainhandItem || hasOffhandItem;
                     bone.setHidden(!visible);
+                }
+                // Hide expression/effect overlay bones by default.
+                // Extra (wheel) animations explicitly set these bones' visibility:
+                // when extraAnimActive we setHidden(false) so the animation takes control.
+                boolean isExpression = name.equals("Effects") || name.equals("Sweat")
+                    || name.contains("Effect") || name.contains("LaughEyes")
+                    || name.contains("CryEyes") || name.contains("DizzinessEyes")
+                    || name.contains("SpeechlessBrow") || name.contains("EyeBrow2")
+                    || name.equals("AngerFace1") || name.equals("BlackFace1") || name.equals("BlackFace2")
+                    || name.equals("AngryMouth1") || name.equals("AngryEffects1")
+                    || name.equals("SurprisedEffects1") || name.equals("SurprisedEffects2")
+                    || name.equals("SurprisedMouth1") || name.equals("SurprisedMouth2")
+                    || name.equals("SpeechlessEffects1") || name.equals("SpeechlessEffects2")
+                    || name.equals("SpeechlessEffects3") || name.equals("SpeechlessEffects4")
+                    || name.equals("SpeechlessEffects5") || name.equals("SpeechlessEffects6")
+                    || name.equals("SpeechlessMouth1") || name.equals("CryMouth1") || name.equals("CryMouth2")
+                    || name.equals("LaughMouth1") || name.equals("LaughMouth2") || name.equals("LaughMouth3")
+                    || name.equals("LaughMouth4") || name.equals("IdiotMouth1") || name.equals("ZheMeQiang")
+                    || name.equals("ConfusionEffects1") || name.equals("SoundEffects1")
+                    || name.contains("RightSpeechless") || name.contains("LeftSpeechless");
+                if (isExpression) {
+                    boolean show = false;
+                    if (extraAnimActive && extraAnimName != null && animId != null) {
+                        // Check if the active extra animation has keyframes for this bone.
+                        // If not, keep it hidden (no expression data in this animation).
+                        try {
+                            software.bernie.geckolib3.file.AnimationFile animFile =
+                                GeckoLibCache.getInstance().getAnimations().get(animId);
+                            if (animFile != null) {
+                                software.bernie.geckolib3.core.builder.Animation anim =
+                                    animFile.animations.get(extraAnimName);
+                                if (anim != null && anim.boneAnimations != null) {
+                                    for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : anim.boneAnimations) {
+                                        if (name.equals(ba.boneName)) {
+                                            show = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        } catch (Exception ignored) {}
+                    }
+                    bone.setHidden(!show);
                 }
             }
         }

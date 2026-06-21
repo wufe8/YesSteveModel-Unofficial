@@ -86,7 +86,7 @@ final class OpenYsmControllerExpressionEvaluator {
                 // 同步到 MolangPhysicsRuntime，使动画关键帧中的 Molang 表达式
                 // (通过 ScopedMolangVariable → MolangPhysicsRuntime.getVariable())
                 // 能够读取到控制器 onEntry/onExit 设置的 v.* 变量值
-                MolangPhysicsRuntime.setVariable(varName, value);
+                MolangPhysicsRuntime.setVariable(target, value);
             }
         }
     }
