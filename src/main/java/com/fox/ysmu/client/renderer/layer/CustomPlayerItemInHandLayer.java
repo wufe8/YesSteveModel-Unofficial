@@ -74,6 +74,10 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
         GL11.glPushMatrix();
         GL11.glEnable(GL12.GL_RESCALE_NORMAL);
         GL11.glDisable(GL11.GL_CULL_FACE);
+        // Enable blending for transparent item textures (potions, enchanted glints, etc.)
+        // GeckoLib disables blend in IGeoRenderer.render() before layers run.
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         if (!isVanilla) {
             GL11.glScalef(0.7F, 0.7F, 0.7F);
         }
@@ -88,6 +92,7 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
         if (!isMainHand) {
             GL11.glFrontFace(GL11.GL_CCW);
         }
+        GL11.glDisable(GL11.GL_BLEND);
         GL11.glDisable(GL12.GL_RESCALE_NORMAL);
         GL11.glEnable(GL11.GL_CULL_FACE);
         GL11.glPopMatrix();
