@@ -204,6 +204,15 @@ public final class OpenYsmPlayerControllerRuntime {
             if (!conditionMet) {
                 continue;
             }
+            // When the player is sneaking, don't allow unconditional
+            // sky/ground->default transitions — they break the crouch cycle.
+            if ("default".equals(target.name)
+                && ("sky".equals(state.name) || "ground".equals(state.name))
+                && StringUtils.isBlank(transition.condition)) {
+                if (OpenYsmControllerExpressionEvaluator.evaluateBoolean("q.is_sneaking", context)) {
+                    continue;
+                }
+            }
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
             runtimeState.currentState = target.name;
             runtimeState.hasLeftInitial = true;
