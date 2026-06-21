@@ -98,16 +98,28 @@ public class CustomPlayerModel extends AnimatedGeoModel {
      * drives weapon animations, so bone visibility stays in sync.
      */
     private void applyWeaponBoneVisibility(CustomPlayerEntity customPlayer, EntityPlayer player) {
+        ResourceLocation animId = customPlayer.getAnimation();
         // Use the same hold detection as predicateMainhandHold/predicateOffhandHold
         boolean hasMainhandItem = false;
         boolean hasOffhandItem = false;
         try {
-            hasMainhandItem = hasWeaponInHand(player, true);
-            hasOffhandItem = hasWeaponInHand(player, false);
+            com.fox.ysmu.client.animation.condition.ConditionalHold mainHand =
+                com.fox.ysmu.client.animation.condition.ConditionManager.getHoldMainhand(animId);
+            String mainResult = mainHand != null ? mainHand.doTest(player, true) : null;
+            hasMainhandItem = mainResult != null && mainResult.contains(":sword");
+
+            com.fox.ysmu.client.animation.condition.ConditionalHold offHand =
+                com.fox.ysmu.client.animation.condition.ConditionManager.getHoldOffhand(animId);
+            String offResult = offHand != null ? offHand.doTest(player, false) : null;
+            hasOffhandItem = offResult != null && offResult.contains(":sword");
         } catch (Exception e) {
-            // Fallback: check held item directly
-            hasMainhandItem = player.getHeldItem() != null;
-            hasOffhandItem = com.fox.ysmu.compat.BackhandCompat.getOffhandItem(player) != null;
+            // Fallback: use InnerClassify for type detection
+            net.minecraft.item.ItemStack mainStack = player.getHeldItem();
+            hasMainhandItem = mainStack != null && "sword".equals(
+                com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(mainStack));
+            net.minecraft.item.ItemStack offStack = com.fox.ysmu.compat.BackhandCompat.getOffhandItem(player);
+            hasOffhandItem = offStack != null && "sword".equals(
+                com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(offStack));
         }
         List<IBone> bones = getAnimationProcessor().getModelRendererList();
         for (IBone bone : bones) {
@@ -127,15 +139,6 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 }
             }
         }
-    }
-
-    /** Checks whether the player holds a weapon-type item (sword etc.) in the given hand. */
-    private static boolean hasWeaponInHand(EntityPlayer player, boolean isMainHand) {
-        net.minecraft.item.ItemStack stack = com.fox.ysmu.compat.BackhandCompat.getItemInHand(player, isMainHand);
-        if (stack == null) return false;
-        String type = com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(stack);
-        if (type.isEmpty()) return false;
-        return "sword".equals(type);
     }
 
     private void codeAnimation(AnimationEvent animationEvent, EntityModelData data, EntityPlayer player) {

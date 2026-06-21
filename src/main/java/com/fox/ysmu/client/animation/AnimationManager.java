@@ -41,6 +41,9 @@ public final class AnimationManager {
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
+    /** Tracks the last held item hash to detect item changes for animation reload. */
+    private final Map<UUID, Integer> lastMainhandItemHash = new ConcurrentHashMap<>();
+    private final Map<UUID, Integer> lastOffhandItemHash = new ConcurrentHashMap<>();
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -210,7 +213,14 @@ public final class AnimationManager {
         // 修改为使用BackhandCompat兼容层
         ItemStack offhandItem = BackhandCompat.getOffhandItem(player);
         if (offhandItem != null && checkSwingAndUse(player, false)) {
+            int hash = itemHash(offhandItem);
+            Integer last = lastOffhandItemHash.put(player.getUniqueID(), hash);
+            if (last == null || last != hash || last == -1) {
+                event.getController().markNeedsReload();
+            }
             return playIfPresent(event, findHoldAnimation(event, player, false));
+        } else {
+            lastOffhandItemHash.put(player.getUniqueID(), -1);
         }
         return PlayState.STOP;
     }
@@ -240,7 +250,16 @@ public final class AnimationManager {
         }
 
         if (player.getHeldItem() != null && checkSwingAndUse(player, true)) {
+            int hash = itemHash(player.getHeldItem());
+            Integer last = lastMainhandItemHash.put(player.getUniqueID(), hash);
+            // Reload when item changes OR when coming back from empty hand
+            if (last == null || last != hash || last == -1) {
+                event.getController().markNeedsReload();
+            }
             return playIfPresent(event, findHoldAnimation(event, player, true));
+        } else {
+            // Mark as empty
+            lastMainhandItemHash.put(player.getUniqueID(), -1);
         }
         return PlayState.STOP;
     }
@@ -395,5 +414,10 @@ public final class AnimationManager {
             return false;
         }
         return !player.isUsingItem() || BackhandCompat.getUsedItemHand(player) != isMainHand;
+    }
+
+    /** Returns a hash that changes when the held item type changes. */
+    private static int itemHash(net.minecraft.item.ItemStack stack) {
+        return stack == null || stack.getItem() == null ? 0 : stack.getItem().hashCode();
     }
 }
