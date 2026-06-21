@@ -98,20 +98,12 @@ public class CustomPlayerModel extends AnimatedGeoModel {
      * drives weapon animations, so bone visibility stays in sync.
      */
     private void applyWeaponBoneVisibility(CustomPlayerEntity customPlayer, EntityPlayer player) {
-        ResourceLocation animId = customPlayer.getAnimation();
         // Use the same hold detection as predicateMainhandHold/predicateOffhandHold
         boolean hasMainhandItem = false;
         boolean hasOffhandItem = false;
         try {
-            com.fox.ysmu.client.animation.condition.ConditionalHold mainHand =
-                com.fox.ysmu.client.animation.condition.ConditionManager.getHoldMainhand(animId);
-            String mainResult = mainHand != null ? mainHand.doTest(player, true) : null;
-            hasMainhandItem = mainResult != null && !"empty".equals(mainResult);
-
-            com.fox.ysmu.client.animation.condition.ConditionalHold offHand =
-                com.fox.ysmu.client.animation.condition.ConditionManager.getHoldOffhand(animId);
-            String offResult = offHand != null ? offHand.doTest(player, false) : null;
-            hasOffhandItem = offResult != null && !"empty".equals(offResult);
+            hasMainhandItem = hasWeaponInHand(player, true);
+            hasOffhandItem = hasWeaponInHand(player, false);
         } catch (Exception e) {
             // Fallback: check held item directly
             hasMainhandItem = player.getHeldItem() != null;
@@ -135,6 +127,15 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 }
             }
         }
+    }
+
+    /** Checks whether the player holds a weapon-type item (sword etc.) in the given hand. */
+    private static boolean hasWeaponInHand(EntityPlayer player, boolean isMainHand) {
+        net.minecraft.item.ItemStack stack = com.fox.ysmu.compat.BackhandCompat.getItemInHand(player, isMainHand);
+        if (stack == null) return false;
+        String type = com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(stack);
+        if (type.isEmpty()) return false;
+        return "sword".equals(type);
     }
 
     private void codeAnimation(AnimationEvent animationEvent, EntityModelData data, EntityPlayer player) {
