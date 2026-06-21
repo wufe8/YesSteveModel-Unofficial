@@ -117,12 +117,6 @@ public final class AnimationManager {
             if (geckoName != null && geckoName.startsWith("pre_parallel_")) {
                 return PlayState.STOP;
             }
-            // When legacy handles the body, parallel_5's sneaking_sky
-            // (static crouch) overrides legacy sneaking (movement-blended).
-            // Stop it entirely so legacy sneaking has full control.
-            if (legacyBodyActive && "parallel_5_controller".equals(geckoName)) {
-                return PlayState.STOP;
-            }
             PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
             if (controllerState != null) {
                 return controllerState;
