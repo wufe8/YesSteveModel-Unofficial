@@ -26,6 +26,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
+import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -199,6 +200,9 @@ public final class OpenYsmPlayerControllerRuntime {
             event.getController().transitionLengthTicks = state.blendTransitionTicks;
         }
         applyAnimation(event, runtimeState, state, animationName);
+        if (player.isOnLadder()) {
+            ysmu.LOG.info("[YSMU-DBG] OYSMC {} state={} anim={}", geckoControllerName, state.name, animationName);
+        }
         return PlayState.CONTINUE;
     }
 

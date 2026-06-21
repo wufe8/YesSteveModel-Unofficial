@@ -55,6 +55,11 @@ public class ConditionalHold {
         }
     }
 
+    /** 返回 true 如果该实例已注册了至少一个条件测试（有实际的武器/物品匹配规则）。 */
+    public boolean hasTests() {
+        return !idTest.isEmpty() || !oreDictTest.isEmpty() || !extraTest.isEmpty() || !innerTest.isEmpty();
+    }
+
     public void addTest(String name) {
         if (name.length() <= preSize) {
             return;

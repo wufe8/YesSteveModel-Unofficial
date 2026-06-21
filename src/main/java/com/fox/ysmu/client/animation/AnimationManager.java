@@ -120,6 +120,15 @@ public final class AnimationManager {
             }
             PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
             if (controllerState != null) {
+                // 梯子上跳过 parallel 控制器结果，防止 climbing_start 等动画的
+                // Root rotation [90,0,0] 覆盖主控制器的梯子姿态导致模型平躺过渡
+                if (geckoName != null && geckoName.startsWith("parallel_")) {
+                    EntityPlayer player = animatable != null ? animatable.getPlayer() : null;
+                    if (player != null && player.isOnLadder()) {
+                        ysmu.LOG.info("[YSMU-DBG] suppress {} on ladder", geckoName);
+                        return PlayState.STOP;
+                    }
+                }
                 return controllerState;
             }
             return PlayState.STOP;
@@ -181,7 +190,7 @@ public final class AnimationManager {
                         ILoopType loopType = state.getLoopType();
                         // DEBUG: log ladder-related state transitions
                         if (player.isOnLadder() && (animationName.startsWith("ladder") || animationName.startsWith("climb") || animationName.equals("idle") || animationName.equals("sneak") || animationName.equals("sneaking"))) {
-                            ysmu.LOG.info("[DEBUG] Ladder state → {} (onLadder={}, sneak={}, inWater={}, onGround={})",
+                        ysmu.LOG.info("[YSMU-DBG] anim={} onLadder={} sneak={} water={} ground={}",
                                 animationName, player.isOnLadder(), player.isSneaking(), player.isInWater(), player.onGround);
                         }
                         return playAnimation(event, animationName, loopType);
@@ -287,8 +296,10 @@ public final class AnimationManager {
             }
             String conditionalAnimation = findSwingAnimation(event, player);
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
+                ysmu.LOG.info("[YSMU-DBG] swing={}", conditionalAnimation);
                 return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.PLAY_ONCE);
             }
+            ysmu.LOG.info("[YSMU-DBG] swing=swing_hand (no conditional)");
             return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.PLAY_ONCE);
         }
         return PlayState.STOP;
