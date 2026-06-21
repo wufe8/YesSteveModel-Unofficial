@@ -18,7 +18,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
-import com.fox.ysmu.ysmu;
 import com.google.common.collect.Lists;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -36,8 +35,6 @@ public final class AnimationManager {
     /** True when the main controller body animation is handled by the legacy system
         (no player.main OpenYSM controller match). */
     public static volatile boolean legacyBodyActive = false;
-    /** True when the legacy system is currently playing sneak/sneaking. */
-    public static volatile boolean legacySneaking = false;
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
@@ -76,7 +73,7 @@ public final class AnimationManager {
      * 只在动画存在时播放。防止 GeckoLib 的 setAnimation() 在动画不存在时静默失败
      * （不设 animationQueue），导致控制器处于 Stopped 状态且模型冻结。
      */
-    private static <P extends IAnimatable> PlayState playIfPresent(AnimationEvent<P> event, String animationName,
+    private static <P extends IAnimatable> PlayState playIfAnimExists(AnimationEvent<P> event, String animationName,
         ILoopType loopType, ResourceLocation animId) {
         if (animationExistsInFile(animId, animationName)) {
             return playAnimation(event, animationName, loopType);
@@ -165,11 +162,9 @@ public final class AnimationManager {
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         if (controllerState != null) {
             legacyBodyActive = false;
-            legacySneaking = false;
             return controllerState;
         }
         legacyBodyActive = true;
-        legacySneaking = false;
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
             : GeckoLibCache.getInstance().getAnimations().get(animId);
@@ -181,7 +176,6 @@ public final class AnimationManager {
             for (AnimationState state : states) {
                 if (state.getPredicate().test(player, event)) {
                     String animationName = state.getAnimationName();
-                    legacySneaking = "sneak".equals(animationName) || "sneaking".equals(animationName);
                     if (animFile != null && animFile.animations.containsKey(animationName)) {
                         ILoopType loopType = state.getLoopType();
                         return playAnimation(event, animationName, loopType);

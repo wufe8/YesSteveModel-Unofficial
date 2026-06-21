@@ -25,6 +25,9 @@ import software.bernie.geckolib3.core.molang.functions.FirstOrder;
 import software.bernie.geckolib3.core.molang.functions.SecondOrder;
 import software.bernie.geckolib3.core.molang.functions.SinDegrees;
 
+import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
+import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
+
 /**
  * MoLang 解析器
  * <a href="https://bedrock.dev/docs/1.19.0.0/1.19.30.23/Molang#Math%20Functions">Wiki</a>
@@ -60,6 +63,20 @@ public class MolangParser extends MathBuilder {
         this.functions.put("ysm.bone_scale_x", BoneScale.class);
         this.functions.put("ysm.bone_scale_y", BoneScale.class);
         this.functions.put("ysm.bone_scale_z", BoneScale.class);
+
+        // 防止模型动画 Molang 表达式中使用 ctrl.* 函数时抛出
+        // "Function couldn't be found" 异常导致日志刷屏。
+        // 控制器条件中的 ctrl.* 由 OpenYsmControllerExpressionEvaluator 处理，
+        // 此处仅作为 Molang keyframe 表达式中的安全回退（始终返回 0）。
+        this.functions.put("ctrl.hold", CtrlHoldFunction.class);
+        this.functions.put("ctrl.use", CtrlHoldFunction.class);
+        this.functions.put("ctrl.swing", CtrlHoldFunction.class);
+        this.functions.put("ctrl.ride", CtrlHoldFunction.class);
+
+        // 防止模型动画 Molang 表达式中使用 query.position_delta(axis) 时
+        // 抛出 "Function couldn't be found" 异常导致日志刷屏。
+        // 变量版 query.position_delta 由 AnimationRegister.setEntityQueryValues() 提供值。
+        this.functions.put("query.position_delta", QueryPositionDeltaFunction.class);
 
         remap("abs", "math.abs");
         remap("acos", "math.acos");

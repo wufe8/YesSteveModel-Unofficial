@@ -143,6 +143,7 @@ public final class OpenYsmPlayerControllerRuntime {
         if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
             animationName = state.animations.get(0).animationName;
         }
+        // 以下4套蹲下过渡检测代码不知道为什么全都有用 如果你不知道你在干什么 一个都不要删
         // When moving while sneaking, let legacy handle (no ground state).
         if ("sky".equals(state.name) && event.isMoving()
             && "sneaking_sky".equals(animationName)) {

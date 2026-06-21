@@ -102,20 +102,9 @@ public class AnimationProcessor<T extends IAnimatable> {
                     pointData.rotationValueX += valueX;
                     pointData.rotationValueY += valueY;
                     pointData.rotationValueZ += valueZ;
-                    //// Original additive behavior for parallel controllers:
-                    //// bone.setRotation = pointData + initial (accumulates main + parallel)
-                    //// Changed to replace: when no player.main controller exists,
-                    //// legacy system already provides full body animation; parallel
-                    //// additive rotation causes double-weight issues.
-                    //if (controller.getName().startsWith("parallel_")) {
-                    //    bone.setRotationX(pointData.rotationValueX + initialSnapshot.rotationValueX);
-                    //    bone.setRotationY(pointData.rotationValueY + initialSnapshot.rotationValueY);
-                    //    bone.setRotationZ(pointData.rotationValueZ + initialSnapshot.rotationValueZ);
-                    //} else {
-                        bone.setRotationX(valueX + initialSnapshot.rotationValueX);
-                        bone.setRotationY(valueY + initialSnapshot.rotationValueY);
-                        bone.setRotationZ(valueZ + initialSnapshot.rotationValueZ);
-                    //}
+                    bone.setRotationX(valueX + initialSnapshot.rotationValueX);
+                    bone.setRotationY(valueY + initialSnapshot.rotationValueY);
+                    bone.setRotationZ(valueZ + initialSnapshot.rotationValueZ);
                     snapshot.rotationValueX = bone.getRotationX();
                     snapshot.rotationValueY = bone.getRotationY();
                     snapshot.rotationValueZ = bone.getRotationZ();
