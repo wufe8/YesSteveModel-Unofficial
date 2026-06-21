@@ -79,6 +79,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             try {
                 super.setLivingAnimations(animatable, instanceId, animationEvent);
                 this.codeAnimation(animationEvent, data, player);
+                applyWeaponBoneVisibility(customPlayer, player);
             } finally {
                 MolangPhysicsRuntime.end();
             }
@@ -87,6 +88,51 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 super.setLivingAnimations(animatable, instanceId, animationEvent);
             } finally {
                 MolangPhysicsRuntime.end();
+            }
+        }
+    }
+
+    /**
+     * Hides weapon display bones when the player isn't holding a matching item.
+     * Uses the same detection chain (ConditionManager → ConditionalHold) that
+     * drives weapon animations, so bone visibility stays in sync.
+     */
+    private void applyWeaponBoneVisibility(CustomPlayerEntity customPlayer, EntityPlayer player) {
+        ResourceLocation animId = customPlayer.getAnimation();
+        // Use the same hold detection as predicateMainhandHold/predicateOffhandHold
+        boolean hasMainhandItem = false;
+        boolean hasOffhandItem = false;
+        try {
+            com.fox.ysmu.client.animation.condition.ConditionalHold mainHand =
+                com.fox.ysmu.client.animation.condition.ConditionManager.getHoldMainhand(animId);
+            String mainResult = mainHand != null ? mainHand.doTest(player, true) : null;
+            hasMainhandItem = mainResult != null && !"empty".equals(mainResult);
+
+            com.fox.ysmu.client.animation.condition.ConditionalHold offHand =
+                com.fox.ysmu.client.animation.condition.ConditionManager.getHoldOffhand(animId);
+            String offResult = offHand != null ? offHand.doTest(player, false) : null;
+            hasOffhandItem = offResult != null && !"empty".equals(offResult);
+        } catch (Exception e) {
+            // Fallback: check held item directly
+            hasMainhandItem = player.getHeldItem() != null;
+            hasOffhandItem = com.fox.ysmu.compat.BackhandCompat.getOffhandItem(player) != null;
+        }
+        List<IBone> bones = getAnimationProcessor().getModelRendererList();
+        for (IBone bone : bones) {
+            if (bone instanceof GeoBone) {
+                String name = ((GeoBone) bone).getName();
+                if (name == null) continue;
+                boolean isWeaponBone = name.contains("_Sword") || name.contains("_Blade")
+                    || name.contains("_Handle") || name.contains("_Thruster")
+                    || name.contains("_WolfHead") || name.contains("Knife");
+                boolean isRightHand = name.startsWith("Right_") || name.startsWith("MRight_");
+                boolean isLeftHand = name.startsWith("Left_") || name.startsWith("MLeft_");
+                if (isWeaponBone) {
+                    boolean visible = isRightHand ? hasMainhandItem
+                        : isLeftHand ? hasOffhandItem
+                        : hasMainhandItem || hasOffhandItem;
+                    bone.setHidden(!visible);
+                }
             }
         }
     }
