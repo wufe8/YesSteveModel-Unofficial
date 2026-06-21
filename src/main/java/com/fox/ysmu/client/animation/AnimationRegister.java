@@ -37,11 +37,13 @@ public class AnimationRegister {
 
     private static void registerHighPriorityStates() {
         register("death", ILoopType.EDefaultLoopTypes.PLAY_ONCE, Priority.HIGHEST, (player, event) -> player.isDead);
-        // TODO 睡觉站着睡，爬梯子躺着爬
+        // TODO 睡觉站着睡——床的方向旋转与动画叠加可能不对，目前 applyRotations 已做 -90° 旋转
         register("sleep", Priority.HIGHEST, (player, event) -> player.isPlayerSleeping());
         register("swim", Priority.HIGHEST, (player, event) -> player.isInWater() && Math.abs(event.getLimbSwingAmount()) > MIN_SPEED);
-        register("climb", Priority.HIGHEST, (player, event) -> player.isOnLadder() && Math.abs(event.getLimbSwingAmount()) > MIN_SPEED);
-        register("climbing", Priority.HIGHEST, (player, event) -> player.isOnLadder());
+        // climb/climbing 是游泳/爬行姿态（Root rotation = [90,0,0]），不应绑定到 isOnLadder()
+        // 在 1.7.10 中没有 Pose.SWIMMING，改为通过水中非站立状态触发
+        register("climb", Priority.HIGHEST, (player, event) -> player.isInWater() && !isPlayerOnGround(player) && Math.abs(event.getLimbSwingAmount()) > MIN_SPEED);
+        register("climbing", Priority.HIGHEST, (player, event) -> player.isInWater() && !isPlayerOnGround(player));
         register("ladder_up", Priority.HIGHEST, (player, event) -> player.isOnLadder() && motionYState(player, 0.1D) == 1);
         register("ladder_stillness", Priority.HIGHEST, (player, event) -> player.isOnLadder() && motionYState(player, 0.1D) == 0);
         register("ladder_down", Priority.HIGHEST, (player, event) -> player.isOnLadder() && motionYState(player, 0.1D) == -1);
@@ -186,8 +188,12 @@ public class AnimationRegister {
     private static void setEntityQueryValues(MolangParser parser, EntityModelData data, EntityPlayer player,
         Minecraft mc, RemotePlayerAnimationQueries.QueryValues queryValues) {
         parser.setValue("query.actor_count", () -> mc.theWorld.loadedEntityList.size());
+        // rotationPitch 是玩家的垂直视角，而 body_x_rotation 应代表身体俯仰
+        // OpenYSM 中对 body_x_rotation 做了帧间插值：lerp(xRotO, xRot)
         parser.setValue("query.body_x_rotation", player.rotationPitch);
-        parser.setValue("query.body_y_rotation", () -> MathHelper.wrapAngleTo180_float(player.rotationYaw));
+        // renderYawOffset 对应身体的偏航角（转动头部时身体不会立即跟随），
+        // 等效于 OpenYSM 中的 yBodyRot。切勿使用 rotationYaw（头部偏航）。
+        parser.setValue("query.body_y_rotation", () -> MathHelper.wrapAngleTo180_float(player.renderYawOffset));
         parser.setValue("query.cardinal_facing_2d", () -> MathHelper.floor_double((double) (player.rotationYaw * 4.0F / 360.0F) + 0.5D) & 3);
         parser.setValue("query.distance_from_camera", () -> mc.renderViewEntity.getDistanceToEntity(player));
         parser.setValue("query.equipment_count", () -> getEquipmentCount(player));
