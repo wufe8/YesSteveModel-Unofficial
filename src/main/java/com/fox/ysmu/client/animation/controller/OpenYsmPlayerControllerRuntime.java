@@ -26,7 +26,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
-import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -144,6 +143,44 @@ public final class OpenYsmPlayerControllerRuntime {
         if (StringUtils.isBlank(animationName) && !state.animations.isEmpty()) {
             animationName = state.animations.get(0).animationName;
         }
+        // When moving while sneaking, let legacy handle (no ground state).
+        if ("sky".equals(state.name) && event.isMoving()
+            && "sneaking_sky".equals(animationName)) {
+            runtimeState.wasMoving = true;
+            return null;
+        }
+        // Transition when stopping from moving sneaking.
+        if ("sky".equals(state.name) && "sneaking_sky".equals(animationName)
+            && !event.isMoving()) {
+            animationName = "sneaking_start";
+            runtimeState.currentState = "start";
+            runtimeState.enteredTick = event.getAnimationTick();
+            runtimeState.lastSelectedAnimationState = "";
+            runtimeState.lastSelectedAnimation = "";
+        }
+        // One-shot transition when returning from movement to stationary.
+        if (runtimeState.wasMoving && "default".equals(state.name) && !event.isMoving()
+            && animationExists(animationId, "sneaking_start")) {
+            runtimeState.wasMoving = false;
+            animationName = "sneaking_start";
+            runtimeState.currentState = "start";
+            runtimeState.enteredTick = event.getAnimationTick();
+            runtimeState.lastSelectedAnimationState = "";
+            runtimeState.lastSelectedAnimation = "";
+        }
+        // General fallback: when default has no animation but the player IS
+        // sneaking (ctrl.sneaking failed to trigger default->start), redirect
+        // to sneaking_start so the transition animation plays.
+        if ("default".equals(state.name) && !event.isMoving()
+            && animationExists(animationId, "sneaking_start")
+            && Minecraft.getMinecraft().thePlayer != null
+            && Minecraft.getMinecraft().thePlayer.isSneaking()) {
+            animationName = "sneaking_start";
+            runtimeState.currentState = "start";
+            runtimeState.enteredTick = event.getAnimationTick();
+            runtimeState.lastSelectedAnimationState = "";
+            runtimeState.lastSelectedAnimation = "";
+        }
         if (StringUtils.isBlank(animationName) || !animationExists(animationId, animationName)) {
             State initialState = match.controller.getInitialState();
             if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
@@ -204,14 +241,11 @@ public final class OpenYsmPlayerControllerRuntime {
             if (!conditionMet) {
                 continue;
             }
-            // When the player is sneaking, don't allow unconditional
-            // sky/ground->default transitions — they break the crouch cycle.
-            if ("default".equals(target.name)
-                && ("sky".equals(state.name) || "ground".equals(state.name))
-                && StringUtils.isBlank(transition.condition)) {
-                if (OpenYsmControllerExpressionEvaluator.evaluateBoolean("q.is_sneaking", context)) {
-                    continue;
-                }
+            // Delay start→sky so sneaking_start is visible for at least 5
+            // ticks before transitioning to the stationary crouch pose.
+            if ("sky".equals(target.name) && "start".equals(state.name)
+                && event.getAnimationTick() - runtimeState.enteredTick < 5.0) {
+                continue;
             }
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
             runtimeState.currentState = target.name;
@@ -392,6 +426,7 @@ public final class OpenYsmPlayerControllerRuntime {
         String lastSelectedAnimationState = "";
         String lastSelectedAnimation = "";
         double enteredTick;
+        boolean wasMoving;
         boolean lastSwingActive;
         int lastSwingProgress = -1;
         final Map<String, Double> variables = new ConcurrentHashMap<>();
