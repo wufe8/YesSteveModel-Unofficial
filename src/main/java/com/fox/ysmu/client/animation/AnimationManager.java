@@ -182,9 +182,14 @@ public final class AnimationManager {
             return PlayState.STOP;
         }
 
+        // === 临时测试：extra1→attack_1, extra2→attack_2, extra3→attack_3 ===
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
-            return playAnimation(event, eep.getAnimation());
+            String anim = eep.getAnimation();
+            if ("extra1".equals(anim)) anim = "attack_1";
+            else if ("extra2".equals(anim)) anim = "attack_2";
+            else if ("extra3".equals(anim)) anim = "attack_3";
+            return playAnimation(event, anim);
         }
         return PlayState.STOP;
     }
