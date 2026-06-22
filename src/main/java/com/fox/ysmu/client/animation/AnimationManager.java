@@ -18,6 +18,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
+
 import com.google.common.collect.Lists;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -41,6 +42,12 @@ public final class AnimationManager {
     /** Tracks the last held item hash to detect item changes for animation reload. */
     private final Map<UUID, Integer> lastMainhandItemHash = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> lastOffhandItemHash = new ConcurrentHashMap<>();
+    /** Tracks previous riding state to detect dismount transitions. */
+    private final Map<UUID, Boolean> wasRiding = new ConcurrentHashMap<>();
+    /** Non-null entry means player is in dismount; value is the animation being played. */
+    private final Map<UUID, String> dismountAnim = new ConcurrentHashMap<>();
+    /** Remaining ticks to suppress other controllers during dismount. */
+    private final Map<UUID, Integer> dismountTimer = new ConcurrentHashMap<>();
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -117,6 +124,15 @@ public final class AnimationManager {
             if (geckoName != null && geckoName.startsWith("pre_parallel_")) {
                 return PlayState.STOP;
             }
+            // 下马期间抑制 parallel 控制器，让 dismount 动画不受覆盖
+            if (geckoName != null && geckoName.startsWith("parallel_")) {
+                EntityPlayer player = animatable != null ? animatable.getPlayer() : null;
+                if (player != null) {
+                    if (dismountAnim.containsKey(player.getUniqueID())) {
+                        return PlayState.STOP;
+                    }
+                }
+            }
             PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
             if (controllerState != null) {
                 // 梯子上跳过 parallel 控制器结果，防止 climbing_start 等动画的
@@ -139,6 +155,16 @@ public final class AnimationManager {
             .isGamePaused()) {
             return PlayState.STOP;
         }
+        // 下马期间抑制所有 OpenYSM 槽位控制器
+        CustomPlayerEntity animatable = event.getAnimatable();
+        if (animatable != null) {
+            EntityPlayer player = animatable.getPlayer();
+            if (player != null) {
+                if (dismountAnim.containsKey(player.getUniqueID())) {
+                    return PlayState.STOP;
+                }
+            }
+        }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         return controllerState == null ? PlayState.STOP : controllerState;
     }
@@ -150,6 +176,9 @@ public final class AnimationManager {
             if (animatable.hasPreviewAnimation()) {
                 return playLoopAnimation(event, animatable.getPreviewAnimation());
             }
+            return PlayState.STOP;
+        }
+        if (dismountAnim.containsKey(player.getUniqueID())) {
             return PlayState.STOP;
         }
 
@@ -167,6 +196,31 @@ public final class AnimationManager {
         if (player == null) {
             return PlayState.STOP;
         }
+        // 追踪骑乘状态变化用于下马检测
+        UUID dismountId = player.getUniqueID();
+        boolean currentlyRiding = player.isRiding();
+        Boolean wasRidingPrev = wasRiding.put(dismountId, currentlyRiding);
+        boolean justDismounted = Boolean.TRUE.equals(wasRidingPrev) && !currentlyRiding;
+
+        // 下马状态管理：抑制其他控制器干扰，但不覆盖 MAIN 的动画选择
+        String dismountAnimName = dismountAnim.get(dismountId);
+        if (justDismounted || dismountAnimName != null) {
+            Integer remaining = dismountTimer.get(dismountId);
+            if (remaining != null && remaining <= 0) {
+                dismountAnim.remove(dismountId);
+                dismountTimer.remove(dismountId);
+            } else {
+                if (justDismounted) {
+                    dismountAnim.put(dismountId, "");
+                    dismountTimer.put(dismountId, 40);
+                } else if (remaining != null) {
+                    dismountTimer.put(dismountId, remaining - 1);
+                }
+                // 不下发 MAIN 覆盖，让 OpenYSM/legacy 自然选择动画
+                // 仅靠 dismountAnim.containsKey 抑制其他控制器
+            }
+        }
+
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         if (controllerState != null) {
             legacyBodyActive = false;
@@ -208,6 +262,9 @@ public final class AnimationManager {
         if (player == null) {
             return PlayState.STOP;
         }
+        if (dismountAnim.containsKey(player.getUniqueID())) {
+            return PlayState.STOP;
+        }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         if (controllerState != null) {
             return controllerState;
@@ -238,6 +295,9 @@ public final class AnimationManager {
         EntityPlayer player = event.getAnimatable()
             .getPlayer();
         if (player == null) {
+            return PlayState.STOP;
+        }
+        if (dismountAnim.containsKey(player.getUniqueID())) {
             return PlayState.STOP;
         }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
@@ -271,6 +331,9 @@ public final class AnimationManager {
         EntityPlayer player = event.getAnimatable()
             .getPlayer();
         if (player == null) {
+            return PlayState.STOP;
+        }
+        if (dismountAnim.containsKey(player.getUniqueID())) {
             return PlayState.STOP;
         }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
@@ -321,6 +384,9 @@ public final class AnimationManager {
         if (player == null) {
             return PlayState.STOP;
         }
+        if (dismountAnim.containsKey(player.getUniqueID())) {
+            return PlayState.STOP;
+        }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         if (controllerState != null) {
             return controllerState;
@@ -358,6 +424,9 @@ public final class AnimationManager {
         EntityPlayer player = event.getAnimatable()
             .getPlayer();
         if (player == null) {
+            return PlayState.STOP;
+        }
+        if (dismountAnim.containsKey(player.getUniqueID())) {
             return PlayState.STOP;
         }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
@@ -431,8 +500,14 @@ public final class AnimationManager {
         return !player.isUsingItem() || BackhandCompat.getUsedItemHand(player) != isMainHand;
     }
 
-    /** Returns a hash that changes when the held item type changes. */
+    /**
+     * Returns a hash that changes when the held item type changes. */
     private static int itemHash(net.minecraft.item.ItemStack stack) {
         return stack == null || stack.getItem() == null ? 0 : stack.getItem().hashCode();
     }
+
+    /**
+     * 检测玩家是否刚下马（isRiding 从 true→false）。
+     */
 }
+
