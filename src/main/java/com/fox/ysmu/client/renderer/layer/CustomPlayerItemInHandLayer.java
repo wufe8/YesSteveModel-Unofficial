@@ -16,10 +16,8 @@ import net.minecraftforge.client.MinecraftForgeClient;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
-import com.fox.ysmu.client.animation.condition.ConditionManager;
 import com.fox.ysmu.compat.BackhandCompat;
 import cpw.mods.fml.common.Optional;
-import net.minecraft.util.ResourceLocation;
 import software.bernie.geckolib3.core.IAnimatable;
 import software.bernie.geckolib3.core.util.Color;
 import software.bernie.geckolib3.geo.GeoLayerRenderer;
@@ -56,42 +54,13 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
             ItemStack mainHandItem = player.getHeldItem();
             ItemStack offhandItem = BackhandCompat.getOffhandItem(player);
 
-            // 检查当前模型是否注册了武器类持握动画。
-            // 如果有，说明模型有自己的模型武器骨骼（如 Right_Sword），应隐藏原版手持物品。
-            // 如果模型没有注册任何 hold_mainhand 条件（如默认模型），则保留原版物品渲染。
-            // 注意：条件以动画ID为key注册，而非模型ID（modelLoc=ysmu:default/main,
-            // animLoc=ysmu:default/animations）。必须用动画ID查 ConditionManager。
-            software.bernie.geckolib3.model.AnimatedGeoModel<?> animatedProvider =
-                (software.bernie.geckolib3.model.AnimatedGeoModel<?>) entityRenderer.getGeoModelProvider();
-            ResourceLocation animLoc = animatedProvider.getAnimationFileLocation(entity);
-            com.fox.ysmu.client.animation.condition.ConditionalHold mainHold =
-                animLoc != null ? ConditionManager.getHoldMainhand(animLoc) : null;
-            boolean modelHasWeaponBones = mainHold != null && mainHold.hasTests();
-            EntityPlayer playerForCheck = entity instanceof EntityPlayer ? (EntityPlayer) entity : null;
-            boolean hasMainhandWeapon = modelHasWeaponBones && playerForCheck != null
-                && hasWeaponHoldAnim(playerForCheck.getHeldItem());
-            boolean hasOffhandWeapon = modelHasWeaponBones && playerForCheck != null
-                && hasWeaponHoldAnim(BackhandCompat.getOffhandItem(playerForCheck));
-
             if (mainHandItem != null || offhandItem != null) {
                 GlStateManager.pushMatrix();
-                if (!hasMainhandWeapon) {
-                    renderArmWithItem(player, mainHandItem, geoModel.rightHandBones, true, isVanilla);
-                }
-                if (!hasOffhandWeapon) {
-                    renderArmWithItem(player, offhandItem, geoModel.leftHandBones, false, isVanilla);
-                }
+                renderArmWithItem(player, mainHandItem, geoModel.rightHandBones, true, isVanilla);
+                renderArmWithItem(player, offhandItem, geoModel.leftHandBones, false, isVanilla);
                 GlStateManager.popMatrix();
             }
         }
-    }
-
-    /**
-     * 检查手持物品是否为剑类武器。如果是，说明应由模型武器骨骼展示，不渲染原版物品。
-     */
-    private static boolean hasWeaponHoldAnim(ItemStack stack) {
-        if (stack == null || stack.getItem() == null) return false;
-        return "sword".equals(com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(stack));
     }
 
     /**

@@ -18,7 +18,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
-import com.fox.ysmu.ysmu;
 import com.google.common.collect.Lists;
 
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
@@ -125,7 +124,6 @@ public final class AnimationManager {
                 if (geckoName != null && geckoName.startsWith("parallel_")) {
                     EntityPlayer player = animatable != null ? animatable.getPlayer() : null;
                     if (player != null && player.isOnLadder()) {
-                        ysmu.LOG.info("[YSMU-DBG] suppress {} on ladder", geckoName);
                         return PlayState.STOP;
                     }
                 }
@@ -188,11 +186,7 @@ public final class AnimationManager {
                     String animationName = state.getAnimationName();
                     if (animFile != null && animFile.animations.containsKey(animationName)) {
                         ILoopType loopType = state.getLoopType();
-                        // DEBUG: log ladder-related state transitions
-                        if (player.isOnLadder() && (animationName.startsWith("ladder") || animationName.startsWith("climb") || animationName.equals("idle") || animationName.equals("sneak") || animationName.equals("sneaking"))) {
-                        ysmu.LOG.info("[YSMU-DBG] anim={} onLadder={} sneak={} water={} ground={}",
-                                animationName, player.isOnLadder(), player.isSneaking(), player.isInWater(), player.onGround);
-                        }
+
                         return playAnimation(event, animationName, loopType);
                     }
                 }
@@ -296,11 +290,12 @@ public final class AnimationManager {
             }
             String conditionalAnimation = findSwingAnimation(event, player);
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
-                ysmu.LOG.info("[YSMU-DBG] swing={}", conditionalAnimation);
-                return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.PLAY_ONCE);
+                ResourceLocation animId = getAnimationId(event);
+                if (animationExistsInFile(animId, conditionalAnimation)) {
+                    return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
+                }
             }
-            ysmu.LOG.info("[YSMU-DBG] swing=swing_hand (no conditional)");
-            return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.PLAY_ONCE);
+            return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.LOOP);
         }
         return PlayState.STOP;
     }
@@ -311,9 +306,13 @@ public final class AnimationManager {
             swingProgressByPlayer.remove(playerId);
             return false;
         }
-        int currentProgress = player.swingProgressInt;
-        Integer previousProgress = swingProgressByPlayer.put(playerId, currentProgress);
-        return previousProgress == null || currentProgress < previousProgress;
+        // swingProgressInt 在 1.7.10 中是递减的（从最大值→0）。
+        // 旧逻辑 currentProgress < previousProgress 在递减时每帧都 true，
+        // 导致 markNeedsReload() 每帧重置动画，swing_hand 永远播不出来。
+        // 改用 boolean 跟踪：只在新攻击的第一帧返回 true。
+        boolean wasAlreadySwinging = swingProgressByPlayer.containsKey(playerId);
+        swingProgressByPlayer.put(playerId, 0); // 仅用作标记
+        return !wasAlreadySwinging;
     }
 
     public PlayState predicateUse(AnimationEvent<CustomPlayerEntity> event) {
