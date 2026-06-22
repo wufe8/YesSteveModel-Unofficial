@@ -63,6 +63,12 @@ public final class OpenYsmAnimationControllerRegistry {
         return CONTROLLERS.get(animationId);
     }
 
+    /** Returns true if the model has an OpenYSM controller with the given name. */
+    public static boolean hasController(ResourceLocation animationId, String controllerName) {
+        ControllerSet set = CONTROLLERS.get(animationId);
+        return set != null && set.controllers.containsKey(controllerName);
+    }
+
     public static void clear() {
         CONTROLLERS.clear();
         WARNED.clear();

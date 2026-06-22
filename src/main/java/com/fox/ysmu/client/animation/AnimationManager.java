@@ -14,6 +14,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
 import com.fox.ysmu.client.animation.condition.*;
+import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
@@ -48,6 +49,12 @@ public final class AnimationManager {
     private final Map<UUID, String> dismountAnim = new ConcurrentHashMap<>();
     /** Remaining ticks to suppress other controllers during dismount. */
     private final Map<UUID, Integer> dismountTimer = new ConcurrentHashMap<>();
+    /** Attack combo counter: stores the NEXT swing's attack index (0/1/2 → attack_1/2/3). */
+    private final Map<UUID, Integer> swingCombo = new ConcurrentHashMap<>();
+    /** Tracks isSwingInProgress across frames to detect new swing cycles (false→true). */
+    private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
+    /** Attack combo animation names in order. */
+    private static final String[] ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"};
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -182,7 +189,6 @@ public final class AnimationManager {
             return PlayState.STOP;
         }
 
-        // === 临时测试：extra1→attack_1, extra2→attack_2, extra3→attack_3 ===
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
             String anim = eep.getAnimation();
@@ -190,6 +196,11 @@ public final class AnimationManager {
             else if ("extra2".equals(anim)) anim = "attack_2";
             else if ("extra3".equals(anim)) anim = "attack_3";
             return playAnimation(event, anim);
+        }
+        // 攻击组合技：通过 CAP 播放
+        Integer combo = swingCombo.get(player.getUniqueID());
+        if (combo != null) {
+            return playAnimation(event, ATTACK_COMBO[(combo - 1 + 3) % 3]);
         }
         return PlayState.STOP;
     }
@@ -345,12 +356,20 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        if (!player.isSwingInProgress) {
-            swingProgressByPlayer.remove(player.getUniqueID());
+        UUID pid = player.getUniqueID();
+        // 检测 true→false→true 的完整挥剑结束→开始转换
+        boolean nowSwinging = player.isSwingInProgress;
+        boolean wasSwinging = swingWasActive.getOrDefault(pid, false);
+        swingWasActive.put(pid, nowSwinging);
+        boolean swingStarted = !wasSwinging && nowSwinging;
+
+        if (!nowSwinging) {
+            swingProgressByPlayer.remove(pid);
             return PlayState.STOP;
         }
         if (!player.isPlayerSleeping()) {
-            if (markSwingStart(player)) {
+            boolean newSwing = markSwingStart(player);
+            if (newSwing) {
                 event.getController().shouldResetTick = true;
                 event.getController().markNeedsReload();
                 event.getController()
@@ -360,6 +379,12 @@ public final class AnimationManager {
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 ResourceLocation animId = getAnimationId(event);
                 if (animationExistsInFile(animId, conditionalAnimation)) {
+                    if ("swing:sword".equals(conditionalAnimation)
+                        && !OpenYsmAnimationControllerRegistry.hasController(animId, "player.post_swing")
+                        && (swingStarted || newSwing)) {
+                        int combo = swingCombo.getOrDefault(pid, 3);
+                        swingCombo.put(pid, (combo + 1) % 3);
+                    }
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
                 }
             }

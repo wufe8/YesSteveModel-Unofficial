@@ -32,6 +32,8 @@ import software.bernie.geckolib3.core.builder.AnimationBuilder;
 import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.builder.ILoopType.EDefaultLoopTypes;
 import software.bernie.geckolib3.core.easing.EasingManager;
+import software.bernie.geckolib3.file.AnimationFile;
+import software.bernie.geckolib3.resource.GeckoLibCache;
 import software.bernie.geckolib3.core.easing.EasingType;
 import software.bernie.geckolib3.core.event.CustomInstructionKeyframeEvent;
 import software.bernie.geckolib3.core.event.ParticleKeyFrameEvent;
@@ -224,6 +226,15 @@ public class AnimationController<T extends IAnimatable> {
                         .stream()
                         .map((rawAnimation) -> {
                             Animation animation = model.getAnimation(rawAnimation.animationName, animatable);
+                            // Fallback: 如果 model 找不到（例如冒号命名的动画），
+                            // 遍历 GeckoLibCache 中所有动画文件查找
+                            if (animation == null) {
+                                for (AnimationFile file : GeckoLibCache.getInstance()
+                                    .getAnimations().values()) {
+                                    animation = file.getAnimation(rawAnimation.animationName);
+                                    if (animation != null) break;
+                                }
+                            }
                             if (animation == null) {
                                 System.out
                                     .printf("Could not load animation: %s. Is it missing?", rawAnimation.animationName);
@@ -263,6 +274,13 @@ public class AnimationController<T extends IAnimatable> {
             .stream()
             .map((rawAnimation) -> {
                 Animation animation = model.getAnimation(rawAnimation.animationName, animatable);
+                if (animation == null) {
+                    for (AnimationFile file : GeckoLibCache.getInstance()
+                        .getAnimations().values()) {
+                        animation = file.getAnimation(rawAnimation.animationName);
+                        if (animation != null) break;
+                    }
+                }
                 if (animation == null) {
                     System.out.printf("Could not load animation: %s. Is it missing?", rawAnimation.animationName);
                     encounteredError.set(true);
@@ -449,6 +467,13 @@ public class AnimationController<T extends IAnimatable> {
             IAnimatableModel<T> model = getModel(this.animatable);
             if (model != null) {
                 Animation animation = model.getAnimation(currentAnimation.animationName, this.animatable);
+                if (animation == null) {
+                    for (AnimationFile file : GeckoLibCache.getInstance()
+                        .getAnimations().values()) {
+                        animation = file.getAnimation(currentAnimation.animationName);
+                        if (animation != null) break;
+                    }
+                }
                 if (animation != null) {
                     ILoopType loop = currentAnimation.loop;
                     currentAnimation = animation;
