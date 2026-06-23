@@ -35,9 +35,6 @@ public final class MolangPhysicsRuntime {
         EntityPlayer player = animatable.getPlayer();
         ScopeKey key = ScopeKey.from(player, animatable.getMainModel(), animatable.getAnimation());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
-        // Inject pending roaming variables so animation keyframes can read them.
-        // PENDING_ROAMING keys lack the "v." prefix; also inject lowercased copy
-        // since model queries may use any case.
         if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.isEmpty()) {
             for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
                 String prefixedKey = "v." + entry.getKey();
@@ -89,7 +86,11 @@ public final class MolangPhysicsRuntime {
             return fallback;
         }
         Double value = context.state.variables.get(name);
-        return value == null ? fallback : value;
+        double result = value == null ? fallback : value;
+        if (name.contains("player_size") || name.contains(".back")) {
+            System.out.println("[YSMU-DBG] getVariable " + name + "=" + result + " injected=" + (value != null));
+        }
+        return result;
     }
 
     public static boolean setVariable(String name, double value) {

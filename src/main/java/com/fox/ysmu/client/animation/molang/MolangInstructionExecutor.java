@@ -38,10 +38,33 @@ public final class MolangInstructionExecutor {
             if (trimmed.isEmpty()) {
                 continue;
             }
+            // Check if this is an assignment (e.g. "v.roaming.h=0" or "v.hold=5")
+            int eqIdx = findAssignmentOperator(trimmed);
+            if (eqIdx > 0) {
+                String target = trimmed.substring(0, eqIdx).trim();
+                String valueExpr = trimmed.substring(eqIdx + 1).trim();
+                if (target.startsWith("v.")) {
+                    try {
+                        IValue val = parser.parseExpression(valueExpr);
+                        if (val != null) {
+                            double d = val.get();
+                            // Write through MolangParser.VARIABLES so ScopedMolangVariable
+                            // (if it exists) sees the change. This works because
+                            // LazyVariable.set() / ScopedMolangVariable.set() will
+                            // propagate to MolangPhysicsRuntime when inside a render frame.
+                            MolangParser.VARIABLES.computeIfAbsent(target,
+                                k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0)).set(d);
+                        }
+                    } catch (Exception e) {
+                        warnOnce(trimmed, e);
+                    }
+                }
+                continue;
+            }
+            // Not an assignment — evaluate as a normal expression
             try {
                 IValue result = parser.parseExpression(trimmed);
                 if (result == null) {
-                    // 解析结果为 null，跳过，不执行 .get()，避免 NPE
                     continue;
                 }
                 result.get();
@@ -49,6 +72,35 @@ public final class MolangInstructionExecutor {
                 warnOnce(trimmed, e);
             }
         }
+    }
+
+    /**
+     * Locates the first {@code =} character that acts as an assignment
+     * operator (ignoring {@code ==}, {@code !=}, {@code <=}, {@code >=},
+     * and {@code ?=}/{@code ?:}).
+     */
+    private static int findAssignmentOperator(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (c == '=') {
+                // Skip two-character operators: ==, !=, <=, >=
+                if (i > 0) {
+                    char prev = text.charAt(i - 1);
+                    if (prev == '=' || prev == '!' || prev == '<' || prev == '>') {
+                        continue;
+                    }
+                }
+                // Skip if this is part of ?= or ?: operator
+                if (i > 0 && text.charAt(i - 1) == '?') {
+                    continue;
+                }
+                if (i + 1 < text.length() && (text.charAt(i + 1) == '=')) {
+                    continue;
+                }
+                return i;
+            }
+        }
+        return -1;
     }
 
     public static void clearWarnings() {

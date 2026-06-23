@@ -262,6 +262,25 @@ public class MolangParser extends MathBuilder {
             }
         }
 
+        // Handle null-coalescing operator: a ?? b
+        // Equivalent to: a != 0 ? a : b
+        int ncIdx = findNullCoalesce(expression);
+        if (ncIdx > 0) {
+            String leftExpr = expression.substring(0, ncIdx).trim();
+            String rightExpr = expression.substring(ncIdx + 2).trim();
+            MolangExpression leftVal = parseOneLine(leftExpr, currentStatement);
+            MolangExpression rightVal = parseOneLine(rightExpr, currentStatement);
+            return new MolangValue(this, new com.eliotlash.mclib.math.IValue() {
+                @Override
+                public double get() {
+                    double l = leftVal.get();
+                    double result = l != 0 ? l : rightVal.get();
+                    System.out.println("[YSMU-DBG] ?? " + leftExpr + "=" + l + " => " + result);
+                    return result;
+                }
+            });
+        }
+
         try {
             // 将表达式拆分
             List<Object> symbols = breakdownChars(this.breakdown(expression));
@@ -299,6 +318,30 @@ public class MolangParser extends MathBuilder {
             e.printStackTrace();
             throw new MolangException("Couldn't parse an expression!");
         }
+    }
+
+    /**
+     * Finds the first {@code ??} (null-coalescing) operator in the expression,
+     * skipping over parenthesized groups and string literals.
+     * Returns the index of the first {@code ?}, or -1 if not found.
+     */
+    private static int findNullCoalesce(String expression) {
+        int depth = 0;
+        boolean inString = false;
+        for (int i = 0; i < expression.length() - 1; i++) {
+            char c = expression.charAt(i);
+            if (c == '\'' || c == '"') {
+                inString = !inString;
+                continue;
+            }
+            if (inString) continue;
+            if (c == '(') { depth++; continue; }
+            if (c == ')') { depth--; continue; }
+            if (depth == 0 && c == '?' && expression.charAt(i + 1) == '?') {
+                return i;
+            }
+        }
+        return -1;
     }
 
     /**

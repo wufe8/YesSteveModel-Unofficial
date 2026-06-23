@@ -253,6 +253,11 @@ public final class OpenYsmModelSyncClient {
             RawYsmModel raw = deserializer.deserializeKeepOpen();
             deserializer.parseYSMFooter(raw);
             raw.modelId = context.modelId;
+            ResourceLocation modelId = ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, context.modelId));
+            // Always register extra wheel data, even for non-bridgeable models
+            Minecraft.getMinecraft().func_152344_a(() -> {
+                ClientModelManager.registerExtraWheel(modelId, raw);
+            });
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
                 ysmu.LOG.warn("OpenYSM synced model {} is not bridgeable to legacy ModelData", context.modelId);
                 return false;
@@ -260,7 +265,6 @@ public final class OpenYsmModelSyncClient {
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, context.modelId);
             Minecraft.getMinecraft().func_152344_a(() -> {
                 ClientModelManager.registerAll(data);
-                ClientModelManager.registerExtraWheel(ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, context.modelId)), raw);
             });
             return true;
         } catch (Exception e) {
