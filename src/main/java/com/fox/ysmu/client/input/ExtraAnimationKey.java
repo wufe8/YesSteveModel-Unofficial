@@ -30,7 +30,7 @@ public class ExtraAnimationKey {
     public static void onKeyboardInput(InputEvent.KeyInputEvent event) {
         for (KeyBinding key : EXTRA_ANIMATION_KEYS) {
             if (key.isPressed()) {
-                NetworkHandler.CHANNEL.sendToServer(new SetPlayAnimation(EXTRA_ANIMATION_KEYS.indexOf(key)));
+                NetworkHandler.CHANNEL.sendToServer(new SetPlayAnimation("extra" + EXTRA_ANIMATION_KEYS.indexOf(key)));
                 return;
             }
         }

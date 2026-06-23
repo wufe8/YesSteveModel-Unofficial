@@ -9,6 +9,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import net.minecraft.client.Minecraft;
+import net.minecraft.util.ResourceLocation;
 
 import org.apache.commons.io.FileUtils;
 
@@ -21,6 +22,7 @@ import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.C2SCompleteFeedback17;
 import com.fox.ysmu.network.message.C2SModelSyncPayload17;
+import com.fox.ysmu.util.ModelIdUtil;
 import com.fox.ysmu.util.ThreadTools;
 import com.fox.ysmu.ysmu;
 import com.google.common.collect.Maps;
@@ -256,7 +258,10 @@ public final class OpenYsmModelSyncClient {
                 return false;
             }
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, context.modelId);
-            Minecraft.getMinecraft().func_152344_a(() -> ClientModelManager.registerAll(data));
+            Minecraft.getMinecraft().func_152344_a(() -> {
+                ClientModelManager.registerAll(data);
+                ClientModelManager.registerExtraWheel(ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, context.modelId)), raw);
+            });
             return true;
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to parse OpenYSM synced model " + context.modelId, e);

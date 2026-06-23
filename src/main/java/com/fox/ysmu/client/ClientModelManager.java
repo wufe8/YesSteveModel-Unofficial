@@ -62,6 +62,8 @@ public class ClientModelManager {
     public static Map<ResourceLocation, Pair<Double, Double>> SCALE_INFO = Maps.newHashMap();
     public static Map<ResourceLocation, List<IChatComponent>> EXTRA_INFO = Maps.newHashMap();
     public static Map<ResourceLocation, String[]> EXTRA_ANIMATION_NAME = Maps.newHashMap();
+    /** Rich wheel data (YSM 2.3.0+ sub-pages). */
+    public static Map<ResourceLocation, ExtraWheelData> EXTRA_WHEEL = Maps.newHashMap();
     public static AnimationFile DEFAULT_ANIMATION_FILE = new AnimationFile();
     public static List<String> CACHE_MD5 = Collections.synchronizedList(Lists.newArrayList());
     public static volatile byte[] PASSWORD;
@@ -328,10 +330,16 @@ public class ClientModelManager {
         SCALE_INFO.clear();
         EXTRA_INFO.clear();
         EXTRA_ANIMATION_NAME.clear();
+        EXTRA_WHEEL.clear();
         ConditionManager.clear();
         OpenYsmAnimationControllerRegistry.clear();
         MolangPhysicsRuntime.clear();
         MolangInstructionExecutor.clearWarnings();
+    }
+
+    /** Registers rich extra wheel data from a RawYsmModel. */
+    public static void registerExtraWheel(ResourceLocation modelId, com.fox.ysmu.model.resource.pojo.RawYsmModel raw) {
+        EXTRA_WHEEL.put(modelId, ExtraWheelData.from(raw));
     }
 
     public static void rememberCachedModel(String md5) {
