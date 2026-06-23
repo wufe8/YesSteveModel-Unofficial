@@ -58,8 +58,12 @@ public final class AnimationManager {
     private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
     /** Tracks last swingProgressInt to detect rapid-click resets. */
     private final Map<UUID, Integer> lastSwingProgress = new ConcurrentHashMap<>();
-    /** Attack combo animation names in order. */
+    /** Attack combo animation names in order (moving). */
     private static final String[] ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"};
+    /** Attack combo animation names in order (idle/stationary). */
+    private static final String[] ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"};
+    /** True if the current swing's combo uses idle variant (set on first frame, not changed mid-swing). */
+    private final Map<UUID, Boolean> comboIsIdle = new ConcurrentHashMap<>();
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -197,9 +201,9 @@ public final class AnimationManager {
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
             String anim = eep.getAnimation();
-            if ("extra1".equals(anim)) anim = "hd_a_1";
-            else if ("extra2".equals(anim)) anim = "hd_a_2";
-            else if ("extra3".equals(anim)) anim = "hd_a_3";
+            if ("extra1".equals(anim)) anim = "extra1";
+            else if ("extra2".equals(anim)) anim = "extra2";
+            else if ("extra3".equals(anim)) anim = "extra3";
             return playAnimation(event, anim);
         }
         // 攻击组合技：通过 CAP 播放
@@ -207,10 +211,11 @@ public final class AnimationManager {
         if (combo != null) {
             double animTick = event.getAnimationTick();
             Double startTick = swingComboStartTick.get(player.getUniqueID());
-            // 新 combo 的第一帧：记录开始 tick
+            // 新 combo 的第一帧：记录开始 tick 和 idle/move 状态（整轮 combo 不变）
             if (startTick == null) {
                 swingComboStartTick.put(player.getUniqueID(), animTick);
                 startTick = animTick;
+                comboIsIdle.put(player.getUniqueID(), !event.isMoving());
             }
             // 检查动画是否播完（相对 tick >= animation_length）
             Animation curAnim = event.getController().getCurrentAnimation();
@@ -219,9 +224,11 @@ public final class AnimationManager {
                 && elapsed >= curAnim.animationLength) {
                 swingCombo.remove(player.getUniqueID());
                 swingComboStartTick.remove(player.getUniqueID());
+                comboIsIdle.remove(player.getUniqueID());
                 return PlayState.STOP;
             }
-            return playAnimation(event, ATTACK_COMBO[(combo - 1 + 3) % 3]);
+            String[] pool = Boolean.TRUE.equals(comboIsIdle.get(player.getUniqueID())) ? ATTACK_COMBO_IDLE : ATTACK_COMBO;
+            return playAnimation(event, pool[(combo - 1 + 3) % 3]);
         }
         return PlayState.STOP;
     }
@@ -413,7 +420,8 @@ public final class AnimationManager {
                         && (swingStarted || newSwing || progressReset)) {
                         int combo = swingCombo.getOrDefault(pid, 3);
                         swingCombo.put(pid, (combo + 1) % 3);
-                        swingComboStartTick.remove(pid); // 新 combo，重置开始 tick
+                        swingComboStartTick.remove(pid);
+                        comboIsIdle.remove(pid);
                     }
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
                 }
