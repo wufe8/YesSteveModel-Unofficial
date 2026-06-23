@@ -121,6 +121,10 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             hasOffhandItem = offStack != null && "sword".equals(
                 com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(offStack));
         }
+        // 攻击组合技激活时也显示模型武器（即使手上没有物品剑）
+        if (com.fox.ysmu.client.animation.AnimationManager.hasActiveCombo(player)) {
+            hasMainhandItem = true;
+        }
         List<IBone> bones = getAnimationProcessor().getModelRendererList();
         // Check if an extra animation (wheel animation) is currently playing.
         com.fox.ysmu.eep.ExtendedModelInfo eep = null;

@@ -25,6 +25,7 @@ import com.google.common.collect.Lists;
 import it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap;
 import software.bernie.geckolib3.core.IAnimatable;
 import software.bernie.geckolib3.core.PlayState;
+import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
 import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
@@ -51,6 +52,8 @@ public final class AnimationManager {
     private final Map<UUID, Integer> dismountTimer = new ConcurrentHashMap<>();
     /** Attack combo counter: stores the NEXT swing's attack index (0/1/2 → attack_1/2/3). */
     private final Map<UUID, Integer> swingCombo = new ConcurrentHashMap<>();
+    /** Ticks when the current combo animation started (for animation-end detection). */
+    private final Map<UUID, Double> swingComboStartTick = new ConcurrentHashMap<>();
     /** Tracks isSwingInProgress across frames to detect new swing cycles (false→true). */
     private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
     /** Tracks last swingProgressInt to detect rapid-click resets. */
@@ -190,18 +193,34 @@ public final class AnimationManager {
         if (dismountAnim.containsKey(player.getUniqueID())) {
             return PlayState.STOP;
         }
-
+        // extra轮盘动画重载 仅测试用
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
             String anim = eep.getAnimation();
-            if ("extra1".equals(anim)) anim = "attack_1";
-            else if ("extra2".equals(anim)) anim = "attack_2";
-            else if ("extra3".equals(anim)) anim = "attack_3";
+            if ("extra1".equals(anim)) anim = "hd_a_1";
+            else if ("extra2".equals(anim)) anim = "hd_a_2";
+            else if ("extra3".equals(anim)) anim = "hd_a_3";
             return playAnimation(event, anim);
         }
         // 攻击组合技：通过 CAP 播放
         Integer combo = swingCombo.get(player.getUniqueID());
         if (combo != null) {
+            double animTick = event.getAnimationTick();
+            Double startTick = swingComboStartTick.get(player.getUniqueID());
+            // 新 combo 的第一帧：记录开始 tick
+            if (startTick == null) {
+                swingComboStartTick.put(player.getUniqueID(), animTick);
+                startTick = animTick;
+            }
+            // 检查动画是否播完（相对 tick >= animation_length）
+            Animation curAnim = event.getController().getCurrentAnimation();
+            double elapsed = animTick - startTick;
+            if (curAnim != null && curAnim.animationLength != null && curAnim.animationLength > 0
+                && elapsed >= curAnim.animationLength) {
+                swingCombo.remove(player.getUniqueID());
+                swingComboStartTick.remove(player.getUniqueID());
+                return PlayState.STOP;
+            }
             return playAnimation(event, ATTACK_COMBO[(combo - 1 + 3) % 3]);
         }
         return PlayState.STOP;
@@ -394,6 +413,7 @@ public final class AnimationManager {
                         && (swingStarted || newSwing || progressReset)) {
                         int combo = swingCombo.getOrDefault(pid, 3);
                         swingCombo.put(pid, (combo + 1) % 3);
+                        swingComboStartTick.remove(pid); // 新 combo，重置开始 tick
                     }
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
                 }
@@ -549,5 +569,11 @@ public final class AnimationManager {
     /**
      * 检测玩家是否刚下马（isRiding 从 true→false）。
      */
+
+    /** 返回指定玩家是否有活跃的攻击组合技。 */
+    public static boolean hasActiveCombo(EntityPlayer player) {
+        if (player == null || MANAGER == null) return false;
+        return MANAGER.swingCombo.containsKey(player.getUniqueID());
+    }
 }
 
