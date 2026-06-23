@@ -36,6 +36,9 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public final class OpenYsmPlayerControllerRuntime {
 
     private static final Map<StateKey, RuntimeState> STATES = new ConcurrentHashMap<>();
+    /** Roaming variables set from outside the render loop (e.g. GUI config panel).
+     *  Key is the variable name WITHOUT the "v." prefix (e.g. "roaming.ef"). */
+    public static final Map<String, Double> PENDING_ROAMING = new ConcurrentHashMap<>();
 
     private OpenYsmPlayerControllerRuntime() {}
 
@@ -99,6 +102,10 @@ public final class OpenYsmPlayerControllerRuntime {
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
+        // Inject any roaming variables set from outside the render loop (e.g. GUI config panel)
+        if (!PENDING_ROAMING.isEmpty()) {
+            runtimeState.variables.putAll(PENDING_ROAMING);
+        }
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
