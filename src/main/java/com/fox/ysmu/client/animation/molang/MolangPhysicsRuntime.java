@@ -8,10 +8,12 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
+import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 
 import software.bernie.geckolib3.core.molang.MolangStringPool;
 import software.bernie.geckolib3.core.processor.AnimationProcessor;
 import software.bernie.geckolib3.core.processor.IBone;
+import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 
 public final class MolangPhysicsRuntime {
 
@@ -20,6 +22,11 @@ public final class MolangPhysicsRuntime {
 
     private MolangPhysicsRuntime() {}
 
+    /**
+     * Called at the start of each render frame for a player model.
+     * Injects roaming variables set from outside the render loop (e.g. GUI)
+     * into both this render frame's ScopeState and the controller RuntimeState.
+     */
     public static void begin(CustomPlayerEntity animatable, double renderTicks, AnimationProcessor<?> processor) {
         if (animatable == null || processor == null) {
             CURRENT.remove();
@@ -28,6 +35,19 @@ public final class MolangPhysicsRuntime {
         EntityPlayer player = animatable.getPlayer();
         ScopeKey key = ScopeKey.from(player, animatable.getMainModel(), animatable.getAnimation());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
+        // Inject pending roaming variables so animation keyframes can read them.
+        // PENDING_ROAMING keys lack the "v." prefix; also inject lowercased copy
+        // since model queries may use any case.
+        if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.isEmpty()) {
+            for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+                String prefixedKey = "v." + entry.getKey();
+                state.variables.put(prefixedKey, entry.getValue());
+                String lcKey = "v." + entry.getKey().toLowerCase(java.util.Locale.ROOT);
+                if (!lcKey.equals(prefixedKey)) {
+                    state.variables.put(lcKey, entry.getValue());
+                }
+            }
+        }
         state.physics.update(renderTicks);
         CURRENT.set(new FrameContext(state, processor));
     }

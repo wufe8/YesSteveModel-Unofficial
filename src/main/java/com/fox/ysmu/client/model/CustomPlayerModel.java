@@ -174,8 +174,6 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 if (isExpression) {
                     boolean show = false;
                     if (extraAnimActive && extraAnimName != null && animId != null) {
-                        // Check if the active extra animation has keyframes for this bone.
-                        // If not, keep it hidden (no expression data in this animation).
                         try {
                             software.bernie.geckolib3.file.AnimationFile animFile =
                                 GeckoLibCache.getInstance().getAnimations().get(animId);

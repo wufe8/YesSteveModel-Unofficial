@@ -103,8 +103,15 @@ public final class OpenYsmPlayerControllerRuntime {
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
         // Inject any roaming variables set from outside the render loop (e.g. GUI config panel)
+        // Inject both original case and lowercase for compatibility.
         if (!PENDING_ROAMING.isEmpty()) {
-            runtimeState.variables.putAll(PENDING_ROAMING);
+            for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
+                runtimeState.variables.put(entry.getKey(), entry.getValue());
+                String lcKey = entry.getKey().toLowerCase(java.util.Locale.ROOT);
+                if (!lcKey.equals(entry.getKey())) {
+                    runtimeState.variables.put(lcKey, entry.getValue());
+                }
+            }
         }
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
