@@ -53,6 +53,8 @@ public final class AnimationManager {
     private final Map<UUID, Integer> swingCombo = new ConcurrentHashMap<>();
     /** Tracks isSwingInProgress across frames to detect new swing cycles (false→true). */
     private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
+    /** Tracks last swingProgressInt to detect rapid-click resets. */
+    private final Map<UUID, Integer> lastSwingProgress = new ConcurrentHashMap<>();
     /** Attack combo animation names in order. */
     private static final String[] ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"};
 
@@ -357,11 +359,19 @@ public final class AnimationManager {
             return controllerState;
         }
         UUID pid = player.getUniqueID();
-        // 检测 true→false→true 的完整挥剑结束→开始转换
+        // 检测新挥剑：完整 false→true 转换，或 swingProgressInt 跳高（快速连点）
         boolean nowSwinging = player.isSwingInProgress;
         boolean wasSwinging = swingWasActive.getOrDefault(pid, false);
         swingWasActive.put(pid, nowSwinging);
         boolean swingStarted = !wasSwinging && nowSwinging;
+        boolean progressReset = false;
+        if (nowSwinging) {
+            int prev = lastSwingProgress.getOrDefault(pid, -1);
+            if (prev >= 0 && player.swingProgressInt < prev) progressReset = true;
+            lastSwingProgress.put(pid, player.swingProgressInt);
+        } else {
+            lastSwingProgress.remove(pid);
+        }
 
         if (!nowSwinging) {
             swingProgressByPlayer.remove(pid);
@@ -381,7 +391,7 @@ public final class AnimationManager {
                 if (animationExistsInFile(animId, conditionalAnimation)) {
                     if ("swing:sword".equals(conditionalAnimation)
                         && !OpenYsmAnimationControllerRegistry.hasController(animId, "player.post_swing")
-                        && (swingStarted || newSwing)) {
+                        && (swingStarted || newSwing || progressReset)) {
                         int combo = swingCombo.getOrDefault(pid, 3);
                         swingCombo.put(pid, (combo + 1) % 3);
                     }
