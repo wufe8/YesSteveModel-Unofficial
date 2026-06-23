@@ -10,6 +10,8 @@ import java.nio.file.Path;
 import java.util.*;
 
 import net.minecraft.command.*;
+import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.ChatComponentTranslation;
 
 import org.apache.commons.io.FileUtils;
@@ -18,6 +20,7 @@ import org.apache.commons.io.filefilter.FileFileFilter;
 import org.apache.commons.lang3.StringUtils;
 import org.apache.commons.lang3.time.StopWatch;
 
+import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.model.ServerModelManager;
 
 public class YsmCommand extends CommandBase {
@@ -29,7 +32,7 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm reload";
+        return "/ysm <reload|play> [animationName]";
     }
 
     @Override
@@ -39,10 +42,16 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public void processCommand(ICommandSender sender, String[] args) {
-        if (args.length != 1 || !"reload".equalsIgnoreCase(args[0])) {
+        if (args.length < 1) {
             throw new WrongUsageException(getCommandUsage(sender));
         }
-        processReload(sender);
+        if ("reload".equalsIgnoreCase(args[0])) {
+            processReload(sender);
+        } else if ("play".equalsIgnoreCase(args[0])) {
+            processPlay(sender, args);
+        } else {
+            throw new WrongUsageException(getCommandUsage(sender));
+        }
     }
 
     private void processReload(ICommandSender sender) {
@@ -50,11 +59,26 @@ public class YsmCommand extends CommandBase {
         watch.start();
         checkModelFiles(sender, CUSTOM);
         ServerModelManager.reloadPacks();
-
         ServerModelManager.sendRequestSyncModelMessage(sender.getEntityWorld().playerEntities);
-
         watch.stop();
         sender.addChatMessage(new ChatComponentTranslation("message.yes_steve_model.model.reload.info", watch.getTime()));
+    }
+
+    private void processPlay(ICommandSender sender, String[] args) {
+        if (!(sender instanceof EntityPlayerMP)) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        String animName = args.length >= 2 ? args[1] : "";
+        if (StringUtils.isBlank(animName)) {
+            sender.addChatMessage(new ChatComponentTranslation("message.yes_steve_model.model.animation_roulette.play", "?"));
+            return;
+        }
+        EntityPlayerMP player = (EntityPlayerMP) sender;
+        ExtendedModelInfo eep = ExtendedModelInfo.get(player);
+        if (eep != null) {
+            eep.playAnimation(animName);
+            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
+        }
     }
 
     private void checkModelFiles(ICommandSender sender, Path rootPath) {

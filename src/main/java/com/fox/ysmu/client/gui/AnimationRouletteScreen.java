@@ -152,7 +152,7 @@ public class AnimationRouletteScreen extends GuiScreen {
             String animName = key.startsWith("extra") ? key : key;
             NetworkHandler.CHANNEL.sendToServer(new SetPlayAnimation(animName));
             if (mc.thePlayer != null && Config.PRINT_ANIMATION_ROULETTE_MSG) {
-                mc.thePlayer.addChatMessage(new ChatComponentText("Play: " + animName));
+                mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
             }
             mc.displayGuiScreen(null);
         }
