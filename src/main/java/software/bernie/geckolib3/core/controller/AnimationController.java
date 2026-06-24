@@ -178,7 +178,7 @@ public class AnimationController<T extends IAnimatable> {
     private final HashMap<String, BoneAnimationQueue> boneAnimationQueues = new HashMap<>();
     private final List<BoneAnimationQueue> activeBoneAnimationQueues = new ArrayList<>();
     public double tickOffset;
-    protected Queue<Animation> animationQueue = new LinkedList<>();
+    public Queue<Animation> animationQueue = new LinkedList<>();
     public Animation currentAnimation;
     public AnimationBuilder currentAnimationBuilder = new AnimationBuilder();
     public boolean shouldResetTick = false;

@@ -29,6 +29,7 @@ import com.fox.ysmu.client.entity.CustomPlayerEntity;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
+import software.bernie.geckolib3.core.controller.AnimationController;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.file.AnimationFile;
 import software.bernie.geckolib3.resource.GeckoLibCache;
@@ -157,9 +158,6 @@ public final class OpenYsmPlayerControllerRuntime {
         // "animations" list plays all entries simultaneously; selectAnimation
         // only returns the first match for historical code that expects one.
         List<String> activeAnimations = collectActiveAnimations(state, animationId, context);
-        // Also include the preferred-index animation if it has a condition that's
-        // met (selectAnimation handles condition-aware single selection).
-        String preferredAnim = selectAnimation(state, match.preferredAnimationIndex, context);
         // 以下4套蹲下过渡检测代码不知道为什么全都有用 如果你不知道你在干什么 一个都不要删
         // When moving while sneaking, let legacy handle (no ground state).
         if ("sky".equals(state.name) && event.isMoving()
@@ -170,7 +168,6 @@ public final class OpenYsmPlayerControllerRuntime {
         // Transition when stopping from moving sneaking.
         if ("sky".equals(state.name) && activeAnimations.contains("sneaking_sky")
             && !event.isMoving()) {
-            preferredAnim = "sneaking_start";
             activeAnimations = java.util.Collections.singletonList("sneaking_start");
             runtimeState.currentState = "start";
             runtimeState.enteredTick = event.getAnimationTick();
@@ -181,7 +178,6 @@ public final class OpenYsmPlayerControllerRuntime {
         if (runtimeState.wasMoving && "default".equals(state.name) && !event.isMoving()
             && animationExists(animationId, "sneaking_start")) {
             runtimeState.wasMoving = false;
-            preferredAnim = "sneaking_start";
             activeAnimations = java.util.Collections.singletonList("sneaking_start");
             runtimeState.currentState = "start";
             runtimeState.enteredTick = event.getAnimationTick();
@@ -195,7 +191,6 @@ public final class OpenYsmPlayerControllerRuntime {
             && animationExists(animationId, "sneaking_start")
             && Minecraft.getMinecraft().thePlayer != null
             && Minecraft.getMinecraft().thePlayer.isSneaking()) {
-            preferredAnim = "sneaking_start";
             activeAnimations = java.util.Collections.singletonList("sneaking_start");
             runtimeState.currentState = "start";
             runtimeState.enteredTick = event.getAnimationTick();
@@ -226,9 +221,10 @@ public final class OpenYsmPlayerControllerRuntime {
             return null;
         }
         if (state.blendTransitionTicks >= 0f) {
-            event.getController().transitionLengthTicks = state.blendTransitionTicks;
+            AnimationController<?> ctrl = event.getController();
+            ctrl.transitionLengthTicks = state.blendTransitionTicks;
         }
-        applyAnimations(event, runtimeState, state, existing);
+        applyAnimations(event, runtimeState, state, existing, animationId);
         return PlayState.CONTINUE;
     }
 
@@ -290,23 +286,6 @@ public final class OpenYsmPlayerControllerRuntime {
         return state;
     }
 
-    private static String selectAnimation(State state, int preferredAnimationIndex,
-        OpenYsmControllerExpressionEvaluator.Context context) {
-        if (state.animations.isEmpty()) {
-            return null;
-        }
-        if (preferredAnimationIndex >= 0 && preferredAnimationIndex < state.animations.size()) {
-            AnimationEntry entry = state.animations.get(preferredAnimationIndex);
-            return animationEntryActive(entry, context) ? entry.animationName : null;
-        }
-        for (AnimationEntry entry : state.animations) {
-            if (animationEntryActive(entry, context)) {
-                return entry.animationName;
-            }
-        }
-        return null;
-    }
-
     private static boolean animationEntryActive(AnimationEntry entry,
         OpenYsmControllerExpressionEvaluator.Context context) {
         return StringUtils.isBlank(entry.condition)
@@ -345,7 +324,7 @@ public final class OpenYsmPlayerControllerRuntime {
      * from all parallel animations into the primary animation.
      */
     private static void applyAnimations(AnimationEvent<CustomPlayerEntity> event, RuntimeState runtimeState,
-        State state, List<String> animationNames) {
+        State state, List<String> animationNames, ResourceLocation animationId) {
         String primaryName = animationNames.get(0);
         AnimationBuilder builder = new AnimationBuilder().addAnimation(primaryName);
         boolean sameState = state.name.equals(runtimeState.lastSelectedAnimationState);
@@ -362,74 +341,57 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
         event.getController().setAnimation(builder);
-        // Merge bone animations from parallel animations into the current animation
-        if (animationNames.size() > 1 && event.getController().currentAnimation != null) {
-            List<software.bernie.geckolib3.core.keyframe.BoneAnimation> merged =
-                new ArrayList<>(event.getController().currentAnimation.boneAnimations);
-            int added = 0;
+        // Merge bone animations from parallel animations into the queued animation.
+        if (animationNames.size() > 1) {
+            List<software.bernie.geckolib3.core.keyframe.BoneAnimation> mergedBones = null;
+            software.bernie.geckolib3.file.AnimationFile animFile =
+                software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
             for (int i = 1; i < animationNames.size(); i++) {
-                software.bernie.geckolib3.core.builder.Animation a = lookupAnimation(animationNames.get(i));
-                if (a != null && a.boneAnimations != null) {
-                    for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : a.boneAnimations) {
-                        // Only add if this bone is not already animated by the primary animation
-                        boolean exists = false;
-                        for (software.bernie.geckolib3.core.keyframe.BoneAnimation existing : merged) {
-                            if (existing.boneName.equals(ba.boneName)) {
-                                // Higher priority (later in list) overrides earlier
-                                existing.rotationKeyFrames = ba.rotationKeyFrames;
-                                existing.positionKeyFrames = ba.positionKeyFrames;
-                                existing.scaleKeyFrames = ba.scaleKeyFrames;
-                                exists = true;
-                                break;
-                            }
-                        }
-                        if (!exists) {
-                            merged.add(ba);
-                            added++;
-                        }
-                    }
+                software.bernie.geckolib3.core.builder.Animation a = null;
+                if (animFile != null) {
+                    a = animFile.getAnimation(animationNames.get(i));
                 }
-            }
-            event.getController().currentAnimation.boneAnimations = merged;
-            // Diagnostic: show merged bone count and check for Root/scale keyframes
-            System.out.println("[YSMU-DBG] applyAnimations: merged " + merged.size() + " bones (primary="
-                + (merged.size() - added) + " added=" + added + ")");
-            for (int i = 1; i < animationNames.size(); i++) {
-                software.bernie.geckolib3.core.builder.Animation a = lookupAnimation(animationNames.get(i));
                 if (a == null) {
-                    System.out.println("[YSMU-DBG]   lookup failed: " + animationNames.get(i));
-                } else if (a.boneAnimations == null || a.boneAnimations.isEmpty()) {
-                    System.out.println("[YSMU-DBG]   empty boneAnims: " + animationNames.get(i));
-                } else {
-                    StringBuilder sb = new StringBuilder("[YSMU-DBG]   " + animationNames.get(i) + " bones:");
-                    for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : a.boneAnimations) {
-                        sb.append(" ").append(ba.boneName);
-                        if (ba.boneName.contains("Root")) {
-                            sb.append("(sca=").append(ba.scaleKeyFrames.xKeyFrames.size()).append(")");
-                        }
-                    }
-                    System.out.println(sb);
+                    a = lookupAnimation(animationNames.get(i));
                 }
-            }
-            boolean foundRoot = false;
-            for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : merged) {
-                if (ba.boneName.contains("Root") || ba.boneName.contains("root")) {
-                    foundRoot = true;
-                    System.out.println("[YSMU-DBG]   " + ba.boneName + " scaX=" + ba.scaleKeyFrames.xKeyFrames.size()
-                        + " rotX=" + ba.rotationKeyFrames.xKeyFrames.size());
-                    if (!ba.scaleKeyFrames.xKeyFrames.isEmpty()) {
-                        System.out.println("[YSMU-DBG]   MRoot scale[0]=" + ba.scaleKeyFrames.xKeyFrames.get(0).getStartValue().get());
+                if (a != null && a.boneAnimations != null) {
+                    if (mergedBones == null) {
+                        mergedBones = new ArrayList<>(a.boneAnimations);
+                    } else {
+                        mergeBones(mergedBones, a.boneAnimations);
                     }
                 }
             }
-            if (!foundRoot) {
-                // Print all bone names to see what we have
-                StringBuilder names = new StringBuilder("[YSMU-DBG]   all bones: ");
-                for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : merged) {
-                    if (names.length() > 200) { names.append("..."); break; }
-                    names.append(ba.boneName).append(" ");
+            if (mergedBones != null) {
+                AnimationController<?> ctrl = event.getController();
+                for (software.bernie.geckolib3.core.builder.Animation queued : ctrl.animationQueue) {
+                    if (queued != null) {
+                        mergeBones(mergedBones, queued.boneAnimations);
+                        queued.boneAnimations = mergedBones;
+                    }
                 }
-                System.out.println(names);
+                if (ctrl.currentAnimation != null) {
+                    ctrl.currentAnimation.boneAnimations = mergedBones;
+                }
+            }
+        }
+    }
+
+    private static void mergeBones(List<software.bernie.geckolib3.core.keyframe.BoneAnimation> target,
+        List<software.bernie.geckolib3.core.keyframe.BoneAnimation> source) {
+        for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : source) {
+            boolean exists = false;
+            for (software.bernie.geckolib3.core.keyframe.BoneAnimation existing : target) {
+                if (existing.boneName.equals(ba.boneName)) {
+                    existing.rotationKeyFrames = ba.rotationKeyFrames;
+                    existing.positionKeyFrames = ba.positionKeyFrames;
+                    existing.scaleKeyFrames = ba.scaleKeyFrames;
+                    exists = true;
+                    break;
+                }
+            }
+            if (!exists) {
+                target.add(ba);
             }
         }
     }
@@ -441,26 +403,6 @@ public final class OpenYsmPlayerControllerRuntime {
             if (anim != null) return anim;
         }
         return null;
-    }
-
-    private static void applyAnimation(AnimationEvent<CustomPlayerEntity> event, RuntimeState runtimeState, State state,
-        String animationName) {
-        AnimationBuilder builder = new AnimationBuilder().addAnimation(animationName);
-        boolean sameState = state.name.equals(runtimeState.lastSelectedAnimationState);
-        boolean changedInSameState = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
-            && !runtimeState.lastSelectedAnimation.equals(animationName);
-        runtimeState.lastAnimation = animationName;
-        runtimeState.lastSelectedAnimationState = state.name;
-        runtimeState.lastSelectedAnimation = animationName;
-        if (changedInSameState) {
-            double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);
-            if (event.getController()
-                .setAnimationPreservingTick(builder, event.getAnimationTick(), elapsedTick)) {
-                return;
-            }
-        }
-        event.getController()
-            .setAnimation(builder);
     }
 
     private static void prepareFrameVariables(String geckoControllerName, EntityPlayer player, RuntimeState state,

@@ -86,11 +86,7 @@ public final class MolangPhysicsRuntime {
             return fallback;
         }
         Double value = context.state.variables.get(name);
-        double result = value == null ? fallback : value;
-        if (name.contains("player_size") || name.contains(".back")) {
-            System.out.println("[YSMU-DBG] getVariable " + name + "=" + result + " injected=" + (value != null));
-        }
-        return result;
+        return value == null ? fallback : value;
     }
 
     public static boolean setVariable(String name, double value) {

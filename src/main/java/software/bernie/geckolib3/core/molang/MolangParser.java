@@ -274,9 +274,7 @@ public class MolangParser extends MathBuilder {
                 @Override
                 public double get() {
                     double l = leftVal.get();
-                    double result = l != 0 ? l : rightVal.get();
-                    System.out.println("[YSMU-DBG] ?? " + leftExpr + "=" + l + " => " + result);
-                    return result;
+                    return l != 0 ? l : rightVal.get();
                 }
             });
         }

@@ -338,9 +338,6 @@ public class JsonAnimationUtils {
                 boneAnimation.scaleKeyFrames = JsonKeyFrameUtils
                     .convertJsonToKeyFrames(new ArrayList<>(scaleKeyFramesJson), parser);
             } catch (Exception e) {
-                if (boneAnimation.boneName.contains("Root")) {
-                    System.out.println("[YSMU-DBG] scale parse FAILED for " + boneAnimation.boneName + ": " + e.getMessage());
-                }
                 boneAnimation.scaleKeyFrames = new VectorKeyFrameList<>();
             }
 
@@ -349,9 +346,6 @@ public class JsonAnimationUtils {
                 boneAnimation.positionKeyFrames = JsonKeyFrameUtils
                     .convertJsonToKeyFrames(new ArrayList<>(positionKeyFramesJson), parser);
             } catch (Exception e) {
-                if (boneAnimation.boneName.contains("Root")) {
-                    System.out.println("[YSMU-DBG] position parse FAILED for " + boneAnimation.boneName + ": " + e.getMessage());
-                }
                 boneAnimation.positionKeyFrames = new VectorKeyFrameList<>();
             }
 
@@ -360,26 +354,10 @@ public class JsonAnimationUtils {
                 boneAnimation.rotationKeyFrames = JsonKeyFrameUtils
                     .convertJsonToRotationKeyFrames(new ArrayList<>(rotationKeyFramesJson), parser);
             } catch (Exception e) {
-                if (boneAnimation.boneName.contains("Root")) {
-                    System.out.println("[YSMU-DBG] rotation parse FAILED for " + boneAnimation.boneName + ": " + e.getMessage());
-                }
                 boneAnimation.rotationKeyFrames = new VectorKeyFrameList<>();
             }
 
             animation.boneAnimations.add(boneAnimation);
-        }
-        // Diagnostic: dump parallel1 animation bones after loading
-        if (animation.animationName.equals("parallel1")) {
-            StringBuilder sb = new StringBuilder("[YSMU-DBG] LOADED parallel1 bones(" + animation.boneAnimations.size() + "):");
-            for (BoneAnimation ba : animation.boneAnimations) {
-                sb.append(" ").append(ba.boneName);
-                if (ba.boneName.contains("Root")) {
-                    sb.append("(sca=").append(ba.scaleKeyFrames.xKeyFrames.size())
-                      .append(" pos=").append(ba.positionKeyFrames.xKeyFrames.size())
-                      .append(" rot=").append(ba.rotationKeyFrames.xKeyFrames.size()).append(")");
-                }
-            }
-            System.out.println(sb);
         }
         if (animation.animationLength == null) {
             animation.animationLength = calculateLength(animation.boneAnimations);
