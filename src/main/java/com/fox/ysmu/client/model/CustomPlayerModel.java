@@ -13,6 +13,7 @@ import net.minecraft.util.ResourceLocation;
 import com.fox.ysmu.client.animation.AnimationRegister;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.animation.RemotePlayerAnimationQueries;
+import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.util.ModelIdUtil;
 import com.fox.ysmu.ysmu;
@@ -36,6 +37,8 @@ public class CustomPlayerModel extends AnimatedGeoModel {
     public static final ResourceLocation DEFAULT_TEXTURE = new ResourceLocation(ysmu.MODID, "default/default.png");
     public static float FIRST_PERSON_HEAD_POS;
     private final Map<IBone, HeadPoseOffset> headPoseOffsets = new IdentityHashMap<>();
+    /** Cached bone names belonging to each model's preview animation. */
+    private static final Map<ResourceLocation, java.util.Set<String>> PREVIEW_BONE_CACHE = new java.util.HashMap<>();
 
     @Override
 
@@ -171,7 +174,9 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                     || name.equals("LaughMouth4") || name.equals("IdiotMouth1") || name.equals("ZheMeQiang")
                     || name.equals("ConfusionEffects1") || name.equals("SoundEffects1")
                     || name.contains("RightSpeechless") || name.contains("LeftSpeechless");
-                if (isExpression) {
+                // Hide bones belonging to the model's preview animation (e.g. gui decoration)
+                boolean isPreviewBone = isPreviewAnimationBone(name, animId);
+                if (isExpression || isPreviewBone) {
                     boolean show = false;
                     if (extraAnimActive && extraAnimName != null && animId != null) {
                         try {
@@ -195,6 +200,55 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 }
             }
         }
+    }
+
+    /**
+     * Returns true if the named bone belongs exclusively to the model's preview
+     * animation, i.e. it is animated in {@code preview_animation} but NOT in any
+     * other game animation. This prevents normal player bones (MRoot, Head, etc.)
+     * from being hidden just because the preview animation also references them.
+     */
+    private static boolean isPreviewAnimationBone(String boneName, ResourceLocation animId) {
+        if (animId == null) return false;
+        java.util.Set<String> bones = PREVIEW_BONE_CACHE.get(animId);
+        if (bones == null) {
+            bones = java.util.Collections.emptySet();
+            String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(animId);
+            if (previewAnim != null) {
+                software.bernie.geckolib3.file.AnimationFile file =
+                    GeckoLibCache.getInstance().getAnimations().get(animId);
+                if (file != null) {
+                    // Collect all bone names from the preview animation
+                    software.bernie.geckolib3.core.builder.Animation panim = file.getAnimation(previewAnim);
+                    if (panim != null && panim.boneAnimations != null && !panim.boneAnimations.isEmpty()) {
+                        java.util.Set<String> previewBones = new java.util.HashSet<>();
+                        for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : panim.boneAnimations) {
+                            previewBones.add(ba.boneName);
+                        }
+                        // Collect bone names from ALL other (non-preview) animations.
+                        // Bones that appear only in the preview animation are decoration.
+                        java.util.Set<String> gameBones = new java.util.HashSet<>();
+                        for (java.util.Map.Entry<String, software.bernie.geckolib3.core.builder.Animation> entry
+                            : file.animations.entrySet()) {
+                            if (entry.getKey().equals(previewAnim)) continue;
+                            software.bernie.geckolib3.core.builder.Animation anim = entry.getValue();
+                            if (anim != null && anim.boneAnimations != null) {
+                                for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : anim.boneAnimations) {
+                                    gameBones.add(ba.boneName);
+                                }
+                            }
+                        }
+                        // Only hide bones that are unique to the preview animation
+                        previewBones.removeAll(gameBones);
+                        if (!previewBones.isEmpty()) {
+                            bones = previewBones;
+                        }
+                    }
+                }
+            }
+            PREVIEW_BONE_CACHE.put(animId, bones);
+        }
+        return bones.contains(boneName);
     }
 
     private void codeAnimation(AnimationEvent animationEvent, EntityModelData data, EntityPlayer player) {

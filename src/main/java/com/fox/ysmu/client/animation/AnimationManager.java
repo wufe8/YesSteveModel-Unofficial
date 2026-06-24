@@ -137,9 +137,6 @@ public final class AnimationManager {
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
         String geckoName = event.getController().getName();
         if (animId != null && OpenYsmPlayerControllerRuntime.hasAnyController(animId)) {
-            if (geckoName != null && geckoName.startsWith("pre_parallel_")) {
-                return PlayState.STOP;
-            }
             // 下马期间抑制 parallel 控制器，让 dismount 动画不受覆盖
             if (geckoName != null && geckoName.startsWith("parallel_")) {
                 EntityPlayer player = animatable != null ? animatable.getPlayer() : null;
@@ -189,7 +186,12 @@ public final class AnimationManager {
         CustomPlayerEntity animatable = event.getAnimatable();
         EntityPlayer player = animatable.getPlayer();
         if (player == null) {
-            if (animatable.hasPreviewAnimation()) {
+            // Only play the preview animation when not in a game world
+            // (e.g. model preview GUI). During world load, player may be null
+            // briefly, and playing the preview animation would set its bone
+            // keyframes (e.g. huge GUI decoration scales) onto the model.
+            if (animatable.hasPreviewAnimation()
+                && Minecraft.getMinecraft().theWorld == null) {
                 return playLoopAnimation(event, animatable.getPreviewAnimation());
             }
             return PlayState.STOP;
