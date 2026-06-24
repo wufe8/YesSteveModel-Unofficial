@@ -124,7 +124,9 @@ public class ClientModelManager {
             String modelJson = new String(data, StandardCharsets.UTF_8);
             RawGeoModel rawModel = Converter.fromJsonString(modelJson);
 
-            if (rawModel.getFormatVersion() == FormatVersion.VERSION_1_12_0) {
+            if (rawModel.getFormatVersion() == FormatVersion.VERSION_1_12_0
+                || rawModel.getFormatVersion() == FormatVersion.VERSION_1_14_0
+                || rawModel.getFormatVersion() == FormatVersion.VERSION_1_21_0) {
                 RawGeometryTree rawGeometryTree = RawGeometryTree.parseHierarchy(rawModel);
                 GeoModel geoModel = GeoBuilder.getGeoBuilder(id.getResourceDomain())
                     .constructGeoModel(rawGeometryTree);

@@ -114,9 +114,9 @@ public class AnimationRouletteScreen extends GuiScreen {
         float distance = MathHelper.sqrt_float((pMouseY - y) * (pMouseY - y) + (pMouseX - x) * (pMouseX - x));
         float theta = (float) Math.atan2(pMouseY - y, pMouseX - x);
         if (theta < 0) theta = (float) (Math.PI * 2 + theta);
-        int hoveredIndex = getHoveredIndex(theta, pageEntries.size());
+        int hoveredIndex = getHoveredIndex(theta, ITEMS_PER_PAGE);
 
-        if (pButton == 0 && hoveredIndex >= 0) {
+        if (pButton == 0 && hoveredIndex >= 0 && hoveredIndex < pageEntries.size()) {
             Map.Entry<String, String> entry = pageEntries.get(hoveredIndex);
             String key = entry.getKey();
             // Inner ring (25-50): config button or back navigation
@@ -171,10 +171,11 @@ public class AnimationRouletteScreen extends GuiScreen {
 
     private int getHoveredIndex(float theta, int count) {
         if (count == 0) return -1;
-        for (int i = 0; i < count; i++) {
-            float spacingDeg = (float) (Math.PI / 90);
-            float startDeg = (float) ((2 * Math.PI / count) * i + spacingDeg);
-            float endDeg = (float) ((2 * Math.PI / count) * (i + 1) - spacingDeg);
+        int slots = ITEMS_PER_PAGE;
+        float spacingDeg = (float) (Math.PI / 90);
+        for (int i = 0; i < slots; i++) {
+            float startDeg = (float) ((2 * Math.PI / slots) * i + spacingDeg);
+            float endDeg = (float) ((2 * Math.PI / slots) * (i + 1) - spacingDeg);
             if (startDeg < theta && theta < endDeg) return i;
         }
         return -1;
@@ -460,9 +461,9 @@ public class AnimationRouletteScreen extends GuiScreen {
     // ── Wheel Rendering ───────────────────────────────────────────
 
     private void drawRouletteText(List<Map.Entry<String, String>> pageEntries) {
-        int count = pageEntries.size();
-        if (count == 0) return;
+        int count = ITEMS_PER_PAGE;
         for (int i = 0; i < count; i++) {
+            if (i >= pageEntries.size()) continue;
             Map.Entry<String, String> entry = pageEntries.get(i);
             String key = entry.getKey();
             String label = entry.getValue();
@@ -493,8 +494,8 @@ public class AnimationRouletteScreen extends GuiScreen {
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glDisable(GL11.GL_TEXTURE_2D);
         Tessellator tessellator = Tessellator.instance;
-        int count = pageEntries.size();
-        if (count == 0) {
+        int count = ITEMS_PER_PAGE;
+        if (pageEntries.isEmpty()) {
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             GL11.glDisable(GL11.GL_BLEND);
             return;

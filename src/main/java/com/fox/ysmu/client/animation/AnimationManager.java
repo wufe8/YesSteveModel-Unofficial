@@ -158,7 +158,8 @@ public final class AnimationManager {
                 }
                 return controllerState;
             }
-            return PlayState.STOP;
+            // No matching OpenYSM controller — fall back to legacy animation
+            return playLoopAnimation(event, animationName);
         }
         return playLoopAnimation(event, animationName);
     }

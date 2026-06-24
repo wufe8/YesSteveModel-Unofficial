@@ -27,6 +27,7 @@ import software.bernie.geckolib3.core.molang.functions.SinDegrees;
 
 import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
+import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
 
 /**
  * MoLang 解析器
@@ -77,6 +78,10 @@ public class MolangParser extends MathBuilder {
         // 抛出 "Function couldn't be found" 异常导致日志刷屏。
         // 变量版 query.position_delta 由 AnimationRegister.setEntityQueryValues() 提供值。
         this.functions.put("query.position_delta", QueryPositionDeltaFunction.class);
+
+        // 防止模型动画 Molang 表达式中使用 query.position(axis) 时抛出
+        // "Function couldn't be found" 异常导致日志刷屏。
+        this.functions.put("query.position", QueryPositionFunction.class);
 
         remap("abs", "math.abs");
         remap("acos", "math.acos");
