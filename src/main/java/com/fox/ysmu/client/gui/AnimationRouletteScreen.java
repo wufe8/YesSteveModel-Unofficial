@@ -347,7 +347,9 @@ public class AnimationRouletteScreen extends GuiScreen {
         int eqIdx = expression.indexOf('=');
         if (eqIdx > 0) {
             varName = expression.substring(0, eqIdx).trim();
+            // 去除尾部多余字符（如 Molang 语句尾部的分号）
             String valStr = expression.substring(eqIdx + 1).trim();
+            valStr = valStr.replaceAll(";+$", "").trim();
             try {
                 value = Double.parseDouble(valStr);
             } catch (NumberFormatException e) {
@@ -484,6 +486,7 @@ public class AnimationRouletteScreen extends GuiScreen {
                     String optExpr = label.getValue();
                     if (StringUtils.isNotBlank(optExpr) && optExpr.contains("=")) {
                         String valStr = optExpr.substring(optExpr.indexOf('=') + 1).trim();
+                        valStr = valStr.replaceAll(";+$", "").trim();
                         try {
                             selected = Math.abs(curVal - Double.parseDouble(valStr)) < 0.001;
                         } catch (NumberFormatException e) {

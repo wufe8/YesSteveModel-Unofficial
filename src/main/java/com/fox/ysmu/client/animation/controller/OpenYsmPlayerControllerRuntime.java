@@ -30,6 +30,7 @@ import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
+import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.controller.AnimationController;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.file.AnimationFile;
@@ -382,26 +383,34 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             if (mergedBones != null) {
                 AnimationController<?> ctrl = event.getController();
-                // Replace queue entries with copies carrying the merged bones.
-                // This avoids corrupting the original Animation objects in the
-                // AnimationFile while ensuring the processor sees merged data.
-                java.util.Queue<software.bernie.geckolib3.core.builder.Animation> newQueue =
-                    new java.util.LinkedList<>();
-                for (software.bernie.geckolib3.core.builder.Animation queued : ctrl.animationQueue) {
-                    if (queued != null) {
-                        software.bernie.geckolib3.core.builder.Animation copy =
-                            new software.bernie.geckolib3.core.builder.Animation();
-                        copy.animationName = queued.animationName;
-                        copy.animationLength = queued.animationLength;
-                        copy.loop = queued.loop;
-                        copy.soundKeyFrames = queued.soundKeyFrames;
-                        copy.particleKeyFrames = queued.particleKeyFrames;
-                        copy.customInstructionKeyframes = queued.customInstructionKeyframes;
-                        copy.boneAnimations = mergedBones;
-                        newQueue.add(copy);
+                // AnimationController.process() 每帧会从缓存重新加载 currentAnimation
+                // （第 466-477 行），覆盖掉我们设置的合并数据。因此把合并后的动画存回
+                // GeckoLibCache 中，使后续帧的重新加载也能拿到合并版本。
+                String mergedName = "__ysm_merged__" + primaryName;
+                software.bernie.geckolib3.core.builder.Animation mergedAnim = null;
+                software.bernie.geckolib3.file.AnimationFile cachedFile =
+                    software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
+                if (cachedFile != null) {
+                    mergedAnim = cachedFile.getAnimation(mergedName);
+                }
+                if (mergedAnim == null) {
+                    mergedAnim = new software.bernie.geckolib3.core.builder.Animation();
+                    mergedAnim.animationName = mergedName;
+                    if (cachedFile != null) {
+                        cachedFile.putAnimation(mergedName, mergedAnim);
                     }
                 }
-                ctrl.animationQueue = newQueue;
+                mergedAnim.boneAnimations = mergedBones;
+                if (primaryAnim != null) {
+                    mergedAnim.animationLength = primaryAnim.animationLength;
+                    mergedAnim.loop = primaryAnim.loop;
+                } else {
+                    mergedAnim.animationLength = null;
+                    mergedAnim.loop = ILoopType.EDefaultLoopTypes.LOOP;
+                }
+                // 用合并后的动画名替换 builder，让 controller 从缓存加载合并版本
+                event.getController().setAnimation(
+                    new AnimationBuilder().addAnimation(mergedName, mergedAnim.loop));
             }
         }
     }
@@ -500,6 +509,17 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         if (geckoControllerName.endsWith("_controller")) {
             addMatch(matches, set, geckoControllerName.substring(0, geckoControllerName.length() - 11), preferredIndex);
+        }
+        // 模糊匹配：player.post_main → player.post_main_<anything>
+        // 用于车辆动画等带后缀的槽位控制器
+        if (geckoControllerName.endsWith("_main") || geckoControllerName.endsWith("_hold")
+            || geckoControllerName.endsWith("_swing") || geckoControllerName.endsWith("_use")) {
+            String prefix = geckoControllerName + "_";
+            for (String key : set.controllers.keySet()) {
+                if (key.startsWith(prefix)) {
+                    addMatch(matches, set, key, preferredIndex);
+                }
+            }
         }
         return matches;
     }

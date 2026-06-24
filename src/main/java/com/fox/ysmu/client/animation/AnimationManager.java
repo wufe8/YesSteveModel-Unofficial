@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.animation;
 
 import java.util.LinkedList;
+import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
@@ -12,6 +13,7 @@ import net.minecraft.util.ResourceLocation;
 
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import com.fox.ysmu.client.animation.condition.*;
 import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
@@ -41,6 +43,20 @@ public final class AnimationManager {
     /** Current wheel animation name set by the wheel GUI, null when none active.
         Used for client-side playback without waiting for EEP server sync. */
     public static volatile String currentWheelAnim = null;
+    /**
+     * 从模型的 .molang 函数文件（如 @player_ctrl_pre_main.molang）中提取的
+     * ctrl.<state> → 动画名 映射。key=模型 ResourceLocation, value=state→animName。
+     * 当模型提供了 .molang 主动画控制器时，传统谓词系统优先使用这里的映射名，
+     * 而不是直接使用标准英文名（如 walk→正常_行走）。
+     */
+    public static final Map<ResourceLocation, Map<String, String>> MOLANG_STATE_MAP = new ConcurrentHashMap<>();
+    /**
+     * 有条件分支的动画映射，如 v.show_car 时的开车动画。
+     * key=模型 ResourceLocation, value=state→[(condition, animName), ...]。
+     * 在 getMolangMappedAnimation() 中检查这些条件，若满足则使用替代动画。
+     */
+    public static final Map<ResourceLocation, Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>>>
+        MOLANG_CONDITIONAL_MAP = new ConcurrentHashMap<>();
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
@@ -81,6 +97,90 @@ public final class AnimationManager {
 
     public static String getCurrentWheelAnimName() {
         return currentWheelAnim;
+    }
+
+    /**
+     * 检查动画是否有实际的骨骼关键帧数据。
+     * 某些高版本 YSM 模型会在 main.animation.json 中包含空桩动画
+     * （只有 "loop": true，没有 "bones" 数据），这些动画播放时不会产生
+     * 任何骨骼变换，导致模型显示为绑定姿势/A-pose。
+     */
+    private static boolean isAnimationNonEmpty(Animation anim) {
+        return anim != null && anim.boneAnimations != null && !anim.boneAnimations.isEmpty();
+    }
+
+    /**
+     * 当模型提供了 .molang 函数文件（如 @player_ctrl_pre_main.molang）时，
+     * 从中提取 ctrl.<state> → 动画名 映射。传统谓词系统应优先使用映射名。
+     * 同时会检查有条件分支的替代动画（如 v.show_car → 开车动画）。
+     *
+     * @param animId      模型的动画 ResourceLocation
+     * @param stateName   标准谓词状态名（如 "walk"、"idle"）
+     * @return 映射的动画名（如 "正常_行走"），若无可返回 null
+     */
+    @Nullable
+    private static String getMolangMappedAnimation(ResourceLocation animId, String stateName) {
+        if (animId == null) return null;
+        // 1) 检查有条件分支的替代动画
+        Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> condMap =
+            MOLANG_CONDITIONAL_MAP.get(animId);
+        if (condMap != null) {
+            List<org.apache.commons.lang3.tuple.Pair<String, String>> alternatives = condMap.get(stateName);
+            if (alternatives != null) {
+                for (org.apache.commons.lang3.tuple.Pair<String, String> alt : alternatives) {
+                    if (evaluateSimpleCondition(alt.getKey())) {
+                        return alt.getValue();
+                    }
+                }
+            }
+        }
+        // 2) 检查默认映射
+        Map<String, String> mapping = MOLANG_STATE_MAP.get(animId);
+        if (mapping == null) return null;
+        return mapping.get(stateName);
+    }
+
+    /**
+     * 简单求值 .molang 函数文件中的条件表达式。
+     * 仅支持 v.<name> 和 !v.<name> 形式的纯变量条件。
+     * 含有 && || <= >= < > == != 的复杂条件无法处理，跳过（返回 false）。
+     * 完整条件评估需要执行完整 Molang 脚本，暂不支持。
+     */
+    private static boolean evaluateSimpleCondition(String condition) {
+        if (StringUtils.isBlank(condition)) return true;
+        String trimmed = condition.trim();
+        // 拒绝含运算符的复杂条件
+        if (trimmed.contains("&&") || trimmed.contains("||")
+            || trimmed.contains("<=") || trimmed.contains(">=")
+            || trimmed.contains("==") || trimmed.contains("!=")
+            || trimmed.contains("<") || trimmed.contains(">")) {
+            return false;
+        }
+        // 取反: !v.xxx
+        if (trimmed.startsWith("!")) {
+            String varName = trimmed.substring(1).trim();
+            if (varName.startsWith("v.")) {
+                return getMolangVariable(varName) == 0;
+            }
+            return false;
+        }
+        // 正向: v.xxx
+        if (trimmed.startsWith("v.")) {
+            return getMolangVariable(trimmed) != 0;
+        }
+        return false;
+    }
+
+    /** 从 PENDING_ROAMING 读取 Molang 变量的当前值 */
+    private static double getMolangVariable(String varName) {
+        if (StringUtils.isBlank(varName)) return 0;
+        String roamingName = varName.startsWith("v.") ? varName.substring(2) : varName;
+        Double val = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(roamingName);
+        // 也检查带 v. 前缀的
+        if (val == null) {
+            val = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get("v." + roamingName);
+        }
+        return val != null ? val : 0;
     }
 
     @NotNull
@@ -310,20 +410,53 @@ public final class AnimationManager {
             for (AnimationState state : states) {
                 if (state.getPredicate().test(player, event)) {
                     String animationName = state.getAnimationName();
-                    if (animFile != null && animFile.animations.containsKey(animationName)) {
+                    // 优先检查 molang 映射：当模型提供了 .molang 函数文件时，
+                    // 使用映射的动画名（如 walk → 正常_行走）替代标准名
+                    String mappedName = getMolangMappedAnimation(animId, animationName);
+                    String targetName = mappedName != null ? mappedName : animationName;
+                    if (animFile != null && animFile.animations.containsKey(targetName)) {
+                        Animation anim = animFile.animations.get(targetName);
+                        // 跳过空桩动画（loop:true 无 bones）
+                        if (!isAnimationNonEmpty(anim)) {
+                            continue;
+                        }
                         ILoopType loopType = state.getLoopType();
-
-                        return playAnimation(event, animationName, loopType);
+                        return playAnimation(event, targetName, loopType);
                     }
                 }
             }
         }
+        // 所有优先级轮询完毕仍未找到有效动画 — 回退：
+        // 1) 优先 idle（检查 molang 映射和直接名）
+        // 2) 最后兜底取任意非空动画
         if (animFile != null && !animFile.animations.isEmpty()) {
-            if (animFile.animations.containsKey("idle")) {
-                return playLoopAnimation(event, "idle");
+            // 优先尝试 idle
+            String idleName = getMolangMappedAnimation(animId, "idle");
+            if (idleName == null) idleName = "idle";
+            Animation idleAnim = animFile.animations.get(idleName);
+            if (isAnimationNonEmpty(idleAnim)) {
+                return playLoopAnimation(event, idleName);
             }
-            String firstAnim = animFile.animations.keySet().iterator().next();
-            return playLoopAnimation(event, firstAnim);
+            // 遍历所有注册状态名，尝试从 molang 映射或直接名找非空动画
+            for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
+                LinkedList<AnimationState> states = data.get(i);
+                if (states == null) continue;
+                for (AnimationState state : states) {
+                    String name = state.getAnimationName();
+                    String mapped = getMolangMappedAnimation(animId, name);
+                    String target = mapped != null ? mapped : name;
+                    Animation anim = animFile.animations.get(target);
+                    if (isAnimationNonEmpty(anim)) {
+                        return playLoopAnimation(event, target);
+                    }
+                }
+            }
+            // 最后兜底：取文件中任意第一个非空动画
+            for (Map.Entry<String, Animation> entry : animFile.animations.entrySet()) {
+                if (isAnimationNonEmpty(entry.getValue())) {
+                    return playLoopAnimation(event, entry.getKey());
+                }
+            }
         }
         return PlayState.STOP;
     }

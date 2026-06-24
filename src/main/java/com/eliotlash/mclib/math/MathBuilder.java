@@ -299,6 +299,16 @@ public class MathBuilder {
                 this.parseSymbols(symbols.subList(colon + 1, size)));
         }
 
+        // 处理简写三元表达式: condition ? value （无 : else_branch）
+        // 等价于 condition ? value : 0
+        // 例如: (!v.leftbow&&!v.rightbow?(-18.99067)) 中的 (?(-18.99067)) 部分
+        if (questions > 0 && colons == 0 && question > 0 && question < size - 1) {
+            return new Ternary(
+                this.parseSymbols(symbols.subList(0, question)),
+                this.parseSymbols(symbols.subList(question + 1, size)),
+                new Constant(0));
+        }
+
         return null;
     }
 

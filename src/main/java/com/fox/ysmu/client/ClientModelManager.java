@@ -21,8 +21,10 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.filefilter.FileFileFilter;
 import org.apache.commons.lang3.StringUtils;
 
+import com.fox.ysmu.client.animation.AnimationManager;
 import com.fox.ysmu.client.animation.condition.ConditionManager;
 import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
+import com.fox.ysmu.client.animation.molang.MolangFunctionParser;
 import com.fox.ysmu.client.animation.molang.MolangInstructionExecutor;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.sync.OpenYsmModelSyncClient;
@@ -186,22 +188,49 @@ public class ClientModelManager {
             .getAnimations();
         AnimationFile main = new AnimationFile();
         Map<String, byte[]> controllerFiles = new LinkedHashMap<>();
+        Map<String, String> molangMapping = new LinkedHashMap<>();
+        Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> molangConditional = new LinkedHashMap<>();
         for (Map.Entry<String, byte[]> entry : mapData.entrySet()) {
-            if (isControllerResource(entry.getKey(), entry.getValue())) {
-                controllerFiles.put(entry.getKey(), entry.getValue());
+            String key = entry.getKey();
+            byte[] data = entry.getValue();
+            if (YsmControllerResources.isMolangResource(key)) {
+                // 解析 .molang 函数文件并提取 ctrl.<state> → 动画名 映射
+                Map<String, String> parsed = MolangFunctionParser.parseStateToAnimationMap(data);
+                if (!parsed.isEmpty()) {
+                    molangMapping.putAll(parsed);
+                    ysmu.LOG.info("YSM parsed molang function {} for {}: mapping={}",
+                        YsmControllerResources.molangName(key), id, parsed);
+                }
+                // 提取有条件分支的替代动画（如 v.show_car → 开车动画）
+                Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> condParsed =
+                    MolangFunctionParser.parseConditionalAnimations(data);
+                for (Map.Entry<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> ce : condParsed.entrySet()) {
+                    molangConditional.merge(ce.getKey(), ce.getValue(), (a, b) -> { a.addAll(b); return a; });
+                }
+                continue;
+            }
+            if (isControllerResource(key, data)) {
+                controllerFiles.put(key, data);
                 continue;
             }
             try {
-                AnimationFile other = getAnimationFile(new String(entry.getValue(), StandardCharsets.UTF_8));
+                AnimationFile other = getAnimationFile(new String(data, StandardCharsets.UTF_8));
                 mergeAnimationFile(main, other);
             } catch (Exception e) {
                 ysmu.LOG.warn(
                     "Failed to parse animation file {} for model {}: {}: {}",
-                    entry.getKey(),
+                    key,
                     id,
                     e.getClass().getSimpleName(),
                     StringUtils.defaultString(e.getMessage()));
             }
+        }
+        // 注册 molang 映射，供传统谓词系统在播放动画时重定向
+        if (!molangMapping.isEmpty()) {
+            AnimationManager.MOLANG_STATE_MAP.put(id, molangMapping);
+        }
+        if (!molangConditional.isEmpty()) {
+            AnimationManager.MOLANG_CONDITIONAL_MAP.put(id, molangConditional);
         }
         DEFAULT_ANIMATION_FILE.animations.forEach((name, action) -> {
             if (!main.animations.containsKey(name)) {
@@ -217,7 +246,8 @@ public class ClientModelManager {
         });
         animations.put(id, main);
         OpenYsmAnimationControllerRegistry.register(id, controllerFiles.values());
-        ysmu.LOG.info("YSM client registered animations for {}: count={}", id, main.animations.size());
+        ysmu.LOG.info("YSM client registered animations for {}: count={}, molangMappings={}",
+            id, main.animations.size(), molangMapping.size());
     }
 
     private static boolean isControllerResource(String name, byte[] data) {

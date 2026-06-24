@@ -13,7 +13,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import software.bernie.geckolib3.core.molang.MolangStringPool;
 import software.bernie.geckolib3.core.processor.AnimationProcessor;
 import software.bernie.geckolib3.core.processor.IBone;
-import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 
 public final class MolangPhysicsRuntime {
 
@@ -36,6 +35,7 @@ public final class MolangPhysicsRuntime {
         ScopeKey key = ScopeKey.from(player, animatable.getMainModel(), animatable.getAnimation());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
         if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.isEmpty()) {
+            // 先注入所有 PENDING_ROAMING 变量
             for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
                 String prefixedKey = "v." + entry.getKey();
                 state.variables.put(prefixedKey, entry.getValue());
@@ -43,6 +43,22 @@ public final class MolangPhysicsRuntime {
                 if (!lcKey.equals(prefixedKey)) {
                     state.variables.put(lcKey, entry.getValue());
                 }
+            }
+            // 应用 .molang 函数文件中定义的变量派生规则。
+            // @player_ctrl_pre_main.molang 开头: v.anim_ctrl=1;
+            // 但我们不执行 .molang 文件，所以在这里设置默认值。
+            if (!state.variables.containsKey("v.anim_ctrl")) {
+                state.variables.put("v.anim_ctrl", 1.0);
+            }
+            // car_stuff@player_ctrl_parallel_6.molang:
+            //   v.show_car=v.roaming.car && !(ctrl.tac_hold_gun||...)
+            // 简化桥接: v.roaming.car == 1 时设为 1，否则 0。
+            // 同时写入 PENDING_ROAMING 让条件映射（evaluateSimpleCondition）能读到。
+            Double roamingCar = state.variables.get("v.roaming.car");
+            if (roamingCar != null) {
+                double showCar = roamingCar > 0 ? 1.0 : 0.0;
+                state.variables.put("v.show_car", showCar);
+                OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("show_car", showCar);
             }
         }
         state.physics.update(renderTicks);

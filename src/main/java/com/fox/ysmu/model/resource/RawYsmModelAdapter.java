@@ -102,6 +102,7 @@ public final class RawYsmModelAdapter {
             }
         }
         putAnimationControllers(animations, raw);
+        putMolangFunctions(animations, raw);
 
         return new ModelData(modelId, Type.FOLDER, model, textures, animations);
     }
@@ -742,6 +743,22 @@ public final class RawYsmModelAdapter {
             array.add(new JsonPrimitive(value));
         }
         json.add(name, array);
+    }
+
+    /**
+     * 将 .molang 函数文件添加到 animations map 中，键使用 MOLANG_MAP_PREFIX 前缀。
+     * 这些文件在客户端注册阶段会被解析为 ctrl.<state> → 动画名 的映射。
+     */
+    private static void putMolangFunctions(Map<String, byte[]> animations, RawYsmModel raw) {
+        for (Map.Entry<String, RawYsmModel.RawDataFile> entry : raw.functionFiles.entrySet()) {
+            String name = entry.getKey();   // 例如 "@player_ctrl_pre_main"
+            RawYsmModel.RawDataFile file = entry.getValue();
+            if (file == null || file.data == null || file.data.length == 0) {
+                continue;
+            }
+            String mapKey = YsmControllerResources.molangResourceName(name);
+            animations.put(mapKey, file.data);
+        }
     }
 
 }
