@@ -26,6 +26,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
+import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -342,10 +343,27 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         event.getController().setAnimation(builder);
         // Merge bone animations from parallel animations into the queued animation.
+        // CRITICAL: setAnimation() populates the queue with references to the ORIGINAL
+        // Animation objects from the AnimationFile. We must NEVER mutate those
+        // originals, or the cached data gets corrupted for all future playback.
+        // Instead we build a new merged list and replace the queue entries with
+        // new Animation copies that carry the merged data.
         if (animationNames.size() > 1) {
             List<software.bernie.geckolib3.core.keyframe.BoneAnimation> mergedBones = null;
             software.bernie.geckolib3.file.AnimationFile animFile =
                 software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
+            // Start with a copy of the primary animation's bones
+            software.bernie.geckolib3.core.builder.Animation primaryAnim = null;
+            if (animFile != null) {
+                primaryAnim = animFile.getAnimation(primaryName);
+            }
+            if (primaryAnim == null) {
+                primaryAnim = lookupAnimation(primaryName);
+            }
+            if (primaryAnim != null && primaryAnim.boneAnimations != null) {
+                mergedBones = new ArrayList<>(primaryAnim.boneAnimations);
+            }
+            // Merge additional animations' bones on top
             for (int i = 1; i < animationNames.size(); i++) {
                 software.bernie.geckolib3.core.builder.Animation a = null;
                 if (animFile != null) {
@@ -364,15 +382,26 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             if (mergedBones != null) {
                 AnimationController<?> ctrl = event.getController();
+                // Replace queue entries with copies carrying the merged bones.
+                // This avoids corrupting the original Animation objects in the
+                // AnimationFile while ensuring the processor sees merged data.
+                java.util.Queue<software.bernie.geckolib3.core.builder.Animation> newQueue =
+                    new java.util.LinkedList<>();
                 for (software.bernie.geckolib3.core.builder.Animation queued : ctrl.animationQueue) {
                     if (queued != null) {
-                        mergeBones(mergedBones, queued.boneAnimations);
-                        queued.boneAnimations = mergedBones;
+                        software.bernie.geckolib3.core.builder.Animation copy =
+                            new software.bernie.geckolib3.core.builder.Animation();
+                        copy.animationName = queued.animationName;
+                        copy.animationLength = queued.animationLength;
+                        copy.loop = queued.loop;
+                        copy.soundKeyFrames = queued.soundKeyFrames;
+                        copy.particleKeyFrames = queued.particleKeyFrames;
+                        copy.customInstructionKeyframes = queued.customInstructionKeyframes;
+                        copy.boneAnimations = mergedBones;
+                        newQueue.add(copy);
                     }
                 }
-                if (ctrl.currentAnimation != null) {
-                    ctrl.currentAnimation.boneAnimations = mergedBones;
-                }
+                ctrl.animationQueue = newQueue;
             }
         }
     }

@@ -41,6 +41,11 @@ public class ExtraWheelData {
         for (RawYsmModel.ExtraAnimationClassify classify : raw.properties.extraAnimationClassifies) {
             if (StringUtils.isNotBlank(classify.id)) {
                 classifies.put(classify.id, new LinkedHashMap<>(classify.extras));
+                // Add classify as a navigable submenu entry if not already present
+                String key = "#" + classify.id;
+                if (!entries.containsKey(key)) {
+                    entries.put(key, classify.id);
+                }
             }
         }
 

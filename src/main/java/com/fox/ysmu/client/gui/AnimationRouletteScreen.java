@@ -37,6 +37,8 @@ public class AnimationRouletteScreen extends GuiScreen {
     // Config panel state
     private ExtraAnimationButton currentConfigGroup;
     private int configScrollOffset;
+    /** Whether wheel animations are locked (not interrupted by walk/run/fly). */
+    private static final String LOCK_VAR = "lock_wheel";
 
     @Override
     public void initGui() {
@@ -81,11 +83,33 @@ public class AnimationRouletteScreen extends GuiScreen {
     public void drawScreen(int pMouseX, int pMouseY, float pPartialTick) {
         if (currentConfigGroup != null) {
             drawConfigPanel(pMouseX, pMouseY);
+            // Handle slider dragging: track left mouse button held on range sliders
+            if (org.lwjgl.input.Mouse.isButtonDown(0)) {
+                int panelX = width / 2 - 100;
+                int panelW = 200;
+                int startY = 60 - configScrollOffset;
+                for (int i = 0; i < currentConfigGroup.forms.size(); i++) {
+                    ConfigForm form = currentConfigGroup.forms.get(i);
+                    if (!"range".equals(form.type)) continue;
+                    int fy = startY + getFormY(i);
+                    int sliderY = fy + 28;
+                    if (pMouseY >= sliderY - 6 && pMouseY <= sliderY + 6
+                        && pMouseX >= panelX && pMouseX <= panelX + panelW) {
+                        handleRangeChange(i, pMouseX, panelX, panelW);
+                        break;
+                    }
+                }
+            }
             return;
         }
         List<Map.Entry<String, String>> pageEntries = getPageEntries();
         drawRoulette(pMouseX, pMouseY, pageEntries);
         drawRouletteText(pageEntries);
+        // Draw center lock button using ASCII-safe symbols
+        boolean locked = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault(LOCK_VAR, 0.0) > 0;
+        String lockIcon = locked ? "[x]" : "[ ]";
+        int lockColor = locked ? 0xFFB100 : 0x666666;
+        drawCenteredString(fontRendererObj, lockIcon + " Lock", x, y - fontRendererObj.FONT_HEIGHT / 2, lockColor);
     }
 
     @Override
@@ -146,7 +170,19 @@ public class AnimationRouletteScreen extends GuiScreen {
                     triggerExtra(key);
                 }
             }
-        } else if (pButton == 1) {
+        }
+        // Center area (0-25): lock toggle on left click
+        if (pButton == 0 && distance < INNER_RING_MIN) {
+            boolean locked = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault(LOCK_VAR, 0.0) > 0;
+            boolean newLocked = !locked;
+            OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(LOCK_VAR, newLocked ? 1.0 : 0.0);
+            if (!newLocked) {
+                OpenYsmPlayerControllerRuntime.PENDING_ROAMING.remove("wheel_anim");
+                com.fox.ysmu.client.animation.AnimationManager.setCurrentWheelAnimName(null);
+            }
+            mc.getSoundHandler().playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
+        }
+        if (pButton == 1) {
             if (currentConfigGroup != null) {
                 currentConfigGroup = null;
             } else if (!navigationStack.isEmpty()) {
@@ -226,6 +262,10 @@ public class AnimationRouletteScreen extends GuiScreen {
         if (mc != null) {
             mc.getSoundHandler().playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
             String animName = key.startsWith("extra") ? key : key;
+            // Set client-side flag so predicateMain can detect active wheel anim
+            OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("wheel_anim", 1.0);
+            // Store the animation name for direct client-side playback via predicateCap
+            com.fox.ysmu.client.animation.AnimationManager.setCurrentWheelAnimName(animName);
             NetworkHandler.CHANNEL.sendToServer(new SetPlayAnimation(animName));
             if (mc.thePlayer != null && Config.PRINT_ANIMATION_ROULETTE_MSG) {
                 mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
@@ -521,6 +561,18 @@ public class AnimationRouletteScreen extends GuiScreen {
             }
             drawFan(tessellator, INNER_RING_MIN, INNER_RING_MAX, startDeg, endDeg, innerColor);
             drawFan(tessellator, INNER_RING_MAX, 105, startDeg, endDeg, outerColor);
+            // Draw config panel indicator on inner ring
+            if (i < pageEntries.size()) {
+                Map.Entry<String, String> entry = pageEntries.get(i);
+                if (entry.getValue() != null && entry.getValue().startsWith(SUBMENU_PREFIX)) {
+                    float midAngle = (startDeg + endDeg) / 2;
+                    int cx = (int) (x + (INNER_RING_MIN + INNER_RING_MAX) / 2 * MathHelper.cos(midAngle));
+                    int cy = (int) (y + (INNER_RING_MIN + INNER_RING_MAX) / 2 * MathHelper.sin(midAngle));
+                    GL11.glEnable(GL11.GL_TEXTURE_2D);
+                    drawCenteredString(fontRendererObj, "\u2699", cx, cy - 3, 0xFFB100);
+                    GL11.glDisable(GL11.GL_TEXTURE_2D);
+                }
+            }
         }
         GL11.glEnable(GL11.GL_TEXTURE_2D);
         GL11.glDisable(GL11.GL_BLEND);

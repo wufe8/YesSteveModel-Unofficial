@@ -38,6 +38,9 @@ public final class AnimationManager {
     /** True when the main controller body animation is handled by the legacy system
         (no player.main OpenYSM controller match). */
     public static volatile boolean legacyBodyActive = false;
+    /** Current wheel animation name set by the wheel GUI, null when none active.
+        Used for client-side playback without waiting for EEP server sync. */
+    public static volatile String currentWheelAnim = null;
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
@@ -70,6 +73,14 @@ public final class AnimationManager {
             MANAGER = new AnimationManager();
         }
         return MANAGER;
+    }
+
+    public static void setCurrentWheelAnimName(String name) {
+        currentWheelAnim = name;
+    }
+
+    public static String getCurrentWheelAnimName() {
+        return currentWheelAnim;
     }
 
     @NotNull
@@ -200,7 +211,14 @@ public final class AnimationManager {
         if (dismountAnim.containsKey(player.getUniqueID())) {
             return PlayState.STOP;
         }
-        // extra轮盘动画重载 仅测试用
+        // extra轮盘动画重载 — 客户端本地 wheel 动画名（仅在 lock 开启时生效）
+        if (OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) > 0
+            && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
+            String wheelAnimName = getCurrentWheelAnimName();
+            if (wheelAnimName != null) {
+                return playAnimation(event, wheelAnimName);
+            }
+        }
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
             String anim = eep.getAnimation();
@@ -242,6 +260,13 @@ public final class AnimationManager {
             .getPlayer();
         if (player == null) {
             return PlayState.STOP;
+        }
+        // When wheel lock is active and a wheel animation is playing, force idle
+        // to keep legs in a natural pose instead of T-pose. The cap_controller's
+        // wheel animation overrides upper body bones.
+        if (OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) > 0
+            && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
+            return playLoopAnimation(event, "idle");
         }
         // 追踪骑乘状态变化用于下马检测
         UUID dismountId = player.getUniqueID();
