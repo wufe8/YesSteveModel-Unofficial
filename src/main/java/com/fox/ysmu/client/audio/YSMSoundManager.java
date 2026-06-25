@@ -1,23 +1,15 @@
 package com.fox.ysmu.client.audio;
 
-import java.awt.image.BufferedImage;
-import java.io.FileNotFoundException;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Collections;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.audio.PositionedSoundRecord;
-import net.minecraft.client.resources.FallbackResourceManager;
-import net.minecraft.client.resources.IResourcePack;
-import net.minecraft.client.resources.SimpleReloadableResourceManager;
-import net.minecraft.client.resources.data.IMetadataSection;
-import net.minecraft.client.resources.data.IMetadataSerializer;
+import net.minecraft.client.audio.SoundHandler;
+import net.minecraft.client.audio.SoundManager;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
@@ -27,16 +19,14 @@ import com.fox.ysmu.ysmu;
 
 /**
  * YSM 模型自定义音效管理器。
- * 将 OGG 文件提取到缓存目录，通过注入自定义 IResourcePack
- * 使 Minecraft 音效系统可直接播放模型音效。
+ * 利用反射直接通过 paulscode SoundSystem 播放缓存的 OGG 文件，
+ * 绕开 1.7.10 残缺的 SoundRegistry 资源加载流程。
  */
 public final class YSMSoundManager {
 
     private static final Path SOUND_CACHE = ServerModelManager.CACHE.resolve("sounds");
-    private static final String SOUND_DOMAIN = "ysm_sounds";
-    /** 音效名（动画/控制器中的 effect 值）→ 缓存文件名 */
-    private static final Map<String, String> SOUND_FILES = new ConcurrentHashMap<>();
-    private static volatile boolean packInjected = false;
+    private static final Map<String, Path> SOUND_FILES = new ConcurrentHashMap<>();
+    private static volatile java.util.concurrent.atomic.AtomicInteger sourceCounter = new java.util.concurrent.atomic.AtomicInteger(0);
 
     private YSMSoundManager() {}
 
@@ -53,171 +43,177 @@ public final class YSMSoundManager {
         for (Map.Entry<String, RawYsmModel.RawDataFile> e : raw.soundFiles.entrySet()) {
             String name = e.getKey();
             RawYsmModel.RawDataFile sf = e.getValue();
-            if (sf == null || sf.data == null || sf.data.length == 0) {
-                ysmu.LOG.debug("[YSM Sound]  skip empty soundFile '{}'", name);
-                continue;
-            }
+            if (sf == null || sf.data == null || sf.data.length == 0) continue;
             String hash = sf.hash.length() > 8 ? sf.hash.substring(0, 8) : sf.hash;
             String file = sanitize(name) + "_" + hash + ".ogg";
             Path path = SOUND_CACHE.resolve(file);
             try {
                 if (!Files.exists(path)) Files.write(path, sf.data);
-                SOUND_FILES.put(name, file);
+                SOUND_FILES.put(name, path);
                 ysmu.LOG.info("[YSM Sound]  cached '{}' → {} ({} bytes)", name, file, sf.data.length);
             } catch (IOException ex) {
                 ysmu.LOG.warn("Failed to cache sound {}: {}", name, ex.getMessage());
             }
         }
-        injectPack();
     }
 
     public static void playSound(EntityPlayer player, String soundName, float volume, float pitch) {
         if (soundName == null || soundName.isEmpty()) return;
-        Minecraft mc = Minecraft.getMinecraft();
-        ysmu.LOG.info("[YSM Sound] playSound called: '{}' (vol={}, pitch={})", soundName, volume, pitch);
-        // Try model sound via our custom resource pack domain
-        if (SOUND_FILES.containsKey(soundName)) {
-            String s = sanitize(soundName);
-            ResourceLocation loc = new ResourceLocation(SOUND_DOMAIN, s);
-            ysmu.LOG.info("[YSM Sound]  playing model sound as {}", loc);
-            mc.getSoundHandler().playSound(
-                PositionedSoundRecord.func_147674_a(loc, volume));
+        // Try model sound
+        Path file = SOUND_FILES.get(soundName);
+        if (file != null) {
+            playOggDirect(file, volume, pitch);
             return;
         }
-        // Try vanilla
+        // Try vanilla sound
         if (soundName.contains(":")) {
-            ResourceLocation loc = new ResourceLocation(soundName);
-            ysmu.LOG.info("[YSM Sound]  playing vanilla sound as {}", loc);
+            Minecraft mc = Minecraft.getMinecraft();
             mc.getSoundHandler().playSound(
-                PositionedSoundRecord.func_147674_a(loc, volume));
-            return;
+                PositionedSoundRecord.func_147674_a(new ResourceLocation(soundName), volume));
         }
-        ysmu.LOG.warn("[YSM Sound]  sound '{}' not found in SOUND_FILES (keys={})", soundName, SOUND_FILES.keySet());
     }
 
     public static void playSoundAtPlayer(String soundName) {
         Minecraft mc = Minecraft.getMinecraft();
-        ysmu.LOG.info("[YSM Sound] playSoundAtPlayer: '{}'", soundName);
         if (mc.thePlayer != null) playSound(mc.thePlayer, soundName, 1.0f, 1.0f);
-        else ysmu.LOG.warn("[YSM Sound]  mc.thePlayer is null, cannot play");
     }
 
-    public static void clear() { SOUND_FILES.clear(); packInjected = false; }
+    public static void clear() { SOUND_FILES.clear(); }
 
     private static String sanitize(String n) {
-        return n.replaceAll("[^a-z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT);
+        return n.replaceAll("[^a-zA-Z0-9._-]", "_").toLowerCase(java.util.Locale.ROOT);
     }
 
-    // ── Custom resource pack injection ──────────────────────────
-
+    /**
+     * 通过反射直接操作 Minecraft 的 SoundManager.sndSystem 播放 OGG。
+     * 1.7.10 中 sndSystem 字段实际类型是 ISoundSystem（内部接口），
+     * 它的 func_148692_a_ 方法接受 ResourceLocation 参数。
+     */
     @SuppressWarnings("unchecked")
-    private static void injectPack() {
-        if (packInjected) return;
+    private static void playOggDirect(Path oggPath, float volume, float pitch) {
         try {
             Minecraft mc = Minecraft.getMinecraft();
-            if (!(mc.getResourceManager() instanceof SimpleReloadableResourceManager)) return;
-            SimpleReloadableResourceManager rm = (SimpleReloadableResourceManager) mc.getResourceManager();
-            // Reflection: get domainResourceManagers map
-            java.lang.reflect.Field f = null;
-            for (java.lang.reflect.Field ff : SimpleReloadableResourceManager.class.getDeclaredFields()) {
-                if (Map.class.isAssignableFrom(ff.getType())) { f = ff; break; }
+            SoundHandler sh = mc.getSoundHandler();
+            // Get SoundManager from SoundHandler
+            java.lang.reflect.Field sndF = null;
+            for (java.lang.reflect.Field f : SoundHandler.class.getDeclaredFields()) {
+                if (SoundManager.class.isAssignableFrom(f.getType())) { sndF = f; break; }
             }
-            if (f == null) return;
-            f.setAccessible(true);
-            Map<String, FallbackResourceManager> domains = (Map<String, FallbackResourceManager>) f.get(rm);
-            FallbackResourceManager fbr = domains.get(SOUND_DOMAIN);
-            if (fbr == null) {
-                // Get IMetadataSerializer from any existing domain manager
-                IMetadataSerializer metaSer = null;
-                for (FallbackResourceManager existing : domains.values()) {
-                    try {
-                        java.lang.reflect.Field metaF = FallbackResourceManager.class.getDeclaredFields()[1];
-                        metaF.setAccessible(true);
-                        metaSer = (IMetadataSerializer) metaF.get(existing);
+            if (sndF == null) { ysmu.LOG.warn("[YSM Sound] Cannot find SoundManager field"); return; }
+            sndF.setAccessible(true);
+            SoundManager sndMgr = (SoundManager) sndF.get(sh);
+
+            // -- DEBUG: dump all SoundManager fields --
+            ysmu.LOG.info("[YSM Sound] SoundManager class={}", sndMgr.getClass().getName());
+            for (java.lang.reflect.Field f : SoundManager.class.getDeclaredFields()) {
+                f.setAccessible(true);
+                Object val = f.get(sndMgr);
+                String typeName = (val == null) ? "null" : val.getClass().getName();
+                ysmu.LOG.info("[YSM Sound]  field '{}' type={} → {}", f.getName(), f.getType().getName(), typeName);
+            }
+
+            // Try to find sndSystem by common field names
+            String[] candidateNames = {"sndSystem", "field_148617_c", "field_148614_b", "sndManager"};
+            Object sndSystem = null;
+            for (String name : candidateNames) {
+                try {
+                    java.lang.reflect.Field f = SoundManager.class.getDeclaredField(name);
+                    f.setAccessible(true);
+                    sndSystem = f.get(sndMgr);
+                    if (sndSystem != null) {
+                        ysmu.LOG.info("[YSM Sound] Found sndSystem via field name '{}': {}", name, sndSystem.getClass().getName());
                         break;
-                    } catch (Exception ignored) {}
-                }
-                if (metaSer == null) {
-                    // Last resort: get from SimpleReloadableResourceManager
-                    for (java.lang.reflect.Field ff : SimpleReloadableResourceManager.class.getDeclaredFields()) {
-                        if (IMetadataSerializer.class.isAssignableFrom(ff.getType())) {
-                            ff.setAccessible(true);
-                            metaSer = (IMetadataSerializer) ff.get(rm);
-                            break;
+                    }
+                } catch (NoSuchFieldException ignored) {}
+            }
+            if (sndSystem == null) {
+                ysmu.LOG.warn("[YSM Sound] Cannot find sndSystem field by any name");
+                return;
+            }
+
+            // -- Try to use Minecraft's internal playSound method via reflection --
+            // SoundManager has a private method: playSound(SoundPoolEntry, float, float, double, double, double, boolean)
+            // We can create a SoundPoolEntry with our file path and call this method
+            String absPath = oggPath.toAbsolutePath().toString();
+            ysmu.LOG.info("[YSM Sound]  absPath={}", absPath);
+
+            // Method 1: Try func_148692_a_ on sndSystem (ISoundSystem method, takes ResourceLocation)
+            try {
+                String srcName = "ysm_" + sourceCounter.incrementAndGet();
+                float px = (float) mc.thePlayer.posX;
+                float py = (float) mc.thePlayer.posY;
+                float pz = (float) mc.thePlayer.posZ;
+                // Use ResourceLocation with file:// protocol
+                ResourceLocation fileLoc = new ResourceLocation("ysm_sounds", oggPath.getFileName().toString().replace(".ogg", ""));
+                // Try func_148692_a_(String name, ResourceLocation loc, ...)
+                // OR newSource(String name, ResourceLocation loc, ...)
+                // The ISoundSystem interface has: void func_148692_a_(String name, ResourceLocation loc, boolean stream, double x, double y, double z, int attmodel, float distOrRoll)
+                java.lang.reflect.Method m = null;
+                try {
+                    m = sndSystem.getClass().getMethod("func_148692_a_", String.class, ResourceLocation.class, boolean.class, double.class, double.class, double.class, int.class, float.class);
+                } catch (NoSuchMethodException e1) {
+                    try {
+                        m = sndSystem.getClass().getMethod("newSource", boolean.class, String.class, ResourceLocation.class, boolean.class, double.class, double.class, double.class, int.class, float.class);
+                    } catch (NoSuchMethodException e2) {
+                        // list all methods
+                        StringBuilder sb = new StringBuilder();
+                        for (java.lang.reflect.Method mm : sndSystem.getClass().getMethods()) {
+                            sb.append(mm.getName()).append("(");
+                            Class<?>[] pts = mm.getParameterTypes();
+                            for (int i = 0; i < pts.length; i++) {
+                                if (i > 0) sb.append(",");
+                                sb.append(pts[i].getSimpleName());
+                            }
+                            sb.append(") ");
                         }
+                        ysmu.LOG.info("[YSM Sound] Available methods on sndSystem: {}", sb.toString());
+                        throw e2;
                     }
                 }
-                fbr = new FallbackResourceManager(metaSer);
-                domains.put(SOUND_DOMAIN, fbr);
+                if (m != null) {
+                    m.invoke(sndSystem, false, srcName, fileLoc, false, (double) px, (double) py, (double) pz, 2, 16.0);
+                    sndSystem.getClass().getMethod("setPitch", String.class, float.class).invoke(sndSystem, srcName, pitch);
+                    sndSystem.getClass().getMethod("setVolume", String.class, float.class).invoke(sndSystem, srcName, volume);
+                    sndSystem.getClass().getMethod("play", String.class).invoke(sndSystem, srcName);
+                    ysmu.LOG.info("[YSM Sound] ISoundSystem method succeeded: {} as {}", oggPath.getFileName(), srcName);
+                    return;
+                }
+            } catch (Exception e) {
+                ysmu.LOG.info("[YSM Sound] ISoundSystem method failed: {}", e.getMessage());
             }
-            // Get pack list from FallbackResourceManager
-            java.lang.reflect.Field listF = null;
-            for (java.lang.reflect.Field ff : FallbackResourceManager.class.getDeclaredFields()) {
-                if (java.util.List.class.isAssignableFrom(ff.getType())) { listF = ff; break; }
+
+            // Method 2: Direct paulscode SoundSystem.newSource with file:/// URL
+            try {
+                String srcName = "ysm_" + sourceCounter.incrementAndGet();
+                float px = (float) mc.thePlayer.posX;
+                float py = (float) mc.thePlayer.posY;
+                float pz = (float) mc.thePlayer.posZ;
+                java.net.URL url = oggPath.toUri().toURL();
+                String urlStr = url.toString();
+                ysmu.LOG.info("[YSM Sound]  Trying paulscode newSource with URL: {}", urlStr);
+                sndSystem.getClass().getMethod("newSource", boolean.class, String.class,
+                    java.net.URL.class, String.class, boolean.class, float.class, float.class,
+                    float.class, int.class, float.class)
+                    .invoke(sndSystem, false, srcName, url, urlStr, false, px, py, pz, 0, 16f);
+                sndSystem.getClass().getMethod("setPitch", String.class, float.class)
+                    .invoke(sndSystem, srcName, pitch);
+                sndSystem.getClass().getMethod("setVolume", String.class, float.class)
+                    .invoke(sndSystem, srcName, volume);
+                sndSystem.getClass().getMethod("play", String.class).invoke(sndSystem, srcName);
+                // Follow Minecraft's ordering: setPitch/setVolume BEFORE play
+                ysmu.LOG.info("[YSM Sound] paulscode URL method succeeded: {} as {}", oggPath.getFileName(), srcName);
+                return;
+            } catch (Exception e) {
+                ysmu.LOG.warn("[YSM Sound] paulscode URL method also failed: {}", e.getMessage());
             }
-            if (listF != null) {
-                listF.setAccessible(true);
-                java.util.List<IResourcePack> packs = (java.util.List<IResourcePack>) listF.get(fbr);
-                boolean exists = packs.stream().anyMatch(p -> p instanceof YsmSoundPack);
-                if (!exists) packs.add(new YsmSoundPack());
-            }
-            packInjected = true;
-            ysmu.LOG.info("[YSM Sound] Resource pack injected for domain '{}', SOUND_FILES={}", SOUND_DOMAIN, SOUND_FILES);
         } catch (Exception e) {
-            ysmu.LOG.warn("Failed to inject sound pack: {}", e.getMessage());
+            ysmu.LOG.warn("[YSM Sound] DirectSound failed: {}", e.getMessage());
         }
     }
 
-    /** Serves OGG files from the YSM sound cache directory. */
-    private static class YsmSoundPack implements IResourcePack {
-        @Override
-        public InputStream getInputStream(ResourceLocation loc) throws IOException {
-            ysmu.LOG.info("[YSM SoundPack] getInputStream called: {}", loc);
-            if (!SOUND_DOMAIN.equals(loc.getResourceDomain()))
-                throw new FileNotFoundException(loc.toString());
-            String p = loc.getResourcePath();
-            if (p.startsWith("sounds/")) p = p.substring(7);
-            if (!p.endsWith(".ogg")) p += ".ogg";
-            ysmu.LOG.info("[YSM SoundPack]  resolved path = '{}'", p);
-            // Try exact match first
-            Path file = SOUND_CACHE.resolve(p);
-            if (Files.exists(file)) {
-                ysmu.LOG.info("[YSM SoundPack]  exact match: {}", file);
-                return Files.newInputStream(file);
-            }
-            // Try prefix match: requested name might be without hash suffix
-            String baseName = p.contains(".ogg") ? p.substring(0, p.length() - 4) : p;
-            for (String v : SOUND_FILES.values()) {
-                if (v.startsWith(baseName + "_") || v.equals(p) || v.equals(loc.getResourcePath())) {
-                    Path f2 = SOUND_CACHE.resolve(v);
-                    if (Files.exists(f2)) {
-                        ysmu.LOG.info("[YSM SoundPack]  prefix match: {} → {}", v, f2);
-                        return Files.newInputStream(f2);
-                    }
-                }
-            }
-            ysmu.LOG.warn("[YSM SoundPack]  NOT FOUND. SOUND_FILES values: {}", SOUND_FILES.values());
-            throw new FileNotFoundException("YSM sound: " + loc);
-        }
-        @Override public boolean resourceExists(ResourceLocation loc) {
-            if (!SOUND_DOMAIN.equals(loc.getResourceDomain())) return false;
-            String p = loc.getResourcePath();
-            if (p.startsWith("sounds/")) p = p.substring(7);
-            if (!p.endsWith(".ogg")) p += ".ogg";
-            if (Files.exists(SOUND_CACHE.resolve(p))) return true;
-            String baseName = p.contains(".ogg") ? p.substring(0, p.length() - 4) : p;
-            boolean found = SOUND_FILES.values().stream().anyMatch(v -> v.startsWith(baseName + "_"));
-            ysmu.LOG.info("[YSM SoundPack] resourceExists({}): {} (resolved='{}')", loc, found, p);
-            return found;
-        }
-        @Override public Set<String> getResourceDomains() { return Collections.singleton(SOUND_DOMAIN); }
-        @Override public IMetadataSection getPackMetadata(IMetadataSerializer s, String k) {
-            ysmu.LOG.info("[YSM SoundPack] getPackMetadata({})", k);
-            return null;
-        }
-        @Override public String getPackName() { return "ysm_sounds"; }
-        @Override public BufferedImage getPackImage() throws IOException {
-            throw new FileNotFoundException("No pack image for YSM sounds");
-        }
+    /** Plays a model sound via the SoundSystem. */
+    public static void playOggDirect(String soundName) {
+        Path file = SOUND_FILES.get(soundName);
+        if (file != null) playOggDirect(file, 1.0f, 1.0f);
     }
 }
