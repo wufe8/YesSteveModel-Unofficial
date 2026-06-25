@@ -63,6 +63,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
         }
 
         parseGlobalResources();
+        populateExtraAnimationsFromLang();
         this.finalFolderHash = calculateFinalFolderHash();
         this.model.properties.sha256 = this.finalFolderHash;
         this.model.footer.version = 65535;
@@ -690,6 +691,43 @@ public class YSMFolderDeserializer implements AutoCloseable {
         }
         if (!hasPng) {
             throw new IOException("OpenYSM model requires at least one PNG player texture");
+        }
+    }
+
+    /**
+     * Fallback: if ysm.json does not define an extra_animation section, populate
+     * extraAnimations from language file entries (old-style roulette).
+     * Keys follow the pattern "properties.extra_animation.extraN" (extra0–extra7).
+     * Uses the same locale preference as RawYsmModelAdapter.getExtraAnimationNames().
+     */
+    private void populateExtraAnimationsFromLang() {
+        if (!this.model.properties.extraAnimations.isEmpty()) {
+            return; // already populated from ysm.json
+        }
+        String[] locales = { "en_us", "en_US", "zh_cn", "zh_CN" };
+        for (int i = 0; i < 8; i++) {
+            String key = "properties.extra_animation.extra" + i;
+            String value = null;
+            // Try preferred locales first
+            for (String locale : locales) {
+                RawYsmModel.RawLanguageFile lang = this.model.languageFiles.get(locale);
+                if (lang != null && lang.data.containsKey(key)) {
+                    value = lang.data.get(key);
+                    break;
+                }
+            }
+            // Fallback: search all language files
+            if (value == null) {
+                for (RawYsmModel.RawLanguageFile lang : this.model.languageFiles.values()) {
+                    if (lang.data.containsKey(key)) {
+                        value = lang.data.get(key);
+                        break;
+                    }
+                }
+            }
+            if (value != null) {
+                this.model.properties.extraAnimations.put("extra" + i, value);
+            }
         }
     }
 

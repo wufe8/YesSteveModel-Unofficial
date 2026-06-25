@@ -345,7 +345,12 @@ public final class RawYsmModelAdapter {
     }
 
     private static String[] getExtraAnimationNames(RawYsmModel raw) {
+        // If extraAnimations is empty, attempt fallback from language files (old-style roulette)
         if (raw.properties.extraAnimations.isEmpty()) {
+            String[] fallback = getExtraAnimationNamesFromLang(raw);
+            if (fallback.length > 0) {
+                return fallback;
+            }
             return new String[0];
         }
         String[] names = new String[EXTRA_ANIMATION_SLOT_COUNT];
@@ -367,6 +372,24 @@ public final class RawYsmModelAdapter {
             }
             names[i] = label;
             hasAny = true;
+        }
+        return hasAny ? names : new String[0];
+    }
+
+    /**
+     * Fallback: read extra animation names directly from language files when
+     * extraAnimations is empty (old-style models that only define names in lang).
+     */
+    private static String[] getExtraAnimationNamesFromLang(RawYsmModel raw) {
+        String[] names = new String[EXTRA_ANIMATION_SLOT_COUNT];
+        boolean hasAny = false;
+        for (int i = 0; i < EXTRA_ANIMATION_SLOT_COUNT; i++) {
+            String lookupKey = "properties.extra_animation.extra" + i;
+            String label = getLocalizedValue(raw, lookupKey);
+            if (StringUtils.isNotBlank(label)) {
+                names[i] = label;
+                hasAny = true;
+            }
         }
         return hasAny ? names : new String[0];
     }
