@@ -39,6 +39,10 @@ public class AnimationRouletteScreen extends GuiScreen {
     private int configScrollOffset;
     /** Whether wheel animations are locked (not interrupted by walk/run/fly). */
     private static final String LOCK_VAR = "lock_wheel";
+    /** Current preview yaw (radians, set by clicking on config panel). */
+    private boolean draggingPreview = false;
+    private int previewDragStartX;
+    private float previewYawDeg = 25f; // 3/4 view default
 
     @Override
     public void initGui() {
@@ -93,11 +97,13 @@ public class AnimationRouletteScreen extends GuiScreen {
 
         if (currentConfigGroup != null) {
             drawConfigPanel(pMouseX, pMouseY);
-            // Handle slider dragging: track left mouse button held on range sliders
+            // Handle slider dragging + preview drag rotation
             if (org.lwjgl.input.Mouse.isButtonDown(0)) {
+                boolean handled = false;
                 int panelX = width / 2 - 100;
                 int panelW = 200;
                 int startY = 60 - configScrollOffset;
+                // Slider drag (range controls)
                 for (int i = 0; i < currentConfigGroup.forms.size(); i++) {
                     ConfigForm form = currentConfigGroup.forms.get(i);
                     if (!"range".equals(form.type)) continue;
@@ -106,9 +112,26 @@ public class AnimationRouletteScreen extends GuiScreen {
                     if (pMouseY >= sliderY - 6 && pMouseY <= sliderY + 6
                         && pMouseX >= panelX && pMouseX <= panelX + panelW) {
                         handleRangeChange(i, pMouseX, panelX, panelW);
+                        handled = true;
                         break;
                     }
                 }
+                // Preview drag (1.7.10 lacks mouseClickMove, so we track in drawScreen)
+                if (!handled) {
+                    int prevX = width / 2 - 190, prevY = 70;
+                    boolean inPrev = pMouseX >= prevX && pMouseX < prevX + 80
+                        && pMouseY >= prevY && pMouseY < prevY + 120;
+                    if (draggingPreview) {
+                        float delta = (float)(pMouseX - previewDragStartX) * 2.5f;
+                        previewYawDeg += delta;
+                        previewDragStartX = pMouseX;
+                    } else if (inPrev) {
+                        draggingPreview = true;
+                        previewDragStartX = pMouseX;
+                    }
+                }
+            } else {
+                draggingPreview = false;
             }
         }
     }
@@ -132,6 +155,14 @@ public class AnimationRouletteScreen extends GuiScreen {
     @Override
     protected void mouseClicked(int pMouseX, int pMouseY, int pButton) {
         if (currentConfigGroup != null) {
+            // Check if click is inside the preview area → start drag rotation
+            int previewX = width / 2 - 100 - 90, previewY = 30 + 40;
+            if (pButton == 0 && pMouseX >= previewX && pMouseX < previewX + 80
+                && pMouseY >= previewY && pMouseY < previewY + 120) {
+                draggingPreview = true;
+                previewDragStartX = pMouseX;
+                return;
+            }
             handleConfigClick(pMouseX, pMouseY, pButton);
             return;
         }
@@ -157,6 +188,11 @@ public class AnimationRouletteScreen extends GuiScreen {
                     if (wd != null && wd.configButtons.containsKey(btnId)) {
                         currentConfigGroup = wd.configButtons.get(btnId);
                         configScrollOffset = 0;
+                        // Initial preview angle: player yaw already includes 180°
+                        // to face the camera; add a small offset for a 3/4 view.
+                        if (mc != null && mc.thePlayer != null) {
+                            previewYawDeg = mc.thePlayer.rotationYaw + 20.0f;
+                        }
                         return;
                     }
                 }
@@ -449,13 +485,27 @@ public class AnimationRouletteScreen extends GuiScreen {
                 previewW * scale, previewH * scale);
             // 半透明预览背景框
             drawRect(previewX, previewY, previewX + previewW, previewY + previewH, 0x66000000);
-            com.fox.ysmu.util.RenderUtil.renderPlayerEntity(
-                mc.thePlayer,
-                previewX + previewW / 2.0,
-                previewY + previewH - 10,
-                45.0f,
-                5.0f,
-                100.0);
+            // Use CustomPlayerRenderer directly (not RenderManager) so the
+            // YSM model is rendered in the preview, not the vanilla player.
+            // CustomPlayerRenderer preview — position at center-bottom of
+            // the preview pane, pulled back (z > 0).  Rotate so the model
+            // faces the camera (player yaw + 180°), overridden by drag.
+            com.fox.ysmu.util.RenderUtil.withGuiEntityLighting(() -> {
+                GL11.glPushMatrix();
+                com.fox.ysmu.client.renderer.CustomPlayerRenderer cpr =
+                    com.fox.ysmu.client.ClientProxy.getInstance();
+                float s = 45.0f;
+                float cx = (float)(previewX + previewW / 2.0);
+                float cy = (float)(previewY + previewH - 10);
+                GL11.glTranslatef(cx, cy, 150.0f);
+                GL11.glScalef(-s, s, s);
+                GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F);
+                GL11.glRotatef(previewYawDeg, 0.0F, 1.0F, 0.0F);
+                try {
+                    cpr.doRender(mc.thePlayer, 0, 0, 0, 0, 1.0F);
+                } catch (Exception ignored) {}
+                GL11.glPopMatrix();
+            });
             GL11.glDisable(GL11.GL_SCISSOR_TEST);
         }
 
