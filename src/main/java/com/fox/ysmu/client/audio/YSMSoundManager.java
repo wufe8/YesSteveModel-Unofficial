@@ -198,29 +198,69 @@ public final class YSMSoundManager {
         return null;
     }
 
+    /** Check that the file is an OGG container with Vorbis audio.
+     *  Reads the OGG page header + segment table, then looks for "vorbis"
+     *  at the start of the first packet. Files that pass OggS check but lack
+     *  Vorbis data (e.g. OGG FLAC/Opus) will crash CodecJOrbis. */
+    private static boolean isValidOgg(Path path) {
+        try (java.io.InputStream is = java.nio.file.Files.newInputStream(path)) {
+            byte[] hdr = new byte[4];
+            if (is.read(hdr) != 4 || hdr[0] != 'O' || hdr[1] != 'g' || hdr[2] != 'g' || hdr[3] != 'S')
+                return false;
+            // Skip stream_structure_version (1), header_type_flag (1), granule_position (8),
+            // bitstream_serial_number (4), page_sequence_number (4), page_checksum (4) = 22 bytes
+            long skipped = is.skip(22);
+            if (skipped < 22) return false;
+            int pageSegments = is.read();
+            if (pageSegments < 0) return false;
+            // Skip segment table (pageSegments bytes)
+            skipped = is.skip(pageSegments);
+            if (skipped < pageSegments) return false;
+            // First packet should be Vorbis identification header: packet_type=1, "vorbis"
+            int packetType = is.read();
+            if (packetType != 1) return false;
+            byte[] vorbis = new byte[6];
+            return is.read(vorbis) == 6
+                && vorbis[0] == 'v' && vorbis[1] == 'o' && vorbis[2] == 'r'
+                && vorbis[3] == 'b' && vorbis[4] == 'i' && vorbis[5] == 's';
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
     /** 通过 SoundSystem 直接播放 OGG */
     private static void playOggDirect(Path oggPath, float volume, float pitch) {
         Object ss = resolveSndSystem();
         if (ss == null) return;
+        // Skip invalid OGG files – passing them to CodecJOrbis can freeze the
+        // SoundSystem background thread.
+        if (!java.nio.file.Files.exists(oggPath) || !isValidOgg(oggPath)) {
+            ysmu.LOG.warn("[YSM Sound] skipping invalid OGG: {}", oggPath);
+            return;
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null) return; // world not fully loaded yet
         try {
-            Minecraft mc = Minecraft.getMinecraft();
             String srcName = "ysm_" + sourceCounter.incrementAndGet();
             float px = (float) mc.thePlayer.posX;
             float py = (float) mc.thePlayer.posY;
             float pz = (float) mc.thePlayer.posZ;
             java.net.URL url = oggPath.toUri().toURL();
 
+            // Use the URL overload with streaming=true to bypass
+            // LibraryLWJGLOpenAL.loadSound() (which uses Java AudioSystem and
+            // doesn't support OGG).  Streaming sources go through CodecJOrbis
+            // directly, which understands Vorbis.
+            java.net.URL absUrl = oggPath.toAbsolutePath().toUri().toURL();
             try {
                 ss.getClass().getMethod("newSource", boolean.class, String.class,
-                    java.net.URL.class, String.class, boolean.class, float.class, float.class,
-                    float.class, int.class, float.class)
-                    .invoke(ss, false, srcName, url, url.toString(), false, px, py, pz, 0, 16f);
+                    java.net.URL.class, String.class, boolean.class, float.class,
+                    float.class, float.class, int.class, float.class)
+                    .invoke(ss, false, srcName, absUrl, absUrl.toString(),
+                        true, px, py, pz, 0, 16f);
             } catch (NoSuchMethodException e) {
-                // Fallback: String filename version
-                ss.getClass().getMethod("newSource", boolean.class, String.class,
-                    String.class, boolean.class, float.class, float.class, float.class,
-                    int.class, float.class)
-                    .invoke(ss, false, srcName, oggPath.toAbsolutePath().toString(), false, px, py, pz, 0, 16f);
+                ysmu.LOG.warn("[YSM Sound] newSource(URL) not available");
+                return;
             }
             // Set pitch/volume before play (Minecraft's order)
             try { ss.getClass().getMethod("setPitch", String.class, float.class).invoke(ss, srcName, pitch); } catch (NoSuchMethodException ignored) {}

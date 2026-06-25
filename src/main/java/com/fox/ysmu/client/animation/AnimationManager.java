@@ -43,6 +43,10 @@ public final class AnimationManager {
     /** Current wheel animation name set by the wheel GUI, null when none active.
         Used for client-side playback without waiting for EEP server sync. */
     public static volatile String currentWheelAnim = null;
+    /** Incremented each time the wheel animation is (re)set, so predicateCap can
+        detect user interaction and force keyframe reset on the cap controller. */
+    private static volatile int wheelAnimVersion = 0;
+    private static int lastWheelAnimVersion = 0;
     /**
      * 从模型的 .molang 函数文件（如 @player_ctrl_pre_main.molang）中提取的
      * ctrl.<state> → 动画名 映射。key=模型 ResourceLocation, value=state→animName。
@@ -93,6 +97,7 @@ public final class AnimationManager {
 
     public static void setCurrentWheelAnimName(String name) {
         currentWheelAnim = name;
+        wheelAnimVersion++; // signal predicateCap to reset keyframes
     }
 
     public static String getCurrentWheelAnimName() {
@@ -294,14 +299,18 @@ public final class AnimationManager {
         return controllerState == null ? PlayState.STOP : controllerState;
     }
 
+    /** Tracks whether predicateCap was playing an animation last frame.
+     *  When it transitions from CONTINUE to STOP, we clean up cap sounds. */
+    private static boolean capWasPlaying = false;
+
     public PlayState predicateCap(AnimationEvent<CustomPlayerEntity> event) {
         CustomPlayerEntity animatable = event.getAnimatable();
         EntityPlayer player = animatable.getPlayer();
         if (player == null) {
-            // Only play the preview animation when not in a game world
-            // (e.g. model preview GUI). During world load, player may be null
-            // briefly, and playing the preview animation would set its bone
-            // keyframes (e.g. huge GUI decoration scales) onto the model.
+            // GUI preview render path (e.g. player icon in corner).  The preview
+            // entity has no real player, and its controller shares the same name
+            // as the main player's cap_controller.  Do NOT call stopController
+            // here — that would yank the main player's sound mapping every frame.
             if (animatable.hasPreviewAnimation()
                 && Minecraft.getMinecraft().theWorld == null) {
                 return playLoopAnimation(event, animatable.getPreviewAnimation());
@@ -309,22 +318,47 @@ public final class AnimationManager {
             return PlayState.STOP;
         }
         if (dismountAnim.containsKey(player.getUniqueID())) {
+            if (capWasPlaying) {
+                capWasPlaying = false;
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+            }
             return PlayState.STOP;
         }
+        // Force keyframe reset on the cap controller whenever the user clicks
+        // the wheel (version increments in setCurrentWheelAnimName).  This must
+        // run before both the wheel-lock and EEP paths so that sound keyframes
+        // fire again on replay regardless of which code path handles playback.
+        if (lastWheelAnimVersion != wheelAnimVersion) {
+            event.getController().currentAnimationBuilder = new AnimationBuilder();
+            lastWheelAnimVersion = wheelAnimVersion;
+        }
+
         // extra轮盘动画重载 — 客户端本地 wheel 动画名（仅在 lock 开启时生效）
         if (OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) > 0
             && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
             String wheelAnimName = getCurrentWheelAnimName();
             if (wheelAnimName != null) {
+                capWasPlaying = true;
                 return playAnimation(event, wheelAnimName);
             }
         }
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
+            // Without the wheel lock, walking/running overrides the wheel
+            // animation on the main controller.  Stop the cap controller's
+            // EEP animation when the player moves.
+            if (capWasPlaying && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) == 0
+                && (event.isMoving() || !player.onGround)) {
+                eep.stopAnimation();
+                capWasPlaying = false;
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                return PlayState.STOP;
+            }
             String anim = eep.getAnimation();
             if ("extra1".equals(anim)) anim = "extra1";
             else if ("extra2".equals(anim)) anim = "extra2";
             else if ("extra3".equals(anim)) anim = "extra3";
+            capWasPlaying = true;
             return playAnimation(event, anim);
         }
         // 攻击组合技：通过 CAP 播放
@@ -332,13 +366,11 @@ public final class AnimationManager {
         if (combo != null) {
             double animTick = event.getAnimationTick();
             Double startTick = swingComboStartTick.get(player.getUniqueID());
-            // 新 combo 的第一帧：记录开始 tick 和 idle/move 状态（整轮 combo 不变）
             if (startTick == null) {
                 swingComboStartTick.put(player.getUniqueID(), animTick);
                 startTick = animTick;
                 comboIsIdle.put(player.getUniqueID(), !event.isMoving());
             }
-            // 检查动画是否播完（相对 tick >= animation_length）
             Animation curAnim = event.getController().getCurrentAnimation();
             double elapsed = animTick - startTick;
             if (curAnim != null && curAnim.animationLength != null && curAnim.animationLength > 0
@@ -346,10 +378,20 @@ public final class AnimationManager {
                 swingCombo.remove(player.getUniqueID());
                 swingComboStartTick.remove(player.getUniqueID());
                 comboIsIdle.remove(player.getUniqueID());
+                if (capWasPlaying) {
+                    capWasPlaying = false;
+                    com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                }
                 return PlayState.STOP;
             }
             String[] pool = Boolean.TRUE.equals(comboIsIdle.get(player.getUniqueID())) ? ATTACK_COMBO_IDLE : ATTACK_COMBO;
+            capWasPlaying = true;
             return playAnimation(event, pool[(combo - 1 + 3) % 3]);
+        }
+        // No animation matches → cap controller stops → clean up sounds.
+        if (capWasPlaying) {
+            capWasPlaying = false;
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
         }
         return PlayState.STOP;
     }

@@ -74,6 +74,13 @@ public class CommonEventHandler {
     }
 
     @SubscribeEvent
+    public static void onWorldUnload(net.minecraftforge.event.world.WorldEvent.Unload event) {
+        if (event.world.isRemote) {
+            com.fox.ysmu.client.audio.YSMSoundManager.clear();
+        }
+    }
+
+    @SubscribeEvent
     public static void onPlayerTick(TickEvent.PlayerTickEvent event) {
         if (shouldHandleServerEndPlayerTick(event)) {
             syncDirtyMotionState(event.player);

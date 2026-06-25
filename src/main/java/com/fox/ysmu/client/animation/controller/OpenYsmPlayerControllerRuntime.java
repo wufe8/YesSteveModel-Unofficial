@@ -122,6 +122,7 @@ public final class OpenYsmPlayerControllerRuntime {
         State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
         for (int i = 0; i < 4; i++) {
@@ -168,6 +169,7 @@ public final class OpenYsmPlayerControllerRuntime {
             && activeAnimations.contains("sneaking_sky")) {
             runtimeState.wasMoving = true;
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
         // Transition when stopping from moving sneaking.
@@ -211,6 +213,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 runtimeState.lastSelectedAnimation = "";
             }
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
         // Filter to animations that actually exist
@@ -222,17 +225,26 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         if (existing.isEmpty()) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && existing.contains("attack_empty") && existing.size() == 1) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
         if (state.blendTransitionTicks >= 0f) {
             AnimationController<?> ctrl = event.getController();
             ctrl.transitionLengthTicks = state.blendTransitionTicks;
         }
+        // If the animation changed (different from last selected), stop this
+        // controller's sound so it doesn't linger from the previous animation.
+        String prevAnim = StringUtils.isBlank(runtimeState.lastSelectedAnimation)
+            ? null : runtimeState.lastSelectedAnimation;
         applyAnimations(event, runtimeState, state, existing, animationId);
+        if (prevAnim == null || !prevAnim.equals(existing.get(0))) {
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+        }
         return PlayState.CONTINUE;
     }
 
