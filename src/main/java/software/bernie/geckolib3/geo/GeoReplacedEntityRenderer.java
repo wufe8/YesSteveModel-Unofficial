@@ -62,6 +62,7 @@ public abstract class GeoReplacedEntityRenderer<T extends IAnimatable> extends R
         this.renderManager = RenderManager.instance;
         this.modelProvider = modelProvider;
         this.animatable = animatable;
+        this.currentAnimatable = animatable;
     }
 
     public static void registerReplacedEntity(Class<? extends IAnimatable> itemClass,
@@ -76,6 +77,10 @@ public abstract class GeoReplacedEntityRenderer<T extends IAnimatable> extends R
     @Override
     public void doRender(EntityLivingBase entity, double x, double y, double z, float entityYaw, float partialTicks) {
         if (!(entity instanceof EntityLivingBase)) return;
+        // Ensure currentAnimatable is synced for getEntityTexture()
+        if (this.animatable != null) {
+            this.currentAnimatable = this.animatable;
+        }
         GlStateManager.pushMatrix();
         try {
             GlStateManager.translate(x, y, z);
