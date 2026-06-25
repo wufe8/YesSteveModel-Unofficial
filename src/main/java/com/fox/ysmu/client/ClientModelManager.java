@@ -79,6 +79,16 @@ public class ClientModelManager {
      * 快速查找：模型ID → 所属包的显示名称（不在包内的模型为 null）。
      */
     public static final Map<ResourceLocation, String> MODEL_PACK_OF = Maps.newHashMap();
+    /**
+     * 客户端包元数据：包路径 → ClientPackData（名称、描述、多语言、图标）。
+     * 在同步过程中从协议数据解析填充。
+     */
+    public static final Map<String, ClientPackData> CLIENT_PACKS = Maps.newHashMap();
+    /**
+     * 模型显示名称映射：模型ID → ysm.json metadata.name。
+     * 在 registerExtraWheel 时从 RawYsmModel 填充。
+     */
+    public static final Map<ResourceLocation, String> MODEL_DISPLAY_NAMES = Maps.newHashMap();
 
     public static AnimationFile DEFAULT_ANIMATION_FILE = new AnimationFile();
     public static List<String> CACHE_MD5 = Collections.synchronizedList(Lists.newArrayList());
@@ -111,11 +121,13 @@ public class ClientModelManager {
     /**
      * 扫描 MODELS 中所有模型ID，根据其显示名称中的 '/' 分隔符检测模型包分组，
      * 填充 MODEL_PACKS 和 MODEL_PACK_OF。
+     * 从 CLIENT_PACKS 获取包的显示名称。
      * 每次模型注册完成后应调用一次。
      */
     public static void detectModelPacks() {
         MODEL_PACKS.clear();
         MODEL_PACK_OF.clear();
+        // First, collect model→pack mapping by scanning for '/' in display name
         for (ResourceLocation modelId : MODELS.keySet()) {
             String display = ModelIdUtil.getModelDisplayName(modelId);
             int slash = display.indexOf('/');
@@ -123,9 +135,24 @@ public class ClientModelManager {
                 MODEL_PACK_OF.put(modelId, null);
                 continue;
             }
-            String packName = display.substring(0, slash);
-            MODEL_PACKS.computeIfAbsent(packName, k -> new ArrayList<>()).add(modelId);
-            MODEL_PACK_OF.put(modelId, packName);
+            String packFolder = display.substring(0, slash);
+            MODEL_PACKS.computeIfAbsent(packFolder, k -> new ArrayList<>()).add(modelId);
+            MODEL_PACK_OF.put(modelId, packFolder);
+        }
+        // Rename pack keys to use CLIENT_PACKS display names if available
+        if (!CLIENT_PACKS.isEmpty()) {
+            java.util.Map<String, java.util.List<ResourceLocation>> renamed = new java.util.LinkedHashMap<>();
+            for (java.util.Map.Entry<String, java.util.List<ResourceLocation>> entry : MODEL_PACKS.entrySet()) {
+                ClientPackData cpd = CLIENT_PACKS.get(entry.getKey());
+                String displayName = cpd != null ? cpd.getDisplayName() : entry.getKey();
+                renamed.put(displayName, entry.getValue());
+                // Update MODEL_PACK_OF for models in this pack
+                for (ResourceLocation id : entry.getValue()) {
+                    MODEL_PACK_OF.put(id, displayName);
+                }
+            }
+            MODEL_PACKS.clear();
+            MODEL_PACKS.putAll(renamed);
         }
         ysmu.LOG.info("YSM client detected {} model packs from {} models: {}",
             MODEL_PACKS.size(), MODELS.size(), MODEL_PACKS.keySet());
@@ -348,6 +375,44 @@ public class ClientModelManager {
         }
     }
 
+    /** Client-side pack metadata, parsed from the sync protocol. */
+    public static final class ClientPackData {
+        public final String folderPath;
+        public final String name;
+        public final String description;
+        public final byte[] iconData;
+        public final int iconWidth;
+        public final int iconHeight;
+        public final int iconFormat;
+        public final java.util.Map<String, java.util.Map<String, String>> lang;
+
+        public ClientPackData(String folderPath, String name, String description,
+            byte[] iconData, int iconWidth, int iconHeight, int iconFormat,
+            java.util.Map<String, java.util.Map<String, String>> lang) {
+            this.folderPath = folderPath;
+            this.name = name;
+            this.description = description;
+            this.iconData = iconData;
+            this.iconWidth = iconWidth;
+            this.iconHeight = iconHeight;
+            this.iconFormat = iconFormat;
+            this.lang = lang;
+        }
+
+        /** Returns the localized pack name, falling back to the raw name then folder path. */
+        public String getDisplayName() {
+            if (lang != null) {
+                String mcLang = net.minecraft.client.Minecraft.getMinecraft().getLanguageManager().getCurrentLanguage().getLanguageCode();
+                java.util.Map<String, String> trans = lang.get(mcLang);
+                if (trans != null && trans.containsKey("name")) return trans.get("name");
+                // Fallback: try zh_cn, then en
+                trans = lang.get("zh_cn");
+                if (trans != null && trans.containsKey("name")) return trans.get("name");
+            }
+            return name != null && !name.isEmpty() ? name : folderPath;
+        }
+    }
+
     public static void sendSyncModelMessage() {
         ysmu.LOG.info(
             "YSM client starting model sync: currentModels={}, rememberedCachedModels={}",
@@ -403,6 +468,8 @@ public class ClientModelManager {
         EXTRA_WHEEL.clear();
         MODEL_PACKS.clear();
         MODEL_PACK_OF.clear();
+        CLIENT_PACKS.clear();
+        MODEL_DISPLAY_NAMES.clear();
         ConditionManager.clear();
         OpenYsmAnimationControllerRegistry.clear();
         MolangPhysicsRuntime.clear();
@@ -414,6 +481,10 @@ public class ClientModelManager {
         EXTRA_WHEEL.put(modelId, ExtraWheelData.from(raw));
         if (StringUtils.isNotBlank(raw.properties.previewAnimation)) {
             PREVIEW_ANIMATION.put(modelId, raw.properties.previewAnimation);
+        }
+        // Store display name from ysm.json metadata
+        if (raw.metadata != null && StringUtils.isNotBlank(raw.metadata.name)) {
+            MODEL_DISPLAY_NAMES.put(modelId, raw.metadata.name);
         }
     }
 

@@ -32,6 +32,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 
+import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+
 public final class ServerModelManager {
 
     /**
@@ -70,6 +72,11 @@ public final class ServerModelManager {
     public static volatile byte[] OPEN_YSM_SERVER_KEY;
 
     /**
+     * 模型包数据：pack文件夹路径（相对 custom/） → ServerPackData。
+     */
+    public static final Map<String, ServerPackData> PACKS = new Object2ObjectOpenHashMap<>();
+
+    /**
      * 特定文件名
      */
     public static final String MAIN_MODEL_FILE_NAME = "main.json";
@@ -99,6 +106,8 @@ public final class ServerModelManager {
         initOpenYsmServerIndex();
         initBuiltNoticeFile();
         initBlacklistFile();
+        scanDirectoryPacks(CUSTOM);
+        scanDirectoryPacks(BUILT);
         rebuildModelCaches();
     }
 
@@ -106,6 +115,7 @@ public final class ServerModelManager {
         CACHE_NAME_INFO.clear();
         RAW_MODEL_INFO.clear();
         OPEN_YSM_SYNC_INFO.clear();
+        PACKS.clear();
     }
 
     private static void createConfigDirectories() {
@@ -328,5 +338,122 @@ public final class ServerModelManager {
             fileName = fileName.substring(0, lastIndex);
         }
         return fileName;
+    }
+
+    // ── Pack scanning ────────────────────────────────────────────
+
+    /** Scans a root directory for pack folders containing ysm-pack.json. */
+    public static void scanDirectoryPacks(Path rootPath) {
+        if (!Files.isDirectory(rootPath)) return;
+        try {
+            Files.walkFileTree(rootPath, new java.nio.file.SimpleFileVisitor<Path>() {
+                @Override
+                public java.nio.file.FileVisitResult preVisitDirectory(Path dir,
+                    java.nio.file.attribute.BasicFileAttributes attrs) {
+                    if (dir.equals(rootPath)) return java.nio.file.FileVisitResult.CONTINUE;
+                    Path packJson = dir.resolve("ysm-pack.json");
+                    if (!Files.isRegularFile(packJson)) {
+                        // Check if this dir contains model sub-dirs (implicit pack)
+                        return java.nio.file.FileVisitResult.CONTINUE;
+                    }
+                    // Found a pack folder
+                    String folderPath = rootPath.relativize(dir).toString().replace('\\', '/');
+                    try {
+                        scanSinglePack(dir, folderPath);
+                    } catch (Exception e) {
+                        ysmu.LOG.warn("Failed to scan pack {}", dir, e);
+                    }
+                    return java.nio.file.FileVisitResult.SKIP_SUBTREE;
+                }
+            });
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to scan packs under {}", rootPath, e);
+        }
+    }
+
+    private static void scanSinglePack(Path dir, String folderPath) throws Exception {
+        Path packJson = dir.resolve("ysm-pack.json");
+        if (!Files.isRegularFile(packJson)) return;
+
+        JsonObject json = new JsonParser().parse(
+            new String(Files.readAllBytes(packJson), StandardCharsets.UTF_8)).getAsJsonObject();
+
+        String name = getOptString(json, "name", folderPath);
+        String description = getOptString(json, "description", "");
+
+        // Language translations
+        Map<String, Map<String, String>> lang = new java.util.LinkedHashMap<>();
+        if (json.has("lang") && json.get("lang").isJsonObject()) {
+            JsonObject langObj = json.getAsJsonObject("lang");
+            for (Map.Entry<String, JsonElement> entry : langObj.entrySet()) {
+                String langCode = entry.getKey();
+                JsonObject trans = entry.getValue().getAsJsonObject();
+                Map<String, String> map = new java.util.LinkedHashMap<>();
+                for (Map.Entry<String, JsonElement> te : trans.entrySet()) {
+                    map.put(te.getKey(), te.getValue().getAsString());
+                }
+                lang.put(langCode, map);
+            }
+        }
+
+        // Optional icon
+        byte[] iconData = null;
+        int iconW = 0, iconH = 0, iconFmt = 0;
+        Path iconPng = dir.resolve("ysm-pack.png");
+        if (Files.isRegularFile(iconPng)) {
+            iconData = Files.readAllBytes(iconPng);
+            // Simple PNG dimension detection from header
+            iconW = readPngWidth(iconData);
+            iconH = readPngHeight(iconData);
+            iconFmt = 1; // PNG format
+        }
+
+        PACKS.put(folderPath, new ServerPackData(folderPath, name, description, iconData, iconW, iconH, iconFmt, lang));
+        ysmu.LOG.info("YSM server registered pack '{}' at {}", name, folderPath);
+    }
+
+    private static String getOptString(JsonObject obj, String key, String fallback) {
+        if (obj.has(key) && obj.get(key).isJsonPrimitive()) {
+            return obj.get(key).getAsString();
+        }
+        return fallback;
+    }
+
+    private static int readPngWidth(byte[] data) {
+        if (data == null || data.length < 24) return 0;
+        // PNG: 8-byte signature, then IHDR chunk: 4 len, 4 type, 4 width
+        return ((data[16] & 0xFF) << 24) | ((data[17] & 0xFF) << 16)
+             | ((data[18] & 0xFF) << 8)  | (data[19] & 0xFF);
+    }
+
+    private static int readPngHeight(byte[] data) {
+        if (data == null || data.length < 24) return 0;
+        return ((data[20] & 0xFF) << 24) | ((data[21] & 0xFF) << 16)
+             | ((data[22] & 0xFF) << 8)  | (data[23] & 0xFF);
+    }
+
+    /** Model pack metadata from ysm-pack.json, sent to clients during sync. */
+    public static final class ServerPackData {
+        public final String folderPath;
+        public final String name;
+        public final String description;
+        public final byte[] iconData;
+        public final int iconWidth;
+        public final int iconHeight;
+        public final int iconFormat;
+        public final Map<String, Map<String, String>> lang;
+
+        public ServerPackData(String folderPath, String name, String description,
+            byte[] iconData, int iconWidth, int iconHeight, int iconFormat,
+            Map<String, Map<String, String>> lang) {
+            this.folderPath = folderPath;
+            this.name = name;
+            this.description = description;
+            this.iconData = iconData;
+            this.iconWidth = iconWidth;
+            this.iconHeight = iconHeight;
+            this.iconFormat = iconFormat;
+            this.lang = lang;
+        }
     }
 }

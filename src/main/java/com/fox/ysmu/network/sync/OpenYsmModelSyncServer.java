@@ -209,7 +209,40 @@ public final class OpenYsmModelSyncServer {
                     out.writeVarInt(model.getFormat());
                 }
 
-                out.writeVarInt(0);
+                // 写入包数据
+                out.writeVarInt(ServerModelManager.PACKS.size());
+                for (ServerModelManager.ServerPackData pack : ServerModelManager.PACKS.values()) {
+                    out.writeString(pack.folderPath);
+                    // 图标
+                    if (pack.iconData != null) {
+                        out.writeVarInt(1);
+                        out.writeByteArray(pack.iconData);
+                        out.writeVarInt(pack.iconWidth);
+                        out.writeVarInt(pack.iconHeight);
+                        out.writeVarInt(pack.iconFormat);
+                        out.writeVarInt(1); // unkImageData
+                    } else {
+                        out.writeVarInt(0);
+                    }
+                    // 名称/描述
+                    if (pack.name != null || pack.description != null) {
+                        out.writeVarInt(1);
+                        out.writeString(pack.name != null ? pack.name : "");
+                        out.writeString(pack.description != null ? pack.description : "");
+                    } else {
+                        out.writeVarInt(0);
+                    }
+                    // 本地化
+                    out.writeVarInt(pack.lang.size());
+                    for (Map.Entry<String, Map<String, String>> langEntry : pack.lang.entrySet()) {
+                        out.writeString(langEntry.getKey());
+                        out.writeVarInt(langEntry.getValue().size());
+                        for (Map.Entry<String, String> kv : langEntry.getValue().entrySet()) {
+                            out.writeString(kv.getKey());
+                            out.writeString(kv.getValue());
+                        }
+                    }
+                }
                 out.writeVarInt(0);
 
                 YsmCrypt.EncryptedPacket encrypted = YsmCrypt.encrypt(out.toArray(), state.clientNextKey, false);

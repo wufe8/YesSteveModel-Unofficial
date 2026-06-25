@@ -176,7 +176,7 @@ public final class OpenYsmModelSyncClient {
             }
         }
 
-        skipPackData(buf);
+        parsePackData(buf);
         sendPacket04(modelsToRequest);
     }
 
@@ -273,31 +273,55 @@ public final class OpenYsmModelSyncClient {
         }
     }
 
-    private static void skipPackData(YSMByteBuf buf) {
+    private static void parsePackData(YSMByteBuf buf) {
         int packCount = buf.readVarInt();
-        for (int i = 0; i < packCount; i++) {
-            buf.readString();
-            if (buf.readVarInt() != 0) {
-                buf.readByteArray();
-                buf.readVarInt();
-                buf.readVarInt();
-                buf.readVarInt();
+        if (packCount <= 0) {
+            if (buf.getRawBuf().readableBytes() > 0) {
                 buf.readVarInt();
             }
-            if (buf.readVarInt() != 0) {
-                buf.readString();
-                buf.readString();
-            }
-            int languageCount = buf.readVarInt();
-            for (int lang = 0; lang < languageCount; lang++) {
-                buf.readString();
-                int translationCount = buf.readVarInt();
-                for (int entry = 0; entry < translationCount; entry++) {
-                    buf.readString();
-                    buf.readString();
-                }
-            }
+            return;
         }
+        final java.util.Map<String, ClientModelManager.ClientPackData> parsed = new java.util.LinkedHashMap<>();
+        for (int i = 0; i < packCount; i++) {
+            String folderPath = buf.readString();
+
+            byte[] iconData = null;
+            int iconW = 0, iconH = 0, iconFmt = 0;
+            if (buf.readVarInt() != 0) {
+                iconData = buf.readByteArray();
+                iconW = buf.readVarInt();
+                iconH = buf.readVarInt();
+                iconFmt = buf.readVarInt();
+                buf.readVarInt(); // unkImageData
+            }
+
+            String name = "";
+            String description = "";
+            if (buf.readVarInt() != 0) {
+                name = buf.readString();
+                description = buf.readString();
+            }
+
+            int languageCount = buf.readVarInt();
+            java.util.Map<String, java.util.Map<String, String>> lang = new java.util.LinkedHashMap<>();
+            for (int langIdx = 0; langIdx < languageCount; langIdx++) {
+                String langCode = buf.readString();
+                int translationCount = buf.readVarInt();
+                java.util.Map<String, String> trans = new java.util.LinkedHashMap<>();
+                for (int t = 0; t < translationCount; t++) {
+                    trans.put(buf.readString(), buf.readString());
+                }
+                lang.put(langCode, trans);
+            }
+
+            parsed.put(folderPath, new ClientModelManager.ClientPackData(
+                folderPath, name, description, iconData, iconW, iconH, iconFmt, lang));
+        }
+        // Apply packs to ClientModelManager on the client thread
+        Minecraft.getMinecraft().func_152344_a(() -> {
+            ClientModelManager.CLIENT_PACKS.clear();
+            ClientModelManager.CLIENT_PACKS.putAll(parsed);
+        });
         if (buf.getRawBuf().readableBytes() > 0) {
             buf.readVarInt();
         }

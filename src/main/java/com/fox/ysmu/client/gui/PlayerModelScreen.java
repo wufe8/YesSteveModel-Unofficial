@@ -145,8 +145,9 @@ public class PlayerModelScreen extends GuiScreen {
         this.buttonList.add(new TextureCountButton(0, x + 5, y + 5));
         this.buttonList.add(new FlatIconButton(1, x + 28, y + 5, 79, 20, 32, 16).setTooltips("gui.yes_steve_model.model.texture"));
         this.buttonList.add(new StarButton(2, x + 110, y + 5));
-        // 返回按钮：位于收藏按钮下方，仅在选择包或显示模型列表时可见
-        FlatColorButton backBtn = new FlatColorButton(4, x + 88, y + 27, 42, 16, I18n.format("gui.yes_steve_model.model.return"));
+        // 返回按钮：位于收藏按钮下方，选择包时可见，用返回箭头图标(48,0)
+        FlatIconButton backBtn = new FlatIconButton(4, x + 88, y + 27, 42, 20, 0, 32);
+        backBtn.setTooltips("gui.yes_steve_model.model.return");
         backBtn.visible = selectedPack != null;
         this.buttonList.add(backBtn);
         this.buttonList.add(new FlatIconButton(3, x + 328, y + 5, 18, 18, 32, 0).setTooltips("gui.yes_steve_model.all_models"));
@@ -156,34 +157,42 @@ public class PlayerModelScreen extends GuiScreen {
         this.buttonList.add(new FlatColorButton(9, x + 198, y + 215, 52, 14, I18n.format("gui.yes_steve_model.pre_page")));
         this.buttonList.add(new FlatColorButton(10, x + 308, y + 215, 52, 14, I18n.format("gui.yes_steve_model.next_page")));
 
-        if (this.page > this.maxPage) {
-            this.page = 0;
-        }
-
+        // 收集包文件夹和模型列表，混合显示
+        java.util.List<Object> allItems = new java.util.ArrayList<>();
         if (showingPacks) {
-            // 显示模型包文件夹列表
-            int buttonId = 101;
-            int idx = 0;
-            for (Map.Entry<String, List<ResourceLocation>> packEntry : ClientModelManager.MODEL_PACKS.entrySet()) {
-                String packName = packEntry.getKey();
-                List<ResourceLocation> packModels = packEntry.getValue();
-                int xStart = x + 143 + 55 * (idx % 5);
-                int yStart = y + 28 + 93 * (idx / 5);
-                this.buttonList.add(new PackFolderButton(buttonId++, xStart, yStart, packName, packModels.size()));
-                idx++;
+            // 先显示所有包文件夹
+            allItems.addAll(ClientModelManager.MODEL_PACKS.entrySet());
+            // 再显示非包模型
+            for (ResourceLocation id : modelOrderList) {
+                allItems.add(id);
             }
         } else {
-            // 显示模型按钮
-            int buttonId = 11;
-            for (int i = 0; i < 10; i++) {
-                int modelIndex = i + this.page * 10;
-                if (modelIndex >= models.size()) {
-                    break;
-                }
-                ResourceLocation id = modelOrderList.get(modelIndex);
-                int xStart = x + 143 + 55 * (i % 5);
-                int yStart = y + 28 + 93 * (i / 5);
-                this.buttonList.add(new ModelButton(buttonId++, xStart, yStart, Pair.of(id, models.get(id)), ClientModelManager.EXTRA_INFO.get(ModelIdUtil.getMainId(id)), player));
+            allItems.addAll(modelOrderList);
+        }
+        this.maxPage = Math.max(0, (allItems.size() - 1) / 10);
+        if (this.page > this.maxPage) this.page = 0;
+
+        int buttonId = 11;
+        int packBtnId = 101;
+        int startIdx = this.page * 10;
+        int endIdx = Math.min(startIdx + 10, allItems.size());
+        for (int i = startIdx; i < endIdx; i++) {
+            int gridIdx = i - startIdx;
+            int xStart = x + 143 + 55 * (gridIdx % 5);
+            int yStart = y + 28 + 93 * (gridIdx / 5);
+            Object item = allItems.get(i);
+            if (item instanceof Map.Entry) {
+                @SuppressWarnings("unchecked")
+                Map.Entry<String, List<ResourceLocation>> packEntry = (Map.Entry<String, List<ResourceLocation>>) item;
+                this.buttonList.add(new PackFolderButton(packBtnId++, xStart, yStart,
+                    packEntry.getKey(), packEntry.getValue().size()));
+            } else if (item instanceof ResourceLocation) {
+                ResourceLocation id = (ResourceLocation) item;
+                ModelButton mb = new ModelButton(buttonId++, xStart, yStart,
+                    Pair.of(id, ClientModelManager.MODELS.get(id)),
+                    ClientModelManager.EXTRA_INFO.get(ModelIdUtil.getMainId(id)), player);
+                mb.displayString = getModelDisplayText(id);
+                this.buttonList.add(mb);
             }
         }
     }
@@ -286,7 +295,7 @@ public class PlayerModelScreen extends GuiScreen {
 
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null) {
-            String modelName = ModelIdUtil.getModelDisplayName(eep.getModelId());
+            String modelName = getModelDisplayText(eep.getModelId());
             // font -> fontRendererObj
             List<String> modelNameSplit = fontRendererObj.listFormattedStringToWidth(modelName, 125);
             int lineY = y + 205;
@@ -392,6 +401,18 @@ public class PlayerModelScreen extends GuiScreen {
             this.mc.getSoundHandler().playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
             this.initGui();
         }
+    }
+
+    /** Returns the best display name for a model: ysm.json metadata.name if available, else decoded path. */
+    private static String getModelDisplayText(ResourceLocation modelId) {
+        // MODEL_DISPLAY_NAMES is keyed by main ID (with /main suffix)
+        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+        String name = ClientModelManager.MODEL_DISPLAY_NAMES.get(mainId);
+        if (name != null) return name;
+        // Fallback: strip pack prefix if present
+        String display = ModelIdUtil.getModelDisplayName(modelId);
+        int slash = display.indexOf('/');
+        return slash >= 0 ? display.substring(slash + 1) : display;
     }
 
     @Override
