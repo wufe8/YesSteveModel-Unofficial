@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.gui;
 
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
+import com.fox.ysmu.Config;
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.ExtraWheelData;
@@ -100,8 +101,8 @@ public class AnimationRouletteScreen extends GuiScreen {
             // Handle slider dragging + preview drag rotation
             if (org.lwjgl.input.Mouse.isButtonDown(0)) {
                 boolean handled = false;
-                int panelX = width / 2 - 100;
-                int panelW = 200;
+                int panelW = 170;
+                int panelX = Config.SWAP_CONFIG_SIDES ? 30 : width - panelW - 30;
                 int startY = 60 - configScrollOffset;
                 // Slider drag (range controls)
                 for (int i = 0; i < currentConfigGroup.forms.size(); i++) {
@@ -118,9 +119,11 @@ public class AnimationRouletteScreen extends GuiScreen {
                 }
                 // Preview drag (1.7.10 lacks mouseClickMove, so we track in drawScreen)
                 if (!handled) {
-                    int prevX = width / 2 - 190, prevY = 70;
-                    boolean inPrev = pMouseX >= prevX && pMouseX < prevX + 80
-                        && pMouseY >= prevY && pMouseY < prevY + 120;
+                    int prevW = 120, prevH = 200;
+                    int prevX = Config.SWAP_CONFIG_SIDES ? width - prevW - 20 : 20;
+                    int prevY = (height - prevH) / 2;
+                    boolean inPrev = pMouseX >= prevX && pMouseX < prevX + prevW
+                        && pMouseY >= prevY && pMouseY < prevY + prevH;
                     if (draggingPreview) {
                         float delta = (float)(pMouseX - previewDragStartX) * 2.5f;
                         previewYawDeg += delta;
@@ -156,9 +159,11 @@ public class AnimationRouletteScreen extends GuiScreen {
     protected void mouseClicked(int pMouseX, int pMouseY, int pButton) {
         if (currentConfigGroup != null) {
             // Check if click is inside the preview area → start drag rotation
-            int previewX = width / 2 - 100 - 90, previewY = 30 + 40;
-            if (pButton == 0 && pMouseX >= previewX && pMouseX < previewX + 80
-                && pMouseY >= previewY && pMouseY < previewY + 120) {
+            int prevW = 120, prevH = 200;
+            int prevX = Config.SWAP_CONFIG_SIDES ? width - prevW - 20 : 20;
+            int prevY = (height - prevH) / 2;
+            if (pButton == 0 && pMouseX >= prevX && pMouseX < prevX + prevW
+                && pMouseY >= prevY && pMouseY < prevY + prevH) {
                 draggingPreview = true;
                 previewDragStartX = pMouseX;
                 return;
@@ -335,8 +340,8 @@ public class AnimationRouletteScreen extends GuiScreen {
             currentConfigGroup = null;
             return;
         }
-        int panelX = width / 2 - 100;
-        int panelW = 200;
+        int panelW = 170;
+        int panelX = Config.SWAP_CONFIG_SIDES ? 30 : width - panelW - 30;
         int startY = 60 - configScrollOffset;
         for (int i = 0; i < currentConfigGroup.forms.size(); i++) {
             ConfigForm form = currentConfigGroup.forms.get(i);
@@ -452,49 +457,48 @@ public class AnimationRouletteScreen extends GuiScreen {
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
-        int panelX = width / 2 - 100;
-        int panelW = 200;
+        // Layout:
+        //   Preview pane – 120×200, left side at x=20 (or right if swapped)
+        //   Config panel – 170px wide, opposite side
+        int previewW = 120, previewH = 200;
+        int panelW = 170;
+        int previewX, panelX;
+        if (Config.SWAP_CONFIG_SIDES) {
+            previewX = width - previewW - 20;
+            panelX = 30;
+        } else {
+            previewX = 20;
+            panelX = width - panelW - 30;
+        }
+        int previewY = (height - previewH) / 2;
         int panelY = 30;
 
-        // 半透明面板背景，让轮盘和世界可见
+        // Full‑screen dim overlay
+        drawRect(0, 0, width, height, 0x88000000);
+        // Brighten the panel + preview areas by drawing them on top
+        drawRect(previewX, previewY, previewX + previewW, previewY + previewH, 0x66000000);
         drawRect(panelX - 10, panelY - 10, panelX + panelW + 10, height - 50, 0xBB222222);
-        // 在面板周围加一层微弱的半透明遮罩减少视觉干扰
-        drawRect(0, 0, panelX - 10, height, 0x44000000);
-        drawRect(panelX + panelW + 10, 0, width, height, 0x44000000);
-        drawRect(panelX - 10, 0, panelX + panelW + 10, panelY - 10, 0x44000000);
-        drawRect(panelX - 10, height - 50, panelX + panelW + 10, height, 0x44000000);
 
         String title = StringUtils.isNotBlank(currentConfigGroup.name) ? currentConfigGroup.name : currentConfigGroup.id;
-        drawCenteredString(fontRendererObj, "[CFG] " + title, width / 2, panelY, 0xFFB100);
+        drawCenteredString(fontRendererObj, "[CFG] " + title, panelX + panelW / 2, panelY, 0xFFB100);
 
         if (StringUtils.isNotBlank(currentConfigGroup.description)) {
-            drawCenteredString(fontRendererObj, currentConfigGroup.description, width / 2, panelY + 12, 0xAAAAAA);
+            drawCenteredString(fontRendererObj, currentConfigGroup.description, panelX + panelW / 2, panelY + 12, 0xAAAAAA);
         }
 
-        drawCenteredString(fontRendererObj, "Right-click to close", width / 2, height - 25, 0x666666);
+        drawCenteredString(fontRendererObj, "Right-click to close", panelX + panelW / 2, height - 25, 0x666666);
 
         // 在面板左侧渲染小人物预览
         if (mc != null && mc.thePlayer != null) {
             GL11.glEnable(GL11.GL_SCISSOR_TEST);
             int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
-            int previewX = panelX - 90;
-            int previewY = panelY + 40;
-            int previewW = 80;
-            int previewH = 120;
             GL11.glScissor(previewX * scale, mc.displayHeight - ((previewY + previewH) * scale),
                 previewW * scale, previewH * scale);
-            // 半透明预览背景框
-            drawRect(previewX, previewY, previewX + previewW, previewY + previewH, 0x66000000);
-            // Use CustomPlayerRenderer directly (not RenderManager) so the
-            // YSM model is rendered in the preview, not the vanilla player.
-            // CustomPlayerRenderer preview — position at center-bottom of
-            // the preview pane, pulled back (z > 0).  Rotate so the model
-            // faces the camera (player yaw + 180°), overridden by drag.
             com.fox.ysmu.util.RenderUtil.withGuiEntityLighting(() -> {
                 GL11.glPushMatrix();
                 com.fox.ysmu.client.renderer.CustomPlayerRenderer cpr =
                     com.fox.ysmu.client.ClientProxy.getInstance();
-                float s = 45.0f;
+                float s = 90.0f;
                 float cx = (float)(previewX + previewW / 2.0);
                 float cy = (float)(previewY + previewH - 10);
                 GL11.glTranslatef(cx, cy, 150.0f);

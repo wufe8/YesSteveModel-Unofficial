@@ -23,6 +23,7 @@ public class Config {
     public static int PLAYER_POS_Y = 10;
     public static double PLAYER_SCALE = 40.0;
     public static double PLAYER_YAW_OFFSET = 5.0;
+    public static boolean SWAP_CONFIG_SIDES = false;
 
     // OpenYSM model sync config
     public static boolean ENABLE_OPEN_YSM_SYNC_PROTOCOL = true;
@@ -74,6 +75,7 @@ public class Config {
         PLAYER_POS_Y = syncInt("PlayerPosY", "extra_player_render", PLAYER_POS_Y, "Player position y in screen", 0, Integer.MAX_VALUE, load);
         PLAYER_SCALE = syncDouble("PlayerScale", "extra_player_render", PLAYER_SCALE, "Player scale in screen", 8.0, 360.0, load);
         PLAYER_YAW_OFFSET = syncDouble("PlayerYawOffset", "extra_player_render", PLAYER_YAW_OFFSET, "Player yaw offset in screen", load);
+        SWAP_CONFIG_SIDES = syncBoolean("SwapConfigSides", "extra_player_render", SWAP_CONFIG_SIDES, "Swap wheel config panel and preview sides", load);
 
         // OpenYSM model sync config values
         ENABLE_OPEN_YSM_SYNC_PROTOCOL = syncBoolean("EnableOpenYsmSyncProtocol", "openysm_sync", ENABLE_OPEN_YSM_SYNC_PROTOCOL, "Whether to use the appended OpenYSM hash/cache/chunk sync path before legacy fallback", load);
