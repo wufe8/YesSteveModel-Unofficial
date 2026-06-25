@@ -470,6 +470,7 @@ public class ClientModelManager {
         MODEL_PACK_OF.clear();
         CLIENT_PACKS.clear();
         MODEL_DISPLAY_NAMES.clear();
+        com.fox.ysmu.client.audio.YSMSoundManager.clear();
         ConditionManager.clear();
         OpenYsmAnimationControllerRegistry.clear();
         MolangPhysicsRuntime.clear();
@@ -486,6 +487,8 @@ public class ClientModelManager {
         if (raw.metadata != null && StringUtils.isNotBlank(raw.metadata.name)) {
             MODEL_DISPLAY_NAMES.put(modelId, raw.metadata.name);
         }
+        // Register model sound files
+        com.fox.ysmu.client.audio.YSMSoundManager.registerModelSounds(modelId, raw);
     }
 
     public static void rememberCachedModel(String md5) {

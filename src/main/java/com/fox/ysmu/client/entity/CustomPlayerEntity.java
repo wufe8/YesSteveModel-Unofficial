@@ -93,9 +93,16 @@ public class CustomPlayerEntity implements IAnimatable {
         data.addAnimationController(new AnimationController(this, CAP_CONTROLLER, 2, manager::predicateCap));
         data.getAnimationControllers()
             .values()
-            .forEach(
-                controller -> controller
-                    .registerCustomInstructionListener(event -> MolangInstructionExecutor.execute(event.instructions)));
+            .forEach(controller -> {
+                controller.registerCustomInstructionListener(
+                    event -> MolangInstructionExecutor.execute(event.instructions));
+                controller.registerSoundListener(
+                    event -> {
+                        com.fox.ysmu.ysmu.LOG.info("[YSM Sound] SoundKeyframeEvent fired: sound='{}'",
+                            event.sound);
+                        com.fox.ysmu.client.audio.YSMSoundManager.playSoundAtPlayer(event.sound);
+                    });
+            });
     }
 
     public ResourceLocation getMainModel() {

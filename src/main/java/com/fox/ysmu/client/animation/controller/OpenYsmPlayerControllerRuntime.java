@@ -152,6 +152,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
                 OpenYsmControllerExpressionEvaluator.executeStatements(forcedTarget.onEntry, context);
+                playStateSounds(forcedTarget, event.getAnimatable().getPlayer());
                 state = forcedTarget;
             }
         }
@@ -256,6 +257,7 @@ public final class OpenYsmPlayerControllerRuntime {
         runtimeState.lastSelectedAnimationState = "";
         runtimeState.lastSelectedAnimation = "";
         OpenYsmControllerExpressionEvaluator.executeStatements(initial.onEntry, context);
+        playStateSounds(initial, event.getAnimatable().getPlayer());
         return initial;
     }
 
@@ -283,9 +285,21 @@ public final class OpenYsmPlayerControllerRuntime {
             runtimeState.lastSelectedAnimationState = "";
             runtimeState.lastSelectedAnimation = "";
             OpenYsmControllerExpressionEvaluator.executeStatements(target.onEntry, context);
+            playStateSounds(target, event.getAnimatable().getPlayer());
             return target;
         }
         return state;
+    }
+
+    /** Plays sound effects defined on an OpenYSM controller state. */
+    private static void playStateSounds(State state, EntityPlayer player) {
+        if (state.soundEffects == null || state.soundEffects.isEmpty()) return;
+        if (player == null) return;
+        for (String soundName : state.soundEffects) {
+            if (soundName != null && !soundName.isEmpty()) {
+                com.fox.ysmu.client.audio.YSMSoundManager.playSound(player, soundName, 1.0f, 1.0f);
+            }
+        }
     }
 
     private static boolean animationEntryActive(AnimationEntry entry,
