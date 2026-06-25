@@ -6,7 +6,6 @@ import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.ExtraWheelData;
 import com.fox.ysmu.client.input.ExtraAnimationKey;
-import com.fox.ysmu.Config;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel.ConfigForm;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel.ExtraAnimationButton;
 import com.fox.ysmu.network.NetworkHandler;
@@ -90,6 +89,14 @@ public class AnimationRouletteScreen extends GuiScreen {
         List<Map.Entry<String, String>> pageEntries = getPageEntries();
         drawRoulette(pMouseX, pMouseY, pageEntries);
         drawRouletteText(pageEntries);
+        // Pagination buttons (only when not in config panel mode)
+        int totalPages = Math.max(1, (currentEntries.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE);
+        if (currentConfigGroup == null && totalPages > 1) {
+            int btnY = y + 96;  // moved further down to avoid wheel overlap
+            drawCenteredString(fontRendererObj, "<", x - 60, btnY, 0xF3EFE0);
+            drawCenteredString(fontRendererObj, (currentPage + 1) + "/" + totalPages, x, btnY, 0xAAAAAA);
+            drawCenteredString(fontRendererObj, ">", x + 60, btnY, 0xF3EFE0);
+        }
         // Draw center lock button using ASCII-safe symbols
         boolean locked = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault(LOCK_VAR, 0.0) > 0;
         String lockIcon = locked ? "[x]" : "[ ]";
@@ -157,6 +164,29 @@ public class AnimationRouletteScreen extends GuiScreen {
 
     @Override
     protected void mouseClicked(int pMouseX, int pMouseY, int pButton) {
+        // Pagination buttons
+        if (currentConfigGroup == null && pButton == 0) {
+            int totalPages = Math.max(1, (currentEntries.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE);
+            if (totalPages > 1) {
+                int btnY = y + 96;
+                // Left button — wider hit area, further out
+                if (pMouseX >= x - 75 && pMouseX <= x - 45 && pMouseY >= btnY - 10 && pMouseY <= btnY + 10) {
+                    if (currentPage > 0) {
+                        currentPage--;
+                        mc.getSoundHandler().playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
+                    }
+                    return;
+                }
+                // Right button
+                if (pMouseX >= x + 45 && pMouseX <= x + 75 && pMouseY >= btnY - 10 && pMouseY <= btnY + 10) {
+                    if (currentPage < totalPages - 1) {
+                        currentPage++;
+                        mc.getSoundHandler().playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
+                    }
+                    return;
+                }
+            }
+        }
         if (currentConfigGroup != null) {
             // Check if click is inside the preview area → start drag rotation
             int prevW = 120, prevH = 200;
@@ -587,6 +617,7 @@ public class AnimationRouletteScreen extends GuiScreen {
 
     private void drawRouletteText(List<Map.Entry<String, String>> pageEntries) {
         int count = ITEMS_PER_PAGE;
+        ExtraWheelData wd = getWheelData();
         for (int i = 0; i < count; i++) {
             if (i >= pageEntries.size()) continue;
             Map.Entry<String, String> entry = pageEntries.get(i);
@@ -594,23 +625,35 @@ public class AnimationRouletteScreen extends GuiScreen {
             String label = entry.getValue();
             float angle = (float) (Math.PI / count + 2 * Math.PI * i / count);
             int r = 65;
-            ChatComponentText keyText = new ChatComponentText("[ ");
-            keyText.getChatStyle().setColor(EnumChatFormatting.YELLOW);
-            if (ExtraAnimationKey.EXTRA_ANIMATION_KEYS.size() > i) {
-                KeyBinding kb = ExtraAnimationKey.EXTRA_ANIMATION_KEYS.get(i);
-                if (kb.getKeyCode() == Keyboard.KEY_NONE) {
-                    keyText.appendSibling(new ChatComponentTranslation("key.yes_steve_model.extra_animation.none"));
-                } else {
-                    keyText.appendSibling(new ChatComponentText(Keyboard.getKeyName(kb.getKeyCode())));
-                }
-            }
-            keyText.appendSibling(new ChatComponentText(" ]"));
             int textX = (int) (x + r * MathHelper.cos(angle));
             int textY = (int) (y + r * MathHelper.sin(angle) - (float) fontRendererObj.FONT_HEIGHT / 2);
-            String display = key.startsWith(SUBMENU_PREFIX) ? "[>] " + (StringUtils.isNotBlank(label) ? label : key) : (StringUtils.isNotBlank(label) ? label : key);
+            // Determine display text
+            String display;
+            boolean isSubOrConfig = key.startsWith(SUBMENU_PREFIX);
+            if (isSubOrConfig && label != null && label.startsWith(SUBMENU_PREFIX)) {
+                // Config button — look up the button's name for display
+                String btnId = label.substring(SUBMENU_PREFIX.length());
+                String btnName = null;
+                if (wd != null && wd.configButtons.containsKey(btnId)) {
+                    btnName = wd.configButtons.get(btnId).name;
+                }
+                display = "[>] " + (StringUtils.isNotBlank(btnName) ? btnName : btnId);
+            } else if (isSubOrConfig && StringUtils.isNotBlank(label)) {
+                // Sub-menu entry
+                display = "[>] " + label;
+            } else {
+                display = StringUtils.isNotBlank(label) ? label : key;
+            }
             if (StringUtils.isBlank(display)) display = key;
             this.drawCenteredString(fontRendererObj, display, textX, textY - 8, 0xF3EFE0);
-            this.drawCenteredString(fontRendererObj, keyText.getFormattedText(), textX, textY + 4, 0xF3EFE0);
+            // Show key binding hint only if a real key is assigned
+            if (ExtraAnimationKey.EXTRA_ANIMATION_KEYS.size() > i) {
+                KeyBinding kb = ExtraAnimationKey.EXTRA_ANIMATION_KEYS.get(i);
+                if (kb.getKeyCode() != Keyboard.KEY_NONE) {
+                    String keyName = Keyboard.getKeyName(kb.getKeyCode());
+                    this.drawCenteredString(fontRendererObj, "[" + keyName + "]", textX, textY + 4, 0xCCCCCC);
+                }
+            }
         }
     }
 

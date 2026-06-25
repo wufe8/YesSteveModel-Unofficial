@@ -16,6 +16,7 @@ import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.gui.inventory.GuiInventory;
+import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.resources.I18n;
 import net.minecraft.util.*;
 import net.minecraft.entity.player.EntityPlayer;
@@ -23,6 +24,7 @@ import org.apache.commons.lang3.tuple.Pair;
 import org.lwjgl.input.Mouse;
 import org.lwjgl.opengl.GL11;
 
+import javax.annotation.Nullable;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -184,8 +186,16 @@ public class PlayerModelScreen extends GuiScreen {
             if (item instanceof Map.Entry) {
                 @SuppressWarnings("unchecked")
                 Map.Entry<String, List<ResourceLocation>> packEntry = (Map.Entry<String, List<ResourceLocation>>) item;
+                // Find ClientPackData for this pack by matching display name
+                ClientModelManager.ClientPackData cpd = null;
+                for (ClientModelManager.ClientPackData p : ClientModelManager.CLIENT_PACKS.values()) {
+                    if (p.getDisplayName().equals(packEntry.getKey())) {
+                        cpd = p;
+                        break;
+                    }
+                }
                 this.buttonList.add(new PackFolderButton(packBtnId++, xStart, yStart,
-                    packEntry.getKey(), packEntry.getValue().size()));
+                    packEntry.getKey(), packEntry.getValue().size(), cpd));
             } else if (item instanceof ResourceLocation) {
                 ResourceLocation id = (ResourceLocation) item;
                 ModelButton mb = new ModelButton(buttonId++, xStart, yStart,
@@ -424,11 +434,17 @@ public class PlayerModelScreen extends GuiScreen {
     private static class PackFolderButton extends GuiButton {
         final String packName;
         final int modelCount;
+        @Nullable
+        private final ClientModelManager.ClientPackData packData;
+        @Nullable
+        private ResourceLocation iconLocation;
 
-        PackFolderButton(int id, int pX, int pY, String packName, int modelCount) {
+        PackFolderButton(int id, int pX, int pY, String packName, int modelCount,
+            @Nullable ClientModelManager.ClientPackData packData) {
             super(id, pX, pY, 52, 90, packName);
             this.packName = packName;
             this.modelCount = modelCount;
+            this.packData = packData;
         }
 
         @Override
@@ -442,18 +458,68 @@ public class PlayerModelScreen extends GuiScreen {
                 this.xPosition + this.width, this.yPosition + this.height,
                 0xFF_3A3A3A, 0xFF_3A3A3A);
 
-            // 文件夹图标 - 绘制一个简单的文件夹形状
             int cx = this.xPosition + this.width / 2;
-            int iconY = this.yPosition + 15;
-            // 文件夹主体
-            drawRect(cx - 12, iconY - 4, cx + 12, iconY + 20, 0xFF_F3EFE0);
-            drawRect(cx - 12, iconY - 4, cx - 4, iconY + 2, 0xFF_F3EFE0);
-            // 文件夹标签
-            drawRect(cx - 4, iconY - 2, cx + 12, iconY + 2, 0xFF_F3EFE0);
-            // 半透明覆盖
-            drawGradientRect(this.xPosition, this.yPosition,
-                this.xPosition + this.width, this.yPosition + this.height,
-                0x40_000000, 0x60_000000);
+            int iconX = this.xPosition;
+            int iconY = this.yPosition;
+            int iconDrawW = this.width;
+            int iconDrawH = this.height;
+            boolean drewIcon = false;
+
+            // 尝试绘制 ysm-pack.png 图标
+            if (packData != null && packData.iconData != null && packData.iconData.length > 0) {
+                if (iconLocation == null) {
+                    java.io.ByteArrayInputStream bis = new java.io.ByteArrayInputStream(packData.iconData);
+                    try {
+                        java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(bis);
+                        if (img != null) {
+                            iconLocation = mc.getTextureManager().getDynamicTextureLocation(
+                                "ysmu_pack_" + packName,
+                                new net.minecraft.client.renderer.texture.DynamicTexture(img));
+                        }
+                    } catch (java.io.IOException ignored) {}
+                }
+                if (iconLocation != null) {
+                    drawIcon(mc, iconLocation, iconX, iconY, iconDrawW, iconDrawH);
+                    drewIcon = true;
+                }
+            }
+            // Fallback: try loading ysm-pack.png directly from the pack folder
+            if (!drewIcon) {
+                try {
+                    java.io.File packDir = new java.io.File(
+                        net.minecraft.client.Minecraft.getMinecraft().mcDataDir,
+                        "config/ysmu/custom/" + packName);
+                    java.io.File iconFile = new java.io.File(packDir, "ysm-pack.png");
+                    if (iconFile.isFile()) {
+                        if (iconLocation == null) {
+                            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(iconFile);
+                            if (img != null) {
+                                iconLocation = mc.getTextureManager().getDynamicTextureLocation(
+                                    "ysmu_pack_fs_" + packName,
+                                    new net.minecraft.client.renderer.texture.DynamicTexture(img));
+                            }
+                        }
+                        if (iconLocation != null) {
+                            drawIcon(mc, iconLocation, iconX, iconY, iconDrawW, iconDrawH);
+                            drewIcon = true;
+                        }
+                    }
+                } catch (Exception ignored) {}
+            }
+
+            if (!drewIcon) {
+                // 文件夹图标 - 绘制一个简单的文件夹形状
+                iconY = this.yPosition + 15;
+                // 文件夹主体
+                drawRect(cx - 12, iconY - 4, cx + 12, iconY + 20, 0xFF_F3EFE0);
+                drawRect(cx - 12, iconY - 4, cx - 4, iconY + 2, 0xFF_F3EFE0);
+                // 文件夹标签
+                drawRect(cx - 4, iconY - 2, cx + 12, iconY + 2, 0xFF_F3EFE0);
+                // 半透明覆盖
+                drawGradientRect(this.xPosition, this.yPosition,
+                    this.xPosition + this.width, this.yPosition + this.height,
+                    0x40_000000, 0x60_000000);
+            }
 
             // 包名
             FontRenderer font = mc.fontRenderer;
@@ -481,6 +547,22 @@ public class PlayerModelScreen extends GuiScreen {
                 this.drawGradientRect(this.xPosition, this.yPosition + this.height - 1,
                     this.xPosition + this.width, this.yPosition + this.height, 0xff_F3EFE0, 0xff_F3EFE0);
             }
+        }
+
+        /** Draw a textured rectangle with UV 0-1 (correct for any texture size). */
+        private static void drawIcon(Minecraft mc, ResourceLocation tex, int x, int y, int w, int h) {
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            mc.getTextureManager().bindTexture(tex);
+            Tessellator tessellator = Tessellator.instance;
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
+            tessellator.startDrawingQuads();
+            tessellator.addVertexWithUV(x,       y + h, 0, 0, 1);
+            tessellator.addVertexWithUV(x + w,   y + h, 0, 1, 1);
+            tessellator.addVertexWithUV(x + w,   y,     0, 1, 0);
+            tessellator.addVertexWithUV(x,       y,     0, 0, 0);
+            tessellator.draw();
+            GL11.glDisable(GL11.GL_BLEND);
         }
     }
 

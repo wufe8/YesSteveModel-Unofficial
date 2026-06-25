@@ -35,7 +35,16 @@ public class ExtraWheelData {
         Map<String, ExtraAnimationButton> configButtons = new LinkedHashMap<>();
 
         for (Map.Entry<String, String> entry : raw.properties.extraAnimations.entrySet()) {
-            entries.put(entry.getKey(), entry.getValue());
+            String k = entry.getKey();
+            String v = entry.getValue();
+            // If value starts with #, it's a config button reference — prefix key with #
+            // so the wheel UI displays it as a config entry and the inner-ring click
+            // handler can find the btnId from the value.
+            if (v != null && v.startsWith("#")) {
+                entries.put("#" + k, v);
+            } else {
+                entries.put(k, v);
+            }
         }
 
         for (RawYsmModel.ExtraAnimationClassify classify : raw.properties.extraAnimationClassifies) {
@@ -53,11 +62,11 @@ public class ExtraWheelData {
             if (StringUtils.isNotBlank(btn.id)) {
                 configButtons.put(btn.id, btn);
                 // Auto-add to entries so it appears in the wheel.
-                // OpenYSM convention: value (display label) starts with # for config buttons.
+                // OpenYSM convention: key starts with # for config buttons;
+                // value is "#" + btn.id so the inner-ring click handler can find it.
                 String key = "#" + btn.id;
                 if (!entries.containsKey(key)) {
-                    String label = StringUtils.isNotBlank(btn.name) ? btn.name : btn.id;
-                    entries.put(key, "#" + label);
+                    entries.put(key, "#" + btn.id);
                 }
             }
         }
