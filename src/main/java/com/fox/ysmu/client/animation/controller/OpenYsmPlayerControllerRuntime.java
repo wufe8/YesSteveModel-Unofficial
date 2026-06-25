@@ -121,6 +121,7 @@ public final class OpenYsmPlayerControllerRuntime {
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
         State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             return null;
         }
         for (int i = 0; i < 4; i++) {
@@ -166,6 +167,7 @@ public final class OpenYsmPlayerControllerRuntime {
         if ("sky".equals(state.name) && event.isMoving()
             && activeAnimations.contains("sneaking_sky")) {
             runtimeState.wasMoving = true;
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             return null;
         }
         // Transition when stopping from moving sneaking.
@@ -208,6 +210,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
             }
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             return null;
         }
         // Filter to animations that actually exist
@@ -218,9 +221,11 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
         if (existing.isEmpty()) {
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && existing.contains("attack_empty") && existing.size() == 1) {
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             return null;
         }
         if (state.blendTransitionTicks >= 0f) {
