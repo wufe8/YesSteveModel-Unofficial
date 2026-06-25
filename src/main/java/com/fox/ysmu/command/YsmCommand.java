@@ -57,10 +57,13 @@ public class YsmCommand extends CommandBase {
     private void processReload(ICommandSender sender) {
         StopWatch watch = new StopWatch();
         watch.start();
+        com.fox.ysmu.ysmu.LOG.info("YSM reload command started by {}", sender.getCommandSenderName());
         checkModelFiles(sender, CUSTOM);
         ServerModelManager.reloadPacks();
         ServerModelManager.sendRequestSyncModelMessage(sender.getEntityWorld().playerEntities);
         watch.stop();
+        com.fox.ysmu.ysmu.LOG.info("YSM reload command finished in {}ms, players notified: {}",
+            watch.getTime(), sender.getEntityWorld().playerEntities.size());
         sender.addChatMessage(new ChatComponentTranslation("message.yes_steve_model.model.reload.info", watch.getTime()));
     }
 

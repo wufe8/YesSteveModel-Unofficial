@@ -1,5 +1,9 @@
 package com.fox.ysmu.client.renderer;
 
+import java.util.Collections;
+import java.util.HashSet;
+import java.util.Set;
+
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.scoreboard.Score;
@@ -26,6 +30,8 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayerEntity> {
 
     private GeoModel geoModel;
+    /** Tracks which model locations have already been logged as missing (throttle). */
+    private final Set<String> missingGeoModelLogged = Collections.synchronizedSet(new HashSet<>());
 
     @SuppressWarnings("all")
     public CustomPlayerRenderer() {
@@ -64,6 +70,19 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         if (geoModel != null) {
             this.geoModel = geoModel;
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
+        } else {
+            // Throttled logging: only log once per missing model per game session
+            if (missingGeoModelLogged.add(location.toString())) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSM renderer cannot find geo model: location={}, mainModel={}, texture={}, geoModelsInCache={}",
+                    location,
+                    this.animatable != null ? this.animatable.getMainModel() : "null",
+                    this.animatable != null ? this.animatable.getTexture() : "null",
+                    GeckoLibCache.getInstance().getGeoModels().keySet().stream()
+                        .map(ResourceLocation::toString)
+                        .filter(s -> s.contains(location.getResourceDomain() + ":" + location.getResourcePath().replace("/main", "")))
+                        .collect(java.util.stream.Collectors.joining(", ")));
+            }
         }
     }
 

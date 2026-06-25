@@ -456,11 +456,17 @@ public class ClientModelManager {
 
     private static void clearRuntimeModelCaches() {
         ysmu.LOG.info(
-            "YSM client clearing runtime model caches: models={}, scales={}, extraInfo={}, extraAnimations={}",
+            "YSM client clearing runtime model caches: models={}, scales={}, extraInfo={}, extraAnimations={}, previewAnimations={}, molangStateMaps={}, molangConditionalMaps={}, previewBoneCache={}, geoModels={}, animations={}",
             MODELS.size(),
             SCALE_INFO.size(),
             EXTRA_INFO.size(),
-            EXTRA_ANIMATION_NAME.size());
+            EXTRA_ANIMATION_NAME.size(),
+            PREVIEW_ANIMATION.size(),
+            com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.size(),
+            com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.size(),
+            com.fox.ysmu.client.model.CustomPlayerModel.getPreviewBoneCacheSize(),
+            GeckoLibCache.getInstance().getGeoModels().size(),
+            GeckoLibCache.getInstance().getAnimations().size());
         MODELS.clear();
         SCALE_INFO.clear();
         EXTRA_INFO.clear();
@@ -470,11 +476,18 @@ public class ClientModelManager {
         MODEL_PACK_OF.clear();
         CLIENT_PACKS.clear();
         MODEL_DISPLAY_NAMES.clear();
+        PREVIEW_ANIMATION.clear();
+        GeckoLibCache.getInstance().getGeoModels().clear();
+        GeckoLibCache.getInstance().getAnimations().clear();
+        com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
+        com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.clear();
+        com.fox.ysmu.client.model.CustomPlayerModel.clearPreviewBoneCache();
         com.fox.ysmu.client.audio.YSMSoundManager.clear();
         ConditionManager.clear();
         OpenYsmAnimationControllerRegistry.clear();
         MolangPhysicsRuntime.clear();
         MolangInstructionExecutor.clearWarnings();
+        ysmu.LOG.info("YSM client runtime model caches cleared");
     }
 
     /** Registers rich extra wheel data from a RawYsmModel. */

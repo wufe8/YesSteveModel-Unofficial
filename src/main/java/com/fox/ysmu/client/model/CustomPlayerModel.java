@@ -251,6 +251,16 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         return bones.contains(boneName);
     }
 
+    /** Clears the static preview bone cache (e.g. during /ysm reload). */
+    public static void clearPreviewBoneCache() {
+        PREVIEW_BONE_CACHE.clear();
+    }
+
+    /** Returns the number of cached preview bone entries (for diagnostic logging). */
+    public static int getPreviewBoneCacheSize() {
+        return PREVIEW_BONE_CACHE.size();
+    }
+
     private void codeAnimation(AnimationEvent animationEvent, EntityModelData data, EntityPlayer player) {
         // FIXME: 2023/6/21 这一块设计应该改成 molang 的，而且这个寻找效率低下
         IBone head = getBone("Head");
