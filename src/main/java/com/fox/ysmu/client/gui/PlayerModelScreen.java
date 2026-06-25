@@ -10,6 +10,7 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.audio.PositionedSoundRecord;
+import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.gui.GuiTextField;
@@ -37,6 +38,10 @@ public class PlayerModelScreen extends GuiScreen {
     private int y;
     private int lastClientModelCount = -1;
     private boolean requestedModelSync;
+    /** 当前选中的模型包名称。null = 不限制/包列表模式。 */
+    private String selectedPack;
+    /** 是否正在显示模型包列表（而不是模型列表）。 */
+    private boolean showingPacks;
 
     public PlayerModelScreen() {
         this.category = Category.ALL;
@@ -50,20 +55,46 @@ public class PlayerModelScreen extends GuiScreen {
 
     private void calculateModelList() {
         models = Maps.newHashMap();
+        Map<ResourceLocation, List<ResourceLocation>> source;
+        if (this.selectedPack != null) {
+            // 包模式：只显示选中包内的模型
+            List<ResourceLocation> packModels = ClientModelManager.MODEL_PACKS.get(this.selectedPack);
+            source = Maps.newHashMap();
+            if (packModels != null) {
+                for (ResourceLocation id : packModels) {
+                    List<ResourceLocation> tex = ClientModelManager.MODELS.get(id);
+                    if (tex != null) source.put(id, tex);
+                }
+            }
+        } else {
+            source = ClientModelManager.MODELS;
+        }
+
         if (this.category == Category.ALL) {
-            this.models.putAll(ClientModelManager.MODELS);
+            if (this.selectedPack == null) {
+                // 全部模型模式：排除属于包内的模型
+                for (Map.Entry<ResourceLocation, List<ResourceLocation>> entry : source.entrySet()) {
+                    String pack = ClientModelManager.MODEL_PACK_OF.get(entry.getKey());
+                    if (pack == null) {
+                        this.models.put(entry.getKey(), entry.getValue());
+                    }
+                }
+            } else {
+                this.models.putAll(source);
+            }
         }
         if (this.category == Category.STAR) {
             ExtendedStarModels eep = ExtendedStarModels.get(this.player);
             if (eep != null) {
-                for (ResourceLocation modelId : ClientModelManager.MODELS.keySet()) {
+                for (ResourceLocation modelId : source.keySet()) {
                     if (eep.containModel(modelId)) {
-                        this.models.put(modelId, ClientModelManager.MODELS.get(modelId));
+                        List<ResourceLocation> tex = source.get(modelId);
+                        if (tex != null) this.models.put(modelId, tex);
                     }
                 }
             }
         }
-        if (textField != null) {
+        if (textField != null && !showingPacks) {
             String search = this.textField.getText().toLowerCase(Locale.US);
             models.entrySet()
                 .removeIf(next -> !ModelIdUtil.getModelDisplayName(next.getKey())
@@ -84,6 +115,11 @@ public class PlayerModelScreen extends GuiScreen {
             this.requestedModelSync = true;
             ClientModelManager.sendSyncModelMessage();
         }
+
+        // 决定显示模式：有包且未选择包时显示包列表，否则显示模型列表
+        boolean hasPacks = !ClientModelManager.MODEL_PACKS.isEmpty();
+        this.showingPacks = hasPacks && this.selectedPack == null && this.category == Category.ALL;
+
         this.calculateModelList();
         this.lastClientModelCount = ClientModelManager.MODELS.size();
 
@@ -92,21 +128,27 @@ public class PlayerModelScreen extends GuiScreen {
 
         String perText = "";
         boolean focus = false;
-        if (textField != null) {
+        if (textField != null && !showingPacks) {
             perText = textField.getText();
             focus = textField.isFocused();
         }
         textField = new GuiTextField(this.fontRendererObj, x + 144, y + 6, 158, 16);
-        textField.setText(perText);
+        if (!showingPacks) {
+            textField.setText(perText);
+            textField.setFocused(focus);
+            textField.setCursorPositionEnd();
+        }
         textField.setTextColor(0xF3EFE0);
-        textField.setFocused(focus);
-        textField.setCursorPositionEnd();
 
         // 按钮创建和点击逻辑分离 使用唯一的 ID 来标识按钮
         // addRenderableWidget -> this.buttonList.add
         this.buttonList.add(new TextureCountButton(0, x + 5, y + 5));
         this.buttonList.add(new FlatIconButton(1, x + 28, y + 5, 79, 20, 32, 16).setTooltips("gui.yes_steve_model.model.texture"));
         this.buttonList.add(new StarButton(2, x + 110, y + 5));
+        // 返回按钮：位于收藏按钮下方，仅在选择包或显示模型列表时可见
+        FlatColorButton backBtn = new FlatColorButton(4, x + 88, y + 27, 42, 16, I18n.format("gui.yes_steve_model.model.return"));
+        backBtn.visible = selectedPack != null;
+        this.buttonList.add(backBtn);
         this.buttonList.add(new FlatIconButton(3, x + 328, y + 5, 18, 18, 32, 0).setTooltips("gui.yes_steve_model.all_models"));
         this.buttonList.add(new FlatIconButton(5, x + 308, y + 5, 18, 18, 0, 0).setTooltips("gui.yes_steve_model.star_models"));
         this.buttonList.add(new FlatIconButton(6, x + 397, y + 5, 18, 18, 16, 16).setTooltips("gui.yes_steve_model.config"));
@@ -117,16 +159,32 @@ public class PlayerModelScreen extends GuiScreen {
         if (this.page > this.maxPage) {
             this.page = 0;
         }
-        int buttonId = 11;
-        for (int i = 0; i < 10; i++) {
-            int modelIndex = i + this.page * 10;
-            if (modelIndex >= models.size()) {
-                break;
+
+        if (showingPacks) {
+            // 显示模型包文件夹列表
+            int buttonId = 101;
+            int idx = 0;
+            for (Map.Entry<String, List<ResourceLocation>> packEntry : ClientModelManager.MODEL_PACKS.entrySet()) {
+                String packName = packEntry.getKey();
+                List<ResourceLocation> packModels = packEntry.getValue();
+                int xStart = x + 143 + 55 * (idx % 5);
+                int yStart = y + 28 + 93 * (idx / 5);
+                this.buttonList.add(new PackFolderButton(buttonId++, xStart, yStart, packName, packModels.size()));
+                idx++;
             }
-            ResourceLocation id = modelOrderList.get(modelIndex);
-            int xStart = x + 143 + 55 * (i % 5);
-            int yStart = y + 28 + 93 * (i / 5);
-            this.buttonList.add(new ModelButton(buttonId++, xStart, yStart, Pair.of(id, models.get(id)), ClientModelManager.EXTRA_INFO.get(ModelIdUtil.getMainId(id)), player));
+        } else {
+            // 显示模型按钮
+            int buttonId = 11;
+            for (int i = 0; i < 10; i++) {
+                int modelIndex = i + this.page * 10;
+                if (modelIndex >= models.size()) {
+                    break;
+                }
+                ResourceLocation id = modelOrderList.get(modelIndex);
+                int xStart = x + 143 + 55 * (i % 5);
+                int yStart = y + 28 + 93 * (i / 5);
+                this.buttonList.add(new ModelButton(buttonId++, xStart, yStart, Pair.of(id, models.get(id)), ClientModelManager.EXTRA_INFO.get(ModelIdUtil.getMainId(id)), player));
+            }
         }
     }
 
@@ -150,16 +208,26 @@ public class PlayerModelScreen extends GuiScreen {
                     ((StarButton) button).doPress();
                 }
                 break;
+            case 4:
+                // 返回：从包浏览回到包列表，或从包列表回到所有模型
+                if (selectedPack != null) {
+                    selectedPack = null;
+                    page = 0;
+                    initGui();
+                }
+                break;
             case 3:
-                if (this.category != Category.ALL) {
+                if (this.category != Category.ALL || this.selectedPack != null || this.showingPacks) {
                     this.category = Category.ALL;
+                    this.selectedPack = null;
                     this.page = 0;
                     this.initGui();
                 }
                 break;
             case 5:
-                if (this.category != Category.STAR) {
+                if (this.category != Category.STAR || this.selectedPack != null) {
                     this.category = Category.STAR;
+                    this.selectedPack = null;
                     this.page = 0;
                     this.initGui();
                 }
@@ -185,6 +253,10 @@ public class PlayerModelScreen extends GuiScreen {
             default:
                 if (button instanceof ModelButton) {
                     ((ModelButton) button).doPress();
+                } else if (button instanceof PackFolderButton) {
+                    this.selectedPack = ((PackFolderButton) button).packName;
+                    this.page = 0;
+                    this.initGui();
                 }
                 break;
         }
@@ -225,7 +297,11 @@ public class PlayerModelScreen extends GuiScreen {
             }
         }
 
-        if (textField.getText().isEmpty() && !textField.isFocused()) {
+        if (selectedPack != null) {
+            // 在搜索框位置显示当前包名称
+            String packLabel = I18n.format("gui.yes_steve_model.model_manage.type.folder") + ": " + selectedPack;
+            this.drawString(fontRendererObj, packLabel, x + 144, y + 8, 0x55FFFF);
+        } else if (textField.getText().isEmpty() && !textField.isFocused()) {
             this.drawString(fontRendererObj, EnumChatFormatting.ITALIC + I18n.format("gui.yes_steve_model.search"), x + 148, y + 10, 0x777777);
         }
 
@@ -321,6 +397,70 @@ public class PlayerModelScreen extends GuiScreen {
     @Override
     public boolean doesGuiPauseGame() {
         return false;
+    }
+
+    /** 模型包文件夹按钮，点击后进入该包查看其下的模型。 */
+    private static class PackFolderButton extends GuiButton {
+        final String packName;
+        final int modelCount;
+
+        PackFolderButton(int id, int pX, int pY, String packName, int modelCount) {
+            super(id, pX, pY, 52, 90, packName);
+            this.packName = packName;
+            this.modelCount = modelCount;
+        }
+
+        @Override
+        public void drawButton(Minecraft mc, int mouseX, int mouseY) {
+            if (!this.visible) return;
+            this.field_146123_n = mouseX >= this.xPosition && mouseY >= this.yPosition
+                && mouseX < this.xPosition + this.width && mouseY < this.yPosition + this.height;
+
+            // 文件夹背景
+            this.drawGradientRect(this.xPosition, this.yPosition,
+                this.xPosition + this.width, this.yPosition + this.height,
+                0xFF_3A3A3A, 0xFF_3A3A3A);
+
+            // 文件夹图标 - 绘制一个简单的文件夹形状
+            int cx = this.xPosition + this.width / 2;
+            int iconY = this.yPosition + 15;
+            // 文件夹主体
+            drawRect(cx - 12, iconY - 4, cx + 12, iconY + 20, 0xFF_F3EFE0);
+            drawRect(cx - 12, iconY - 4, cx - 4, iconY + 2, 0xFF_F3EFE0);
+            // 文件夹标签
+            drawRect(cx - 4, iconY - 2, cx + 12, iconY + 2, 0xFF_F3EFE0);
+            // 半透明覆盖
+            drawGradientRect(this.xPosition, this.yPosition,
+                this.xPosition + this.width, this.yPosition + this.height,
+                0x40_000000, 0x60_000000);
+
+            // 包名
+            FontRenderer font = mc.fontRenderer;
+            List<String> split = font.listFormattedStringToWidth(this.displayString, 45);
+            int textY = this.yPosition + this.height - 28;
+            if (split.size() > 1) {
+                this.drawCenteredString(font, split.get(0), cx, textY, 0xF3EFE0);
+                this.drawCenteredString(font, split.get(1), cx, textY + 10, 0xF3EFE0);
+            } else {
+                this.drawCenteredString(font, this.displayString, cx, textY + 5, 0xF3EFE0);
+            }
+
+            // 模型数量
+            String countStr = modelCount + " models";
+            this.drawCenteredString(font, countStr, cx, this.yPosition + this.height - 12, 0x888888);
+
+            // 悬停边框
+            if (this.field_146123_n) {
+                this.drawGradientRect(this.xPosition, this.yPosition + 1,
+                    this.xPosition + 1, this.yPosition + this.height - 1, 0xff_F3EFE0, 0xff_F3EFE0);
+                this.drawGradientRect(this.xPosition, this.yPosition,
+                    this.xPosition + this.width, this.yPosition + 1, 0xff_F3EFE0, 0xff_F3EFE0);
+                this.drawGradientRect(this.xPosition + this.width - 1, this.yPosition + 1,
+                    this.xPosition + this.width, this.yPosition + this.height - 1, 0xff_F3EFE0, 0xff_F3EFE0);
+                this.drawGradientRect(this.xPosition, this.yPosition + this.height - 1,
+                    this.xPosition + this.width, this.yPosition + this.height, 0xff_F3EFE0, 0xff_F3EFE0);
+            }
+        }
     }
 
     private enum Category {

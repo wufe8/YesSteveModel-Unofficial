@@ -68,6 +68,18 @@ public class ClientModelManager {
     public static Map<ResourceLocation, ExtraWheelData> EXTRA_WHEEL = Maps.newHashMap();
     /** Preview animation name per model, read from ysm.json preview_animation field. */
     public static Map<ResourceLocation, String> PREVIEW_ANIMATION = Maps.newHashMap();
+
+    /**
+     * 模型包/文件夹分组：pack显示名称 → 该包内的模型ID列表。
+     * 当模型位于 config/ysmu/custom/<packName>/<modelName>/ 时被归入包。
+     * 顶层模型（直接位于 custom/ 下）不在此表中。
+     */
+    public static final LinkedHashMap<String, List<ResourceLocation>> MODEL_PACKS = new LinkedHashMap<>();
+    /**
+     * 快速查找：模型ID → 所属包的显示名称（不在包内的模型为 null）。
+     */
+    public static final Map<ResourceLocation, String> MODEL_PACK_OF = Maps.newHashMap();
+
     public static AnimationFile DEFAULT_ANIMATION_FILE = new AnimationFile();
     public static List<String> CACHE_MD5 = Collections.synchronizedList(Lists.newArrayList());
     public static volatile byte[] PASSWORD;
@@ -93,6 +105,30 @@ public class ClientModelManager {
             modelId,
             MODELS.size(),
             MODELS.get(modelId) == null ? 0 : MODELS.get(modelId).size());
+        detectModelPacks();
+    }
+
+    /**
+     * 扫描 MODELS 中所有模型ID，根据其显示名称中的 '/' 分隔符检测模型包分组，
+     * 填充 MODEL_PACKS 和 MODEL_PACK_OF。
+     * 每次模型注册完成后应调用一次。
+     */
+    public static void detectModelPacks() {
+        MODEL_PACKS.clear();
+        MODEL_PACK_OF.clear();
+        for (ResourceLocation modelId : MODELS.keySet()) {
+            String display = ModelIdUtil.getModelDisplayName(modelId);
+            int slash = display.indexOf('/');
+            if (slash <= 0) {
+                MODEL_PACK_OF.put(modelId, null);
+                continue;
+            }
+            String packName = display.substring(0, slash);
+            MODEL_PACKS.computeIfAbsent(packName, k -> new ArrayList<>()).add(modelId);
+            MODEL_PACK_OF.put(modelId, packName);
+        }
+        ysmu.LOG.info("YSM client detected {} model packs from {} models: {}",
+            MODEL_PACKS.size(), MODELS.size(), MODEL_PACKS.keySet());
     }
 
     private static ResourceLocation getModelId(ModelData data) {
@@ -365,6 +401,8 @@ public class ClientModelManager {
         EXTRA_INFO.clear();
         EXTRA_ANIMATION_NAME.clear();
         EXTRA_WHEEL.clear();
+        MODEL_PACKS.clear();
+        MODEL_PACK_OF.clear();
         ConditionManager.clear();
         OpenYsmAnimationControllerRegistry.clear();
         MolangPhysicsRuntime.clear();

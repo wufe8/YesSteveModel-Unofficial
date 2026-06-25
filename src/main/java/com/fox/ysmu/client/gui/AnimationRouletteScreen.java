@@ -81,6 +81,16 @@ public class AnimationRouletteScreen extends GuiScreen {
 
     @Override
     public void drawScreen(int pMouseX, int pMouseY, float pPartialTick) {
+        // 始终绘制轮盘（配置面板模式下作为背景可见）
+        List<Map.Entry<String, String>> pageEntries = getPageEntries();
+        drawRoulette(pMouseX, pMouseY, pageEntries);
+        drawRouletteText(pageEntries);
+        // Draw center lock button using ASCII-safe symbols
+        boolean locked = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault(LOCK_VAR, 0.0) > 0;
+        String lockIcon = locked ? "[x]" : "[ ]";
+        int lockColor = locked ? 0xFFB100 : 0x666666;
+        drawCenteredString(fontRendererObj, lockIcon + " Lock", x, y - fontRendererObj.FONT_HEIGHT / 2, lockColor);
+
         if (currentConfigGroup != null) {
             drawConfigPanel(pMouseX, pMouseY);
             // Handle slider dragging: track left mouse button held on range sliders
@@ -100,16 +110,7 @@ public class AnimationRouletteScreen extends GuiScreen {
                     }
                 }
             }
-            return;
         }
-        List<Map.Entry<String, String>> pageEntries = getPageEntries();
-        drawRoulette(pMouseX, pMouseY, pageEntries);
-        drawRouletteText(pageEntries);
-        // Draw center lock button using ASCII-safe symbols
-        boolean locked = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault(LOCK_VAR, 0.0) > 0;
-        String lockIcon = locked ? "[x]" : "[ ]";
-        int lockColor = locked ? 0xFFB100 : 0x666666;
-        drawCenteredString(fontRendererObj, lockIcon + " Lock", x, y - fontRendererObj.FONT_HEIGHT / 2, lockColor);
     }
 
     @Override
@@ -412,7 +413,6 @@ public class AnimationRouletteScreen extends GuiScreen {
     }
 
     private void drawConfigPanel(int mouseX, int mouseY) {
-        drawDefaultBackground();
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
 
@@ -420,7 +420,13 @@ public class AnimationRouletteScreen extends GuiScreen {
         int panelW = 200;
         int panelY = 30;
 
-        drawRect(panelX - 10, panelY - 10, panelX + panelW + 10, height - 50, 0xCC222222);
+        // 半透明面板背景，让轮盘和世界可见
+        drawRect(panelX - 10, panelY - 10, panelX + panelW + 10, height - 50, 0xBB222222);
+        // 在面板周围加一层微弱的半透明遮罩减少视觉干扰
+        drawRect(0, 0, panelX - 10, height, 0x44000000);
+        drawRect(panelX + panelW + 10, 0, width, height, 0x44000000);
+        drawRect(panelX - 10, 0, panelX + panelW + 10, panelY - 10, 0x44000000);
+        drawRect(panelX - 10, height - 50, panelX + panelW + 10, height, 0x44000000);
 
         String title = StringUtils.isNotBlank(currentConfigGroup.name) ? currentConfigGroup.name : currentConfigGroup.id;
         drawCenteredString(fontRendererObj, "[CFG] " + title, width / 2, panelY, 0xFFB100);
@@ -430,6 +436,28 @@ public class AnimationRouletteScreen extends GuiScreen {
         }
 
         drawCenteredString(fontRendererObj, "Right-click to close", width / 2, height - 25, 0x666666);
+
+        // 在面板左侧渲染小人物预览
+        if (mc != null && mc.thePlayer != null) {
+            GL11.glEnable(GL11.GL_SCISSOR_TEST);
+            int scale = new net.minecraft.client.gui.ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
+            int previewX = panelX - 90;
+            int previewY = panelY + 40;
+            int previewW = 80;
+            int previewH = 120;
+            GL11.glScissor(previewX * scale, mc.displayHeight - ((previewY + previewH) * scale),
+                previewW * scale, previewH * scale);
+            // 半透明预览背景框
+            drawRect(previewX, previewY, previewX + previewW, previewY + previewH, 0x66000000);
+            com.fox.ysmu.util.RenderUtil.renderPlayerEntity(
+                mc.thePlayer,
+                previewX + previewW / 2.0,
+                previewY + previewH - 10,
+                45.0f,
+                5.0f,
+                100.0);
+            GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        }
 
         int startY = panelY + 30 - configScrollOffset;
 
