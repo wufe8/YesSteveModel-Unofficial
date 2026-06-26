@@ -207,6 +207,12 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                             }
                         } catch (Exception ignored) {}
                     }
+                    // Never hide structural bones (those with children in the bone hierarchy)
+                    // — doing so would cascade to all descendants and make the model invisible.
+                    // Only leaf bones (GUI decorations like curtain, backgrounds) may be hidden.
+                    if (!((GeoBone) bone).childBones.isEmpty()) {
+                        show = true;
+                    }
                     bone.setHidden(!show);
                     if (!show) {
                         hiddenCount++;
