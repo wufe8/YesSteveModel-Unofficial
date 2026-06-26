@@ -137,7 +137,14 @@ public class MathBuilder {
                 }
                 if (longOperator) {
                     s = chars[i - 1] + s;
-                    buffer = buffer.substring(0, buffer.length() - 1);
+                    // 前一个字符可能在 buffer 中（标准情况），也可能已经被推入 symbols
+                    // （当 isOperator 对单字符返回 true 时，如 MolangParser 的 "="）
+                    if (buffer.length() > 0) {
+                        buffer = buffer.substring(0, buffer.length() - 1);
+                    }
+                    if (!symbols.isEmpty() && symbols.get(symbols.size() - 1).equals(chars[i - 1])) {
+                        symbols.remove(symbols.size() - 1);
+                    }
                 }
                 // 推送 buffer 和操作符
                 if (!buffer.isEmpty()) {

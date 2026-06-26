@@ -96,12 +96,25 @@ public final class MolangPhysicsRuntime {
         return context.state.physics.secondOrder(nameId, input, frequency, coefficient, response);
     }
 
+    private static final java.util.Set<String> LOGGED_VARS = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     public static double getVariable(String name, double fallback) {
         FrameContext context = CURRENT.get();
         if (context == null) {
+            if (name.startsWith("v.roaming.") && LOGGED_VARS.add(name)) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSM MolangPhysicsRuntime: getVariable('{}') – NO FRAME CONTEXT, fallback={}",
+                    name, fallback);
+            }
             return fallback;
         }
         Double value = context.state.variables.get(name);
+        // 只记录 v.roaming.* 变量，每个变量名只记录第一次
+        if (name.startsWith("v.roaming.") && LOGGED_VARS.add(name)) {
+            com.fox.ysmu.ysmu.LOG.info(
+                "YSM MolangPhysicsRuntime: getVariable('{}') = {} (fallback={})",
+                name, value, fallback);
+        }
         return value == null ? fallback : value;
     }
 

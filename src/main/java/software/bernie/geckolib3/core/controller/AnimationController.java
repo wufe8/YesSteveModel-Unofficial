@@ -10,10 +10,12 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Objects;
 import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -189,6 +191,8 @@ public class AnimationController<T extends IAnimatable> {
     protected boolean needsAnimationReload = false;
     public double animationSpeed = 1D;
     private final Set<EventKeyFrame<?>> executedKeyFrames = new HashSet<>();
+    /** 仅用于调试：记录已输出过一次日志的 (controllerName, boneName)，防止刷屏 */
+    private static final Set<String> DEBUG_LOGGED_BONES = ConcurrentHashMap.newKeySet();
 
     /**
      * This method sets the current animation with an animation builder. You can run
@@ -200,6 +204,17 @@ public class AnimationController<T extends IAnimatable> {
         /// ADDED
         if (builder != null && !builder.getRawAnimationList()
             .isEmpty()) {
+            // Log pre_parallel/parallel animations being set (throttled: only when actually reloading)
+            String animName = builder.getRawAnimationList().get(0).animationName;
+            boolean animChanged = !builder.getRawAnimationList()
+                .equals(this.currentAnimationBuilder.getRawAnimationList());
+            if (animName != null && (animName.startsWith("pre_parallel") || animName.startsWith("parallel"))
+                && (animChanged || needsAnimationReload)) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSM AnimationController.setAnimation: controller={}, anim='{}', changed={}, needsReload={}, currentAnim={}",
+                    getName(), animName, animChanged, needsAnimationReload,
+                    currentAnimation != null ? currentAnimation.animationName : "null");
+            }
             if (builder.getRawAnimationList()
                 .equals(this.currentAnimationBuilder.getRawAnimationList()) && !this.needsAnimationReload) {
                 if (builder.getRawAnimationList()
@@ -741,6 +756,24 @@ public class AnimationController<T extends IAnimatable> {
             VectorKeyFrameList<KeyFrame<IValue>> rotationKeyFrames = boneAnimation.rotationKeyFrames;
             VectorKeyFrameList<KeyFrame<IValue>> positionKeyFrames = boneAnimation.positionKeyFrames;
             VectorKeyFrameList<KeyFrame<IValue>> scaleKeyFrames = boneAnimation.scaleKeyFrames;
+
+            // DEBUG (throttled): Log per-bone processing only once per (controller, bone) pair
+            if (getName() != null && (getName().startsWith("pre_parallel") || getName().startsWith("parallel"))) {
+                String debugKey = getName() + "|" + boneAnimation.boneName;
+                if (DEBUG_LOGGED_BONES.add(debugKey)) {
+                    boolean hasRot = !rotationKeyFrames.xKeyFrames.isEmpty();
+                    boolean hasPos = !positionKeyFrames.xKeyFrames.isEmpty();
+                    boolean hasScale = !scaleKeyFrames.xKeyFrames.isEmpty();
+                    String scaleExpr = "none";
+                    if (hasScale && !scaleKeyFrames.xKeyFrames.isEmpty()) {
+                        scaleExpr = scaleKeyFrames.xKeyFrames.get(0).getStartValue().toString();
+                        if (scaleExpr.length() > 100) scaleExpr = scaleExpr.substring(0, 100);
+                    }
+                    com.fox.ysmu.ysmu.LOG.info(
+                        "YSM processCurrentAnimation: controller={}, bone='{}', hasRot={}, hasPos={}, hasScale={}, scaleExpr='{}'",
+                        getName(), boneAnimation.boneName, hasRot, hasPos, hasScale, scaleExpr);
+                }
+            }
 
             if (!rotationKeyFrames.xKeyFrames.isEmpty()) {
                 boneAnimationQueue.rotationXQueue

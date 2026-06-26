@@ -6,7 +6,7 @@ import java.util.Set;
 public enum Operation {
 
     // 操作符
-    ADD("+", 1) {
+    ADD("+", 4) {
 
         @Override
 
@@ -14,7 +14,7 @@ public enum Operation {
             return a + b;
         }
     },
-    SUB("-", 1) {
+    SUB("-", 4) {
 
         @Override
 
@@ -22,7 +22,7 @@ public enum Operation {
             return a - b;
         }
     },
-    MUL("*", 2) {
+    MUL("*", 5) {
 
         @Override
 
@@ -30,7 +30,7 @@ public enum Operation {
             return a * b;
         }
     },
-    DIV("/", 2) {
+    DIV("/", 5) {
 
         @Override
 
@@ -39,7 +39,7 @@ public enum Operation {
             return a / (b == 0 ? 1 : b);
         }
     },
-    MOD("%", 2) {
+    MOD("%", 5) {
 
         @Override
 
@@ -47,7 +47,7 @@ public enum Operation {
             return a % b;
         }
     },
-    POW("^", 3) {
+    POW("^", 6) {
 
         @Override
 
@@ -55,7 +55,7 @@ public enum Operation {
             return Math.pow(a, b);
         }
     },
-    AND("&&", 5) {
+    AND("&&", 1) {
 
         @Override
 
@@ -63,7 +63,7 @@ public enum Operation {
             return a != 0 && b != 0 ? 1 : 0;
         }
     },
-    OR("||", 5) {
+    OR("||", 0) {
 
         @Override
 
@@ -71,7 +71,7 @@ public enum Operation {
             return a != 0 || b != 0 ? 1 : 0;
         }
     },
-    LESS("<", 5) {
+    LESS("<", 3) {
 
         @Override
 
@@ -79,7 +79,7 @@ public enum Operation {
             return a < b ? 1 : 0;
         }
     },
-    LESS_THAN("<=", 5) {
+    LESS_THAN("<=", 3) {
 
         @Override
 
@@ -87,7 +87,7 @@ public enum Operation {
             return a <= b ? 1 : 0;
         }
     },
-    GREATER_THAN(">=", 5) {
+    GREATER_THAN(">=", 3) {
 
         @Override
 
@@ -95,7 +95,7 @@ public enum Operation {
             return a >= b ? 1 : 0;
         }
     },
-    GREATER(">", 5) {
+    GREATER(">", 3) {
 
         @Override
 
@@ -103,7 +103,7 @@ public enum Operation {
             return a > b ? 1 : 0;
         }
     },
-    EQUALS("==", 5) {
+    EQUALS("==", 2) {
 
         @Override
 
@@ -111,7 +111,7 @@ public enum Operation {
             return equals(a, b) ? 1 : 0;
         }
     },
-    NOT_EQUALS("!=", 5) {
+    NOT_EQUALS("!=", 2) {
 
         @Override
 
