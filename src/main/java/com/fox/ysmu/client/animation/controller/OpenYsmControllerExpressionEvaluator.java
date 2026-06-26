@@ -422,6 +422,21 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("ctrl.ride".equals(name)) {
                 return player.isRiding() ? TRUE : FALSE;
             }
+            if ("math.mod".equals(name) && arguments.size() >= 2) {
+                double a = arguments.get(0).asNumber();
+                double b = arguments.get(1).asNumber();
+                if (b == 0.0d) return FALSE;
+                double result = a % b;
+                // 兼容负数的取模行为
+                if (result < 0) result += Math.abs(b);
+                return result;
+            }
+            if ("math.random_integer".equals(name) && arguments.size() >= 2) {
+                int min = (int) arguments.get(0).asNumber();
+                int max = (int) arguments.get(1).asNumber();
+                if (min > max) return min;
+                return min + (int)(Math.random() * (max - min + 1));
+            }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "func:" + name,
                 "Unsupported OpenYSM controller function: " + name);
@@ -797,6 +812,18 @@ final class OpenYsmControllerExpressionEvaluator {
 
         String asString() {
             return string ? stringValue : Double.toString(numberValue);
+        }
+
+        double asNumber() {
+            return string ? parseStringAsNumber(stringValue) : numberValue;
+        }
+
+        private static double parseStringAsNumber(String s) {
+            try {
+                return Double.parseDouble(s);
+            } catch (NumberFormatException e) {
+                return 0.0d;
+            }
         }
     }
 }

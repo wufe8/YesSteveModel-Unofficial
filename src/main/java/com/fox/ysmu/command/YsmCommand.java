@@ -71,7 +71,7 @@ public class YsmCommand extends CommandBase {
         if (!(sender instanceof EntityPlayerMP)) {
             throw new CommandException("commands.generic.player.notFound");
         }
-        // 合并剩余参数，支持带冒号或空格的动画名
+        // 合并剩余参数，支持带空格的动画名；剔除可能包含的引号
         String animName = "";
         if (args.length >= 2) {
             StringBuilder sb = new StringBuilder();
@@ -79,7 +79,7 @@ public class YsmCommand extends CommandBase {
                 if (sb.length() > 0) sb.append(" ");
                 sb.append(args[i]);
             }
-            animName = sb.toString();
+            animName = sb.toString().replaceAll("[\"']", "");
         }
         if (StringUtils.isBlank(animName)) {
             sender.addChatMessage(new ChatComponentTranslation("message.yes_steve_model.model.animation_roulette.play", "?"));

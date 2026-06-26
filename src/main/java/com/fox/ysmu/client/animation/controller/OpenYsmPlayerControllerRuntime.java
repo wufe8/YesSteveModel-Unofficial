@@ -489,12 +489,12 @@ public final class OpenYsmPlayerControllerRuntime {
     private static void prepareFrameVariables(String geckoControllerName, EntityPlayer player, RuntimeState state,
         OpenYsmControllerExpressionEvaluator.Context context) {
         if (isPostSwingController(geckoControllerName)) {
-            // 1.7.10: swingProgressInt 递减 (max→0)。
-            // !state.lastSwingActive = 刚从不挥动变为挥动（真正的首次帧）
-            // swingProgressInt > state.lastSwingProgress + 1 = 连点重置（从低值跳回高值）
+            // 1.7.10: swingProgressInt 从 0 递增到 swingProgressIntMax (≈6)。
+            // swingJustStarted = 刚从不挥动变为挥动
+            // swingReset = swingProgressInt 变小说明连点重置（从高值跳回 0 重新递增）
             boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
             boolean swingReset = player.isSwingInProgress && state.lastSwingActive
-                && player.swingProgressInt > state.lastSwingProgress + 1;
+                && player.swingProgressInt < state.lastSwingProgress;
             boolean newSwing = swingJustStarted || swingReset;
             if (newSwing) {
                 boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
@@ -519,9 +519,8 @@ public final class OpenYsmPlayerControllerRuntime {
                         geckoControllerName);
                 }
             } else {
-                // 每帧记录非 newSwing 时的关键状态（减少日志量：only when state changed）
-                if (state.lastSwingActive != player.isSwingInProgress
-                    || state.lastSwingProgress != player.swingProgressInt) {
+                // 仅在 swing 状态发生变化时记录（减少刷屏）
+                if (state.lastSwingActive != player.isSwingInProgress) {
                     com.fox.ysmu.ysmu.LOG.info(
                         "YSM post_swing: no newSwing, isSwingInProgress={}, swingProgressInt={}, "
                         + "lastSwingActive={}, lastSwingProgress={}, controller={}",
