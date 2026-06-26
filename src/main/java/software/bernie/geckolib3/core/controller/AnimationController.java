@@ -208,13 +208,6 @@ public class AnimationController<T extends IAnimatable> {
             String animName = builder.getRawAnimationList().get(0).animationName;
             boolean animChanged = !builder.getRawAnimationList()
                 .equals(this.currentAnimationBuilder.getRawAnimationList());
-            if (animName != null && (animName.startsWith("pre_parallel") || animName.startsWith("parallel"))
-                && (animChanged || needsAnimationReload)) {
-                com.fox.ysmu.ysmu.LOG.info(
-                    "YSM AnimationController.setAnimation: controller={}, anim='{}', changed={}, needsReload={}, currentAnim={}",
-                    getName(), animName, animChanged, needsAnimationReload,
-                    currentAnimation != null ? currentAnimation.animationName : "null");
-            }
             if (builder.getRawAnimationList()
                 .equals(this.currentAnimationBuilder.getRawAnimationList()) && !this.needsAnimationReload) {
                 if (builder.getRawAnimationList()
@@ -769,9 +762,6 @@ public class AnimationController<T extends IAnimatable> {
                         scaleExpr = scaleKeyFrames.xKeyFrames.get(0).getStartValue().toString();
                         if (scaleExpr.length() > 100) scaleExpr = scaleExpr.substring(0, 100);
                     }
-                    com.fox.ysmu.ysmu.LOG.info(
-                        "YSM processCurrentAnimation: controller={}, bone='{}', hasRot={}, hasPos={}, hasScale={}, scaleExpr='{}'",
-                        getName(), boneAnimation.boneName, hasRot, hasPos, hasScale, scaleExpr);
                 }
             }
 

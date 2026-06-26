@@ -621,11 +621,6 @@ public final class AnimationManager {
             ResourceLocation animId = getAnimationId(event);
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
-                com.fox.ysmu.ysmu.LOG.info(
-                    "YSM predicateSwing: conditional='{}', exists={}, animId={}, "
-                    + "idle={}, moving={}, onGround={}",
-                    conditionalAnimation, exists, animId,
-                    !event.isMoving() && player.onGround, event.isMoving(), player.onGround);
                 if (exists) {
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
                 }

@@ -519,27 +519,6 @@ public final class OpenYsmPlayerControllerRuntime {
                         OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                             "q.is_jumping&&(q.vertical_speed<0)",
                             context) ? 1.0d : 0.0d);
-                    com.fox.ysmu.ysmu.LOG.info(
-                        "YSM post_swing: SET swing_sword=1, swingJustStarted={}, swingReset={}, "
-                        + "swingProgressInt={}, lastSwingProgress={}, onGround={}, controller={}",
-                        swingJustStarted, swingReset,
-                        player.swingProgressInt, state.lastSwingProgress,
-                        player.onGround,
-                        geckoControllerName);
-                } else {
-                    com.fox.ysmu.ysmu.LOG.info(
-                        "YSM post_swing: newSwing=true but NOT a sword swing (held={}), controller={}",
-                        player.getHeldItem(), geckoControllerName);
-                }
-            } else {
-                // 仅在 swing 状态发生变化时记录（减少刷屏）
-                if (state.lastSwingActive != player.isSwingInProgress) {
-                    com.fox.ysmu.ysmu.LOG.info(
-                        "YSM post_swing: no newSwing, isSwingInProgress={}, swingProgressInt={}, "
-                        + "lastSwingActive={}, lastSwingProgress={}, controller={}",
-                        player.isSwingInProgress, player.swingProgressInt,
-                        state.lastSwingActive, state.lastSwingProgress,
-                        geckoControllerName);
                 }
             }
             state.lastSwingActive = player.isSwingInProgress;
