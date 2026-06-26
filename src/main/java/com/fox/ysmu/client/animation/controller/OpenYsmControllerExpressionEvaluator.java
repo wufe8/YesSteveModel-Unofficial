@@ -580,6 +580,30 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("food_level".equals(name)) {
                 return player.getFoodStats().getFoodLevel();
             }
+            if ("ground_speed2".equals(name)) {
+                return horizontalSpeed();
+            }
+            if ("fps".equals(name)) {
+                return 60;
+            }
+            if ("input_vertical".equals(name)) {
+                return player.moveForward;
+            }
+            if ("input_horizontal".equals(name)) {
+                return player.moveStrafing;
+            }
+            if ("xxa".equals(name)) {
+                return player.moveStrafing;
+            }
+            if ("yya".equals(name)) {
+                return 0.0d; // 1.7.10 has no vertical input equivalent
+            }
+            if ("zza".equals(name)) {
+                return player.moveForward;
+            }
+            if ("attack_time".equals(name)) {
+                return player.isSwingInProgress ? 1.0d : 0.0d;
+            }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "ysm:" + name,
                 "Unsupported OpenYSM controller ysm variable: ysm." + name);

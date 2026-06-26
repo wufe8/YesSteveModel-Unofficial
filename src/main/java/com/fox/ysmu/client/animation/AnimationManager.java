@@ -420,6 +420,11 @@ public final class AnimationManager {
             legacyBodyActive = false;
             return controllerState;
         }
+        if (!legacyBodyActive && player.isSwingInProgress) {
+            com.fox.ysmu.ysmu.LOG.info(
+                "YSM predicateMain: OpenYSM returned null, falling to legacy (swinging={}, moving={}, onGround={})",
+                player.isSwingInProgress, event.isMoving(), player.onGround);
+        }
         legacyBodyActive = true;
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
@@ -617,16 +622,20 @@ public final class AnimationManager {
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
                 com.fox.ysmu.ysmu.LOG.info(
-                    "YSM predicateSwing: conditional='{}', exists={}, animId={}",
-                    conditionalAnimation, exists, animId);
+                    "YSM predicateSwing: conditional='{}', exists={}, animId={}, "
+                    + "idle={}, moving={}, onGround={}",
+                    conditionalAnimation, exists, animId,
+                    !event.isMoving() && player.onGround, event.isMoving(), player.onGround);
                 if (exists) {
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
                 }
             } else {
                 boolean swingHandExists = animationExistsInFile(animId, "swing_hand");
                 com.fox.ysmu.ysmu.LOG.info(
-                    "YSM predicateSwing: no conditional, fallback swing_hand exists={}, animId={}",
-                    swingHandExists, animId);
+                    "YSM predicateSwing: no conditional, fallback swing_hand exists={}, animId={}, "
+                    + "idle={}, moving={}, onGround={}",
+                    swingHandExists, animId,
+                    !event.isMoving() && player.onGround, event.isMoving(), player.onGround);
             }
             return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.LOOP);
         }

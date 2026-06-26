@@ -184,10 +184,14 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                     || name.contains("RightSpeechless") || name.contains("LeftSpeechless");
                 // Hide bones belonging to the model's preview animation (e.g. gui decoration)
                 boolean isPreviewBone = isPreviewAnimationBone(name, animId);
+                // Hide reference/guide bones that are only used during modeling
+                // (e.g. zero-thickness positioning grids at Y=0 like "dingwei").
+                // Also hide accessory bones that are only visible conditionally
+                boolean isReferenceBone = name.equals("dingwei");
                 totalBones++;
                 if (isExpression) expressionCount++;
                 if (isPreviewBone && !isExpression) previewCount++;
-                if (isExpression || isPreviewBone) {
+                if (isExpression || isPreviewBone || isReferenceBone) {
                     boolean show = false;
                     if (extraAnimActive && extraAnimName != null && animId != null) {
                         try {
