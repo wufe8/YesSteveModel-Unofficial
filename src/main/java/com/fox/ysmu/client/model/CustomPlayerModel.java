@@ -39,6 +39,9 @@ public class CustomPlayerModel extends AnimatedGeoModel {
     private final Map<IBone, HeadPoseOffset> headPoseOffsets = new IdentityHashMap<>();
     /** Cached bone names belonging to each model's preview animation. */
     private static final Map<ResourceLocation, java.util.Set<String>> PREVIEW_BONE_CACHE = new java.util.HashMap<>();
+    /** Tracks which model+player combos have been logged for visibility diagnostics (throttle). */
+    private static final java.util.Set<String> VISIBILITY_LOG_THROTTLE = java.util.Collections.newSetFromMap(
+        new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
     @Override
 
@@ -140,6 +143,10 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 extraAnimName = eep.getAnimation();
             }
         } catch (Exception ignored) {}
+        int totalBones = 0;
+        int hiddenCount = 0;
+        int expressionCount = 0;
+        int previewCount = 0;
         for (IBone bone : bones) {
             if (bone instanceof GeoBone) {
                 String name = ((GeoBone) bone).getName();
@@ -176,6 +183,9 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                     || name.contains("RightSpeechless") || name.contains("LeftSpeechless");
                 // Hide bones belonging to the model's preview animation (e.g. gui decoration)
                 boolean isPreviewBone = isPreviewAnimationBone(name, animId);
+                totalBones++;
+                if (isExpression) expressionCount++;
+                if (isPreviewBone && !isExpression) previewCount++;
                 if (isExpression || isPreviewBone) {
                     boolean show = false;
                     if (extraAnimActive && extraAnimName != null && animId != null) {
@@ -197,7 +207,17 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                         } catch (Exception ignored) {}
                     }
                     bone.setHidden(!show);
+                    if (!show) hiddenCount++;
                 }
+            }
+        }
+        // Diagnostic: log visibility stats once per model switch (throttled per animId)
+        if (hiddenCount > 0 || totalBones > 0) {
+            String throttleKey = animId.toString();
+            if (VISIBILITY_LOG_THROTTLE.add(throttleKey)) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSM visibility: {}/{} bones hidden for {} (extraAnimActive={}, extraAnimName={}, expressionBones={}, previewBones={})",
+                    hiddenCount, totalBones, animId, extraAnimActive, extraAnimName, expressionCount, previewCount);
             }
         }
     }
@@ -254,6 +274,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
     /** Clears the static preview bone cache (e.g. during /ysm reload). */
     public static void clearPreviewBoneCache() {
         PREVIEW_BONE_CACHE.clear();
+        VISIBILITY_LOG_THROTTLE.clear();
     }
 
     /** Returns the number of cached preview bone entries (for diagnostic logging). */
