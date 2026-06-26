@@ -73,20 +73,22 @@ public final class AnimationManager {
     private final Map<UUID, String> dismountAnim = new ConcurrentHashMap<>();
     /** Remaining ticks to suppress other controllers during dismount. */
     private final Map<UUID, Integer> dismountTimer = new ConcurrentHashMap<>();
-    /** Attack combo counter: stores the NEXT swing's attack index (0/1/2 → attack_1/2/3). */
-    private final Map<UUID, Integer> swingCombo = new ConcurrentHashMap<>();
-    /** Ticks when the current combo animation started (for animation-end detection). */
-    private final Map<UUID, Double> swingComboStartTick = new ConcurrentHashMap<>();
     /** Tracks isSwingInProgress across frames to detect new swing cycles (false→true). */
     private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
     /** Tracks last swingProgressInt to detect rapid-click resets. */
     private final Map<UUID, Integer> lastSwingProgress = new ConcurrentHashMap<>();
-    /** Attack combo animation names in order (moving). */
-    private static final String[] ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"};
-    /** Attack combo animation names in order (idle/stationary). */
-    private static final String[] ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"};
-    /** True if the current swing's combo uses idle variant (set on first frame, not changed mid-swing). */
-    private final Map<UUID, Boolean> comboIsIdle = new ConcurrentHashMap<>();
+    // --- 硬编码的攻击组合动画已被注释掉 (2025-06-26) ---
+    // 原 ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"}
+    // 原 ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"}
+    // 这些硬编码的动画名大多数模型并不存在，会导致:
+    // - 攻击变为空动画 (bind pose / A-pose)
+    // - cap 控制器卡死在非存在动画上，后续 cap 动画异常
+    // - 肢体在某些动作后完全无动画
+    // private final Map<UUID, Integer> swingCombo = new ConcurrentHashMap<>();
+    // private final Map<UUID, Double> swingComboStartTick = new ConcurrentHashMap<>();
+    // private final Map<UUID, Boolean> comboIsIdle = new ConcurrentHashMap<>();
+    // private static final String[] ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"};
+    // private static final String[] ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"};
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -361,33 +363,11 @@ public final class AnimationManager {
             capWasPlaying = true;
             return playAnimation(event, anim);
         }
-        // 攻击组合技：通过 CAP 播放
-        Integer combo = swingCombo.get(player.getUniqueID());
-        if (combo != null) {
-            double animTick = event.getAnimationTick();
-            Double startTick = swingComboStartTick.get(player.getUniqueID());
-            if (startTick == null) {
-                swingComboStartTick.put(player.getUniqueID(), animTick);
-                startTick = animTick;
-                comboIsIdle.put(player.getUniqueID(), !event.isMoving());
-            }
-            Animation curAnim = event.getController().getCurrentAnimation();
-            double elapsed = animTick - startTick;
-            if (curAnim != null && curAnim.animationLength != null && curAnim.animationLength > 0
-                && elapsed >= curAnim.animationLength) {
-                swingCombo.remove(player.getUniqueID());
-                swingComboStartTick.remove(player.getUniqueID());
-                comboIsIdle.remove(player.getUniqueID());
-                if (capWasPlaying) {
-                    capWasPlaying = false;
-                    com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
-                }
-                return PlayState.STOP;
-            }
-            String[] pool = Boolean.TRUE.equals(comboIsIdle.get(player.getUniqueID())) ? ATTACK_COMBO_IDLE : ATTACK_COMBO;
-            capWasPlaying = true;
-            return playAnimation(event, pool[(combo - 1 + 3) % 3]);
-        }
+        // --- 硬编码的攻击组合动画已被注释掉 (2025-06-26) ---
+        // 原逻辑：通过 cap 控制器播放 ATTACK_COMBO / ATTACK_COMBO_IDLE 序列。
+        // 问题：这些硬编码动画名大多数模型不存在，导致 cap 控制器卡死、动画异常。
+        // Integer combo = swingCombo.get(player.getUniqueID());
+        // if (combo != null) { ... }
         // No animation matches → cap controller stops → clean up sounds.
         if (capWasPlaying) {
             capWasPlaying = false;
@@ -528,11 +508,21 @@ public final class AnimationManager {
             }
             int hash = itemHash(offhandItem);
             Integer last = lastOffhandItemHash.put(player.getUniqueID(), hash);
-            if (last == null || last != hash || last == -1) {
+            // Reload when item changes, coming from empty (-1), or coming from empty anim (0)
+            if (last == null || last != hash || last == -1 || last == 0) {
                 event.getController().markNeedsReload();
             }
             return playIfPresent(event, findHoldAnimation(event, player, false));
         } else {
+            // 尝试空手持握动画 (hold_offhand:empty)
+            String emptyAnim = findHoldAnimation(event, player, false);
+            if (StringUtils.isNoneBlank(emptyAnim)) {
+                Integer last = lastOffhandItemHash.put(player.getUniqueID(), 0); // 0 = 空手动画激活
+                if (last == null || last != 0) {
+                    event.getController().markNeedsReload();
+                }
+                return playAnimation(event, emptyAnim, ILoopType.EDefaultLoopTypes.LOOP);
+            }
             lastOffhandItemHash.put(player.getUniqueID(), -1);
         }
         return PlayState.STOP;
@@ -562,13 +552,21 @@ public final class AnimationManager {
             }
             int hash = itemHash(player.getHeldItem());
             Integer last = lastMainhandItemHash.put(player.getUniqueID(), hash);
-            // Reload when item changes OR when coming back from empty hand
-            if (last == null || last != hash || last == -1) {
+            // Reload when item changes, coming from empty (-1), or coming from empty anim (0)
+            if (last == null || last != hash || last == -1 || last == 0) {
                 event.getController().markNeedsReload();
             }
             return playIfPresent(event, findHoldAnimation(event, player, true));
         } else {
-            // Mark as empty
+            // 尝试空手持握动画 (hold_mainhand:empty)
+            String emptyAnim = findHoldAnimation(event, player, true);
+            if (StringUtils.isNoneBlank(emptyAnim)) {
+                Integer last = lastMainhandItemHash.put(player.getUniqueID(), 0); // 0 = 空手动画激活
+                if (last == null || last != 0) {
+                    event.getController().markNeedsReload();
+                }
+                return playAnimation(event, emptyAnim, ILoopType.EDefaultLoopTypes.LOOP);
+            }
             lastMainhandItemHash.put(player.getUniqueID(), -1);
         }
         return PlayState.STOP;
@@ -615,19 +613,20 @@ public final class AnimationManager {
                     .adjustTick(0);
             }
             String conditionalAnimation = findSwingAnimation(event, player);
+            ResourceLocation animId = getAnimationId(event);
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
-                ResourceLocation animId = getAnimationId(event);
-                if (animationExistsInFile(animId, conditionalAnimation)) {
-                    if ("swing:sword".equals(conditionalAnimation)
-                        && !OpenYsmAnimationControllerRegistry.hasController(animId, "player.post_swing")
-                        && (swingStarted || newSwing || progressReset)) {
-                        int combo = swingCombo.getOrDefault(pid, 3);
-                        swingCombo.put(pid, (combo + 1) % 3);
-                        swingComboStartTick.remove(pid);
-                        comboIsIdle.remove(pid);
-                    }
+                boolean exists = animationExistsInFile(animId, conditionalAnimation);
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSM predicateSwing: conditional='{}', exists={}, animId={}",
+                    conditionalAnimation, exists, animId);
+                if (exists) {
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
                 }
+            } else {
+                boolean swingHandExists = animationExistsInFile(animId, "swing_hand");
+                com.fox.ysmu.ysmu.LOG.info(
+                    "YSM predicateSwing: no conditional, fallback swing_hand exists={}, animId={}",
+                    swingHandExists, animId);
             }
             return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.LOOP);
         }
@@ -781,10 +780,10 @@ public final class AnimationManager {
      * 检测玩家是否刚下马（isRiding 从 true→false）。
      */
 
-    /** 返回指定玩家是否有活跃的攻击组合技。 */
-    public static boolean hasActiveCombo(EntityPlayer player) {
-        if (player == null || MANAGER == null) return false;
-        return MANAGER.swingCombo.containsKey(player.getUniqueID());
-    }
+    // 攻击组合技 (hasActiveCombo) 已注释掉 (2025-06-26)
+    // public static boolean hasActiveCombo(EntityPlayer player) {
+    //     if (player == null || MANAGER == null) return false;
+    //     return MANAGER.swingCombo.containsKey(player.getUniqueID());
+    // }
 }
 

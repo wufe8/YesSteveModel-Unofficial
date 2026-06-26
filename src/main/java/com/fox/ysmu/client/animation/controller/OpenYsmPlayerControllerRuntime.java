@@ -125,12 +125,24 @@ public final class OpenYsmPlayerControllerRuntime {
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
+        int transitionCount = 0;
         for (int i = 0; i < 4; i++) {
+            String prevStateName = state.name;
             State nextState = applyTransition(event, match.controller, state, runtimeState, context);
             if (nextState == state) {
                 break;
             }
+            transitionCount++;
+            com.fox.ysmu.ysmu.LOG.info(
+                "YSM controller transition #{}: {} → {} (controller={})",
+                transitionCount, prevStateName, nextState.name, geckoControllerName);
             state = nextState;
+        }
+        if (transitionCount > 0) {
+            com.fox.ysmu.ysmu.LOG.info(
+                "YSM controller {} ended at state '{}' after {} transition(s), animations={}",
+                geckoControllerName, state.name, transitionCount,
+                state.animations.stream().map(e -> e.animationName).collect(java.util.stream.Collectors.toList()));
         }
 
         // If the current state has no animations, try to force transition to any
@@ -477,8 +489,13 @@ public final class OpenYsmPlayerControllerRuntime {
     private static void prepareFrameVariables(String geckoControllerName, EntityPlayer player, RuntimeState state,
         OpenYsmControllerExpressionEvaluator.Context context) {
         if (isPostSwingController(geckoControllerName)) {
-            boolean newSwing = player.isSwingInProgress
-                && (!state.lastSwingActive || player.swingProgressInt < state.lastSwingProgress);
+            // 1.7.10: swingProgressInt 递减 (max→0)。
+            // !state.lastSwingActive = 刚从不挥动变为挥动（真正的首次帧）
+            // swingProgressInt > state.lastSwingProgress + 1 = 连点重置（从低值跳回高值）
+            boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
+            boolean swingReset = player.isSwingInProgress && state.lastSwingActive
+                && player.swingProgressInt > state.lastSwingProgress + 1;
+            boolean newSwing = swingJustStarted || swingReset;
             if (newSwing) {
                 boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                     "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
@@ -490,6 +507,27 @@ public final class OpenYsmPlayerControllerRuntime {
                         OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                             "q.is_jumping&&(q.vertical_speed<0)",
                             context) ? 1.0d : 0.0d);
+                    com.fox.ysmu.ysmu.LOG.info(
+                        "YSM post_swing: newSwing=true, swingJustStarted={}, swingReset={}, "
+                        + "swingProgressInt={}, lastSwingProgress={}, controller={}",
+                        swingJustStarted, swingReset,
+                        player.swingProgressInt, state.lastSwingProgress,
+                        geckoControllerName);
+                } else {
+                    com.fox.ysmu.ysmu.LOG.info(
+                        "YSM post_swing: newSwing=true but NOT a sword swing, controller={}",
+                        geckoControllerName);
+                }
+            } else {
+                // 每帧记录非 newSwing 时的关键状态（减少日志量：only when state changed）
+                if (state.lastSwingActive != player.isSwingInProgress
+                    || state.lastSwingProgress != player.swingProgressInt) {
+                    com.fox.ysmu.ysmu.LOG.info(
+                        "YSM post_swing: no newSwing, isSwingInProgress={}, swingProgressInt={}, "
+                        + "lastSwingActive={}, lastSwingProgress={}, controller={}",
+                        player.isSwingInProgress, player.swingProgressInt,
+                        state.lastSwingActive, state.lastSwingProgress,
+                        geckoControllerName);
                 }
             }
             state.lastSwingActive = player.isSwingInProgress;

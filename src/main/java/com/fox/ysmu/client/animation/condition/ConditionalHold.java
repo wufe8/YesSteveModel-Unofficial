@@ -95,6 +95,11 @@ public class ConditionalHold {
 
     public String doTest(EntityPlayer player, boolean isMainHand) {
         if (BackhandCompat.getItemInHand(player, isMainHand) == null) {
+            // 空手时检查模型是否注册了 hold_mainhand:empty / hold_offhand:empty
+            String emptyAnim = extraPre + "empty";
+            if (innerTest.contains(emptyAnim)) {
+                return emptyAnim;
+            }
             return EMPTY;
         }
         String result = doIdTest(player, isMainHand);
