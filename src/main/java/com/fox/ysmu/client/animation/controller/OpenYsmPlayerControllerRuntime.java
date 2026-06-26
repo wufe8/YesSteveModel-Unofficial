@@ -371,7 +371,89 @@ public final class OpenYsmPlayerControllerRuntime {
     private static void applyAnimations(AnimationEvent<CustomPlayerEntity> event, RuntimeState runtimeState,
         State state, List<String> animationNames, ResourceLocation animationId) {
         String primaryName = animationNames.get(0);
-        AnimationBuilder builder = new AnimationBuilder().addAnimation(primaryName);
+        // Determine whether this controller should animate the Root bone.
+        // Overlay controllers (post_hold, post_swing, parallel, etc.) should NOT
+        // override Root, which controls full-body position/rotation and should
+        // only come from the main controller's animation.
+        String ctrlName = event.getController().getName();
+        boolean excludeRoot = ctrlName != null && !MAIN_CONTROLLER.equals(ctrlName);
+        // Build merged bone animations. For single-animation states or when
+        // Root filtering is needed, we create a merged copy stored in the
+        // GeckoLib cache so the controller loads our modified version.
+        List<software.bernie.geckolib3.core.keyframe.BoneAnimation> mergedBones = null;
+        software.bernie.geckolib3.file.AnimationFile animFile =
+            software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
+        software.bernie.geckolib3.core.builder.Animation primaryAnim = null;
+        if (animFile != null) {
+            primaryAnim = animFile.getAnimation(primaryName);
+        }
+        if (primaryAnim == null) {
+            primaryAnim = lookupAnimation(primaryName);
+        }
+        if (primaryAnim != null && primaryAnim.boneAnimations != null) {
+            mergedBones = new ArrayList<>(primaryAnim.boneAnimations);
+        }
+        // Merge additional animations' bones on top (for multi-animation states)
+        for (int i = 1; i < animationNames.size(); i++) {
+            software.bernie.geckolib3.core.builder.Animation a = null;
+            if (animFile != null) {
+                a = animFile.getAnimation(animationNames.get(i));
+            }
+            if (a == null) {
+                a = lookupAnimation(animationNames.get(i));
+            }
+            if (a != null && a.boneAnimations != null) {
+                if (mergedBones == null) {
+                    mergedBones = new ArrayList<>(a.boneAnimations);
+                } else {
+                    mergeBones(mergedBones, a.boneAnimations);
+                }
+            }
+        }
+        // Determine the final animation name: if we have merged bones and either
+        // need Root filtering or have multiple animations, use a cached merged copy.
+        boolean needsMergedCopy = mergedBones != null
+            && (excludeRoot || animationNames.size() > 1);
+        String finalName;
+        ILoopType finalLoop;
+        if (needsMergedCopy) {
+            // Remove Root bone for overlay controllers
+            if (excludeRoot) {
+                mergedBones.removeIf(ba -> "Root".equals(ba.boneName));
+            }
+            String mergedName = "__ysm_merged__" + primaryName;
+            software.bernie.geckolib3.core.builder.Animation mergedAnim = null;
+            software.bernie.geckolib3.file.AnimationFile cachedFile =
+                software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
+            if (cachedFile != null) {
+                mergedAnim = cachedFile.getAnimation(mergedName);
+            }
+            if (mergedAnim == null) {
+                mergedAnim = new software.bernie.geckolib3.core.builder.Animation();
+                mergedAnim.animationName = mergedName;
+                if (cachedFile != null) {
+                    cachedFile.putAnimation(mergedName, mergedAnim);
+                }
+            }
+            mergedAnim.boneAnimations = mergedBones;
+            if (primaryAnim != null) {
+                mergedAnim.animationLength = primaryAnim.animationLength;
+                mergedAnim.loop = primaryAnim.loop;
+                finalLoop = primaryAnim.loop;
+            } else {
+                mergedAnim.animationLength = null;
+                mergedAnim.loop = ILoopType.EDefaultLoopTypes.LOOP;
+                finalLoop = ILoopType.EDefaultLoopTypes.LOOP;
+            }
+            finalName = mergedName;
+        } else {
+            finalName = primaryName;
+            finalLoop = primaryAnim != null ? primaryAnim.loop : ILoopType.EDefaultLoopTypes.LOOP;
+        }
+        // Only call setAnimation ONCE with the final name, so GeckoLib does NOT
+        // reset shouldResetTick every frame (which would freeze the animation at tick 0).
+        finalName = finalName != null ? finalName : primaryName;
+        AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
         boolean sameState = state.name.equals(runtimeState.lastSelectedAnimationState);
         boolean changedInSameState = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
             && !runtimeState.lastSelectedAnimation.equals(primaryName);
@@ -386,76 +468,6 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
         event.getController().setAnimation(builder);
-        // Merge bone animations from parallel animations into the queued animation.
-        // CRITICAL: setAnimation() populates the queue with references to the ORIGINAL
-        // Animation objects from the AnimationFile. We must NEVER mutate those
-        // originals, or the cached data gets corrupted for all future playback.
-        // Instead we build a new merged list and replace the queue entries with
-        // new Animation copies that carry the merged data.
-        if (animationNames.size() > 1) {
-            List<software.bernie.geckolib3.core.keyframe.BoneAnimation> mergedBones = null;
-            software.bernie.geckolib3.file.AnimationFile animFile =
-                software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
-            // Start with a copy of the primary animation's bones
-            software.bernie.geckolib3.core.builder.Animation primaryAnim = null;
-            if (animFile != null) {
-                primaryAnim = animFile.getAnimation(primaryName);
-            }
-            if (primaryAnim == null) {
-                primaryAnim = lookupAnimation(primaryName);
-            }
-            if (primaryAnim != null && primaryAnim.boneAnimations != null) {
-                mergedBones = new ArrayList<>(primaryAnim.boneAnimations);
-            }
-            // Merge additional animations' bones on top
-            for (int i = 1; i < animationNames.size(); i++) {
-                software.bernie.geckolib3.core.builder.Animation a = null;
-                if (animFile != null) {
-                    a = animFile.getAnimation(animationNames.get(i));
-                }
-                if (a == null) {
-                    a = lookupAnimation(animationNames.get(i));
-                }
-                if (a != null && a.boneAnimations != null) {
-                    if (mergedBones == null) {
-                        mergedBones = new ArrayList<>(a.boneAnimations);
-                    } else {
-                        mergeBones(mergedBones, a.boneAnimations);
-                    }
-                }
-            }
-            if (mergedBones != null) {
-                AnimationController<?> ctrl = event.getController();
-                // AnimationController.process() 每帧会从缓存重新加载 currentAnimation
-                // （第 466-477 行），覆盖掉我们设置的合并数据。因此把合并后的动画存回
-                // GeckoLibCache 中，使后续帧的重新加载也能拿到合并版本。
-                String mergedName = "__ysm_merged__" + primaryName;
-                software.bernie.geckolib3.core.builder.Animation mergedAnim = null;
-                software.bernie.geckolib3.file.AnimationFile cachedFile =
-                    software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
-                if (cachedFile != null) {
-                    mergedAnim = cachedFile.getAnimation(mergedName);
-                }
-                if (mergedAnim == null) {
-                    mergedAnim = new software.bernie.geckolib3.core.builder.Animation();
-                    mergedAnim.animationName = mergedName;
-                    if (cachedFile != null) {
-                        cachedFile.putAnimation(mergedName, mergedAnim);
-                    }
-                }
-                mergedAnim.boneAnimations = mergedBones;
-                if (primaryAnim != null) {
-                    mergedAnim.animationLength = primaryAnim.animationLength;
-                    mergedAnim.loop = primaryAnim.loop;
-                } else {
-                    mergedAnim.animationLength = null;
-                    mergedAnim.loop = ILoopType.EDefaultLoopTypes.LOOP;
-                }
-                // 用合并后的动画名替换 builder，让 controller 从缓存加载合并版本
-                event.getController().setAnimation(
-                    new AnimationBuilder().addAnimation(mergedName, mergedAnim.loop));
-            }
-        }
     }
 
     private static void mergeBones(List<software.bernie.geckolib3.core.keyframe.BoneAnimation> target,
@@ -508,15 +520,16 @@ public final class OpenYsmPlayerControllerRuntime {
                             "q.is_jumping&&(q.vertical_speed<0)",
                             context) ? 1.0d : 0.0d);
                     com.fox.ysmu.ysmu.LOG.info(
-                        "YSM post_swing: newSwing=true, swingJustStarted={}, swingReset={}, "
-                        + "swingProgressInt={}, lastSwingProgress={}, controller={}",
+                        "YSM post_swing: SET swing_sword=1, swingJustStarted={}, swingReset={}, "
+                        + "swingProgressInt={}, lastSwingProgress={}, onGround={}, controller={}",
                         swingJustStarted, swingReset,
                         player.swingProgressInt, state.lastSwingProgress,
+                        player.onGround,
                         geckoControllerName);
                 } else {
                     com.fox.ysmu.ysmu.LOG.info(
-                        "YSM post_swing: newSwing=true but NOT a sword swing, controller={}",
-                        geckoControllerName);
+                        "YSM post_swing: newSwing=true but NOT a sword swing (held={}), controller={}",
+                        player.getHeldItem(), geckoControllerName);
                 }
             } else {
                 // 仅在 swing 状态发生变化时记录（减少刷屏）

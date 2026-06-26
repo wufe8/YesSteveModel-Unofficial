@@ -356,7 +356,20 @@ public class ClientModelManager {
     }
 
     private static AnimationFile mergeAnimationFile(AnimationFile main, AnimationFile other) {
-        other.animations.forEach(main::putAnimation);
+        for (java.util.Map.Entry<String, Animation> entry : other.animations.entrySet()) {
+            String name = entry.getKey();
+            Animation incoming = entry.getValue();
+            Animation existing = main.animations.get(name);
+            // If we already have a non-empty animation for this name, only overwrite
+            // if the incoming animation also has bone keyframes.  This prevents
+            // arm.animation.json (which may have empty stubs like "swing_hand" with
+            // no bones) from overwriting the real animation in main.animation.json.
+            if (existing != null && existing.boneAnimations != null && !existing.boneAnimations.isEmpty()
+                && (incoming.boneAnimations == null || incoming.boneAnimations.isEmpty())) {
+                continue;
+            }
+            main.putAnimation(name, incoming);
+        }
         return main;
     }
 
