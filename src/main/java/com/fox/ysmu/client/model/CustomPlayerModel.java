@@ -147,6 +147,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         int hiddenCount = 0;
         int expressionCount = 0;
         int previewCount = 0;
+        java.util.List<String> hiddenBoneNames = new java.util.ArrayList<>();
         for (IBone bone : bones) {
             if (bone instanceof GeoBone) {
                 String name = ((GeoBone) bone).getName();
@@ -207,7 +208,10 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                         } catch (Exception ignored) {}
                     }
                     bone.setHidden(!show);
-                    if (!show) hiddenCount++;
+                    if (!show) {
+                        hiddenCount++;
+                        hiddenBoneNames.add(name);
+                    }
                 }
             }
         }
@@ -216,8 +220,8 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             String throttleKey = animId.toString();
             if (VISIBILITY_LOG_THROTTLE.add(throttleKey)) {
                 com.fox.ysmu.ysmu.LOG.info(
-                    "YSM visibility: {}/{} bones hidden for {} (extraAnimActive={}, extraAnimName={}, expressionBones={}, previewBones={})",
-                    hiddenCount, totalBones, animId, extraAnimActive, extraAnimName, expressionCount, previewCount);
+                    "YSM visibility: {}/{} bones hidden for {} (extraAnimActive={}, extraAnimName={}, expressionBones={}, previewBones={}, hiddenBones={})",
+                    hiddenCount, totalBones, animId, extraAnimActive, extraAnimName, expressionCount, previewCount, hiddenBoneNames);
             }
         }
     }
