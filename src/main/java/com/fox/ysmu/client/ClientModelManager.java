@@ -68,6 +68,12 @@ public class ClientModelManager {
     public static Map<ResourceLocation, ExtraWheelData> EXTRA_WHEEL = Maps.newHashMap();
     /** Preview animation name per model, read from ysm.json preview_animation field. */
     public static Map<ResourceLocation, String> PREVIEW_ANIMATION = Maps.newHashMap();
+    /** GUI foreground texture RawImage per model, from ysm.json gui_foreground. */
+    public static Map<ResourceLocation, com.fox.ysmu.model.resource.pojo.RawYsmModel.RawImage> GUI_FOREGROUND_IMAGE = Maps.newHashMap();
+    /** GUI background texture RawImage per model, from ysm.json gui_background. */
+    public static Map<ResourceLocation, com.fox.ysmu.model.resource.pojo.RawYsmModel.RawImage> GUI_BACKGROUND_IMAGE = Maps.newHashMap();
+    /** Per-model disable_preview_rotation flag, from ysm.json properties. */
+    public static Map<ResourceLocation, Boolean> DISABLE_PREVIEW_ROTATION = Maps.newHashMap();
 
     /**
      * 模型包/文件夹分组：pack显示名称 → 该包内的模型ID列表。
@@ -505,6 +511,9 @@ public class ClientModelManager {
         CLIENT_PACKS.clear();
         MODEL_DISPLAY_NAMES.clear();
         PREVIEW_ANIMATION.clear();
+        GUI_FOREGROUND_IMAGE.clear();
+        GUI_BACKGROUND_IMAGE.clear();
+        DISABLE_PREVIEW_ROTATION.clear();
         GeckoLibCache.getInstance().getGeoModels().clear();
         GeckoLibCache.getInstance().getAnimations().clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
@@ -518,7 +527,7 @@ public class ClientModelManager {
         ysmu.LOG.info("YSM client runtime model caches cleared");
     }
 
-    /** Registers rich extra wheel data from a RawYsmModel. */
+    /** Registers rich extra wheel data and GUI image textures from a RawYsmModel. */
     public static void registerExtraWheel(ResourceLocation modelId, com.fox.ysmu.model.resource.pojo.RawYsmModel raw) {
         EXTRA_WHEEL.put(modelId, ExtraWheelData.from(raw));
         if (StringUtils.isNotBlank(raw.properties.previewAnimation)) {
@@ -530,6 +539,16 @@ public class ClientModelManager {
         }
         // Register model sound files
         com.fox.ysmu.client.audio.YSMSoundManager.registerModelSounds(modelId, raw);
+        // Store GUI foreground/background images
+        for (com.fox.ysmu.model.resource.pojo.RawYsmModel.RawImage img : raw.properties.backgroundImages) {
+            if ("gui_foreground".equals(img.name)) {
+                GUI_FOREGROUND_IMAGE.put(modelId, img);
+            } else if ("gui_background".equals(img.name)) {
+                GUI_BACKGROUND_IMAGE.put(modelId, img);
+            }
+        }
+        // Store disablePreviewRotation flag
+        DISABLE_PREVIEW_ROTATION.put(modelId, raw.properties.disablePreviewRotation);
     }
 
     public static void rememberCachedModel(String md5) {

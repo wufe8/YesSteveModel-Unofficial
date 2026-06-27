@@ -321,12 +321,12 @@ public final class AnimationManager {
         CustomPlayerEntity animatable = event.getAnimatable();
         EntityPlayer player = animatable.getPlayer();
         if (player == null) {
-            // GUI preview render path (e.g. player icon in corner).  The preview
-            // entity has no real player, and its controller shares the same name
-            // as the main player's cap_controller.  Do NOT call stopController
-            // here — that would yank the main player's sound mapping every frame.
-            if (animatable.hasPreviewAnimation()
-                && Minecraft.getMinecraft().theWorld == null) {
+            // GUI preview render path (e.g. model selection GUI, player icon).
+            // The preview entity has no real player, and its controller shares
+            // the same name as the main player's cap_controller.  Do NOT call
+            // stopController here — that would yank the main player's sound
+            // mapping every frame.
+            if (animatable.hasPreviewAnimation()) {
                 return playLoopAnimation(event, animatable.getPreviewAnimation());
             }
             return PlayState.STOP;

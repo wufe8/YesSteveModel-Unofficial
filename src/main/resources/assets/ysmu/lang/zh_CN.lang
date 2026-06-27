@@ -21,6 +21,7 @@ gui.yes_steve_model.config.print_animation_roulette_msg=是否显示轮盘动画
 gui.yes_steve_model.config.disable_self_hands=阻止渲染玩家自身手臂
 gui.yes_steve_model.config.disable_player_render=禁用额外玩家渲染
 gui.yes_steve_model.config.swap_config_sides=交换配置面版和预览框位置
+gui.yes_steve_model.config.gui_enhancements=启用选择界面增强（前景/背景纹理、选择界面动画）
 gui.yes_steve_model.disclaimer.text=感谢您使用本模组，请务必仔细阅读相关条款并同意本声明：\n\n\n1.本模组本体的下载使用完全免费。制作组也致力于向使用者提供安全、稳定的优质服务，但对模型保密性不作任何形式的保证。\n\n2.制作组不参与相关联的直接或间接的模型交易，产生的任何交易或纠纷，本制作组不承担任何连带责任。\n\n3.创作者享有所创作模型的版权，同时也承担相应的责任，与本制作组无关。所创作的任何内容也不代表本制作组的观点和看法。
 gui.yes_steve_model.disclaimer.read=我已经阅读并同意本使用条款
 gui.yes_steve_model.disclaimer.close=关闭

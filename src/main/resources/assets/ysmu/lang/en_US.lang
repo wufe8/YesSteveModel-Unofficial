@@ -21,6 +21,7 @@ gui.yes_steve_model.config.print_animation_roulette_msg=Whether to print animati
 gui.yes_steve_model.config.disable_self_hands=Prevents rendering of self player's hands
 gui.yes_steve_model.config.disable_player_render=Disable extra player render
 gui.yes_steve_model.config.swap_config_sides=Swap config panel and preview sides
+gui.yes_steve_model.config.gui_enhancements=Enable GUI enhancements (foreground/background textures, GUI animations)
 gui.yes_steve_model.disclaimer.text=Thank you for using the mod, please be sure to read the relevant terms carefully and agree to the terms:\n\n\n1. The download and use of the mod is completely free, and the confidentiality of the model is not guaranteed in any form\n\n2. The dev team does not participate in the relevant model transactions, please bear the responsibility for the transaction disputes arising\n\n3. The creator enjoys the copyright of the model created, and also bears corresponding responsibilities, which has nothing to do with the dev team
 gui.yes_steve_model.disclaimer.read=I have read and agree the terms of use
 gui.yes_steve_model.disclaimer.close=Close

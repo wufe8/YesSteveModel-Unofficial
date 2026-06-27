@@ -330,9 +330,40 @@ public final class RenderUtil {
         });
     }
 
+    public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
+        ResourceLocation modelId, ResourceLocation textureId, boolean disablePreviewRotation) {
+        renderEntityInInventory(pPosX, pPosY, pScale, player, modelId, textureId, entity -> {
+            // Keep preview animation if set (don't clear)
+        }, disablePreviewRotation);
+    }
+
+    public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
+        ResourceLocation modelId, ResourceLocation textureId, Consumer<CustomPlayerEntity> consumer,
+        boolean disablePreviewRotation) {
+        if (player == null) {
+            return;
+        }
+        try {
+            CustomPlayerRenderer renderer = ClientProxy.getInstance();
+            IAnimatable animatable = AnimatableCacheUtil.ANIMATABLE_CACHE.get(modelId, CustomPlayerEntity::new);
+            if (animatable instanceof CustomPlayerEntity entity) {
+                consumer.accept(entity);
+                renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity, disablePreviewRotation);
+            }
+        } catch (ExecutionException e) {
+            e.printStackTrace();
+        }
+    }
+
     private static void renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, GeoReplacedEntityRenderer renderer,
         CustomPlayerEntity entity) {
+        renderModel(pPosX, pPosY, pScale, player, modelId, textureId, renderer, entity, false);
+    }
+
+    private static void renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
+        ResourceLocation modelId, ResourceLocation textureId, GeoReplacedEntityRenderer renderer,
+        CustomPlayerEntity entity, boolean disablePreviewRotation) {
         entity.setMainModel(ModelIdUtil.getMainId(modelId));
         entity.setTexture(textureId);
 
@@ -342,7 +373,9 @@ public final class RenderUtil {
         GL11.glTranslatef((float) pPosX, (float) pPosY, 100.0F);
         GL11.glScalef(pScale, pScale, -pScale);
         GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F); // 将模型从倒置状态翻转过来
-        GL11.glRotatef(-25.0F, 0.4F, 0.8F, -0.08F); // 倾斜一点
+        if (!disablePreviewRotation) {
+            GL11.glRotatef(-25.0F, 0.4F, 0.8F, -0.08F); // 倾斜一点
+        }
 
         // 保存玩家状态
         float yBodyRot = player.renderYawOffset;

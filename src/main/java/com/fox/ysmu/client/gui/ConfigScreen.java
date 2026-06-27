@@ -27,6 +27,7 @@ public class ConfigScreen extends GuiScreen {
         this.buttonList.add(new ConfigCheckBox(4 ,x + 5, y + 91, "disable_self_hands", Config.DISABLE_SELF_HANDS));
         this.buttonList.add(new ConfigCheckBox(5, x + 5, y + 112, "disable_player_render", Config.DISABLE_PLAYER_RENDER));
         this.buttonList.add(new ConfigCheckBox(6, x + 5, y + 134, "swap_config_sides", Config.SWAP_CONFIG_SIDES));
+        this.buttonList.add(new ConfigCheckBox(7, x + 5, y + 156, "gui_enhancements", Config.GUI_ENHANCEMENTS));
     }
 
     @Override
@@ -57,6 +58,10 @@ public class ConfigScreen extends GuiScreen {
                 break;
             case 6:
                 Config.SWAP_CONFIG_SIDES = !Config.SWAP_CONFIG_SIDES;
+                ((ConfigCheckBox) button).doPress();
+                break;
+            case 7:
+                Config.GUI_ENHANCEMENTS = !Config.GUI_ENHANCEMENTS;
                 ((ConfigCheckBox) button).doPress();
                 break;
         }

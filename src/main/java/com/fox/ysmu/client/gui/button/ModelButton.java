@@ -1,8 +1,11 @@
 package com.fox.ysmu.client.gui.button;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
+import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.eep.ExtendedStarModels;
+import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.OpenModelGuiMessage;
 import com.fox.ysmu.network.message.SetModelAndTexture;
@@ -13,28 +16,67 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.renderer.texture.DynamicTexture;
 import net.minecraft.util.IChatComponent;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.entity.player.EntityPlayer;
 import org.apache.commons.lang3.tuple.Pair;
 import org.lwjgl.opengl.GL11;
+import software.bernie.geckolib3.file.AnimationFile;
+import software.bernie.geckolib3.resource.GeckoLibCache;
 
+import javax.imageio.ImageIO;
+import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.util.List;
 
 public class ModelButton extends GuiButton {
     private final static ResourceLocation ICON = new ResourceLocation(ysmu.MODID, "texture/icon.png");
     private final Pair<ResourceLocation, List<ResourceLocation>> modelInfo;
+    private final ResourceLocation mainModelId;
     private final int color;
     public final List<IChatComponent> tooltips;
     private final EntityPlayer player;
+    private final boolean disablePreviewRotation;
+
+    // Cached DynamicTexture locations for foreground/background
+    private ResourceLocation fgTextureLocation;
+    private ResourceLocation bgTextureLocation;
+
+    // GUI animation state
+    private long lastHoverTime = -1;
+    private boolean hasHoverAnim;
+    private boolean hasHoverFadeoutAnim;
+    private boolean hasFocusAnim;
+    private double hoverFadeoutDurationMs;
 
     public ModelButton(int id, int pX, int pY, Pair<ResourceLocation, List<ResourceLocation>> modelInfo,
                        List<IChatComponent> tooltips, EntityPlayer player) {
         super(id, pX, pY, 52, 90, "");
         this.modelInfo = modelInfo;
+        this.mainModelId = ModelIdUtil.getMainId(modelInfo.getLeft());
         this.color = 0xFF_434242;
         this.tooltips = tooltips;
         this.player = player;
+
+        // Look up disablePreviewRotation from ClientModelManager
+        Boolean dpr = ClientModelManager.DISABLE_PREVIEW_ROTATION.get(mainModelId);
+        this.disablePreviewRotation = dpr != null && dpr;
+
+        // Detect GUI animations from the model's animation file
+        AnimationFile animFile = GeckoLibCache.getInstance().getAnimations().get(mainModelId);
+        if (animFile != null) {
+            this.hasHoverAnim = animFile.getAnimation("hover") != null;
+            this.hasHoverFadeoutAnim = animFile.getAnimation("hover_fadeout") != null;
+            this.hasFocusAnim = animFile.getAnimation("focus") != null;
+            if (this.hasHoverFadeoutAnim) {
+                software.bernie.geckolib3.core.builder.Animation fadeout = animFile.getAnimation("hover_fadeout");
+                this.hoverFadeoutDurationMs = fadeout != null ? fadeout.animationLength * 1000.0 : 0;
+            }
+        }
+
         this.displayString = ModelIdUtil.getModelDisplayName(modelInfo.getLeft());
     }
 
@@ -50,6 +92,25 @@ public class ModelButton extends GuiButton {
         }
     }
 
+    /**
+     * Creates a DynamicTexture from a RawImage and registers it with the texture manager.
+     * The caller should cache the returned ResourceLocation.
+     */
+    private ResourceLocation createGuiTexture(Minecraft mc, RawYsmModel.RawImage rawImage, String suffix) {
+        if (rawImage == null || rawImage.data == null) return null;
+        String key = "ysmu_gui_" + mainModelId.toString().replace(':', '_').replace('/', '_') + "_" + suffix;
+        try {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(rawImage.data));
+            if (img != null) {
+                DynamicTexture dynTex = new DynamicTexture(img);
+                return mc.getTextureManager().getDynamicTextureLocation(key, dynTex);
+            }
+        } catch (IOException e) {
+            ysmu.LOG.warn("Failed to load GUI texture {} for model {}", suffix, mainModelId);
+        }
+        return null;
+    }
+
     @Override
     public void drawButton(Minecraft mc, int mouseX, int mouseY) {
         if (!this.visible) {
@@ -57,45 +118,143 @@ public class ModelButton extends GuiButton {
         }
         FontRenderer font = mc.fontRenderer;
         // Hover状态
-        this.field_146123_n = mouseX >= this.xPosition && mouseY >= this.yPosition && mouseX < this.xPosition + this.width && mouseY < this.yPosition + this.height;
-        // 绘制背景(原graphics.fillGradient)
-        this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + this.height, this.color, this.color);
-        // 剪裁测试（缩放）
+        this.field_146123_n = mouseX >= this.xPosition && mouseY >= this.yPosition
+            && mouseX < this.xPosition + this.width && mouseY < this.yPosition + this.height;
+
+        boolean guiEnhancements = Config.GUI_ENHANCEMENTS;
+
+        // Determine GUI animation state (hover / hover_fadeout / focus)
+        String guiAnimName = "";
+        if (guiEnhancements) {
+            if (this.field_146123_n) {
+                // Hovering: play "hover" animation
+                this.lastHoverTime = System.currentTimeMillis();
+                guiAnimName = hasHoverAnim ? "hover" : "";
+            } else if (this.lastHoverTime >= 0) {
+                long elapsed = System.currentTimeMillis() - this.lastHoverTime;
+                if (hasHoverFadeoutAnim && elapsed < hoverFadeoutDurationMs) {
+                    guiAnimName = "hover_fadeout";
+                } else {
+                    this.lastHoverTime = -1;
+                }
+            }
+            // If nothing playing, check if this button's model is the player's current selection → focus
+            if (guiAnimName.isEmpty()) {
+                ExtendedModelInfo eep = ExtendedModelInfo.get(player);
+                if (eep != null && hasFocusAnim && eep.getModelId() != null
+                    && mainModelId.equals(ModelIdUtil.getMainId(eep.getModelId()))) {
+                    guiAnimName = "focus";
+                }
+            }
+            // Fallback to the model's default preview animation if no GUI animation active
+            if (guiAnimName.isEmpty()) {
+                String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
+                if (previewAnim != null && !previewAnim.isEmpty()) {
+                    guiAnimName = previewAnim;
+                }
+            }
+        }
+
+        // Draw solid background
+        this.drawGradientRect(this.xPosition, this.yPosition,
+            this.xPosition + this.width, this.yPosition + this.height, this.color, this.color);
+
+        // Draw GUI background texture (behind model, full button area)
+        if (guiEnhancements) {
+            RawYsmModel.RawImage bgRaw = ClientModelManager.GUI_BACKGROUND_IMAGE.get(mainModelId);
+            if (bgRaw != null) {
+                if (bgTextureLocation == null) {
+                    bgTextureLocation = createGuiTexture(mc, bgRaw, "bg");
+                }
+                if (bgTextureLocation != null) {
+                    drawGuiTexture(mc, bgTextureLocation, this.xPosition, this.yPosition, this.width, this.height);
+                }
+            }
+        }
+
+        // Scissor and render entity
         int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
         int scissorX = this.xPosition * scale;
-        // 在GL11中，Y轴的原点在左下角，所以需要从屏幕总高度中减去
         int scissorY = mc.displayHeight - ((this.yPosition + this.height - 20) * scale);
         int scissorW = this.width * scale;
         int scissorH = (this.height - 20) * scale;
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
         GL11.glScissor(scissorX, scissorY, scissorW, scissorH);
-        // 渲染实体
-        RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
-            mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0));
+
+        // Render entity with preview animation and disablePreviewRotation support
+        final String finalGuiAnimName = guiAnimName;
+        RenderUtil.renderEntityInInventory(
+            this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
+            mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0),
+            entity -> {
+                entity.setPreviewAnimation(finalGuiAnimName);
+            },
+            disablePreviewRotation);
         GL11.glDisable(GL11.GL_SCISSOR_TEST);
-        // 渲染文本
-        // font.split->listFormattedStringToWidth
+
+        // Draw GUI foreground texture (over model, full button area)
+        if (guiEnhancements) {
+            RawYsmModel.RawImage fgRaw = ClientModelManager.GUI_FOREGROUND_IMAGE.get(mainModelId);
+            if (fgRaw != null) {
+                if (fgTextureLocation == null) {
+                    fgTextureLocation = createGuiTexture(mc, fgRaw, "fg");
+                }
+                if (fgTextureLocation != null) {
+                    drawGuiTexture(mc, fgTextureLocation, this.xPosition, this.yPosition, this.width, this.height);
+                }
+            }
+        }
+
+        // Render text
         List<String> split = font.listFormattedStringToWidth(this.displayString, 45);
         if (split.size() > 1) {
-            this.drawCenteredString(font, split.get(0), this.xPosition + this.width / 2, this.yPosition + this.height - 19, 0xF3EFE0);
-            this.drawCenteredString(font, split.get(1), this.xPosition + this.width / 2, this.yPosition + this.height - 10, 0xF3EFE0);
+            this.drawCenteredString(font, split.get(0), this.xPosition + this.width / 2,
+                this.yPosition + this.height - 19, 0xF3EFE0);
+            this.drawCenteredString(font, split.get(1), this.xPosition + this.width / 2,
+                this.yPosition + this.height - 10, 0xF3EFE0);
         } else {
-            this.drawCenteredString(font, this.displayString, this.xPosition + this.width / 2, this.yPosition + this.height - 15, 0xF3EFE0);
+            this.drawCenteredString(font, this.displayString, this.xPosition + this.width / 2,
+                this.yPosition + this.height - 15, 0xF3EFE0);
         }
-        // 悬停时的高亮边框
+
+        // Hover highlight border
         if (this.field_146123_n) {
-            this.drawGradientRect(this.xPosition, this.yPosition + 1, this.xPosition + 1, this.yPosition + this.height - 1, 0xff_F3EFE0, 0xff_F3EFE0);
-            this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + 1, 0xff_F3EFE0, 0xff_F3EFE0);
-            this.drawGradientRect(this.xPosition + this.width - 1, this.yPosition + 1, this.xPosition + this.width, this.yPosition + this.height - 1, 0xff_F3EFE0, 0xff_F3EFE0);
-            this.drawGradientRect(this.xPosition, this.yPosition + this.height - 1, this.xPosition + this.width, this.yPosition + this.height, 0xff_F3EFE0, 0xff_F3EFE0);
+            this.drawGradientRect(this.xPosition, this.yPosition + 1, this.xPosition + 1,
+                this.yPosition + this.height - 1, 0xff_F3EFE0, 0xff_F3EFE0);
+            this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width,
+                this.yPosition + 1, 0xff_F3EFE0, 0xff_F3EFE0);
+            this.drawGradientRect(this.xPosition + this.width - 1, this.yPosition + 1,
+                this.xPosition + this.width, this.yPosition + this.height - 1, 0xff_F3EFE0, 0xff_F3EFE0);
+            this.drawGradientRect(this.xPosition, this.yPosition + this.height - 1,
+                this.xPosition + this.width, this.yPosition + this.height, 0xff_F3EFE0, 0xff_F3EFE0);
         }
-        // 收藏图标
-        ExtendedStarModels eep = ExtendedStarModels.get(player);
-        if (eep != null && eep.containModel(modelInfo.getLeft())) {
-            // graphics.blit
+
+        // Star/favorite icon
+        ExtendedStarModels starEep = ExtendedStarModels.get(player);
+        if (starEep != null && starEep.containModel(modelInfo.getLeft())) {
             mc.getTextureManager().bindTexture(ICON);
             GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
             this.drawTexturedModalRect(this.xPosition + this.width - 14, this.yPosition, 16, 0, 16, 16);
         }
+    }
+
+    /**
+     * Draws a custom-sized GUI texture (foreground/background) stretched to fill (x,y,w,h).
+     * Uses Tessellator for correct UV mapping with DynamicTextures.
+     */
+    private static void drawGuiTexture(Minecraft mc, ResourceLocation tex, int x, int y, int w, int h) {
+        GL11.glEnable(GL11.GL_BLEND);
+        GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+        GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        mc.getTextureManager().bindTexture(tex);
+        Tessellator tessellator = Tessellator.instance;
+        GL11.glEnable(GL11.GL_TEXTURE_2D);
+        tessellator.startDrawingQuads();
+        tessellator.addVertexWithUV(x,   y + h, 0, 0, 1);
+        tessellator.addVertexWithUV(x + w, y + h, 0, 1, 1);
+        tessellator.addVertexWithUV(x + w, y,     0, 1, 0);
+        tessellator.addVertexWithUV(x,   y,     0, 0, 0);
+        tessellator.draw();
+        GL11.glDisable(GL11.GL_BLEND);
     }
 }
