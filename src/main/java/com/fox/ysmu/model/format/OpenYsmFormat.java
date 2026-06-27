@@ -100,17 +100,31 @@ public final class OpenYsmFormat {
                 String modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
                 raw.modelId = modelId;
                 RAW_MODEL_INFO.put(modelId, raw);
-                if (!RawYsmModelAdapter.isBridgeable(raw)) {
-                    ysmu.LOG.info("OpenYSM binary model {} parsed but cannot be bridged to legacy ModelData", file);
-                    return;
-                }
-                ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
-                ServerModelInfo info = ModelCacheWriter.write(data);
-                if (info != null) {
-                    CACHE_NAME_INFO.put(modelId, info);
-                }
+                // 即使模型无法桥接 legacy 格式，仍写入 OpenYSM 同步缓存，
+                // 保证客户端可通过 OpenYSM 同步协议加载模型。
+                // 截断的 .ysm 文件核心数据（几何、动画、纹理）在
+                // parseYSMJson/parseYSMFooter 之前已解析完成。
+                boolean bridgeable = RawYsmModelAdapter.isBridgeable(raw);
+                ysmu.LOG.info("OpenYSM binary model {} cached: modelId={}, bridgeable={}, "
+                    + "mainBones={}, armBones={}, textures={}, animations={}, "
+                    + "widthScale={}, heightScale={}, extraAnimations={}",
+                    file, modelId, bridgeable,
+                    raw.mainEntity.mainModel != null && raw.mainEntity.mainModel.bones != null
+                        ? raw.mainEntity.mainModel.bones.size() : 0,
+                    raw.mainEntity.armModel != null && raw.mainEntity.armModel.bones != null
+                        ? raw.mainEntity.armModel.bones.size() : 0,
+                    raw.mainEntity.textures.size(), raw.mainEntity.animationFiles.size(),
+                    raw.properties.widthScale, raw.properties.heightScale,
+                    raw.properties.extraAnimations.size());
                 OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
                 OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
+                if (bridgeable) {
+                    ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
+                    ServerModelInfo info = ModelCacheWriter.write(data);
+                    if (info != null) {
+                        CACHE_NAME_INFO.put(modelId, info);
+                    }
+                }
             }
         } catch (UnsupportedOperationException e) {
             ysmu.LOG.warn("Unsupported OpenYSM binary model {}", file, e);

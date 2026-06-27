@@ -26,6 +26,8 @@ import software.bernie.geckolib3.core.molang.functions.SecondOrder;
 import software.bernie.geckolib3.core.molang.functions.SinDegrees;
 
 import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
+import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
+import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
 
@@ -83,6 +85,15 @@ public class MolangParser extends MathBuilder {
         // "Function couldn't be found" 异常导致日志刷屏。
         this.functions.put("query.position", QueryPositionFunction.class);
 
+        // 防止模型动画 Molang 表达式中使用 query.relative_block_has_any_tag 时
+        // 抛出 "Function couldn't be found" 异常导致日志刷屏。
+        // 始终返回 0 (false)，因 1.7.10 方块标签系统差异过大不便完整实现。
+        this.functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
+
+        // 防止模型动画 Molang 表达式中使用 query.is_item_name_any 时抛出异常。
+        // 始终返回 0 (false)，TODO: 待物品注册名上下文可用时实现完整匹配。
+        this.functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
+
         remap("abs", "math.abs");
         remap("acos", "math.acos");
         remap("asin", "math.asin");
@@ -91,11 +102,12 @@ public class MolangParser extends MathBuilder {
         remap("ceil", "math.ceil");
         remap("clamp", "math.clamp");
         remap("cos", "math.cos");
-        remap("die_roll", "math.die_roll");
-        remap("die_roll_integer", "math.die_roll_integer");
+        // MathBuilder 将这些函数注册为短名，需要直接复制到 math.* 名下
+        this.functions.put("math.die_roll", this.functions.get("roll"));
+        this.functions.put("math.die_roll_integer", this.functions.get("rolli"));
+        this.functions.put("math.hermite_blend", this.functions.get("hermite"));
         remap("exp", "math.exp");
         remap("floor", "math.floor");
-        remap("hermite_blend", "math.hermite_blend");
         remap("lerp", "math.lerp");
         remap("lerprotate", "math.lerprotate");
         remap("ln", "math.ln");
@@ -105,7 +117,8 @@ public class MolangParser extends MathBuilder {
         remap("pi", "math.pi");
         remap("pow", "math.pow");
         remap("random", "math.random");
-        remap("random_integer", "math.random_integer");
+        // MathBuilder 将 random_integer 注册为 "randomi"，而非 "random_integer"
+        this.functions.put("math.random_integer", this.functions.get("randomi"));
         remap("round", "math.round");
         remap("sin", "math.sin");
         remap("sqrt", "math.sqrt");

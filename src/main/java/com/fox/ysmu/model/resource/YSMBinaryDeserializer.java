@@ -1,6 +1,7 @@
 package com.fox.ysmu.model.resource;
 
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
+import com.fox.ysmu.ysmu;
 import rip.ysm.security.YSMByteBuf;
 import io.netty.buffer.Unpooled;
 
@@ -82,8 +83,11 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 }
             }
 
-        } catch (Throwable t) {
-            throw new RuntimeException("Failed to parse YSM footer", t);
+        } catch (IndexOutOfBoundsException e) {
+            ysmu.LOG.debug("YSM footer truncated, skipping: {}", e.getMessage());
+        } catch (Exception e) {
+            ysmu.LOG.debug("Failed to parse YSM footer: {}: {}",
+                e.getClass().getSimpleName(), e.getMessage());
         }
     }
 
@@ -522,6 +526,38 @@ public class YSMBinaryDeserializer implements AutoCloseable {
     }
 
     private void parseYSMJson() {
+        // 如果缓冲区数据不足，说明 .ysm 文件尾部被截断。
+        // 核心数据（几何、动画、纹理）在此之前已解析完成，此处仅解析元数据/属性，
+        // 截断时静默跳过，保证模型仍可加载使用。
+        int startPos = reader.getOffset();
+        try {
+            parseYSMJsonInternal();
+            int endPos = reader.getOffset();
+            ysmu.LOG.info("YSM JSON metadata parsed successfully: format={}, bytesRead={}, extraAnimations={}, "
+                + "widthScale={}, heightScale={}, defaultTexture={}",
+                format, endPos - startPos,
+                model.properties.extraAnimations.size(),
+                model.properties.widthScale, model.properties.heightScale,
+                model.properties.defaultTexture);
+        } catch (IndexOutOfBoundsException e) {
+            int failPos = reader.getOffset();
+            // 截断时 widthScale/heightScale 可能已被部分读取为垃圾值，
+            // 重置为默认值 0.7 防止模型渲染异常。
+            model.properties.widthScale = 0.7f;
+            model.properties.heightScale = 0.7f;
+            ysmu.LOG.info("YSM JSON metadata truncated at offset {} ({} of {} bytes) for format {}: "
+                + "extraAnimations={}, widthScale={}, heightScale={}, defaultTexture={}",
+                failPos, failPos - startPos, startPos + 0, format,
+                model.properties.extraAnimations.size(),
+                model.properties.widthScale, model.properties.heightScale,
+                model.properties.defaultTexture);
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to parse YSM JSON metadata: {}: {}",
+                e.getClass().getSimpleName(), e.getMessage());
+        }
+    }
+
+    private void parseYSMJsonInternal() {
         model.properties.sha256 = reader.readString();
         int isNewVersionYsm = reader.readVarInt();
 

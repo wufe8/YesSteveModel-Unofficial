@@ -68,6 +68,19 @@ public final class RawYsmModelAdapter {
         model.put("main", toGeometryJson(raw, raw.mainEntity.mainModel, true));
         model.put("arm", toGeometryJson(raw, raw.mainEntity.armModel, false));
 
+        boolean hasMainBones = raw.mainEntity.mainModel != null
+            && raw.mainEntity.mainModel.bones != null
+            && !raw.mainEntity.mainModel.bones.isEmpty();
+        boolean hasArmBones = raw.mainEntity.armModel != null
+            && raw.mainEntity.armModel.bones != null
+            && !raw.mainEntity.armModel.bones.isEmpty();
+        ysmu.LOG.info("YSM bridging model {} to legacy: mainBones={}, armBones={}, "
+            + "widthScale={}, heightScale={}, textures={}, animations={}",
+            modelId, hasMainBones ? raw.mainEntity.mainModel.bones.size() : 0,
+            hasArmBones ? raw.mainEntity.armModel.bones.size() : 0,
+            raw.properties.widthScale, raw.properties.heightScale,
+            raw.mainEntity.textures.size(), raw.mainEntity.animationFiles.size());
+
         Map<String, byte[]> textures = new LinkedHashMap<>();
         for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
             if (texture.data == null) {

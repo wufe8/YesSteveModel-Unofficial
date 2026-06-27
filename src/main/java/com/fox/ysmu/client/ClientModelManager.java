@@ -205,15 +205,23 @@ public class ClientModelManager {
                     EXTRA_ANIMATION_NAME.put(id, extraInfo.getExtraAnimationNames());
                 }
                 geoModels.put(id, geoModel);
+                int boneCount = geoModel.topLevelBones != null ? geoModel.topLevelBones.size() : 0;
+                int totalCubes = geoModel.topLevelBones.stream()
+                    .mapToInt(b -> b.childBones != null ? b.childBones.size() : 0)
+                    .sum();
                 ysmu.LOG.info(
-                    "YSM client registered geometry {}: heightScale={}, widthScale={}, hasExtraInfo={}, extraAnimationNames={}",
+                    "YSM client registered geometry {}: heightScale={}, widthScale={}, "
+                    + "hasExtraInfo={}, extraAnimationNames={}, topLevelBones={}, totalCubes={}",
                     id,
                     rawGeometryTree.properties.getHeightScale(),
                     rawGeometryTree.properties.getWidthScale(),
                     extraInfo != null,
                     extraInfo != null && extraInfo.getExtraAnimationNames() != null
                         ? extraInfo.getExtraAnimationNames().length
-                        : 0);
+                        : 0,
+                    boneCount, totalCubes);
+            } else {
+                ysmu.LOG.warn("YSM geometry {} has unsupported format version: {}", id, rawModel.getFormatVersion());
             }
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to register geometry " + id, e);
@@ -333,24 +341,31 @@ public class ClientModelManager {
 
     private static AnimationFile getAnimationFile(String file) {
         AnimationFile animationFile = new AnimationFile();
-        MolangParser parser = GeckoLibCache.getInstance().parser;
-        JsonObject jsonObject = GsonHelper.fromJson(ysmu.GSON, file, JsonObject.class);
-        if (jsonObject != null) {
-            for (Map.Entry<String, JsonElement> entry : JsonAnimationUtils.getAnimations(jsonObject)) {
-                String animationName = entry.getKey();
-                Animation animation;
-                try {
-                    animation = JsonAnimationUtils
-                        .deserializeJsonToAnimation(JsonAnimationUtils.getAnimation(jsonObject, animationName), parser);
-                    animationFile.putAnimation(animationName, animation);
-                } catch (Exception e) {
-                    ysmu.LOG.warn(
-                        "Failed to register animation {}: {}: {}",
-                        animationName,
-                        e.getClass().getSimpleName(),
-                        StringUtils.defaultString(e.getMessage()));
+        try {
+            MolangParser parser = GeckoLibCache.getInstance().parser;
+            JsonObject jsonObject = GsonHelper.fromJson(ysmu.GSON, file, JsonObject.class);
+            if (jsonObject != null) {
+                for (Map.Entry<String, JsonElement> entry : JsonAnimationUtils.getAnimations(jsonObject)) {
+                    String animationName = entry.getKey();
+                    Animation animation;
+                    try {
+                        animation = JsonAnimationUtils
+                            .deserializeJsonToAnimation(JsonAnimationUtils.getAnimation(jsonObject, animationName), parser);
+                        animationFile.putAnimation(animationName, animation);
+                    } catch (Exception e) {
+                        ysmu.LOG.warn(
+                            "Failed to register animation {}: {}: {}",
+                            animationName,
+                            e.getClass().getSimpleName(),
+                            StringUtils.defaultString(e.getMessage()));
+                    }
                 }
             }
+        } catch (Exception e) {
+            ysmu.LOG.warn(
+                "Failed to parse animation file: {}: {}",
+                e.getClass().getSimpleName(),
+                StringUtils.defaultString(e.getMessage()));
         }
         return animationFile;
     }
