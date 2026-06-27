@@ -4,7 +4,6 @@ import static com.fox.ysmu.util.ControllerUtils.CAP_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_MAINHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_OFFHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.MAIN_CONTROLLER;
-import static com.fox.ysmu.util.ControllerUtils.OPENYSM_POST_SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
 
@@ -133,17 +132,17 @@ public final class OpenYsmPlayerControllerRuntime {
                 break;
             }
             transitionCount++;
-            com.fox.ysmu.ysmu.LOG.info(
-                "YSM controller transition #{}: {} → {} (controller={})",
-                transitionCount, prevStateName, nextState.name, geckoControllerName);
+            //com.fox.ysmu.ysmu.LOG.info(
+            //    "YSM controller transition #{}: {} → {} (controller={})",
+            //    transitionCount, prevStateName, nextState.name, geckoControllerName);
             state = nextState;
         }
-        if (transitionCount > 0) {
+        /*if (transitionCount > 0) {
             com.fox.ysmu.ysmu.LOG.info(
                 "YSM controller {} ended at state '{}' after {} transition(s), animations={}",
                 geckoControllerName, state.name, transitionCount,
                 state.animations.stream().map(e -> e.animationName).collect(java.util.stream.Collectors.toList()));
-        }
+        }*/
 
         // If the current state has no animations, try to force transition to any
         // state that has them. Only transition when the condition is met so we
@@ -372,11 +371,17 @@ public final class OpenYsmPlayerControllerRuntime {
         State state, List<String> animationNames, ResourceLocation animationId) {
         String primaryName = animationNames.get(0);
         // Determine whether this controller should animate the Root bone.
-        // Overlay controllers (post_hold, post_swing, parallel, etc.) should NOT
+        // Post-* overlay controllers (post_hold, post_swing, etc.) should NOT
         // override Root, which controls full-body position/rotation and should
         // only come from the main controller's animation.
+        // Parallel controllers ARE allowed to animate Root since they are
+        // designed for blended parallel animation (e.g. attack combos that
+        // need full-body movement).
         String ctrlName = event.getController().getName();
-        boolean excludeRoot = ctrlName != null && !MAIN_CONTROLLER.equals(ctrlName);
+        boolean excludeRoot = ctrlName != null
+            && !MAIN_CONTROLLER.equals(ctrlName)
+            && !ctrlName.startsWith("parallel_")
+            && !ctrlName.startsWith("pre_parallel_");
         // Build merged bone animations. For single-animation states or when
         // Root filtering is needed, we create a merged copy stored in the
         // GeckoLib cache so the controller loads our modified version.
@@ -500,35 +505,29 @@ public final class OpenYsmPlayerControllerRuntime {
 
     private static void prepareFrameVariables(String geckoControllerName, EntityPlayer player, RuntimeState state,
         OpenYsmControllerExpressionEvaluator.Context context) {
-        if (isPostSwingController(geckoControllerName)) {
-            // 1.7.10: swingProgressInt 从 0 递增到 swingProgressIntMax (≈6)。
-            // swingJustStarted = 刚从不挥动变为挥动
-            // swingReset = swingProgressInt 变小说明连点重置（从高值跳回 0 重新递增）
-            boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
-            boolean swingReset = player.isSwingInProgress && state.lastSwingActive
-                && player.swingProgressInt < state.lastSwingProgress;
-            boolean newSwing = swingJustStarted || swingReset;
-            if (newSwing) {
-                boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
-                    "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
-                    context);
-                if (swordSwing) {
-                    state.variables.put("swing_sword", 1.0d);
-                    state.variables.put(
-                        "jump",
-                        OpenYsmControllerExpressionEvaluator.evaluateBoolean(
-                            "q.is_jumping&&(q.vertical_speed<0)",
-                            context) ? 1.0d : 0.0d);
-                }
+        // Run on EVERY controller so that parallel_2 (and others without a
+        // post_swing OpenYSM controller) can detect swings independently.
+        // Each controller uses its OWN lastSwingActive/lastSwingProgress so that
+        // on_exit variable clearance (v.swing_sword=0) is never overwritten.
+        boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
+        boolean swingReset = player.isSwingInProgress && state.lastSwingActive
+            && player.swingProgressInt < state.lastSwingProgress;
+        boolean newSwing = swingJustStarted || swingReset;
+        if (newSwing) {
+            boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
+                "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
+                context);
+            if (swordSwing) {
+                state.variables.put("swing_sword", 1.0d);
             }
-            state.lastSwingActive = player.isSwingInProgress;
-            state.lastSwingProgress = player.isSwingInProgress ? player.swingProgressInt : -1;
+            state.variables.put(
+                "jump",
+                OpenYsmControllerExpressionEvaluator.evaluateBoolean(
+                    "q.is_jumping&&(q.vertical_speed<0)",
+                    context) ? 1.0d : 0.0d);
         }
-    }
-
-    private static boolean isPostSwingController(String geckoControllerName) {
-        return OPENYSM_POST_SWING_CONTROLLER.equals(geckoControllerName)
-            || SWING_CONTROLLER.equals(geckoControllerName);
+        state.lastSwingActive = player.isSwingInProgress;
+        state.lastSwingProgress = player.isSwingInProgress ? player.swingProgressInt : -1;
     }
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {
