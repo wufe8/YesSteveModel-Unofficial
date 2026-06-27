@@ -99,6 +99,9 @@ public final class AnimationManager {
         swingWasActive.remove(playerId);
         lastSwingProgress.remove(playerId);
         swingComboStage.remove(playerId);
+        dismountAnim.remove(playerId);
+        dismountTimer.remove(playerId);
+        wasRiding.remove(playerId);
     }
 
     public static AnimationManager getInstance() {
