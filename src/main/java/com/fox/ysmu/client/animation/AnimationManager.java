@@ -15,6 +15,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.animation.condition.*;
 import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
@@ -390,9 +391,30 @@ public final class AnimationManager {
 
     @NotNull
     public PlayState predicateMain(AnimationEvent<CustomPlayerEntity> event) {
-        EntityPlayer player = event.getAnimatable()
-            .getPlayer();
+        CustomPlayerEntity animatable = event.getAnimatable();
+        EntityPlayer player = animatable.getPlayer();
         if (player == null) {
+            // GUI preview context: play the model's preview_animation as the
+            // base animation from the main controller. The cap_controller may
+            // additionally play hover/focus as an overlay (they blend).
+            ResourceLocation mainModel = animatable.getMainModel();
+            if (mainModel != null) {
+                String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModel);
+                // Also try the raw model ID (without /main suffix)
+                if ((previewAnim == null || previewAnim.isEmpty()) && mainModel.getResourcePath().endsWith("/main")) {
+                    ResourceLocation rawId = new ResourceLocation(mainModel.getResourceDomain(),
+                        mainModel.getResourcePath().substring(0, mainModel.getResourcePath().length() - 5));
+                    previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(rawId);
+                }
+                if (previewAnim != null && !previewAnim.isEmpty()) {
+                    return playLoopAnimation(event, previewAnim);
+                }
+                // Final fallback: if the model has any animation named "idle", play it
+                AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(mainModel);
+                if (file != null && file.getAnimation("idle") != null) {
+                    return playLoopAnimation(event, "idle");
+                }
+            }
             return PlayState.STOP;
         }
         // When wheel lock is active and a wheel animation is playing, force idle

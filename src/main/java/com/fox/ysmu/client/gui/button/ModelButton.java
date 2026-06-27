@@ -70,7 +70,8 @@ public class ModelButton extends GuiButton {
         if (animFile != null) {
             this.hasHoverAnim = animFile.getAnimation("hover") != null;
             this.hasHoverFadeoutAnim = animFile.getAnimation("hover_fadeout") != null;
-            this.hasFocusAnim = animFile.getAnimation("focus") != null;
+            software.bernie.geckolib3.core.builder.Animation focusAnim = animFile.getAnimation("focus");
+            this.hasFocusAnim = focusAnim != null && focusAnim.boneAnimations != null && !focusAnim.boneAnimations.isEmpty();
             if (this.hasHoverFadeoutAnim) {
                 software.bernie.geckolib3.core.builder.Animation fadeout = animFile.getAnimation("hover_fadeout");
                 this.hoverFadeoutDurationMs = fadeout != null ? fadeout.animationLength * 1000.0 : 0;
@@ -123,7 +124,9 @@ public class ModelButton extends GuiButton {
 
         boolean guiEnhancements = Config.GUI_ENHANCEMENTS;
 
-        // Determine GUI animation state (hover / hover_fadeout / focus)
+        // Determine cap-controller overlay animation (hover / hover_fadeout / focus).
+        // The base preview_animation is now played by predicateMain, so the cap
+        // controller only handles temporary overlays — they blend naturally.
         String guiAnimName = "";
         if (guiEnhancements) {
             if (this.field_146123_n) {
@@ -138,19 +141,12 @@ public class ModelButton extends GuiButton {
                     this.lastHoverTime = -1;
                 }
             }
-            // If nothing playing, check if this button's model is the player's current selection → focus
+            // If nothing from hover/fadeout and this model is selected, play "focus" as overlay
             if (guiAnimName.isEmpty()) {
                 ExtendedModelInfo eep = ExtendedModelInfo.get(player);
                 if (eep != null && hasFocusAnim && eep.getModelId() != null
                     && mainModelId.equals(ModelIdUtil.getMainId(eep.getModelId()))) {
                     guiAnimName = "focus";
-                }
-            }
-            // Fallback to the model's default preview animation if no GUI animation active
-            if (guiAnimName.isEmpty()) {
-                String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
-                if (previewAnim != null && !previewAnim.isEmpty()) {
-                    guiAnimName = previewAnim;
                 }
             }
         }
@@ -242,10 +238,21 @@ public class ModelButton extends GuiButton {
      * Draws a custom-sized GUI texture (foreground/background) stretched to fill (x,y,w,h).
      * Uses Tessellator for correct UV mapping with DynamicTextures.
      */
+    /**
+     * Draws a custom-sized GUI texture (foreground/background) stretched to fill (x,y,w,h).
+     * Resets critical GL state first to ensure correct rendering after 3D entity drawing.
+     */
     private static void drawGuiTexture(Minecraft mc, ResourceLocation tex, int x, int y, int w, int h) {
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
+        GL11.glDisable(GL11.GL_LIGHTING);
+        GL11.glDisable(GL11.GL_COLOR_MATERIAL);
         GL11.glEnable(GL11.GL_BLEND);
         GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
         GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        // Reset texture matrix to identity (GeckoLib may leave a transform)
+        GL11.glMatrixMode(GL11.GL_TEXTURE);
+        GL11.glLoadIdentity();
+        GL11.glMatrixMode(GL11.GL_MODELVIEW);
         mc.getTextureManager().bindTexture(tex);
         Tessellator tessellator = Tessellator.instance;
         GL11.glEnable(GL11.GL_TEXTURE_2D);
