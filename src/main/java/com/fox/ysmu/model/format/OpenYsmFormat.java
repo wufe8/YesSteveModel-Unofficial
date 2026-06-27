@@ -91,6 +91,10 @@ public final class OpenYsmFormat {
         try {
             byte[] encrypted = Files.readAllBytes(file);
             if (!isOpenYsmBinary(encrypted)) {
+                // 不以 YSGP 前缀开头 → 不是已知的 OpenYSM 二进制格式
+                String hexPrefix = bytesToHex(encrypted, Math.min(encrypted.length, 24));
+                ysmu.LOG.debug("OpenYSM binary model {} skipped: not a recognized YSGP format "
+                    + "(size={}, firstBytes={})", file, encrypted.length, hexPrefix);
                 return;
             }
             byte[] rawBytes = YsmCrypt.decryptYsmFile(encrypted);
@@ -116,9 +120,14 @@ public final class OpenYsmFormat {
                 }
             }
         } catch (UnsupportedOperationException e) {
-            ysmu.LOG.warn("Unsupported OpenYSM binary model {}", file, e);
+            ysmu.LOG.warn("Unsupported OpenYSM binary model {} (size={}): {}",
+                file, file.toFile().length(), e.getMessage());
         } catch (Exception e) {
-            ysmu.LOG.warn("Failed to load OpenYSM binary model {}", file, e);
+            ysmu.LOG.warn("Failed to load OpenYSM binary model {} (size={}): {}: {}",
+                file, file.toFile().length(), e.getClass().getSimpleName(), e.getMessage());
+            if (ysmu.LOG.isDebugEnabled()) {
+                ysmu.LOG.debug("OpenYSM binary model {} load failure detail", file, e);
+            }
         }
     }
 
@@ -136,5 +145,18 @@ public final class OpenYsmFormat {
 
     private static String toModelName(Path rootPath, Path path) {
         return rootPath.relativize(path).toString().replace('\\', '/');
+    }
+
+    /** Helper: convert first {@code maxLen} bytes of a byte array to hex string. */
+    private static String bytesToHex(byte[] data, int maxLen) {
+        if (data == null || data.length == 0) return "(empty)";
+        int len = Math.min(data.length, maxLen);
+        StringBuilder sb = new StringBuilder(len * 3);
+        for (int i = 0; i < len; i++) {
+            if (i > 0) sb.append(' ');
+            sb.append(String.format("%02X", data[i] & 0xFF));
+        }
+        if (len < data.length) sb.append("...");
+        return sb.toString();
     }
 }
