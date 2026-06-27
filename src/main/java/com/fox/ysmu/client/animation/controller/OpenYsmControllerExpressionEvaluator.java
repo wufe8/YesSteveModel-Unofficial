@@ -584,7 +584,13 @@ final class OpenYsmControllerExpressionEvaluator {
                 return horizontalSpeed();
             }
             if ("fps".equals(name)) {
-                return 60;
+                try {
+                    java.lang.reflect.Field f = Minecraft.class.getDeclaredField("debugFPS");
+                    f.setAccessible(true);
+                    return f.getInt(Minecraft.getMinecraft());
+                } catch (Exception e) {
+                    return 60;
+                }
             }
             if ("input_vertical".equals(name)) {
                 return player.moveForward;

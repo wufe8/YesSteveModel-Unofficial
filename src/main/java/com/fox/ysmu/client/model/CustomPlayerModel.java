@@ -186,7 +186,6 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 boolean isPreviewBone = isPreviewAnimationBone(name, animId);
                 // Hide reference/guide bones that are only used during modeling
                 // (e.g. zero-thickness positioning grids at Y=0 like "dingwei").
-                // Also hide accessory bones that are only visible conditionally
                 boolean isReferenceBone = name.equals("dingwei");
                 totalBones++;
                 if (isExpression) expressionCount++;
