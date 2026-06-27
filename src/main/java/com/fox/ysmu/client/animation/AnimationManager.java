@@ -77,18 +77,14 @@ public final class AnimationManager {
     private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
     /** Tracks last swingProgressInt to detect rapid-click resets. */
     private final Map<UUID, Integer> lastSwingProgress = new ConcurrentHashMap<>();
-    // --- 硬编码的攻击组合动画已被注释掉 (2025-06-26) ---
-    // 原 ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"}
-    // 原 ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"}
-    // 这些硬编码的动画名大多数模型并不存在，会导致:
-    // - 攻击变为空动画 (bind pose / A-pose)
-    // - cap 控制器卡死在非存在动画上，后续 cap 动画异常
-    // - 肢体在某些动作后完全无动画
-    // private final Map<UUID, Integer> swingCombo = new ConcurrentHashMap<>();
-    // private final Map<UUID, Double> swingComboStartTick = new ConcurrentHashMap<>();
-    // private final Map<UUID, Boolean> comboIsIdle = new ConcurrentHashMap<>();
-    // private static final String[] ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"};
-    // private static final String[] ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"};
+    /**
+     * 模型自定义 v.attackStage combo 阶段追踪。
+     * 从 .molang 函数文件提取：stage=1 → Attackdown3, stage=2 → Attackdown4, stage=3 → Attackdown5
+     * key=playerUUID, value=当前阶段(1-3)
+     */
+    private final Map<UUID, Integer> swingComboStage = new ConcurrentHashMap<>();
+    /** 模型自定义 combo 动画名数组（从 attackStage=1 开始，即 stage1→[0]）。默认 Attackdown3/4/5。 */
+    private static final String[] DEFAULT_COMBO_ANIMS = {"Attackdown3", "Attackdown4", "Attackdown5"};
 
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
@@ -619,6 +615,28 @@ public final class AnimationManager {
             }
             String conditionalAnimation = findSwingAnimation(event, player);
             ResourceLocation animId = getAnimationId(event);
+
+            // 模型自定义 combo：检查是否有 Attackdown3/4/5 系列动画
+            // 从 .molang 函数文件的 swing 控制器提取：v.attackStage 决定用哪个
+            boolean hasCombo = animationExistsInFile(animId, "Attackdown3");
+            if (hasCombo) {
+                if (newSwing) {
+                    Integer stage = swingComboStage.get(pid);
+                    if (stage == null) stage = 0;
+                    stage = (stage % 3) + 1; // 1→2→3→1 循环
+                    swingComboStage.put(pid, stage);
+                    // 新攻击阶段，触发 markNeedsReload 让 setAnimation 生效
+                    event.getController().markNeedsReload();
+                }
+                Integer currentStage = swingComboStage.get(pid);
+                if (currentStage != null && currentStage >= 1 && currentStage <= 3) {
+                    String comboAnim = DEFAULT_COMBO_ANIMS[currentStage - 1];
+                    if (animationExistsInFile(animId, comboAnim)) {
+                        return playAnimation(event, comboAnim, ILoopType.EDefaultLoopTypes.LOOP);
+                    }
+                }
+            }
+
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
                 if (exists) {

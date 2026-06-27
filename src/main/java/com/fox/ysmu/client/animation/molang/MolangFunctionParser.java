@@ -32,17 +32,81 @@ public final class MolangFunctionParser {
 
     private MolangFunctionParser() {}
 
-    /** 匹配 ctrl.<state> ? { ... }; 块 */
-    private static final Pattern CTRL_BLOCK_PATTERN =
-        Pattern.compile("ctrl\\.(\\w+)\\s*\\?\\s*\\{[^}]*ctrl\\.set_animation\\s*\\(\\s*'([^']+)'\\s*\\)[^}]*\\};");
+    /** 匹配 ctrl.<state> 后跟可选的参数列表，用于定位控制块起始位置 */
+    private static final Pattern CTRL_STATE_PATTERN =
+        Pattern.compile("ctrl\\.(\\w+)(?:\\([^)]*\\))?");
 
-    /** 匹配 ctrl.set_animation('<name>') 调用 */
+    /** 匹配 ctrl.set_animation('<name>') 调用（支持单引号或双引号） */
     private static final Pattern SET_ANIM_PATTERN =
-        Pattern.compile("ctrl\\.set_animation\\s*\\(\\s*'([^']+)'\\s*\\)");
+        Pattern.compile("ctrl\\.set_animation\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)");
 
     /** 匹配条件守卫后的 set_animation: 如 v.show_car ? { ctrl.set_animation('开车_待命'); } */
     private static final Pattern CONDITIONAL_SET_ANIM_PATTERN =
-        Pattern.compile("([^;{]+)\\s*\\?\\s*\\{[^}]*ctrl\\.set_animation\\s*\\(\\s*'([^']+)'\\s*\\)[^}]*\\}");
+        Pattern.compile("([^;{]+)\\s*\\?\\s*\\{[^}]*ctrl\\.set_animation\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)[^}]*\\}");
+
+    /** 查找下一个 ctrl.<state>(...) 后最近的 ? { 块，返回 {blockStart, blockEnd, stateEnd, qmarkPos} 或 null */
+    private static int[] findNextCtrlBlock(String script, int searchFrom) {
+        while (true) {
+            Matcher stateMatcher = CTRL_STATE_PATTERN.matcher(script);
+            if (!stateMatcher.find(searchFrom)) return null;
+            int stateEnd = stateMatcher.end();
+            // 在 stateEnd 到下一个 ';'（语句结束符）或下一个 '}'（块结束符）之间找 '?'
+            int minBound = Math.min(
+                indexOfSkipStrings(script, ';', stateEnd),
+                indexOfSkipStrings(script, '}', stateEnd));
+            if (minBound < 0) minBound = script.length();
+            int qmark = script.indexOf('?', stateEnd);
+            if (qmark < 0 || qmark >= minBound) {
+                searchFrom = stateEnd;
+                continue;
+            }
+            // 跳过 '?' 后的空格找到 '{'
+            int blockOpen = -1;
+            for (int i = qmark + 1; i < script.length(); i++) {
+                char c = script.charAt(i);
+                if (c == '{') { blockOpen = i; break; }
+                if (!Character.isWhitespace(c)) break;
+            }
+            if (blockOpen < 0) {
+                searchFrom = qmark + 1;
+                continue;
+            }
+            // 大括号深度匹配
+            int depth = 1;
+            for (int i = blockOpen + 1; i < script.length(); i++) {
+                char c = script.charAt(i);
+                if (c == '{') depth++;
+                else if (c == '}') {
+                    depth--;
+                    if (depth == 0) return new int[]{blockOpen, i, stateEnd, qmark};
+                }
+            }
+            return null;
+        }
+    }
+
+    /** 检查 ctrl.<state> 到 ? 之间是否只有空白（即纯条件，无 && || 或括号包裹） */
+    private static boolean isSimpleCtrlCondition(String script, int stateEnd, int qmarkPos) {
+        for (int i = stateEnd; i < qmarkPos; i++) {
+            char c = script.charAt(i);
+            if (!Character.isWhitespace(c)) return false;
+        }
+        return true;
+    }
+
+    /** 在字符串中查找字符 ch，但跳过被单引号或双引号包裹的区域 */
+    private static int indexOfSkipStrings(String s, char ch, int from) {
+        for (int i = from; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == ch) return i;
+            if (c == '\'' || c == '"') {
+                char quote = c;
+                i++;
+                while (i < s.length() && s.charAt(i) != quote) i++;
+            }
+        }
+        return -1;
+    }
 
     /**
      * 从 .molang 函数文件的原始字节中解析出 ctrl.<state> → 动画名 的映射。
@@ -58,12 +122,36 @@ public final class MolangFunctionParser {
             return result;
         }
         String script = new String(data, StandardCharsets.UTF_8);
-        Matcher matcher = CTRL_BLOCK_PATTERN.matcher(script);
-        while (matcher.find()) {
-            String state = matcher.group(1);
-            String animName = matcher.group(2);
-            if (StringUtils.isNoneBlank(state) && StringUtils.isNoneBlank(animName)) {
-                if (!result.containsKey(state)) {
+        int searchFrom = 0;
+        while (true) {
+            int[] block = findNextCtrlBlock(script, searchFrom);
+            if (block == null) break;
+            int blockOpen = block[0];
+            int blockEnd = block[1];
+            int stateEnd = block[2];
+            int qmarkPos = block[3];
+            searchFrom = blockEnd + 1;
+            // 只提取纯 ctrl.<state> ? { 条件（state 名到 ? 之间只有空白）
+            if (!isSimpleCtrlCondition(script, stateEnd, qmarkPos)) continue;
+            // 从 blockOpen 向前找到 state 名
+            String prefix = script.substring(0, blockOpen);
+            int lastCtrl = prefix.lastIndexOf("ctrl.");
+            if (lastCtrl < 0) continue;
+            String afterCtrl = prefix.substring(lastCtrl + 5);
+            StringBuilder stateName = new StringBuilder();
+            for (int i = 0; i < afterCtrl.length(); i++) {
+                char c = afterCtrl.charAt(i);
+                if (c == '(' || c == '?' || Character.isWhitespace(c)) break;
+                stateName.append(c);
+            }
+            String state = stateName.toString().trim();
+            if (state.isEmpty() || result.containsKey(state)) continue;
+            // 在块内容中找到第一个 ctrl.set_animation('name')
+            String blockContent = script.substring(blockOpen + 1, blockEnd);
+            Matcher animMatcher = SET_ANIM_PATTERN.matcher(blockContent);
+            if (animMatcher.find()) {
+                String animName = animMatcher.group(1);
+                if (StringUtils.isNoneBlank(animName)) {
                     result.put(state, animName);
                 }
             }
@@ -87,27 +175,27 @@ public final class MolangFunctionParser {
             return result;
         }
         String script = new String(data, StandardCharsets.UTF_8);
-        // 找到每个 ctrl.<state> ? 并定位其 { ... } 块的起止
-        Matcher ctrlMatcher = Pattern.compile("ctrl\\.(\\w+)\\s*\\?").matcher(script);
-        while (ctrlMatcher.find()) {
-            String state = ctrlMatcher.group(1);
-            // 从 ctrl.<state> ? 之后找到第一个 '{'（即该块的开括号）
-            int searchStart = ctrlMatcher.end();
-            int blockOpen = -1;
-            for (int i = searchStart; i < script.length(); i++) {
-                if (script.charAt(i) == '{') { blockOpen = i; break; }
+        int searchFrom = 0;
+        while (true) {
+            int[] block = findNextCtrlBlock(script, searchFrom);
+            if (block == null) break;
+            int blockOpen = block[0];
+            int blockEnd = block[1];
+            searchFrom = blockEnd + 1;
+            // 从 blockOpen 向前找到 state 名
+            String prefix = script.substring(0, blockOpen);
+            int lastCtrl = prefix.lastIndexOf("ctrl.");
+            if (lastCtrl < 0) continue;
+            String afterCtrl = prefix.substring(lastCtrl + 5);
+            StringBuilder stateName = new StringBuilder();
+            for (int i = 0; i < afterCtrl.length(); i++) {
+                char c = afterCtrl.charAt(i);
+                if (c == '(' || c == '?' || Character.isWhitespace(c)) break;
+                stateName.append(c);
             }
-            if (blockOpen < 0) continue;
-            // 从此 '{' 开始匹配对应的 '}'
-            int braceDepth = 1;
-            int blockEnd = -1;
-            for (int i = blockOpen + 1; i < script.length(); i++) {
-                char c = script.charAt(i);
-                if (c == '{') braceDepth++;
-                else if (c == '}') { braceDepth--; if (braceDepth == 0) { blockEnd = i; break; } }
-            }
-            if (blockEnd < 0) continue;
-            // 块内容 = 开括号和闭括号之间的部分
+            String state = stateName.toString().trim();
+            if (state.isEmpty()) continue;
+            // 块内容
             String blockContent = script.substring(blockOpen + 1, blockEnd);
             // 在这个块中找所有条件守卫的 set_animation
             Matcher condMatcher = CONDITIONAL_SET_ANIM_PATTERN.matcher(blockContent);
