@@ -35,6 +35,8 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 
+import rip.ysm.imagestream.webp.WebpDecoder;
+
 public final class RawYsmModelAdapter {
 
     private static final byte[] EMPTY_ANIMATION = "{\"animations\":{}}".getBytes(StandardCharsets.UTF_8);
@@ -155,9 +157,9 @@ public final class RawYsmModelAdapter {
         if (texture.imageFormat == RGBA_FORMAT && canConvertRgba(texture)) {
             return true;
         }
-        // WebP/AVIF：至少能解析尺寸就认为可桥接（用占位纹理）
-        if (parseWebpDimensions(texture.data) != null) {
-            return true;
+        // WebP（format=4）：尝试用 WebpDecoder 实际解码
+        if (texture.imageFormat == 4) {
+            return tryDecodeWebp(texture.data);
         }
         // 其他格式：尝试用 ImageIO 解码
         BufferedImage img = readImageToBufferedImage(texture.data);
@@ -171,23 +173,25 @@ public final class RawYsmModelAdapter {
         if (texture.imageFormat == RGBA_FORMAT && canConvertRgba(texture)) {
             return convertRgbaToPng(texture.data, texture.width, texture.height);
         }
+        // WebP（format=4）：用 WebpDecoder 解码后转 PNG
+        if (texture.imageFormat == 4) {
+            BufferedImage webpImage = decodeWebpToImage(texture.data);
+            if (webpImage != null) {
+                try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                    if (ImageIO.write(webpImage, "PNG", output)) {
+                        return output.toByteArray();
+                    }
+                } catch (Exception ignored) {}
+            }
+            ysmu.LOG.warn("Failed to decode WebP texture {} ({}x{}, {} bytes)",
+                texture.name, texture.width, texture.height, texture.data.length);
+            return null;
+        }
         // 尝试用 ImageIO 解码（支持 PNG/JPEG/BMP，不保证 WebP）
         BufferedImage image = readImageToBufferedImage(texture.data);
         if (image != null) {
             try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 if (ImageIO.write(image, "PNG", output)) {
-                    return output.toByteArray();
-                }
-            } catch (Exception ignored) {}
-        }
-        // 无法解码 → 创建占位纹理（WebP 等不支持的格式）
-        BufferedImage placeholder = createPlaceholderTexture(texture.data);
-        if (placeholder != null) {
-            ysmu.LOG.warn("WebP/unsupported texture {} ({}x{}) cannot be decoded, using placeholder. "
-                + "Install a WebP ImageIO plugin or use PNG textures.",
-                texture.name, texture.width, texture.height);
-            try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
-                if (ImageIO.write(placeholder, "PNG", output)) {
                     return output.toByteArray();
                 }
             } catch (Exception ignored) {}
@@ -242,57 +246,24 @@ public final class RawYsmModelAdapter {
         return null;
     }
 
-    /** 从 WebP 数据中提取图像尺寸（不解码像素）。失败返回 null。 */
-    private static int[] parseWebpDimensions(byte[] data) {
+    /** 尝试用 WebpDecoder 解码 WebP 数据，返回是否可解码。 */
+    private static boolean tryDecodeWebp(byte[] data) {
         try {
-            // RIFF 头部：RIFF(4) + size(4) + WEBP(4)
-            if (data.length < 30) return null;
-            if (data[0] != 'R' || data[1] != 'I' || data[2] != 'F' || data[3] != 'F') return null;
-            if (data[8] != 'W' || data[9] != 'E' || data[10] != 'B' || data[11] != 'P') return null;
-
-            int chunkType = (data[12] & 0xFF) << 24 | (data[13] & 0xFF) << 16
-                          | (data[14] & 0xFF) << 8 | (data[15] & 0xFF);
-            if (chunkType == 0x56503820) { // "VP8 "
-                // VP8 lossy: 第 20 字节起 3 个字节存宽度，再 3 个字节存高度
-                int w = (data[26] & 0xFF) | ((data[27] & 0xFF) << 8) | ((data[28] & 0xFF) << 16);
-                int h = (data[29] & 0xFF) | ((data[30] & 0xFF) << 8) | ((data[31] & 0xFF) << 16);
-                return new int[]{w & 0x3FFF, h & 0x3FFF};
-            } else if (chunkType == 0x5650384C) { // "VP8L"
-                // VP8L lossless: 第 17 字节起 4 字节存 bits(0,14)=width-1, bits(15,28)=height-1
-                int bits = (data[21] & 0xFF) | ((data[22] & 0xFF) << 8)
-                         | ((data[23] & 0xFF) << 16) | ((data[24] & 0xFF) << 24);
-                int w = (bits & 0x3FFF) + 1;
-                int h = ((bits >> 14) & 0x3FFF) + 1;
-                return new int[]{w, h};
-            }
-        } catch (Exception ignored) {}
-        return null;
+            BufferedImage img = new WebpDecoder().read(data);
+            return img != null;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
-    /** 创建占位纹理：当无法解码实际纹理时使用，保证模型能正常加载。 */
-    private static BufferedImage createPlaceholderTexture(byte[] data) {
-        if (data == null) return null;
-        int[] dims = parseWebpDimensions(data);
-        if (dims == null) return null;
-        int w = dims[0], h = dims[1];
-        if (w <= 0 || h <= 0) return null;
-        // 创建一张洋红色占位图（类似 Minecraft 的 missing texture 配色）
-        BufferedImage placeholder = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = placeholder.createGraphics();
-        g.setColor(new java.awt.Color(255, 0, 255)); // 洋红色
-        g.fillRect(0, 0, w, h);
-        // 画黑色 X 叉
-        g.setColor(java.awt.Color.BLACK);
-        int step = Math.max(1, Math.min(w, h) / 8);
-        for (int x = 0; x < w; x += step) {
-            for (int y = 0; y < h; y += step) {
-                if ((x / step + y / step) % 2 == 0) {
-                    g.fillRect(x, y, step, step);
-                }
-            }
+    /** 用 WebpDecoder 解码 WebP 数据为 BufferedImage，失败返回 null。 */
+    private static BufferedImage decodeWebpToImage(byte[] data) {
+        try {
+            return new WebpDecoder().read(data);
+        } catch (Exception e) {
+            ysmu.LOG.warn("WebpDecoder failed for {} bytes", data.length, e);
+            return null;
         }
-        g.dispose();
-        return placeholder;
     }
 
     private static boolean canConvertRgba(RawYsmModel.RawTexture texture) {
