@@ -5,7 +5,12 @@ import static com.fox.ysmu.model.ServerModelManager.CUSTOM;
 import static com.fox.ysmu.model.ServerModelManager.EXTRA_ANIMATION_FILE_NAME;
 import static com.fox.ysmu.model.ServerModelManager.MAIN_ANIMATION_FILE_NAME;
 
+import java.awt.Graphics2D;
+import java.awt.Image;
+import java.awt.MediaTracker;
+import java.awt.Toolkit;
 import java.awt.image.BufferedImage;
+import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -46,11 +51,11 @@ public final class RawYsmModelAdapter {
             return false;
         }
         if (!hasGeometry(raw.mainEntity.mainModel)) {
-            ysmu.LOG.debug("isBridgeable false: no main geometry for {}", raw.modelId);
+            ysmu.LOG.warn("[YSMU-DBG] isBridgeable false: no main geometry for {}", raw.modelId);
             return false;
         }
         if (!hasGeometry(raw.mainEntity.armModel)) {
-            ysmu.LOG.debug("isBridgeable false: no arm geometry for {}", raw.modelId);
+            ysmu.LOG.warn("[YSMU-DBG] isBridgeable false: no arm geometry for {}", raw.modelId);
             return false;
         }
         boolean hasTexture = false;
@@ -61,10 +66,10 @@ public final class RawYsmModelAdapter {
             }
         }
         if (!hasTexture) {
-            ysmu.LOG.debug("isBridgeable false: no legacy-compatible texture for {} ({} textures checked)",
+            ysmu.LOG.warn("isBridgeable false: no legacy-compatible texture for {} ({} textures checked)",
                 raw.modelId, raw.mainEntity.textures.size());
             for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
-                ysmu.LOG.debug("  texture {}: format={}, dataLen={}, w={}, h={}",
+                ysmu.LOG.warn("  texture {}: format={}, dataLen={}, w={}, h={}",
                     texture.name, texture.imageFormat,
                     texture.data == null ? 0 : texture.data.length,
                     texture.width, texture.height);
@@ -142,10 +147,21 @@ public final class RawYsmModelAdapter {
         if (texture == null || texture.data == null) {
             return false;
         }
+        // PNG 可直接使用
         if (texture.imageFormat == PNG_FORMAT) {
             return true;
         }
-        return texture.imageFormat == RGBA_FORMAT && canConvertRgba(texture);
+        // Raw RGBA 且数据尺寸足够
+        if (texture.imageFormat == RGBA_FORMAT && canConvertRgba(texture)) {
+            return true;
+        }
+        // WebP/AVIF：至少能解析尺寸就认为可桥接（用占位纹理）
+        if (parseWebpDimensions(texture.data) != null) {
+            return true;
+        }
+        // 其他格式：尝试用 ImageIO 解码
+        BufferedImage img = readImageToBufferedImage(texture.data);
+        return img != null;
     }
 
     private static byte[] getLegacyTextureData(RawYsmModel.RawTexture texture) {
@@ -155,7 +171,128 @@ public final class RawYsmModelAdapter {
         if (texture.imageFormat == RGBA_FORMAT && canConvertRgba(texture)) {
             return convertRgbaToPng(texture.data, texture.width, texture.height);
         }
+        // 尝试用 ImageIO 解码（支持 PNG/JPEG/BMP，不保证 WebP）
+        BufferedImage image = readImageToBufferedImage(texture.data);
+        if (image != null) {
+            try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                if (ImageIO.write(image, "PNG", output)) {
+                    return output.toByteArray();
+                }
+            } catch (Exception ignored) {}
+        }
+        // 无法解码 → 创建占位纹理（WebP 等不支持的格式）
+        BufferedImage placeholder = createPlaceholderTexture(texture.data);
+        if (placeholder != null) {
+            ysmu.LOG.warn("WebP/unsupported texture {} ({}x{}) cannot be decoded, using placeholder. "
+                + "Install a WebP ImageIO plugin or use PNG textures.",
+                texture.name, texture.width, texture.height);
+            try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
+                if (ImageIO.write(placeholder, "PNG", output)) {
+                    return output.toByteArray();
+                }
+            } catch (Exception ignored) {}
+        }
+        ysmu.LOG.warn("Failed to decode texture {} (format={}, {} bytes, {}x{}): unsupported format",
+            texture.name, texture.imageFormat, texture.data.length, texture.width, texture.height);
         return null;
+    }
+
+    /** 尝试用多种方式将字节数据解码为 BufferedImage。 */
+    private static BufferedImage readImageToBufferedImage(byte[] data) {
+        // 1. ImageIO（标准方式，支持 PNG/JPEG/BMP/GIF）
+        try {
+            BufferedImage img = ImageIO.read(new ByteArrayInputStream(data));
+            if (img != null) return img;
+        } catch (Exception ignored) {}
+
+        // 2. 写临时文件 + ImageIO.read(File)
+        Path tempFile = null;
+        try {
+            tempFile = Files.createTempFile("ysmu_", ".png");
+            Files.write(tempFile, data);
+            BufferedImage img = ImageIO.read(tempFile.toFile());
+            if (img != null) return img;
+        } catch (Exception ignored) {} finally {
+            try { if (tempFile != null) Files.deleteIfExists(tempFile); } catch (Exception ignored) {}
+        }
+
+        // 3. 写 .webp 临时文件 + Toolkit.createImage(String)
+        try {
+            tempFile = Files.createTempFile("ysmu_", ".webp");
+            Files.write(tempFile, data);
+            Image tkImg = Toolkit.getDefaultToolkit().createImage(tempFile.toAbsolutePath().toString());
+            if (tkImg != null) {
+                MediaTracker tracker = new MediaTracker(new java.awt.Canvas());
+                tracker.addImage(tkImg, 0);
+                try { tracker.waitForID(0); } catch (InterruptedException ignored) {}
+                if (tkImg.getWidth(null) > 0 && tkImg.getHeight(null) > 0) {
+                    BufferedImage bi = new BufferedImage(
+                        tkImg.getWidth(null), tkImg.getHeight(null),
+                        BufferedImage.TYPE_INT_ARGB);
+                    Graphics2D g = bi.createGraphics();
+                    g.drawImage(tkImg, 0, 0, null);
+                    g.dispose();
+                    return bi;
+                }
+            }
+        } catch (Exception ignored) {} finally {
+            try { if (tempFile != null) Files.deleteIfExists(tempFile); } catch (Exception ignored) {}
+        }
+
+        return null;
+    }
+
+    /** 从 WebP 数据中提取图像尺寸（不解码像素）。失败返回 null。 */
+    private static int[] parseWebpDimensions(byte[] data) {
+        try {
+            // RIFF 头部：RIFF(4) + size(4) + WEBP(4)
+            if (data.length < 30) return null;
+            if (data[0] != 'R' || data[1] != 'I' || data[2] != 'F' || data[3] != 'F') return null;
+            if (data[8] != 'W' || data[9] != 'E' || data[10] != 'B' || data[11] != 'P') return null;
+
+            int chunkType = (data[12] & 0xFF) << 24 | (data[13] & 0xFF) << 16
+                          | (data[14] & 0xFF) << 8 | (data[15] & 0xFF);
+            if (chunkType == 0x56503820) { // "VP8 "
+                // VP8 lossy: 第 20 字节起 3 个字节存宽度，再 3 个字节存高度
+                int w = (data[26] & 0xFF) | ((data[27] & 0xFF) << 8) | ((data[28] & 0xFF) << 16);
+                int h = (data[29] & 0xFF) | ((data[30] & 0xFF) << 8) | ((data[31] & 0xFF) << 16);
+                return new int[]{w & 0x3FFF, h & 0x3FFF};
+            } else if (chunkType == 0x5650384C) { // "VP8L"
+                // VP8L lossless: 第 17 字节起 4 字节存 bits(0,14)=width-1, bits(15,28)=height-1
+                int bits = (data[21] & 0xFF) | ((data[22] & 0xFF) << 8)
+                         | ((data[23] & 0xFF) << 16) | ((data[24] & 0xFF) << 24);
+                int w = (bits & 0x3FFF) + 1;
+                int h = ((bits >> 14) & 0x3FFF) + 1;
+                return new int[]{w, h};
+            }
+        } catch (Exception ignored) {}
+        return null;
+    }
+
+    /** 创建占位纹理：当无法解码实际纹理时使用，保证模型能正常加载。 */
+    private static BufferedImage createPlaceholderTexture(byte[] data) {
+        if (data == null) return null;
+        int[] dims = parseWebpDimensions(data);
+        if (dims == null) return null;
+        int w = dims[0], h = dims[1];
+        if (w <= 0 || h <= 0) return null;
+        // 创建一张洋红色占位图（类似 Minecraft 的 missing texture 配色）
+        BufferedImage placeholder = new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = placeholder.createGraphics();
+        g.setColor(new java.awt.Color(255, 0, 255)); // 洋红色
+        g.fillRect(0, 0, w, h);
+        // 画黑色 X 叉
+        g.setColor(java.awt.Color.BLACK);
+        int step = Math.max(1, Math.min(w, h) / 8);
+        for (int x = 0; x < w; x += step) {
+            for (int y = 0; y < h; y += step) {
+                if ((x / step + y / step) % 2 == 0) {
+                    g.fillRect(x, y, step, step);
+                }
+            }
+        }
+        g.dispose();
+        return placeholder;
     }
 
     private static boolean canConvertRgba(RawYsmModel.RawTexture texture) {

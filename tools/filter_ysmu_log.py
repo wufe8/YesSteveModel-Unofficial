@@ -36,7 +36,7 @@ SHOW_HEX = False
 PREFIX_RE = re.compile(r'^\[\d+:\d+:\d+\]\s*\[[^\]]*\]\s*:\s*')
 
 YSM_LINE_RE = re.compile(
-    r'\[(YSM_DEBUG|YSM\s*(Sound)?|ysmu|YSM)\]'
+    r'\[(YSM_DEBUG|YSMU-DBG|YSM\s*(Sound)?|ysmu|YSM)\]'
     r'|OpenYSM\s'
     r'|YSM\s(footer|JSON|binary|folder|model)'
     r'|YSGP\sformat'
@@ -61,11 +61,13 @@ YSM_LINE_RE = re.compile(
     r'|applyTransition'
     r'|Registered pack'
     r'|not bridgeable'
+    r'|isBridgeable'
     r'|OpenYSM.*model sync'
     r'|OpenYSM.*sync (index|complete|completed|cache)'
     r'|model sync.*'
     r'|Failed to load texture: ysmu'
     r'|\[CHAT\]'
+    r'|texture texture: format'
 )
 
 
@@ -117,6 +119,8 @@ def classify(line: str) -> str:
     if 'not a recognized YSGP format' in line:
         return 'bin_skip'
     if 'not bridgeable' in line:
+        return 'bin_err'
+    if 'isBridgeable' in line:
         return 'bin_err'
     if 'Invalid YSM file' in line or 'Corrupted YSM' in line:
         return 'bin_corrupt'

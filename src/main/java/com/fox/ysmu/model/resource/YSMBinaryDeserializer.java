@@ -143,7 +143,11 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             tex.data = reader.readByteArray();
             tex.width = reader.readVarInt();
             tex.height = reader.readVarInt();
-            tex.imageFormat = -1; // RGBA
+            int detectedFmt = YSMFolderDeserializer.detectFormat(tex.data);
+            if (detectedFmt == 0 && tex.data.length >= (long) tex.width * tex.height * 4L) {
+                detectedFmt = -1; // 无魔数头但数据尺寸匹配 → raw RGBA
+            }
+            tex.imageFormat = detectedFmt;
             model.mainEntity.textures.put(tex.name, tex);
             tempTextures.add(tex);
         }
@@ -241,7 +245,11 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             tex.data = reader.readByteArray();
             tex.width = reader.readVarInt();
             tex.height = reader.readVarInt();
-            tex.imageFormat = -1; // RGBA
+            int detectedFmt = YSMFolderDeserializer.detectFormat(tex.data);
+            if (detectedFmt == 0 && tex.data.length >= (long) tex.width * tex.height * 4L) {
+                detectedFmt = -1; // 无魔数头但数据尺寸匹配 → raw RGBA
+            }
+            tex.imageFormat = detectedFmt;
 
             int subTextureSize = reader.readVarInt();
             for (int j = 0; j < subTextureSize; ++j) {
@@ -250,7 +258,11 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 sub.data = reader.readByteArray();
                 sub.width = reader.readVarInt();
                 sub.height = reader.readVarInt();
-                sub.imageFormat = -1; // RGBA
+                int subFmt = YSMFolderDeserializer.detectFormat(sub.data);
+                if (subFmt == 0 && sub.data.length >= (long) sub.width * sub.height * 4L) {
+                    subFmt = -1; // raw RGBA
+                }
+                sub.imageFormat = subFmt;
                 tex.subTextures.add(sub);
             }
 

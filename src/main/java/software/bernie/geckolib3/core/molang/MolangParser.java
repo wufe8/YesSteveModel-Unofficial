@@ -30,6 +30,7 @@ import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
+import com.fox.ysmu.ysmu;
 
 /**
  * MoLang 解析器
@@ -93,6 +94,11 @@ public class MolangParser extends MathBuilder {
         // 防止模型动画 Molang 表达式中使用 query.is_item_name_any 时抛出异常。
         // 始终返回 0 (false)，TODO: 待物品注册名上下文可用时实现完整匹配。
         this.functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
+
+        // 缺失的 ysm.* 功能桩函数：防止高版本模型动画控制器每帧刷堆栈
+        this.functions.put("ysm.play_sound", CtrlHoldFunction.class);
+        this.functions.put("ysm.relative_block_name", CtrlHoldFunction.class);
+        this.functions.put("ysm.particle", CtrlHoldFunction.class);
 
         remap("abs", "math.abs");
         remap("acos", "math.acos");
@@ -331,7 +337,9 @@ public class MolangParser extends MathBuilder {
         try {
             return this.parseSymbols(symbols);
         } catch (Exception e) {
-            e.printStackTrace();
+            if (ysmu.LOG.isDebugEnabled()) {
+                ysmu.LOG.debug("Molang parse error: {}", e.getMessage());
+            }
             throw new MolangException("Couldn't parse an expression!");
         }
     }
