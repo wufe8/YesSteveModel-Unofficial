@@ -105,17 +105,6 @@ public final class OpenYsmFormat {
                 // 截断的 .ysm 文件核心数据（几何、动画、纹理）在
                 // parseYSMJson/parseYSMFooter 之前已解析完成。
                 boolean bridgeable = RawYsmModelAdapter.isBridgeable(raw);
-                ysmu.LOG.info("OpenYSM binary model {} cached: modelId={}, bridgeable={}, "
-                    + "mainBones={}, armBones={}, textures={}, animations={}, "
-                    + "widthScale={}, heightScale={}, extraAnimations={}",
-                    file, modelId, bridgeable,
-                    raw.mainEntity.mainModel != null && raw.mainEntity.mainModel.bones != null
-                        ? raw.mainEntity.mainModel.bones.size() : 0,
-                    raw.mainEntity.armModel != null && raw.mainEntity.armModel.bones != null
-                        ? raw.mainEntity.armModel.bones.size() : 0,
-                    raw.mainEntity.textures.size(), raw.mainEntity.animationFiles.size(),
-                    raw.properties.widthScale, raw.properties.heightScale,
-                    raw.properties.extraAnimations.size());
                 OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
                 OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
                 if (bridgeable) {

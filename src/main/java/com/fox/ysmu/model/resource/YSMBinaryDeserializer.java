@@ -533,7 +533,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         try {
             parseYSMJsonInternal();
             int endPos = reader.getOffset();
-            ysmu.LOG.info("YSM JSON metadata parsed successfully: format={}, bytesRead={}, extraAnimations={}, "
+            ysmu.LOG.debug("YSM JSON metadata parsed successfully: format={}, bytesRead={}, extraAnimations={}, "
                 + "widthScale={}, heightScale={}, defaultTexture={}",
                 format, endPos - startPos,
                 model.properties.extraAnimations.size(),
@@ -545,7 +545,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             // 重置为默认值 0.7 防止模型渲染异常。
             model.properties.widthScale = 0.7f;
             model.properties.heightScale = 0.7f;
-            ysmu.LOG.info("YSM JSON metadata truncated at offset {} ({} of {} bytes) for format {}: "
+            ysmu.LOG.debug("YSM JSON metadata truncated at offset {} ({} of {} bytes) for format {}: "
                 + "extraAnimations={}, widthScale={}, heightScale={}, defaultTexture={}",
                 failPos, failPos - startPos, startPos + 0, format,
                 model.properties.extraAnimations.size(),
