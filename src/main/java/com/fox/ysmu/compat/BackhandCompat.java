@@ -56,7 +56,8 @@ public class BackhandCompat {
                 return getOffhandItem(player);
             }
         } else {
-            return player.getHeldItem();
+            // Vanilla 1.7.10 没有副手槽位，副手查询永远返回 null
+            return isMainHand ? player.getHeldItem() : null;
         }
     }
 
