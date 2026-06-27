@@ -262,6 +262,15 @@ public class AnimationController<T extends IAnimatable> {
                     }
                     currentAnimationBuilder = builder;
 
+                    // When transitioning from STOPPED to Transitioning, clear the stale
+                    // currentAnimation so process() properly dequeues the new animation.
+                    // Without this, rapid re-clicks keep using the old animation object
+                    // because tick >= transitionLengthTicks skips the dequeue path.
+                    if (animationState == AnimationState.Stopped) {
+                        this.currentAnimation = null;
+                        resetEventKeyFrames();
+                    }
+
                     // Reset the adjusted tick to 0 on next animation process call
                     shouldResetTick = true;
                     this.animationState = AnimationState.Transitioning;
