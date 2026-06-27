@@ -33,12 +33,14 @@ SHOW_HEX = False
 # ============================================================
 # Patterns
 # ============================================================
-PREFIX_RE = re.compile(r'^\[\d+:\d+:\d+\]\s*\[[^\]]*\]\s*')
+PREFIX_RE = re.compile(r'^\[\d+:\d+:\d+\]\s*\[[^\]]*\]\s*:\s*')
 
 YSM_LINE_RE = re.compile(
-    r'\[(YSM_DEBUG|YSM\s*(Sound)?|ysmu)\]'
+    r'\[(YSM_DEBUG|YSM\s*(Sound)?|ysmu|YSM)\]'
     r'|OpenYSM\s'
     r'|YSM\s(footer|JSON|binary|folder|model)'
+    r'|YSGP\sformat'
+    r'|not a recognized'
     r'|Failed to (load|scan|create|write|initialize).*[Yy][Ss][Mm]'
     r'|ysmu_.*\.ysm'
     r'|YsmCrypt|YSMByteBuf'
@@ -59,6 +61,11 @@ YSM_LINE_RE = re.compile(
     r'|applyTransition'
     r'|Registered pack'
     r'|not bridgeable'
+    r'|OpenYSM.*model sync'
+    r'|OpenYSM.*sync (index|complete|completed|cache)'
+    r'|model sync.*'
+    r'|Failed to load texture: ysmu'
+    r'|\[CHAT\]'
 )
 
 
@@ -78,6 +85,10 @@ def strip_prefix(line: str) -> str:
 
 def extract_level(line: str) -> str:
     """Extract log level from prefix like [Client thread/INFO] → INFO."""
+    # [Thread/LEVEL] or [LEVEL] format
+    m = re.search(r'\[[^\]]*?/([A-Z]+)\]', line)
+    if m:
+        return m.group(1)
     m = re.search(r'\[([A-Z]+)\]', line)
     return m.group(1) if m else 'UNKNOWN'
 
@@ -105,6 +116,8 @@ def classify(line: str) -> str:
         return 'bin_err'
     if 'not a recognized YSGP format' in line:
         return 'bin_skip'
+    if 'not bridgeable' in line:
+        return 'bin_err'
     if 'Invalid YSM file' in line or 'Corrupted YSM' in line:
         return 'bin_corrupt'
     if 'YsmCrypt' in line or 'decrypt' in line:
@@ -147,6 +160,13 @@ def classify(line: str) -> str:
     if 'collectActiveAnimations' in line:
         return 'coll'
 
+    # OpenYSM sync
+    if 'model sync' in line or 'sync index' in line or 'sync complete' in line or 'sync completed' in line or 'sync cache' in line or 'cache hit' in line or 'cache miss' in line or 'downloaded and cached' in line or 'server sent' in line:
+        return 'sync'
+    # Texture load failure
+    if 'Failed to load texture' in line:
+        return 'tex_err'
+
     # Sound
     if '[YSM Sound]' in line:
         return 'sound'
@@ -163,17 +183,19 @@ def classify(line: str) -> str:
         return 'debug'
     if '[YSM]' in line or '[ysmu]' in line:
         return 'info'
+    if '[CHAT]' in line:
+        return 'chat'
 
     return 'other'
 
 
 GROUP_ORDER = [
     'bin_err', 'bin_skip', 'bin_corrupt', 'crypt',
-    'molang_miss', 'idx_err',
+    'molang_miss', 'idx_err', 'tex_err',
     'def', 'trans', 'force', 'warn', 'play', 'ctrl',
     'apply', 'vars', 'coll', 'pred',
-    'sound', 'pack',
-    'debug', 'info', 'stack', 'other',
+    'sync', 'sound', 'pack',
+    'debug', 'info', 'stack', 'chat', 'other'
 ]
 
 GROUP_NAMES = {
@@ -183,22 +205,25 @@ GROUP_NAMES = {
     'crypt':       '=== 4. Encryption/Decryption Issues ===',
     'molang_miss': '=== 5. Missing Molang Functions ===',
     'idx_err':     '=== 6. Index Out of Bounds ===',
-    'def':         '=== 7. Controller Definitions (once per load) ===',
-    'trans':       '=== 8. State Transitions (condition evaluation) ===',
-    'force':       '=== 9. Force Transitions ===',
-    'warn':        '=== 10. Warnings (empty/missing animations) ===',
-    'play':        '=== 11. Controller Play State ===',
-    'ctrl':        '=== 12. Controller State (tryApplyController) ===',
-    'apply':       '=== 13. OpenYSM Apply Results ===',
-    'vars':        '=== 14. Frame Variables ===',
-    'coll':        '=== 15. Animation Collection Details ===',
-    'pred':        '=== 16. Predicate Events ===',
-    'sound':       '=== 17. Sound System ===',
-    'pack':        '=== 18. Pack Registration ===',
-    'debug':       '=== 19. General Debug ===',
-    'info':        '=== 20. General Info ===',
-    'stack':       '=== 21. YSMU Stack Traces ===',
-    'other':       '=== 22. Other ===',
+    'tex_err':     '=== 7. Texture Load Failures ===',
+    'def':         '=== 8. Controller Definitions (once per load) ===',
+    'trans':       '=== 9. State Transitions (condition evaluation) ===',
+    'force':       '=== 10. Force Transitions ===',
+    'warn':        '=== 11. Warnings (empty/missing animations) ===',
+    'play':        '=== 12. Controller Play State ===',
+    'ctrl':        '=== 13. Controller State (tryApplyController) ===',
+    'apply':       '=== 14. OpenYSM Apply Results ===',
+    'vars':        '=== 15. Frame Variables ===',
+    'coll':        '=== 16. Animation Collection Details ===',
+    'pred':        '=== 17. Predicate Events ===',
+    'sync':        '=== 18. OpenYSM Model Sync ===',
+    'sound':       '=== 19. Sound System ===',
+    'pack':        '=== 20. Pack Registration ===',
+    'debug':       '=== 21. General Debug ===',
+    'info':        '=== 22. General Info ===',
+    'stack':       '=== 23. YSMU Stack Traces ===',
+    'chat':        '=== 24. Chat ===',
+    'other':       '=== 25. Other ===',
 }
 
 
@@ -294,6 +319,10 @@ def filter_log(text: str):
         if entries:
             name = GROUP_NAMES[g].strip('= ').strip()
             print(f"  {name}: {len(entries)}")
+    # Hint about DEBUG-level logs
+    has_debug_only = any(g in ('bin_skip', 'bin_corrupt') and groups.get(g) for g in GROUP_ORDER)
+    if has_debug_only:
+        print(f"  (Hint: use --level DEBUG or --raw to see more detail about skipped models)")
     print(f"{'=' * 60}")
 
     # Grouped output
@@ -335,7 +364,7 @@ if __name__ == '__main__':
 Examples:
   %(prog)s < latest.log
   %(prog)s --raw < latest.log
-  %(prog)s --model 玲纱 < latest.log
+  %(prog)s --model steve < latest.log
   %(prog)s --level WARN < latest.log
   %(prog)s --context 2 --raw < latest.log
   %(prog)s --hex --raw < latest.log

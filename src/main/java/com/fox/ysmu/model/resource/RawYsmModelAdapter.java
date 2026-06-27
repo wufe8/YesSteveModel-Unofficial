@@ -46,17 +46,31 @@ public final class RawYsmModelAdapter {
             return false;
         }
         if (!hasGeometry(raw.mainEntity.mainModel)) {
+            ysmu.LOG.debug("isBridgeable false: no main geometry for {}", raw.modelId);
             return false;
         }
         if (!hasGeometry(raw.mainEntity.armModel)) {
+            ysmu.LOG.debug("isBridgeable false: no arm geometry for {}", raw.modelId);
             return false;
         }
+        boolean hasTexture = false;
         for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
             if (hasLegacyTextureData(texture)) {
-                return true;
+                hasTexture = true;
+                break;
             }
         }
-        return false;
+        if (!hasTexture) {
+            ysmu.LOG.debug("isBridgeable false: no legacy-compatible texture for {} ({} textures checked)",
+                raw.modelId, raw.mainEntity.textures.size());
+            for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
+                ysmu.LOG.debug("  texture {}: format={}, dataLen={}, w={}, h={}",
+                    texture.name, texture.imageFormat,
+                    texture.data == null ? 0 : texture.data.length,
+                    texture.width, texture.height);
+            }
+        }
+        return hasTexture;
     }
 
     public static ModelData toLegacyModelData(RawYsmModel raw, String modelId) throws IOException {

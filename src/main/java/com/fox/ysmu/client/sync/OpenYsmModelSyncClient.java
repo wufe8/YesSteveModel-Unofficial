@@ -259,7 +259,7 @@ public final class OpenYsmModelSyncClient {
                 ClientModelManager.registerExtraWheel(modelId, raw);
             });
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
-                ysmu.LOG.debug("OpenYSM synced model {} is not bridgeable to legacy ModelData", context.modelId);
+                ysmu.LOG.warn("OpenYSM synced model {} is not bridgeable to legacy ModelData, skipped", context.modelId);
                 return false;
             }
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, context.modelId);

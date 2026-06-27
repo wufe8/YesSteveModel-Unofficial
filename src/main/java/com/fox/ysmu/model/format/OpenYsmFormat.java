@@ -93,7 +93,7 @@ public final class OpenYsmFormat {
             if (!isOpenYsmBinary(encrypted)) {
                 // 不以 YSGP 前缀开头 → 不是已知的 OpenYSM 二进制格式
                 String hexPrefix = bytesToHex(encrypted, Math.min(encrypted.length, 24));
-                ysmu.LOG.debug("OpenYSM binary model {} skipped: not a recognized YSGP format "
+                ysmu.LOG.warn("OpenYSM binary model {} skipped: not a recognized YSGP format "
                     + "(size={}, firstBytes={})", file, encrypted.length, hexPrefix);
                 return;
             }
