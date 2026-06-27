@@ -2,7 +2,10 @@ package com.fox.ysmu.client.renderer;
 
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
@@ -32,6 +35,8 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
     private GeoModel geoModel;
     /** Tracks which model locations have already been logged as missing (throttle). */
     private final Set<String> missingGeoModelLogged = Collections.synchronizedSet(new HashSet<>());
+    /** Tracks the last main model per player to detect model switches. */
+    private final Map<UUID, ResourceLocation> lastPlayerModel = new ConcurrentHashMap<>();
 
     @SuppressWarnings("all")
     public CustomPlayerRenderer() {
@@ -43,17 +48,27 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
     public void doRender(EntityLivingBase entityObj, double x, double y, double z, float entityYaw,
         float partialTicks) {
         if (this.animatable != null && entityObj instanceof EntityPlayer player) {
+            UUID pid = player.getUniqueID();
+            ResourceLocation oldModel = lastPlayerModel.get(pid);
+            ResourceLocation newModel;
             ExtendedModelInfo eep = ExtendedModelInfo.get(player);
             if (eep != null) {
                 this.animatable.setPlayer(player);
-                if (NPCData.contains(player.getUniqueID())) {
-                    Pair<ResourceLocation, ResourceLocation> data = NPCData.getData(player.getUniqueID());
-                    this.animatable.setMainModel(ModelIdUtil.getMainId(data.left()));
+                if (NPCData.contains(pid)) {
+                    Pair<ResourceLocation, ResourceLocation> data = NPCData.getData(pid);
+                    newModel = ModelIdUtil.getMainId(data.left());
+                    this.animatable.setMainModel(newModel);
                     this.animatable.setTexture(data.right());
                 } else {
-                    this.animatable.setMainModel(ModelIdUtil.getMainId(eep.getModelId()));
+                    newModel = ModelIdUtil.getMainId(eep.getModelId());
+                    this.animatable.setMainModel(newModel);
                     this.animatable.setTexture(eep.getSelectTexture());
                 }
+                // Detect model switch and reset stale per-player animation state
+                if (oldModel != null && !oldModel.equals(newModel)) {
+                    com.fox.ysmu.client.animation.AnimationManager.getInstance().resetPlayerState(pid);
+                }
+                lastPlayerModel.put(pid, newModel);
             }
             if (MinecraftForge.EVENT_BUS.post(
                 new SpecialPlayerRenderEvent(

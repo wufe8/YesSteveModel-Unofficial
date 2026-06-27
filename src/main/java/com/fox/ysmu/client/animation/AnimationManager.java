@@ -86,6 +86,21 @@ public final class AnimationManager {
     /** 模型自定义 combo 动画名数组（从 attackStage=1 开始，即 stage1→[0]）。默认 Attackdown3/4/5。 */
     private static final String[] DEFAULT_COMBO_ANIMS = {"Attackdown3", "Attackdown4", "Attackdown5"};
 
+    /**
+     * Called when a player switches to a different model. Clears per-player state
+     * that would otherwise carry stale data from the previous model (item hashes,
+     * swing tracking, combo stage, etc.).
+     */
+    public void resetPlayerState(UUID playerId) {
+        swingProgressByPlayer.remove(playerId);
+        useDurationByPlayer.remove(playerId);
+        lastMainhandItemHash.remove(playerId);
+        lastOffhandItemHash.remove(playerId);
+        swingWasActive.remove(playerId);
+        lastSwingProgress.remove(playerId);
+        swingComboStage.remove(playerId);
+    }
+
     public static AnimationManager getInstance() {
         if (MANAGER == null) {
             MANAGER = new AnimationManager();
@@ -570,6 +585,7 @@ public final class AnimationManager {
             }
             lastMainhandItemHash.put(player.getUniqueID(), -1);
         }
+        com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
         return PlayState.STOP;
     }
 
@@ -603,6 +619,7 @@ public final class AnimationManager {
 
         if (!nowSwinging) {
             swingProgressByPlayer.remove(pid);
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
             return PlayState.STOP;
         }
         if (!player.isPlayerSleeping()) {
@@ -698,6 +715,7 @@ public final class AnimationManager {
             return playAnimation(event, isMainHand ? "use_mainhand" : "use_offhand", ILoopType.EDefaultLoopTypes.LOOP);
         }
         useDurationByPlayer.remove(player.getUniqueID());
+        com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
         return PlayState.STOP;
     }
 
