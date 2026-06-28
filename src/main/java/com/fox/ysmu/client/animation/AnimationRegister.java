@@ -235,7 +235,7 @@ public class AnimationRegister {
         parser.setValue("query.is_playing_dead", () -> MolangUtils.booleanToFloat(player.isDead));
         parser.setValue("query.is_riding", () -> MolangUtils.booleanToFloat(player.isRiding()));
         parser.setValue("query.is_sleeping", () -> MolangUtils.booleanToFloat(player.isPlayerSleeping()));
-        parser.setValue("query.is_sneaking", () -> MolangUtils.booleanToFloat(isPlayerOnGround(player) && player.isSneaking()));
+        parser.setValue("query.is_sneaking", () -> MolangUtils.booleanToFloat(player.isSneaking()));
         parser.setValue("query.is_sprinting", () -> MolangUtils.booleanToFloat(player.isSprinting()));
         parser.setValue("query.is_swimming", () -> MolangUtils.booleanToFloat(player.isInWater()));
         parser.setValue("query.is_using_item", () -> MolangUtils.booleanToFloat(player.isUsingItem()));

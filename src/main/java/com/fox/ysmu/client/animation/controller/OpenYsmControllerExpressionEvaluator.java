@@ -482,7 +482,7 @@ final class OpenYsmControllerExpressionEvaluator {
                 return isOnGround() ? TRUE : FALSE;
             }
             if ("is_sneaking".equals(name)) {
-                return isOnGround() && player.isSneaking() ? TRUE : FALSE;
+                return player.isSneaking() ? TRUE : FALSE;
             }
             if ("is_sprinting".equals(name)) {
                 return player.isSprinting() ? TRUE : FALSE;
@@ -697,7 +697,7 @@ final class OpenYsmControllerExpressionEvaluator {
                 return isOnGround() && player.isSneaking() && Math.abs(event.getLimbSwingAmount()) > 0.05f;
             }
             if ("sneaking".equals(name)) {
-                return isOnGround() && player.isSneaking();
+                return isOnGround() && player.isSneaking() && !(Math.abs(event.getLimbSwingAmount()) > 0.05f);
             }
             if ("run".equals(name)) {
                 return isOnGround() && player.isSprinting();
