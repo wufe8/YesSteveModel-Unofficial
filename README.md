@@ -1,9 +1,189 @@
-# YesSteveModel-Unofficial
+# YesSteveModel-Unofficial (YSMU)
 
-> [!NOTE]  
-> 注意：[legacy分支](https://github.com/Huli-fox/YesSteveModel-Unofficial/tree/legacy)（基于[1.1.5版本](https://github.com/YesSteveModel/LgeacyYSM)的移植）将不再维护，工作重心转移到将[OpenYSM](https://github.com/OpenYSM/OpenYSM)移植回1.7.10
+<p align="center">
+  <a href="https://github.com/wufe8/YesSteveModel-Unofficial/releases">
+    <img src="https://img.shields.io/badge/版本-1.9--alpha1--pre1--feat--ExtraUI--02-blue" alt="版本">
+  </a>
+  <a href="https://github.com/wufe8/YesSteveModel-Unofficial/releases">
+    <img src="https://img.shields.io/badge/Minecraft-1.7.10-green" alt="Minecraft">
+  </a>
+  <a href="https://github.com/wufe8/YesSteveModel-Unofficial/blob/1.0/LICENSE">
+    <img src="https://img.shields.io/badge/许可证-MIT-yellow" alt="许可证">
+  </a>
+</p>
 
-## 当前状态：Version1.9
-在legacy分支基础上，将OpenYSM移植过来。为了快速见效，纯vibe快速搞了下，bug比较多。
+**该文档主要由ai生成 虽经人工修正 但不确保准确性**
 
-原本legacy就是在几乎没有移植经验的情况下搞的，于此基础上开发是不合适的。从零移植会在未来提上日程，也可能coming s∞n。
+---
+
+## 概述
+
+YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.10 (主要是给我自己玩gtnh)
+
+---
+
+## 当前状态
+
+**最新版本：`1.9-alpha1-pre1-feat-ExtraUI-02`**（`feat-ExtraUI` 分支）
+
+从 `1.9-alpha1`（2025年6月）起，项目经历了 **106 次提交**，变更 **165 个文件，净增约 12.2 万行代码**, 进行了大量重构, 修复和功能增强 (ai太好用了你们知道吗 12万行只要100rmb)
+
+> [NOTE]
+> 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
+
+## 安装
+
+### 环境要求
+- **Minecraft**: 1.7.10
+- **java**: java8, 17-25(with lwjgl3ify)
+- **Forge**: 10.13.4.1614+
+- **必需 Mod**:
+  - [UniMixins](https://github.com/LegacyModdingMC/UniMixins)
+  - [GTNHLib](https://github.com/GTNewHorizons/GTNHLib)
+- **测试兼容性**: +unimixins-all-1.7.10-0.3.1.jar, angelica-2.1.42.jar, gtnhlib-0.10.9.jar, lwjgl3ify-3.0.25.jar, backhand-1.7.7.jar, modularui2-2.2.18-1.7.10.jar
+- **GTNH测试版本**: 2.8.4
+
+### 安装步骤
+1. 安装 Forge 1.7.10（推荐 10.13.4.1614 或更新版本）
+2. 将 UniMixins、GTNHLib 放入 `mods` 目录
+3. 从 [Releases](https://github.com/wufe8/YesSteveModel-Unofficial/releases) 下载 YSMU 放入 `mods` 目录
+4. 启动游戏
+
+---
+
+## 主要功能
+
+### 模型系统
+- **YSM 标准模型支持**：兼容旧版文件夹模型（`main.json` + `arm.json` + `.png`）和 `.ysm` 二进制模型
+- **YSM 新格式支持**：`ysm.json` 文件夹结构、format 32 新版二进制 `.ysm`
+- **高版本模型兼容**：支持 format 1.21.0 几何格式，桥接 `.molang` 函数文件
+- **模型包系统**：模型扫描、服务端/客户端同步协议、GUI 模型分组
+- **WebP 纹理解码**：移植 ImageStream 解码器，处理加密 `.ysm` 中的 WebP 贴图
+- **内置模型**：内置默认模型自动提取到 `config/ysmu/custom`
+
+### 动画系统
+- **动画控制器**：状态机、blend transition、timeline、`on_entry`/`on_exit`
+- **并行动画播放**：支持 `parallel_N` 控制器，多动画同时播放
+- **攻击连击系统**：`post_swing` 状态机推进 attack1→2→3，支持检测模型武器可见性
+- **潜行动画修复**：四种降级路径（MOVE-BLOCK、SKY-REDIRECT、wasMoving、通用回退），修复无 `ground` 状态模型的潜行动画
+- **动画合并修复**：`arm.animation.json` 空动画不再覆盖 `main.animation.json` 有骨骼的正常版本
+- **Root 骨骼过滤**：非主控制器自动剔除 Root 骨骼动画，防止身体旋转被覆盖
+- **额外动画轮盘**：可定制的 8 槽位动画轮盘，支持子菜单导航、翻页
+- **骑乘退出检测**：下马时 40-ticks 停止其他控制器，确保过渡动画播放
+- **GUI 预览动画**：模型选择界面支持 hover/focus 动画和双控制器预览混合
+
+### Molang 脚本引擎
+- **完整 Molang 解析器**：带运算符优先级修复、三元表达式、null-coalescing (`??`) 和赋值操作符
+- **高版本桥接**：解析 `.molang` 函数文件，将 `ctrl.set_animation('正常_行走')` 映射为标准状态名
+- **变量支持**：
+  - `query.*` — 玩家/世界/物品查询函数
+  - `ysm.*` — YSM 特有变量（`ground_speed2`、`fps`、`input_vertical/horizontal`、`has_helmet`、`attack_time` 等）
+  - `v.roaming.*` — 服务端同步的 roaming 变量（`helmet` 等）
+  - `ctrl.hold`/`ctrl.use`/`ctrl.swing` — 完整实现的物品检测函数
+- **物理变量注入**：roaming 变量注入到动画关键帧路径
+
+### 音频系统
+- **OGG Vorbis 播放**：通过 DirectSound 实现模型音效播放
+- **控制器级生命周期**：音效与 GeckoLib 控制器绑定，动画切换/停止时自动清理
+- **vanilla 音效回退**：非 OGG 音效通过 `SoundHandler.playSound` 播放
+
+### 配置与 GUI
+- **全新配置面板**：右侧面板布局、更大预览、拖拽旋转预览玩家
+- **模型选择界面增强**：前景/背景纹理、GUI 动画、foreground/background 贴图渲染
+- **配置页面改进**：透明度滑块、显示名称、包文件夹图标
+- **翻页/锁定按钮**：动画轮盘锁定、多页导航
+- **`/ysm play` 命令**：在游戏中播放指定动画
+
+### 兼容性
+- **Backhand 双持**：通过 `BackhandCompat` 隔离, 副手物品正确检测
+- **Angelica 光影**：第一人称手臂渲染通过 `AngelicaCompat` + Mixin 分流
+- **UniMixins** 和 **GTNHLib** 为运行时必需
+
+---
+
+## 变更历史（自 1.9-alpha1 以来）
+
+| 标签 | 说明 |
+| --- | --- |
+| `1.9-alpha1` | 初始重构版本，动画控制器支持、新模型同步协议 |
+| `1.9-alpha1-fix-ThirdPersonView` | 修复第三人称视角问题 |
+| `1.9-alpha1-fix-EmojiVisibillty` | 修复表情可见性，重构 Molang 函数注册 |
+| `1.9-alpha1-fix-AttackAnimation` | 修复攻击动画，空闲时播放 `attack_idle_N` |
+| `1.9-alpha1-fix-LogOverflow` | 修复 `query.position_delta` 导致的日志溢出崩溃 |
+| `1.9-alpha1-pre1-feat-ExtraUI-00` | 额外动画轮盘、平行动画、Molang 增强、配置面板重构 |
+| `1.9-alpha1-pre1-feat-ExtraUI-01` | GUI 预览动画、内置模型提取、WebP 解码器移植 |
+| `1.9-alpha1-pre1-feat-ExtraUI-02` | 潜行语义修正、头盔检测、范围滑块 roaming 变量初始化 |
+
+---
+
+## 从源码构建
+
+```powershell
+# 克隆仓库
+git clone https://github.com/wufe8/YesSteveModel-Unofficial.git
+cd YesSteveModel-Unofficial
+
+# 检出活跃开发分支
+git checkout feat-ExtraUI
+
+# 构建
+.\gradlew.bat build
+
+# 运行客户端
+.\gradlew.bat runClient
+
+# 运行测试
+.\gradlew.bat test
+```
+
+构建产物位于 `build/libs/` 目录。
+
+---
+
+## 模型安装
+
+### 文件夹模型
+将模型文件夹放入 `config/ysmu/custom/`，需包含：
+- `main.json` — 主体模型几何
+- `arm.json` — 第一人称手臂几何
+- 至少一个 `.png` 贴图
+- 可选：`main.animation.json`、`arm.animation.json`、`extra.animation.json`
+
+### `.ysm` 二进制模型
+将 `.ysm` 文件放入 `config/ysmu/custom/`, 支持新版 format 32 格式(有问题详细描述issue)
+
+---
+
+## 已知问题
+
+- 动画不兼容battlegear2的盾牌和et futurum的鞘翅
+- 无法播放高于1.7.10的原版音效
+- 部分新版模型可能需要 `.molang` 函数文件桥接才能正常工作
+- 某些平行控制器动画的 sneak 回退仍使用硬编码动画名
+- 表情骨骼名称匹配基于启发式规则, 不同模型可能有差异
+- WebP 解码器基于外部实现, 没搞定ImageIO
+- 投射物/载具模型尚未完全移植
+- SIMD 加速渲染未完工
+
+---
+
+## 许可证
+
+### 源代码
+MIT
+
+### 模型资源
+仓库中自带的模型采用不同协议：
+- **默认模型**: [CC0](https://creativecommons.org/publicdomain/zero/1.0/) — 完全开放
+- **酒狐 (Wine Fox) 模型**: [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) — 非商业使用，需署名，相同方式共享
+
+### 第三方代码
+1. **GeckoLib**
+2. **OpenYSM**
+3. **ImageStream WebP 解码器**
+
+### 相关链接
+- [OpenYSM](https://github.com/OpenYSM/OpenYSM)
+- [YesSteveModel](https://github.com/YesSteveModel/YesSteveModel)
+- [GeckoLib](https://github.com/bernie-g/geckolib)
+- [GTNewHorizons](https://github.com/GTNewHorizons)
