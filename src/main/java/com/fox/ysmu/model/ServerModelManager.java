@@ -109,7 +109,7 @@ public final class ServerModelManager {
         clearModelCaches();
         createConfigDirectories();
         extractBuiltinModels();
-        copyBuiltInModels();
+        // copyBuiltInModels();  // 已迁移到 builtin/，不再需要 custom/ 下硬拷贝
         initPassword();
         initOpenYsmServerIndex();
         initBlacklistFile();
@@ -136,13 +136,6 @@ public final class ServerModelManager {
         createFolder(CACHE_CLIENT);
     }
 
-    private static void copyBuiltInModels() {
-        // 不管存不存在，强行覆盖
-        copyDefaultModel();
-        copyWineFoxModel();
-        copyVanillaModel();
-    }
-
     private static void rebuildModelCaches() {
         OpenYsmFormat.cacheAllModels(BUILT);
         OpenYsmFormat.cacheAllModels(CUSTOM);
@@ -150,6 +143,12 @@ public final class ServerModelManager {
         cacheAllModels(CUSTOM);
     }
 
+    /*====== 以下方法已废弃：模型已迁移到 builtin/ ======
+    private static void copyBuiltInModels() {
+        copyDefaultModel();
+        copyWineFoxModel();
+        copyVanillaModel();
+    }
     private static void copyDefaultModel() {
         Path defaultPath = CUSTOM.resolve("default");
         createFolder(defaultPath);
@@ -238,6 +237,7 @@ public final class ServerModelManager {
             wineFoxPath,
             MAIN_ANIMATION_FILE_NAME);
     }
+    ====== end ======*/
 
     private static void cacheAllModels(Path rootPath) {
         YsmFormat.cacheAllModels(rootPath);

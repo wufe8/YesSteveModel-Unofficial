@@ -182,7 +182,14 @@ public class ClientEventHandler {
     }
 
     private static boolean isVanillaPlayer(ResourceLocation modelId) {
-            return modelId.getResourcePath().equals("steve") || modelId.getResourcePath().equals("alex");
+        String path = modelId.getResourcePath();
+        // 直接匹配已知的路径名
+        if (path.equals("steve") || path.equals("alex")) return true;
+        // 解码编码后的 builtin 路径（如 misc/1_alex → 检查最后一段）
+        String decoded = ModelIdUtil.getModelDisplayName(modelId);
+        String lastSegment = decoded.substring(decoded.lastIndexOf('/') + 1);
+        return lastSegment.equals("steve") || lastSegment.equals("alex")
+            || lastSegment.equals("2_steve") || lastSegment.equals("1_alex");
     }
 
     private static final class PlayerPreviousRotationSnapshot {

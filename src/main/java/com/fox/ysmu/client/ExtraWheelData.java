@@ -61,12 +61,12 @@ public class ExtraWheelData {
         for (ExtraAnimationButton btn : raw.properties.extraAnimationButtons) {
             if (StringUtils.isNotBlank(btn.id)) {
                 configButtons.put(btn.id, btn);
-                // Auto-add to entries so it appears in the wheel.
-                // OpenYSM convention: key starts with # for config buttons;
-                // value is "#" + btn.id so the inner-ring click handler can find it.
-                String key = "#" + btn.id;
-                if (!entries.containsKey(key)) {
-                    entries.put(key, "#" + btn.id);
+                // Auto-add to entries only if no entry already references this btn_id
+                // (extraAnimations may already have added it with key="#extraN").
+                String btnRef = "#" + btn.id;
+                boolean alreadyReferenced = entries.values().stream().anyMatch(v -> btnRef.equals(v));
+                if (!alreadyReferenced) {
+                    entries.put(btnRef, btnRef);
                 }
             }
         }

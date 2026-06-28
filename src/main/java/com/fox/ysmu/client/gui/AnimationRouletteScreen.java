@@ -507,7 +507,7 @@ public class AnimationRouletteScreen extends GuiScreen {
         drawRect(0, 0, width, height, 0x88000000);
         // Brighten the panel + preview areas by drawing them on top
         drawRect(previewX, previewY, previewX + previewW, previewY + previewH, 0x66000000);
-        drawRect(panelX - 10, panelY - 10, panelX + panelW + 10, height - 50, 0xBB222222);
+        drawRect(panelX - 10, panelY - 10, panelX + panelW + 10, height - 20, 0xBB222222);
 
         String title = StringUtils.isNotBlank(currentConfigGroup.name) ? currentConfigGroup.name : currentConfigGroup.id;
         drawCenteredString(fontRendererObj, "[CFG] " + title, panelX + panelW / 2, panelY, 0xFFB100);

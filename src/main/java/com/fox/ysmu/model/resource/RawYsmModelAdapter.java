@@ -1,6 +1,7 @@
 package com.fox.ysmu.model.resource;
 
 import static com.fox.ysmu.model.ServerModelManager.ARM_ANIMATION_FILE_NAME;
+import static com.fox.ysmu.model.ServerModelManager.BUILT;
 import static com.fox.ysmu.model.ServerModelManager.CUSTOM;
 import static com.fox.ysmu.model.ServerModelManager.EXTRA_ANIMATION_FILE_NAME;
 import static com.fox.ysmu.model.ServerModelManager.MAIN_ANIMATION_FILE_NAME;
@@ -795,6 +796,11 @@ public final class RawYsmModelAdapter {
         Path defaultPath = CUSTOM.resolve("default").resolve(fileName);
         if (Files.isRegularFile(defaultPath)) {
             return Files.readAllBytes(defaultPath);
+        }
+        // Fallback: try BUILT/default (new format location)
+        Path builtinDefault = BUILT.resolve("default").resolve(fileName);
+        if (Files.isRegularFile(builtinDefault)) {
+            return Files.readAllBytes(builtinDefault);
         }
         return EMPTY_ANIMATION;
     }

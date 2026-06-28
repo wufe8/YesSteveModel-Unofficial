@@ -621,8 +621,7 @@ public class ClientModelManager {
             .setColor(EnumChatFormatting.GOLD);
         component.add(textComponent);
         if (StringUtils.isNoneBlank(extraInfo.getTips())) {
-            String[] split = extraInfo.getTips()
-                .split("\n");
+            String[] split = autoWrapText(extraInfo.getTips(), 60).split("\n");
             for (String s : split) {
                 IChatComponent lineComponent = new ChatComponentText(s);
                 lineComponent.getChatStyle()
@@ -631,14 +630,85 @@ public class ClientModelManager {
             }
         }
         if (extraInfo.getAuthors() != null && extraInfo.getAuthors().length != 0) {
-            component.add(
-                new ChatComponentTranslation(
-                    "gui.yes_steve_model.model.authors",
-                    StringUtils.join(extraInfo.getAuthors(), "丨")));
+            // Single header line, then one line per author (replacing old "|" join)
+            component.add(new ChatComponentTranslation("gui.yes_steve_model.model.authors", ""));
+            for (String author : extraInfo.getAuthors()) {
+                IChatComponent authorLine = new ChatComponentText("  " + author);
+                authorLine.getChatStyle().setColor(EnumChatFormatting.GRAY);
+                component.add(authorLine);
+            }
         }
         if (StringUtils.isNoneBlank(extraInfo.getLicense())) {
             component.add(new ChatComponentTranslation("gui.yes_steve_model.model.license", extraInfo.getLicense()));
         }
         return component;
+    }
+
+    /**
+     * Auto-wraps long text that has no line breaks by inserting \n at word
+     * boundaries. CJK characters count as 2 cells wide, ASCII as 1.
+     * Pre-existing \n are preserved; only segments exceeding maxWidthCells
+     * get wrapped.
+     */
+    private static String autoWrapText(String text, int maxWidthCells) {
+        if (StringUtils.isBlank(text)) return text;
+        StringBuilder result = new StringBuilder();
+        String[] lines = text.split("\n", -1);
+        for (int li = 0; li < lines.length; li++) {
+            if (li > 0) result.append('\n');
+            String line = lines[li];
+            if (line.isEmpty()) continue;
+            // Measure visual width (CJK=2, ASCII=1)
+            int width = 0;
+            int lastBreak = 0;
+            int lastSpace = -1;
+            for (int i = 0; i < line.length(); i++) {
+                char c = line.charAt(i);
+                int charWidth = isCJK(c) ? 2 : 1;
+                // Track last space for clean word breaks
+                if (c == ' ' || c == '\t') {
+                    lastSpace = i;
+                }
+                if (width + charWidth > maxWidthCells && i > lastBreak) {
+                    int breakAt;
+                    if (lastSpace > lastBreak) {
+                        breakAt = lastSpace;
+                    } else {
+                        breakAt = i;
+                    }
+                    result.append(line, lastBreak, breakAt);
+                    result.append('\n');
+                    // Skip the space itself if breaking at it
+                    lastBreak = breakAt + (lastSpace > lastBreak && line.charAt(breakAt) == ' ' ? 1 : 0);
+                    width = 0;
+                    lastSpace = -1;
+                    // Re-measure from the break point
+                    for (int j = lastBreak; j <= i && j < line.length(); j++) {
+                        width += isCJK(line.charAt(j)) ? 2 : 1;
+                    }
+                } else {
+                    width += charWidth;
+                }
+            }
+            if (lastBreak < line.length()) {
+                result.append(line, lastBreak, line.length());
+            }
+        }
+        return result.toString();
+    }
+
+    private static boolean isCJK(char c) {
+        Character.UnicodeBlock block = Character.UnicodeBlock.of(c);
+        return block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS
+            || block == Character.UnicodeBlock.CJK_COMPATIBILITY_IDEOGRAPHS
+            || block == Character.UnicodeBlock.CJK_UNIFIED_IDEOGRAPHS_EXTENSION_A
+            || block == Character.UnicodeBlock.CJK_SYMBOLS_AND_PUNCTUATION
+            || block == Character.UnicodeBlock.HIRAGANA
+            || block == Character.UnicodeBlock.KATAKANA
+            || block == Character.UnicodeBlock.KATAKANA_PHONETIC_EXTENSIONS
+            || block == Character.UnicodeBlock.HANGUL_SYLLABLES
+            || block == Character.UnicodeBlock.HANGUL_JAMO
+            || block == Character.UnicodeBlock.HANGUL_COMPATIBILITY_JAMO
+            || block == Character.UnicodeBlock.HALFWIDTH_AND_FULLWIDTH_FORMS;
     }
 }
