@@ -64,6 +64,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
 
         parseGlobalResources();
         populateExtraAnimationsFromLang();
+        populateMetadataFromLang();
         this.finalFolderHash = calculateFinalFolderHash();
         this.model.properties.sha256 = this.finalFolderHash;
         this.model.footer.version = 65535;
@@ -727,6 +728,32 @@ public class YSMFolderDeserializer implements AutoCloseable {
             }
             if (value != null) {
                 this.model.properties.extraAnimations.put("extra" + i, value);
+            }
+        }
+    }
+
+    /**
+     * If the language files contain a localized metadata.name, use it to
+     * override the ysm.json name. This ensures the localized name is
+     * included in the cached model data and sent to all clients regardless
+     * of whether the client-side registerExtraWheel processes lang files.
+     */
+    private void populateMetadataFromLang() {
+        if (this.model.languageFiles.isEmpty()) return;
+        // Try zh_cn first, then en_us, then any
+        String[] locales = { "zh_cn", "zh_CN", "en_us", "en_US" };
+        for (String locale : locales) {
+            RawYsmModel.RawLanguageFile lang = this.model.languageFiles.get(locale);
+            if (lang != null && lang.data.containsKey("metadata.name")) {
+                this.model.metadata.name = lang.data.get("metadata.name");
+                return;
+            }
+        }
+        // Fallback: search all language files
+        for (RawYsmModel.RawLanguageFile lang : this.model.languageFiles.values()) {
+            if (lang.data.containsKey("metadata.name")) {
+                this.model.metadata.name = lang.data.get("metadata.name");
+                return;
             }
         }
     }

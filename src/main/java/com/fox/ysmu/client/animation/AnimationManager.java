@@ -511,11 +511,14 @@ public final class AnimationManager {
                 return playLoopAnimation(event, idleName);
             }
             // 遍历所有注册状态名，尝试从 molang 映射或直接名找非空动画
+            // 注意：此循环不检查 predicate，仅看动画是否存在。
+            // 因此需要跳过 death 等终端状态，避免 idle 为空时误播。
             for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
                 LinkedList<AnimationState> states = data.get(i);
                 if (states == null) continue;
                 for (AnimationState state : states) {
                     String name = state.getAnimationName();
+                    if ("death".equals(name)) continue;
                     String mapped = getMolangMappedAnimation(animId, name);
                     String target = mapped != null ? mapped : name;
                     Animation anim = animFile.animations.get(target);
@@ -524,10 +527,13 @@ public final class AnimationManager {
                     }
                 }
             }
-            // 最后兜底：取文件中任意第一个非空动画
+            // 最后兜底：取文件中任意第一个非空动画（跳过 death 等终端状态动画，
+            // 防止 idle 为空时误播死亡动画）
             for (Map.Entry<String, Animation> entry : animFile.animations.entrySet()) {
+                String animName = entry.getKey();
+                if ("death".equals(animName)) continue;
                 if (isAnimationNonEmpty(entry.getValue())) {
-                    return playLoopAnimation(event, entry.getKey());
+                    return playLoopAnimation(event, animName);
                 }
             }
         }

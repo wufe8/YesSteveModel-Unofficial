@@ -78,6 +78,8 @@ public class ClientModelManager {
     public static Map<ResourceLocation, com.fox.ysmu.model.resource.pojo.RawYsmModel.RawImage> GUI_BACKGROUND_IMAGE = Maps.newHashMap();
     /** Per-model disable_preview_rotation flag, from ysm.json properties. */
     public static Map<ResourceLocation, Boolean> DISABLE_PREVIEW_ROTATION = Maps.newHashMap();
+    /** Per-model gui_no_lighting flag, from ysm.json properties. */
+    public static Map<ResourceLocation, Boolean> GUI_NO_LIGHTING = Maps.newHashMap();
 
     /**
      * 模型包/文件夹分组：pack显示名称 → 该包内的模型ID列表。
@@ -314,7 +316,13 @@ public class ClientModelManager {
             AnimationManager.MOLANG_CONDITIONAL_MAP.put(id, molangConditional);
         }
         DEFAULT_ANIMATION_FILE.animations.forEach((name, action) -> {
-            if (!main.animations.containsKey(name)) {
+            Animation existing = main.animations.get(name);
+            if (existing == null) {
+                // 模型没有此动画 → 直接合并默认动画
+                main.putAnimation(name, action);
+            } else if (existing.boneAnimations == null || existing.boneAnimations.isEmpty()) {
+                // 模型有此动画但骨骼为空（如只有 "loop": true 的空壳）
+                // → 用默认动画替换，确保 idle 等关键动画有实际骨骼数据
                 main.putAnimation(name, action);
             }
         });
@@ -540,6 +548,7 @@ public class ClientModelManager {
         GUI_FOREGROUND_IMAGE.clear();
         GUI_BACKGROUND_IMAGE.clear();
         DISABLE_PREVIEW_ROTATION.clear();
+        GUI_NO_LIGHTING.clear();
         GeckoLibCache.getInstance().getGeoModels().clear();
         GeckoLibCache.getInstance().getAnimations().clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
@@ -559,9 +568,23 @@ public class ClientModelManager {
         if (StringUtils.isNotBlank(raw.properties.previewAnimation)) {
             PREVIEW_ANIMATION.put(modelId, raw.properties.previewAnimation);
         }
-        // Store display name from ysm.json metadata
-        if (raw.metadata != null && StringUtils.isNotBlank(raw.metadata.name)) {
-            MODEL_DISPLAY_NAMES.put(modelId, raw.metadata.name);
+        // Resolve display name: lang file (当前语言) > ysm.json metadata > empty
+        String displayName = null;
+        if (raw.languageFiles != null && !raw.languageFiles.isEmpty()) {
+            try {
+                String mcLang = net.minecraft.client.Minecraft.getMinecraft()
+                    .getLanguageManager().getCurrentLanguage().getLanguageCode();
+                RawYsmModel.RawLanguageFile langFile = raw.languageFiles.get(mcLang);
+                if (langFile != null && langFile.data != null && langFile.data.containsKey("metadata.name")) {
+                    displayName = langFile.data.get("metadata.name");
+                }
+            } catch (Exception ignored) {}
+        }
+        if (displayName == null && raw.metadata != null && StringUtils.isNotBlank(raw.metadata.name)) {
+            displayName = raw.metadata.name;
+        }
+        if (displayName != null) {
+            MODEL_DISPLAY_NAMES.put(modelId, displayName);
         }
         // Register model sound files
         com.fox.ysmu.client.audio.YSMSoundManager.registerModelSounds(modelId, raw);
@@ -575,6 +598,8 @@ public class ClientModelManager {
         }
         // Store disablePreviewRotation flag
         DISABLE_PREVIEW_ROTATION.put(modelId, raw.properties.disablePreviewRotation);
+        // Store gui_no_lighting flag
+        GUI_NO_LIGHTING.put(modelId, raw.properties.guiNoLighting);
     }
 
     public static void rememberCachedModel(String md5) {

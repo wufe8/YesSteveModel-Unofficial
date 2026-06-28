@@ -1,5 +1,8 @@
 package com.fox.ysmu.util;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.FloatBuffer;
 import java.util.Collections;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
@@ -24,6 +27,8 @@ import com.fox.ysmu.client.renderer.CustomPlayerRenderer;
 import com.fox.ysmu.compat.Axis;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.compat.Utils;
+import com.fox.ysmu.util.ModelIdUtil;
+import com.fox.ysmu.ysmu;
 import software.bernie.geckolib3.core.IAnimatable;
 import software.bernie.geckolib3.core.IAnimatableModel;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
@@ -35,6 +40,14 @@ import software.bernie.geckolib3.model.AnimatedGeoModel;
 public final class RenderUtil {
 
     private static final float GUI_LIGHTMAP_BRIGHTNESS = 240.0F;
+    /** Direct buffer for boosted GL light model ambient (1.275x = 0.51). */
+    private static final FloatBuffer LIGHT_AMBIENT_BOOST;
+    static {
+        LIGHT_AMBIENT_BOOST = ByteBuffer
+            .allocateDirect(16).order(ByteOrder.nativeOrder()).asFloatBuffer();
+        LIGHT_AMBIENT_BOOST.put(new float[]{0.6F, 0.6F, 0.6F, 1.0F});
+        LIGHT_AMBIENT_BOOST.flip();
+    }
 
     public static void withGuiEntityLighting(Runnable renderAction) {
         GuiEntityLightingState state = GuiEntityLightingState.capture();
@@ -381,12 +394,12 @@ public final class RenderUtil {
         GL11.glScalef(pScale, pScale, -pScale);
         GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F); // 将模型从倒置状态翻转过来
         if (!disablePreviewRotation) {
-            GL11.glRotatef(-25.0F, 0.4F, 0.8F, -0.08F); // 倾斜一点
-            //GL11.glRotatef(-25.0F, 0F, 0.8F, -0.08F); //偏向右下下 摄像机最接近右肩 俯拍
-            //GL11.glRotatef(-25.0F, 0.4F, 0F, -0.08F); //严重偏向右下 摄像机最接近右肩 俯拍
-            //GL11.glRotatef(-25.0F, 1F, 0F, -0.08F); //严重偏向右下 摄像机最接近右肩 俯拍
-            //GL11.glRotatef(0F, 0F, 0F, 1F); //偏向左左下 摄像机最靠近左肩 仰拍
-            //GL11.glRotatef(90F, 0F, 0F, 1F); //正对摄像机的情况下顺时针旋转90度
+            // Match OpenYSM: pure X-axis -10° tilt (no Y component)
+            //GL11.glRotatef(-10.0F, 1.0F, 0.0F, 0.0F);
+            //GL11.glRotatef(-25.0F, 1.0F, 0.0F, 0.0F);
+            //GL11.glRotatef(88.67F, 0.2173F, -0.0026F, -0.9761F);
+            //GL11.glRotatef(-1.33F, 0.2173F, -0.0026F, -0.9761F);
+            GL11.glRotatef(45.0F, 1.0F, 0.0F, 0.0F);
         }
 
         // 保存玩家状态
@@ -411,15 +424,13 @@ public final class RenderUtil {
             player.inventory.armorInventory[i] = null;
         }
 
-        // 设置渲染状态 — 仅正视图需要不同值：
-        //   disable=true → yBodyRot=180, YRot=180, +Y 偏移 5.5
-        //   disable=false → 使用原始值（renderYawOffset=200, rotationYaw=180）
+        // Match OpenYSM: both yBodyRot and yRot set to same value
         if (disablePreviewRotation) {
             player.renderYawOffset = 180;
             player.rotationYaw = 180;
         } else {
             player.renderYawOffset = 200;
-            player.rotationYaw = 180;
+            player.rotationYaw = 200;
         }
         player.rotationPitch = 0;
         player.rotationYawHead = player.rotationYaw;
@@ -427,9 +438,39 @@ public final class RenderUtil {
 
         GL11.glRotatef(135.0F, 0.0F, 1.0F, 0.0F);
         RenderHelper.enableStandardItemLighting();
+        // Boost lighting brightness by 1.275x to match gui_no_lighting appearance
+        GL11.glLightModel(GL11.GL_LIGHT_MODEL_AMBIENT, LIGHT_AMBIENT_BOOST);
         GL11.glRotatef(-135.0F, 0.0F, 1.0F, 0.0F);
+
+        // Check if this model has gui_no_lighting enabled
+        boolean guiNoLighting = false;
+        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+        Boolean gnl = com.fox.ysmu.client.ClientModelManager.GUI_NO_LIGHTING.get(mainId);
+        if (gnl != null && gnl) {
+            guiNoLighting = true;
+        }
+        if (!guiNoLighting) {
+            gnl = com.fox.ysmu.client.ClientModelManager.GUI_NO_LIGHTING.get(modelId);
+            if (gnl != null && gnl) {
+                guiNoLighting = true;
+            }
+        }
+
+        if (guiNoLighting) {
+            // gui_no_lighting: disable directional lights, use full-bright lightmap
+            RenderHelper.disableStandardItemLighting();
+            GL11.glDisable(GL12.GL_RESCALE_NORMAL);
+            GL11.glDisable(GL11.GL_COLOR_MATERIAL);
+            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+            setLightmapTextureEnabled(true);
+            OpenGlHelper.setLightmapTextureCoords(
+                OpenGlHelper.lightmapTexUnit,
+                GUI_LIGHTMAP_BRIGHTNESS,
+                GUI_LIGHTMAP_BRIGHTNESS);
+        }
+
         try {
-            withGuiEntityLighting(() -> {
+            if (guiNoLighting) {
                 AnimatedGeoModel provider = renderer.getGeoModelProvider();
                 ResourceLocation modelLocation = provider.getModelLocation(entity);
                 GeoModel model = provider.getModel(modelLocation);
@@ -439,7 +480,19 @@ public final class RenderUtil {
                 }
                 Minecraft.getMinecraft().getTextureManager().bindTexture(provider.getTextureLocation(entity));
                 renderer.render(model, entity, 0, 1.0f, 1.0f, 1.0f, 1.0f);
-            });
+            } else {
+                withGuiEntityLighting(() -> {
+                    AnimatedGeoModel provider = renderer.getGeoModelProvider();
+                    ResourceLocation modelLocation = provider.getModelLocation(entity);
+                    GeoModel model = provider.getModel(modelLocation);
+                    AnimationEvent<CustomPlayerEntity> predicate = new AnimationEvent<>(entity, 0, 0, 0, false, Collections.emptyList());
+                    if (renderer.getGeoModelProvider() instanceof IAnimatableModel) {
+                        ((IAnimatableModel<CustomPlayerEntity>) renderer.getGeoModelProvider()).setLivingAnimations(entity, entity.hashCode(), predicate);
+                    }
+                    Minecraft.getMinecraft().getTextureManager().bindTexture(provider.getTextureLocation(entity));
+                    renderer.render(model, entity, 0, 1.0f, 1.0f, 1.0f, 1.0f);
+                });
+            }
         } finally {
             RenderHelper.disableStandardItemLighting();
             GL11.glPopMatrix();

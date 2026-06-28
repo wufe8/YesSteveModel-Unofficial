@@ -51,6 +51,9 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
         if (entity instanceof EntityPlayer player) {
             String name = geoModel.properties.getExtraInfo().getName();
             boolean isVanilla = Objects.equals(name, "Steve") || Objects.equals(name, "Alex");
+            // TODO render_layers_first: 当模型属性 render_layers_first=true 时，
+            // 应在模型身体之前渲染手持物品层（先层后体），而非当前默认的先体后层。
+            // 需要从 GeoModel/animatable 获取该标志并调整渲染顺序。
             ItemStack mainHandItem = player.getHeldItem();
             ItemStack offhandItem = BackhandCompat.getOffhandItem(player);
 
