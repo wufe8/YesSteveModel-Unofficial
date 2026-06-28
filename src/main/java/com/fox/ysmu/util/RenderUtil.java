@@ -113,6 +113,7 @@ public final class RenderUtil {
         try {
             IAnimatable animatable = AnimatableCacheUtil.TEXTURE_GUI_CACHE.get(modelId, CustomPlayerEntity::new);
             if (animatable instanceof CustomPlayerEntity entity) {
+                entity.setPlayer(null);
                 consumer.accept(entity);
 
                 entity.setMainModel(ModelIdUtil.getMainId(modelId));
@@ -313,6 +314,10 @@ public final class RenderUtil {
             CustomPlayerRenderer renderer = ClientProxy.getInstance();
             IAnimatable animatable = AnimatableCacheUtil.ANIMATABLE_CACHE.get(modelId, CustomPlayerEntity::new);
             if (animatable instanceof CustomPlayerEntity entity) {
+                // Clear player reference — the cached entity may have been
+                // contaminated by FirstPersonHandRenderer.setPlayer().
+                // predicateMain/predicateCap check player==null for GUI path.
+                entity.setPlayer(null);
                 consumer.accept(entity);
                 renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity);
             }
@@ -347,6 +352,7 @@ public final class RenderUtil {
             CustomPlayerRenderer renderer = ClientProxy.getInstance();
             IAnimatable animatable = AnimatableCacheUtil.ANIMATABLE_CACHE.get(modelId, CustomPlayerEntity::new);
             if (animatable instanceof CustomPlayerEntity entity) {
+                entity.setPlayer(null);
                 consumer.accept(entity);
                 renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity, disablePreviewRotation);
             }

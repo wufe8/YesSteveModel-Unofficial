@@ -31,6 +31,8 @@ public class CustomPlayerEntity implements IAnimatable {
     private ResourceLocation mainModel = CustomPlayerModel.DEFAULT_MAIN_MODEL;
     private ResourceLocation texture = CustomPlayerModel.DEFAULT_TEXTURE;
     private String previewAnimation = "";
+    /** Base animation name for GUI preview (set by ModelButton, consumed by predicateMain). */
+    private String guiBaseAnimation = "";
     private EntityPlayer player = null;
 
     @NotNull
@@ -184,5 +186,17 @@ public class CustomPlayerEntity implements IAnimatable {
 
     public boolean hasPreviewAnimation(String previewAnimation) {
         return hasPreviewAnimation() && previewAnimation.equals(this.previewAnimation);
+    }
+
+    public String getGuiBaseAnimation() {
+        return guiBaseAnimation;
+    }
+
+    public void setGuiBaseAnimation(String guiBaseAnimation) {
+        this.guiBaseAnimation = guiBaseAnimation;
+    }
+
+    public boolean hasGuiBaseAnimation() {
+        return StringUtils.isNoneBlank(this.guiBaseAnimation);
     }
 }

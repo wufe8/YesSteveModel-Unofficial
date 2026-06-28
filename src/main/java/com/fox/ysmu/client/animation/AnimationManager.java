@@ -397,6 +397,11 @@ public final class AnimationManager {
             // GUI preview context: play the model's preview_animation as the
             // base animation from the main controller. The cap_controller may
             // additionally play hover/focus as an overlay (they blend).
+            // First, check the entity's guiBaseAnimation (set directly by ModelButton).
+            if (animatable.hasGuiBaseAnimation()) {
+                return playLoopAnimation(event, animatable.getGuiBaseAnimation());
+            }
+            // Fallback: look up PREVIEW_ANIMATION from the model registry.
             ResourceLocation mainModel = animatable.getMainModel();
             if (mainModel != null) {
                 String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModel);
@@ -409,7 +414,7 @@ public final class AnimationManager {
                 if (previewAnim != null && !previewAnim.isEmpty()) {
                     return playLoopAnimation(event, previewAnim);
                 }
-                // Final fallback: if the model has any animation named "idle", play it
+                // Final fallback: if the model has "idle" animation, play it
                 AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(mainModel);
                 if (file != null && file.getAnimation("idle") != null) {
                     return playLoopAnimation(event, "idle");
