@@ -33,6 +33,8 @@ public class CustomPlayerEntity implements IAnimatable {
     private String previewAnimation = "";
     /** Base animation name for GUI preview (set by ModelButton, consumed by predicateMain). */
     private String guiBaseAnimation = "";
+    /** When false, GUI animation predicates return STOP immediately (set by ModelButton when GUI_ENHANCEMENTS disabled). */
+    private boolean guiAnimationsEnabled = true;
     private EntityPlayer player = null;
 
     @NotNull
@@ -198,5 +200,13 @@ public class CustomPlayerEntity implements IAnimatable {
 
     public boolean hasGuiBaseAnimation() {
         return StringUtils.isNoneBlank(this.guiBaseAnimation);
+    }
+
+    public boolean areGuiAnimationsEnabled() {
+        return guiAnimationsEnabled;
+    }
+
+    public void setGuiAnimationsEnabled(boolean enabled) {
+        this.guiAnimationsEnabled = enabled;
     }
 }

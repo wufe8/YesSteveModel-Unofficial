@@ -28,6 +28,8 @@ import javax.annotation.Nullable;
 import java.util.*;
 import java.util.stream.Collectors;
 
+import com.fox.ysmu.ysmu;
+
 public class PlayerModelScreen extends GuiScreen {
     protected final EntityPlayer player;
     private Map<ResourceLocation, List<ResourceLocation>> models = Maps.newHashMap();
@@ -504,6 +506,15 @@ public class PlayerModelScreen extends GuiScreen {
                             drewIcon = true;
                         }
                     }
+                } catch (Exception ignored) {}
+            }
+
+            if (!drewIcon) {
+                // Fallback: try built-in default pack icon (OpenYSM-compatible)
+                try {
+                    ResourceLocation defaultIcon = new ResourceLocation(ysmu.MODID, "texture/default_pack_icon.png");
+                    drawIcon(mc, defaultIcon, iconX, iconY, iconDrawW, iconDrawH);
+                    drewIcon = true;
                 } catch (Exception ignored) {}
             }
 

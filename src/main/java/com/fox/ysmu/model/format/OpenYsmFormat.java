@@ -43,7 +43,9 @@ public final class OpenYsmFormat {
                     if (dir.equals(rootPath)) {
                         return FileVisitResult.CONTINUE;
                     }
-                    if (!Files.isRegularFile(dir.resolve("ysm.json")) || !YSMFolderDeserializer.isModelFolder(dir)) {
+                    // 同时支持新格式（有 ysm.json）和旧格式（无 ysm.json，但有 main.json+arm.json）。
+                    // 使用 && 而非 ||：只有两种格式都不匹配时才跳过。
+                    if (!Files.isRegularFile(dir.resolve("ysm.json")) && !YSMFolderDeserializer.isModelFolder(dir)) {
                         return FileVisitResult.CONTINUE;
                     }
 

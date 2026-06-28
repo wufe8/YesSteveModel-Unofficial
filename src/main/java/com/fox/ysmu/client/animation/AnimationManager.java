@@ -327,6 +327,9 @@ public final class AnimationManager {
             // the same name as the main player's cap_controller.  Do NOT call
             // stopController here — that would yank the main player's sound
             // mapping every frame.
+            if (!animatable.areGuiAnimationsEnabled()) {
+                return PlayState.STOP;
+            }
             if (animatable.hasPreviewAnimation()) {
                 return playLoopAnimation(event, animatable.getPreviewAnimation());
             }
@@ -397,6 +400,10 @@ public final class AnimationManager {
             // GUI preview context: play the model's preview_animation as the
             // base animation from the main controller. The cap_controller may
             // additionally play hover/focus as an overlay (they blend).
+            // When GUI_ENHANCEMENTS is disabled, return STOP immediately.
+            if (!animatable.areGuiAnimationsEnabled()) {
+                return PlayState.STOP;
+            }
             // First, check the entity's guiBaseAnimation (set directly by ModelButton).
             if (animatable.hasGuiBaseAnimation()) {
                 return playLoopAnimation(event, animatable.getGuiBaseAnimation());

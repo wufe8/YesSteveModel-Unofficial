@@ -1,14 +1,21 @@
 package com.fox.ysmu.model;
 
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
 import java.util.Base64;
+import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.ZipEntry;
+import java.util.zip.ZipFile;
 
 import net.minecraft.entity.player.EntityPlayer;
 
@@ -44,7 +51,7 @@ public final class ServerModelManager {
     /**
      * 自定义模型所放置的文件夹
      */
-    public static final Path BUILT = FOLDER.resolve("built");
+    public static final Path BUILT = FOLDER.resolve("builtin");
     public static final Path CUSTOM = FOLDER.resolve("custom");
     public static final Path EXPORT = FOLDER.resolve("export");
 
@@ -101,10 +108,10 @@ public final class ServerModelManager {
     public static void reloadPacks() {
         clearModelCaches();
         createConfigDirectories();
+        extractBuiltinModels();
         copyBuiltInModels();
         initPassword();
         initOpenYsmServerIndex();
-        initBuiltNoticeFile();
         initBlacklistFile();
         scanDirectoryPacks(CUSTOM);
         scanDirectoryPacks(BUILT);
@@ -139,6 +146,7 @@ public final class ServerModelManager {
     private static void rebuildModelCaches() {
         OpenYsmFormat.cacheAllModels(BUILT);
         OpenYsmFormat.cacheAllModels(CUSTOM);
+        cacheAllModels(BUILT);
         cacheAllModels(CUSTOM);
     }
 
@@ -306,14 +314,84 @@ public final class ServerModelManager {
         }
     }
 
-    private static void initBuiltNoticeFile() {
-        Path noticeFile = BUILT.resolve("notice.txt");
+    /**
+     * Extracts built-in models from the JAR's assets/ysmu/builtin/ directory
+     * into the runtime BUILT directory, matching OpenYSM's approach.
+     * The directory is cleared and re-extracted every time the game starts.
+     */
+    private static void extractBuiltinModels() {
+        // Clear existing builtin directory contents (but keep the dir itself)
+        if (Files.isDirectory(BUILT)) {
+            try {
+                FileUtils.cleanDirectory(BUILT.toFile());
+            } catch (IOException e) {
+                ysmu.LOG.warn("Failed to clean builtin directory", e);
+            }
+        }
+        createFolder(BUILT);
+
+        // Write notice.txt matching OpenYSM
         try {
-            String content = "OpenYSM built-in model staging directory.\n"
-                + "This phase creates the directory for the new scanner; legacy built-ins are still copied to custom.\n";
-            FileUtils.writeStringToFile(noticeFile.toFile(), content, StandardCharsets.UTF_8);
+            String notice = "This directory is cleared every time the game starts!\n"
+                + "\u8BE5\u76EE\u5F55\u4F1A\u5728\u6BCF\u6B21\u6E38\u620F\u542F\u52A8\u65F6\u6E05\u7A7A\uFF01\n";
+            Files.write(BUILT.resolve("notice.txt"), notice.getBytes(StandardCharsets.UTF_8));
+        } catch (IOException e) {
+            ysmu.LOG.warn("Failed to write builtin notice.txt", e);
+        }
+
+        // Extract from JAR: assets/ysmu/builtin/ → config/ysmu/builtin/
+        String prefix = "/assets/" + ysmu.MODID + "/builtin/";
+        URL url = ysmu.class.getResource(prefix);
+        if (url == null) {
+            ysmu.LOG.info("No builtin models to extract ({} not found in JAR)", prefix);
+            return;
+        }
+
+        try {
+            if ("jar".equals(url.getProtocol())) {
+                // Production mode: read from JAR via ZipFile
+                String path = url.getPath();
+                int bang = path.indexOf('!');
+                if (bang < 0) return;
+                String jarPath = path.substring(5, bang); // strip "file:"
+                try (ZipFile zip = new ZipFile(jarPath)) {
+                    String entryPrefix = "assets/" + ysmu.MODID + "/builtin/";
+                    Enumeration<? extends ZipEntry> entries = zip.entries();
+                    while (entries.hasMoreElements()) {
+                        ZipEntry entry = entries.nextElement();
+                        String name = entry.getName();
+                        if (!name.startsWith(entryPrefix) || entry.isDirectory()) continue;
+                        String relative = name.substring(entryPrefix.length());
+                        Path dest = BUILT.resolve(relative);
+                        Files.createDirectories(dest.getParent());
+                        try (InputStream in = zip.getInputStream(entry)) {
+                            Files.copy(in, dest, StandardCopyOption.REPLACE_EXISTING);
+                        }
+                    }
+                }
+            } else if ("file".equals(url.getProtocol())) {
+                // Dev mode: resources are on the filesystem
+                Path srcPath = new File(url.toURI()).toPath();
+                if (Files.isDirectory(srcPath)) {
+                    Files.walk(srcPath).forEach(src -> {
+                        try {
+                            Path relative = srcPath.relativize(src);
+                            Path dest = BUILT.resolve(relative.toString());
+                            if (Files.isDirectory(src)) {
+                                Files.createDirectories(dest);
+                            } else {
+                                Files.createDirectories(dest.getParent());
+                                Files.copy(src, dest, StandardCopyOption.REPLACE_EXISTING);
+                            }
+                        } catch (IOException e) {
+                            ysmu.LOG.warn("Failed to copy builtin file: {}", src, e);
+                        }
+                    });
+                }
+            }
+            ysmu.LOG.info("YSM extracted builtin models from {} to {}", prefix, BUILT);
         } catch (Exception e) {
-            ysmu.LOG.warn("Failed to write OpenYSM built directory notice", e);
+            ysmu.LOG.warn("Failed to extract builtin models from {}", prefix, e);
         }
     }
 

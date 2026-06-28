@@ -317,10 +317,12 @@ public final class OpenYsmModelSyncClient {
             parsed.put(folderPath, new ClientModelManager.ClientPackData(
                 folderPath, name, description, iconData, iconW, iconH, iconFmt, lang));
         }
-        // Apply packs to ClientModelManager on the client thread
+        // Apply packs to ClientModelManager on the client thread,
+        // then re-detect model packs so pack display names use localized names.
         Minecraft.getMinecraft().func_152344_a(() -> {
             ClientModelManager.CLIENT_PACKS.clear();
             ClientModelManager.CLIENT_PACKS.putAll(parsed);
+            ClientModelManager.detectModelPacks();
         });
         if (buf.getRawBuf().readableBytes() > 0) {
             buf.readVarInt();

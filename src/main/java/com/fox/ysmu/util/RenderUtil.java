@@ -376,11 +376,17 @@ public final class RenderUtil {
         GL11.glEnable(GL11.GL_COLOR_MATERIAL);
         GL11.glEnable(GL11.GL_DEPTH_TEST);
         GL11.glPushMatrix();
-        GL11.glTranslatef((float) pPosX, (float) pPosY, 100.0F);
+        float yOffset = disablePreviewRotation ? 5.5F : 0.0F;
+        GL11.glTranslatef((float) pPosX, (float) pPosY + yOffset, 100.0F);
         GL11.glScalef(pScale, pScale, -pScale);
         GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F); // 将模型从倒置状态翻转过来
         if (!disablePreviewRotation) {
             GL11.glRotatef(-25.0F, 0.4F, 0.8F, -0.08F); // 倾斜一点
+            //GL11.glRotatef(-25.0F, 0F, 0.8F, -0.08F); //偏向右下下 摄像机最接近右肩 俯拍
+            //GL11.glRotatef(-25.0F, 0.4F, 0F, -0.08F); //严重偏向右下 摄像机最接近右肩 俯拍
+            //GL11.glRotatef(-25.0F, 1F, 0F, -0.08F); //严重偏向右下 摄像机最接近右肩 俯拍
+            //GL11.glRotatef(0F, 0F, 0F, 1F); //偏向左左下 摄像机最靠近左肩 仰拍
+            //GL11.glRotatef(90F, 0F, 0F, 1F); //正对摄像机的情况下顺时针旋转90度
         }
 
         // 保存玩家状态
@@ -405,9 +411,16 @@ public final class RenderUtil {
             player.inventory.armorInventory[i] = null;
         }
 
-        // 设置渲染状态
-        player.renderYawOffset = 200;
-        player.rotationYaw = 180;
+        // 设置渲染状态 — 仅正视图需要不同值：
+        //   disable=true → yBodyRot=180, YRot=180, +Y 偏移 5.5
+        //   disable=false → 使用原始值（renderYawOffset=200, rotationYaw=180）
+        if (disablePreviewRotation) {
+            player.renderYawOffset = 180;
+            player.rotationYaw = 180;
+        } else {
+            player.renderYawOffset = 200;
+            player.rotationYaw = 180;
+        }
         player.rotationPitch = 0;
         player.rotationYawHead = player.rotationYaw;
         player.prevRotationYawHead = player.rotationYaw;

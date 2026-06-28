@@ -180,16 +180,24 @@ public class ModelButton extends GuiButton {
         // Render entity with preview animation and disablePreviewRotation support.
         // guiBaseAnimation is the base preview (consumed by predicateMain as the
         // persistent loop), while previewAnimation is the cap overlay (hover/focus).
+        // When GUI_ENHANCEMENTS is disabled, clear all GUI animations.
         final String finalGuiAnimName = guiAnimName;
         final String baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
         RenderUtil.renderEntityInInventory(
             this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
             mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0),
             entity -> {
-                if (baseAnim != null && !baseAnim.isEmpty()) {
-                    entity.setGuiBaseAnimation(baseAnim);
+                if (guiEnhancements) {
+                    entity.setGuiAnimationsEnabled(true);
+                    if (baseAnim != null && !baseAnim.isEmpty()) {
+                        entity.setGuiBaseAnimation(baseAnim);
+                    }
+                    entity.setPreviewAnimation(finalGuiAnimName);
+                } else {
+                    entity.setGuiAnimationsEnabled(false);
+                    entity.setGuiBaseAnimation("");
+                    entity.setPreviewAnimation("");
                 }
-                entity.setPreviewAnimation(finalGuiAnimName);
             },
             disablePreviewRotation);
         GL11.glDisable(GL11.GL_SCISSOR_TEST);

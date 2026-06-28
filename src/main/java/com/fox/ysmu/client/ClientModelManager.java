@@ -3,6 +3,7 @@ package com.fox.ysmu.client;
 import java.io.File;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -32,7 +33,10 @@ import com.fox.ysmu.client.texture.OuterFileTexture;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.model.ServerModelManager;
 import com.fox.ysmu.model.format.FolderFormat;
+import com.fox.ysmu.model.resource.RawYsmModelAdapter;
+import com.fox.ysmu.model.resource.YSMFolderDeserializer;
 import com.fox.ysmu.model.resource.YsmControllerResources;
+import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.SyncModelFiles;
 import com.fox.ysmu.util.GsonHelper;
@@ -395,17 +399,37 @@ public class ClientModelManager {
     }
 
     public static void loadDefaultModel() {
+        // Try old format (FolderFormat) first, then fallback to new OpenYSM format.
+        ModelData data = null;
         try {
-            ModelData data = FolderFormat.getModelData(ServerModelManager.CUSTOM, "default");
+            data = FolderFormat.getModelData(ServerModelManager.CUSTOM, "default");
+        } catch (IOException e) {
+            ysmu.LOG.info("Legacy default model not found at CUSTOM/default, trying OpenYSM format...");
+        }
+        if (data == null) {
+            // Fallback: new OpenYSM format at BUILT/default/
+            Path builtinDefault = ServerModelManager.BUILT.resolve("default");
+            if (Files.isDirectory(builtinDefault)) {
+                try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(builtinDefault)) {
+                    RawYsmModel raw = deserializer.deserialize();
+                    raw.modelId = "default";
+                    if (RawYsmModelAdapter.isBridgeable(raw)) {
+                        data = RawYsmModelAdapter.toLegacyModelData(raw, "default");
+                    }
+                } catch (Exception e2) {
+                    ysmu.LOG.warn("Failed to load default model from OpenYSM format", e2);
+                }
+            }
+        }
+        if (data != null) {
             data.getAnimation()
                 .forEach((name, bytes) -> {
                     AnimationFile animationFile = getAnimationFile(new String(bytes, StandardCharsets.UTF_8));
                     mergeAnimationFile(DEFAULT_ANIMATION_FILE, animationFile);
                 });
             ClientModelManager.registerAll(data);
-        } catch (IOException e) {
-            ysmu.LOG.warn("Failed to load default model", e);
-            e.printStackTrace();
+        } else {
+            ysmu.LOG.warn("Failed to load default model from any format");
         }
     }
 
@@ -433,13 +457,15 @@ public class ClientModelManager {
             this.lang = lang;
         }
 
-        /** Returns the localized pack name, falling back to the raw name then folder path. */
+        /** Returns the localized pack name, falling back to en_us, zh_cn, raw name, then folder path. */
         public String getDisplayName() {
             if (lang != null) {
                 String mcLang = net.minecraft.client.Minecraft.getMinecraft().getLanguageManager().getCurrentLanguage().getLanguageCode();
                 java.util.Map<String, String> trans = lang.get(mcLang);
                 if (trans != null && trans.containsKey("name")) return trans.get("name");
-                // Fallback: try zh_cn, then en
+                // Fallback: en_us, then zh_cn, then raw name
+                trans = lang.get("en_us");
+                if (trans != null && trans.containsKey("name")) return trans.get("name");
                 trans = lang.get("zh_cn");
                 if (trans != null && trans.containsKey("name")) return trans.get("name");
             }
