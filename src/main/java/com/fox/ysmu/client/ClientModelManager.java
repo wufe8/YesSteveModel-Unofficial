@@ -565,6 +565,25 @@ public class ClientModelManager {
     /** Registers rich extra wheel data and GUI image textures from a RawYsmModel. */
     public static void registerExtraWheel(ResourceLocation modelId, com.fox.ysmu.model.resource.pojo.RawYsmModel raw) {
         EXTRA_WHEEL.put(modelId, ExtraWheelData.from(raw));
+        // Initialize roaming variables for range sliders with sensible defaults.
+        for (RawYsmModel.ExtraAnimationButton btn : raw.properties.extraAnimationButtons) {
+            for (RawYsmModel.ConfigForm form : btn.forms) {
+                if (!"range".equals(form.type)) continue;
+                String varName = form.defaultValue.startsWith("v.") ? form.defaultValue.substring(2) : form.defaultValue;
+                if (!com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(varName)) {
+                    double initVal;
+                    if (form.min <= 0.0f && 0.0f < form.max) {
+                        initVal = 0.0;
+                    } else if (form.min <= 1.0f && 1.0f < form.max) {
+                        initVal = 1.0;
+                    } else {
+                        initVal = form.min;
+                    }
+                    if (form.step > 0) initVal = Math.round(initVal / form.step) * form.step;
+                    com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(varName, initVal);
+                }
+            }
+        }
         if (StringUtils.isNotBlank(raw.properties.previewAnimation)) {
             PREVIEW_ANIMATION.put(modelId, raw.properties.previewAnimation);
         }

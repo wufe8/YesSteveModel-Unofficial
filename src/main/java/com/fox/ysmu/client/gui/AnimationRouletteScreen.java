@@ -565,6 +565,20 @@ public class AnimationRouletteScreen extends GuiScreen {
                 boolean checked = getMolangVar(form.defaultValue) > 0;
                 drawString(fontRendererObj, checked ? "[x]" : "[ ]", panelX + 18, cbY, checked ? 0x55FF55 : 0xF3EFE0);
             } else if ("range".equals(form.type)) {
+                // Initialise roaming variable with a sensible default if unset.
+                String rangeVar = form.defaultValue.startsWith("v.") ? form.defaultValue.substring(2) : form.defaultValue;
+                if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(rangeVar)) {
+                    double initVal;
+                    if (form.min <= 1.0f && 1.0f < form.max) {
+                        initVal = 1.0;
+                    } else if (form.min <= 0.0f && 0.0f < form.max) {
+                        initVal = 0.0;
+                    } else {
+                        initVal = form.min;
+                    }
+                    if (form.step > 0) initVal = Math.round(initVal / form.step) * form.step;
+                    OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(rangeVar, initVal);
+                }
                 int sliderY = fy + 28;
                 boolean hovered = mouseY >= sliderY - 6 && mouseY <= sliderY + 6;
                 drawRect(panelX, sliderY - 2, panelX + panelW, sliderY + 2, hovered ? 0xAAFFFF00 : 0xAA888888);
