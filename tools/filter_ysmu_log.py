@@ -63,6 +63,12 @@ YSM_LINE_RE = re.compile(
     r'|not bridgeable'
     r'|isBridgeable'
     r'|predicateParallel'
+    r'|predicateMain'
+    r'|legacyBodyActive'
+    r'|sneak|sneaking'
+    r'|nonEmpty|limbSwing|isMoving'
+    r'|force transition'
+    r'|playing\s'
     r'|OpenYSM.*model sync'
     r'|OpenYSM.*sync (index|complete|completed|cache)'
     r'|model sync.*'
@@ -83,8 +89,7 @@ def read_log(path=None):
 
 def strip_prefix(line: str) -> str:
     """Remove timestamp like [12:34:56] and [Client thread/INFO]: prefix."""
-    return PREFIX_RE.sub('', line).strip()
-
+    return PREFIX_RE.sub('', line).strip() if SHOW_RAW else line
 
 def extract_level(line: str) -> str:
     """Extract log level from prefix like [Client thread/INFO] → INFO."""
@@ -156,6 +161,8 @@ def classify(line: str) -> str:
 
     if 'tryApply ' in line:
         return 'apply'
+    if 'predicateMain' in line:
+        return 'pred'
     if 'prepareFrameVariables' in line:
         return 'vars'
 
@@ -186,7 +193,7 @@ def classify(line: str) -> str:
         return 'stack'
 
     # General debug/info
-    if '[YSM_DEBUG]' in line or 'YSM DEBUG':
+    if '[YSMU-DBG]' in line or '[YSM_DEBUG]' in line:
         return 'debug'
     if '[YSM]' in line or '[ysmu]' in line:
         return 'info'
@@ -390,6 +397,8 @@ Examples:
                         help='Show N lines of surrounding context (use with --raw)')
     parser.add_argument('--hex', action='store_true',
                         help='Show hex dump hint for binary-related errors')
+    parser.add_argument('--time', action='store_true',
+                        help='Show time')
 
     args = parser.parse_args()
 
@@ -398,6 +407,7 @@ Examples:
     LEVEL_FILTER = args.level
     CONTEXT_LINES = args.context
     SHOW_HEX = args.hex
+    SHOW_TIME = args.time
 
     raw_text = read_log(args.logfile)
     filter_log(raw_text)

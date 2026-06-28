@@ -120,6 +120,9 @@ public final class OpenYsmPlayerControllerRuntime {
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
         State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
+            if (geckoControllerName.contains("parallel") || geckoControllerName.contains("main")) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG] ctrl={} state=null (no initial state)", geckoControllerName);
+            }
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
@@ -165,17 +168,33 @@ public final class OpenYsmPlayerControllerRuntime {
         // "animations" list plays all entries simultaneously; selectAnimation
         // only returns the first match for historical code that expects one.
         List<String> activeAnimations = collectActiveAnimations(state, animationId, context);
-        // 以下4套蹲下过渡检测代码不知道为什么全都有用 如果你不知道你在干什么 一个都不要删
-        // When moving while sneaking, let legacy handle (no ground state).
-        if ("sky".equals(state.name) && event.isMoving()
-            && activeAnimations.contains("sneaking_sky")) {
+        if (!activeAnimations.isEmpty() && (geckoControllerName.contains("parallel") || geckoControllerName.contains("main"))) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG] ctrl={} state={} anims={} isMoving={} isSneaking={}",
+                geckoControllerName, state.name, String.join(",", activeAnimations),
+                event.isMoving(),
+                Minecraft.getMinecraft().thePlayer != null ? Minecraft.getMinecraft().thePlayer.isSneaking() : "?");
+        }
+        // --- Sneak parallel-controller fallbacks ---
+        // These fire when a parallel controller enters "sky" state playing
+        // "sneaking_sky" (crouch idle). Since the main controller handles
+        // the body's sneak-moving animation via legacy AnimationStates, we
+        // must stop/redirect the parallel controller's sneak animation to
+        // avoid it blending over and overriding the main controller.
+        boolean hasSneakingStart = animationExistsSilent(animationId, "sneaking_start");
+        // MOVE-BLOCK: when the player is moving while sneaking, stop this
+        // controller so its sneak animation doesn't blend over the main
+        // controller's sneak-moving animation ("sneak").
+        boolean sneakAnimActive = activeAnimations.contains("sneaking_sky")
+            || activeAnimations.contains("sneaking_start");
+        if (event.isMoving() && (("sky".equals(state.name) && sneakAnimActive)
+            || ("start".equals(state.name) && activeAnimations.contains("sneaking_start")))) {
             runtimeState.wasMoving = true;
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
-        // Transition when stopping from moving sneaking.
-        if ("sky".equals(state.name) && activeAnimations.contains("sneaking_sky")
+        // SKY-REDIRECT: sky + stopped → play transition animation.
+        if (hasSneakingStart && "sky".equals(state.name) && activeAnimations.contains("sneaking_sky")
             && !event.isMoving()) {
             activeAnimations = java.util.Collections.singletonList("sneaking_start");
             runtimeState.currentState = "start";
@@ -183,9 +202,8 @@ public final class OpenYsmPlayerControllerRuntime {
             runtimeState.lastSelectedAnimationState = "";
             runtimeState.lastSelectedAnimation = "";
         }
-        // One-shot transition when returning from movement to stationary.
-        if (runtimeState.wasMoving && "default".equals(state.name) && !event.isMoving()
-            && animationExists(animationId, "sneaking_start")) {
+        // WAS-MOVING: returning from movement to stationary → play transition.
+        if (hasSneakingStart && runtimeState.wasMoving && "default".equals(state.name) && !event.isMoving()) {
             runtimeState.wasMoving = false;
             activeAnimations = java.util.Collections.singletonList("sneaking_start");
             runtimeState.currentState = "start";
@@ -193,11 +211,8 @@ public final class OpenYsmPlayerControllerRuntime {
             runtimeState.lastSelectedAnimationState = "";
             runtimeState.lastSelectedAnimation = "";
         }
-        // General fallback: when default has no animation but the player IS
-        // sneaking (ctrl.sneaking failed to trigger default->start), redirect
-        // to sneaking_start so the transition animation plays.
-        if ("default".equals(state.name) && !event.isMoving()
-            && animationExists(animationId, "sneaking_start")
+        // GENERAL FALLBACK: default + isSneaking but controller missed → play transition.
+        if (hasSneakingStart && "default".equals(state.name) && !event.isMoving()
             && Minecraft.getMinecraft().thePlayer != null
             && Minecraft.getMinecraft().thePlayer.isSneaking()) {
             activeAnimations = java.util.Collections.singletonList("sneaking_start");
@@ -336,6 +351,13 @@ public final class OpenYsmPlayerControllerRuntime {
             return false;
         }
         return true;
+    }
+
+    /** Like animationExists but silent — no log warning. Used by sneak fallback guards. */
+    private static boolean animationExistsSilent(ResourceLocation animationId, String animationName) {
+        if (animationId == null || animationName == null) return false;
+        AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animationId);
+        return file != null && file.animations.containsKey(animationName);
     }
 
     /**

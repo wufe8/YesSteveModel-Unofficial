@@ -466,11 +466,6 @@ public final class AnimationManager {
             legacyBodyActive = false;
             return controllerState;
         }
-        if (!legacyBodyActive && player.isSwingInProgress) {
-            //com.fox.ysmu.ysmu.LOG.info(
-            //    "YSM predicateMain: OpenYSM returned null, falling to legacy (swinging={}, moving={}, onGround={})",
-            //    player.isSwingInProgress, event.isMoving(), player.onGround);
-        }
         legacyBodyActive = true;
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
@@ -489,6 +484,13 @@ public final class AnimationManager {
                     String targetName = mappedName != null ? mappedName : animationName;
                     if (animFile != null && animFile.animations.containsKey(targetName)) {
                         Animation anim = animFile.animations.get(targetName);
+                        if ("sneak".equals(animationName) || "sneaking".equals(animationName)
+                            || "sneaking_sky".equals(animationName) || "sneaking_start".equals(animationName)) {
+                            com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG] predicateMain: state={} mapped={} exists={} nonEmpty={} limbSwing={} isMoving={} isSneaking={}",
+                                animationName, targetName, true, isAnimationNonEmpty(anim),
+                                String.format("%.4f", event.getLimbSwingAmount()),
+                                event.isMoving(), player.isSneaking());
+                        }
                         // 跳过空桩动画（loop:true 无 bones）
                         if (!isAnimationNonEmpty(anim)) {
                             continue;
