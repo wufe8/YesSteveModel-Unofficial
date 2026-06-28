@@ -115,6 +115,15 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
         }
+        // Initialize roaming.helmet from actual helmet state if not yet set.
+        // This ensures Molang keyframes reading v.roaming.helmet get a non-null
+        // value (otherwise the helmet visual defaults to hidden).
+        if (!runtimeState.variables.containsKey("roaming.helmet") && !PENDING_ROAMING.containsKey("roaming.helmet")) {
+            boolean hasHelmet = player.inventory.armorItemInSlot(3) != null;
+            double initVal = hasHelmet ? 1.0 : 0.0;
+            runtimeState.variables.put("roaming.helmet", initVal);
+            PENDING_ROAMING.put("roaming.helmet", initVal);
+        }
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
@@ -132,17 +141,8 @@ public final class OpenYsmPlayerControllerRuntime {
                 break;
             }
             transitionCount++;
-            //com.fox.ysmu.ysmu.LOG.info(
-            //    "YSM controller transition #{}: {} → {} (controller={})",
-            //    transitionCount, prevStateName, nextState.name, geckoControllerName);
             state = nextState;
         }
-        /*if (transitionCount > 0) {
-            com.fox.ysmu.ysmu.LOG.info(
-                "YSM controller {} ended at state '{}' after {} transition(s), animations={}",
-                geckoControllerName, state.name, transitionCount,
-                state.animations.stream().map(e -> e.animationName).collect(java.util.stream.Collectors.toList()));
-        }*/
 
         // If the current state has no animations, try to force transition to any
         // state that has them. Only transition when the condition is met so we

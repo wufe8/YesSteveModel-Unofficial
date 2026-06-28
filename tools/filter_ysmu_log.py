@@ -62,6 +62,7 @@ YSM_LINE_RE = re.compile(
     r'|Registered pack'
     r'|not bridgeable'
     r'|isBridgeable'
+    r'|predicateParallel'
     r'|OpenYSM.*model sync'
     r'|OpenYSM.*sync (index|complete|completed|cache)'
     r'|model sync.*'
@@ -163,6 +164,8 @@ def classify(line: str) -> str:
         return 'pred'
     if 'collectActiveAnimations' in line:
         return 'coll'
+    if 'predicateParallel' in line:
+        return 'parallel'
 
     # OpenYSM sync
     if 'model sync' in line or 'sync index' in line or 'sync complete' in line or 'sync completed' in line or 'sync cache' in line or 'cache hit' in line or 'cache miss' in line or 'downloaded and cached' in line or 'server sent' in line:
@@ -183,7 +186,7 @@ def classify(line: str) -> str:
         return 'stack'
 
     # General debug/info
-    if '[YSM_DEBUG]' in line:
+    if '[YSM_DEBUG]' in line or 'YSM DEBUG':
         return 'debug'
     if '[YSM]' in line or '[ysmu]' in line:
         return 'info'
@@ -197,7 +200,7 @@ GROUP_ORDER = [
     'bin_err', 'bin_skip', 'bin_corrupt', 'crypt',
     'molang_miss', 'idx_err', 'tex_err',
     'def', 'trans', 'force', 'warn', 'play', 'ctrl',
-    'apply', 'vars', 'coll', 'pred',
+    'apply', 'vars', 'coll', 'parallel', 'pred',
     'sync', 'sound', 'pack',
     'debug', 'info', 'stack', 'chat', 'other'
 ]
@@ -219,15 +222,16 @@ GROUP_NAMES = {
     'apply':       '=== 14. OpenYSM Apply Results ===',
     'vars':        '=== 15. Frame Variables ===',
     'coll':        '=== 16. Animation Collection Details ===',
-    'pred':        '=== 17. Predicate Events ===',
-    'sync':        '=== 18. OpenYSM Model Sync ===',
-    'sound':       '=== 19. Sound System ===',
-    'pack':        '=== 20. Pack Registration ===',
-    'debug':       '=== 21. General Debug ===',
-    'info':        '=== 22. General Info ===',
-    'stack':       '=== 23. YSMU Stack Traces ===',
-    'chat':        '=== 24. Chat ===',
-    'other':       '=== 25. Other ===',
+    'parallel':    '=== 17. Predicate Parallel ===',
+    'pred':        '=== 18. Predicate Events ===',
+    'sync':        '=== 19. OpenYSM Model Sync ===',
+    'sound':       '=== 20. Sound System ===',
+    'pack':        '=== 21. Pack Registration ===',
+    'debug':       '=== 22. General Debug ===',
+    'info':        '=== 23. General Info ===',
+    'stack':       '=== 24. YSMU Stack Traces ===',
+    'chat':        '=== 25. Chat ===',
+    'other':       '=== 26. Other ===',
 }
 
 

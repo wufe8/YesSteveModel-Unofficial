@@ -87,6 +87,11 @@ final class OpenYsmControllerExpressionEvaluator {
                 // (通过 ScopedMolangVariable → MolangPhysicsRuntime.getVariable())
                 // 能够读取到控制器 onEntry/onExit 设置的 v.* 变量值
                 MolangPhysicsRuntime.setVariable(target, value);
+                // 同步 roaming 变量回 PENDING_ROAMING，防止下一帧
+                // tryApplyController() 的注入循环用陈旧值覆盖刚设的值
+                if (varName.startsWith("roaming.")) {
+                    OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(varName, value);
+                }
             }
         }
     }
@@ -606,6 +611,9 @@ final class OpenYsmControllerExpressionEvaluator {
             }
             if ("zza".equals(name)) {
                 return player.moveForward;
+            }
+            if ("has_helmet".equals(name)) {
+                return player.inventory.armorItemInSlot(3) != null ? TRUE : FALSE;
             }
             if ("attack_time".equals(name)) {
                 return player.isSwingInProgress ? 1.0d : 0.0d;
