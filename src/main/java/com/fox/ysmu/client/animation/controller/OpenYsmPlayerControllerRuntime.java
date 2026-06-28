@@ -115,15 +115,6 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
         }
-        // Initialize roaming.helmet from actual helmet state if not yet set.
-        // This ensures Molang keyframes reading v.roaming.helmet get a non-null
-        // value (otherwise the helmet visual defaults to hidden).
-        if (!runtimeState.variables.containsKey("roaming.helmet") && !PENDING_ROAMING.containsKey("roaming.helmet")) {
-            boolean hasHelmet = player.inventory.armorItemInSlot(3) != null;
-            double initVal = hasHelmet ? 1.0 : 0.0;
-            runtimeState.variables.put("roaming.helmet", initVal);
-            PENDING_ROAMING.put("roaming.helmet", initVal);
-        }
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);

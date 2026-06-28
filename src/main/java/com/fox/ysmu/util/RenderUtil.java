@@ -394,15 +394,15 @@ public final class RenderUtil {
         GL11.glScalef(pScale, pScale, -pScale);
         GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F); // 将模型从倒置状态翻转过来
         if (!disablePreviewRotation) {
-            // Match OpenYSM: pure X-axis -10° tilt (no Y component)
+            // Match OpenYSM: pure X-axis -10° tilt, no Y component
+            GL11.glRotatef(-10.0F, 1.0F, 0.0F, 0.0F);
             GL11.glRotatef(-20.0F, 0.0F, 1.0F, 0.0F);
-            GL11.glRotatef(-20.0F, 1.0F, 0.0F, 0.0F);
-            //GL11.glRotatef(-10.0F, 1.0F, 0.0F, 0.0F);
-            //GL11.glRotatef(-25.0F, 1.0F, 0.0F, 0.0F);
-            //GL11.glRotatef(88.67F, 0.2173F, -0.0026F, -0.9761F);
-            //GL11.glRotatef(45.0F, 1.0F, 0.0F, 0.0F); //关闭preview时 模型沿-x轴(屏幕向左) 右手螺旋顺时针45度(模型向屏幕上方看)
-            //GL11.glRotatef(45.0F, 0.0F, 1.0F, 0.0F); //模型沿y轴(屏幕向上) 右手螺旋顺时针45度(模型向屏幕右侧看)
-            //GL11.glRotatef(45.0F, 0.0F, 0.0F, 1.0F);   //模型沿z轴(屏幕向内) 右手螺旋顺时针45度(模型在屏幕平面上顺时针旋转)
+            // GL11.glRotatef(45.0F, 1.0F, 0.0F, 0.0F);
+            // 关闭preview时 模型沿-x轴(屏幕向左) 右手螺旋顺时针45度(模型向屏幕上方看)
+            // GL11.glRotatef(45.0F, 0.0F, 1.0F, 0.0F);
+            // 模型沿y轴(屏幕向上) 右手螺旋顺时针45度(模型向屏幕右侧看)
+            // GL11.glRotatef(45.0F, 0.0F, 0.0F, 1.0F);
+            // 模型沿z轴(屏幕向内) 右手螺旋顺时针45度(模型在屏幕平面上顺时针旋转)
         }
 
         // 保存玩家状态
