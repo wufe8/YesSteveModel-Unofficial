@@ -26,7 +26,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 **最新版本：`1.9-alpha1-pre1-feat-ExtraUI-02`**（`feat-ExtraUI` 分支）
 
-从 `1.9-alpha1`（2025年6月）起，项目经历了 **106 次提交**，变更 **165 个文件，净增约 12.2 万行代码**, 进行了大量重构, 修复和功能增强 (ai太好用了你们知道吗 12万行只要100rmb)
+从 `1.9-alpha1`（2025年6月）起，项目经历了 **106 次提交**，变更 **165 个文件，净增数万行代码**, 进行了大量重构, 修复和功能增强 (ai太好用了你们知道吗 改这么多只要100rmb)
 
 > [NOTE]
 > 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
@@ -36,15 +36,15 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 ### 环境要求
 - **Minecraft**: 1.7.10
 - **java**: java8, 17-25(with lwjgl3ify)
-- **Forge**: 10.13.4.1614+
+- **Forge**: 10.13.4.1614
 - **必需 Mod**:
   - [UniMixins](https://github.com/LegacyModdingMC/UniMixins)
   - [GTNHLib](https://github.com/GTNewHorizons/GTNHLib)
 - **测试兼容性**: +unimixins-all-1.7.10-0.3.1.jar, angelica-2.1.42.jar, gtnhlib-0.10.9.jar, lwjgl3ify-3.0.25.jar, backhand-1.7.7.jar, modularui2-2.2.18-1.7.10.jar
-- **GTNH测试版本**: 2.8.4
+- **GTNH测试版本**: 2.8.4, 2.9.0beta1
 
 ### 安装步骤
-1. 安装 Forge 1.7.10（推荐 10.13.4.1614 或更新版本）
+1. 安装 Forge 1.7.10（推荐 10.13.4.1614）
 2. 将 UniMixins、GTNHLib 放入 `mods` 目录
 3. 从 [Releases](https://github.com/wufe8/YesSteveModel-Unofficial/releases) 下载 YSMU 放入 `mods` 目录
 4. 启动游戏
@@ -157,13 +157,17 @@ git checkout feat-ExtraUI
 ## 已知问题
 
 - 动画不兼容battlegear2的盾牌和et futurum的鞘翅
-- 无法播放高于1.7.10的原版音效
+- 持剑右键格挡会重复播放挥动动画 由于高版本没有该原版动作 可能添加条件判断跳过播放 或者 wont fix
+- 无法播放高于1.7.10的原版音效 可能将来会选择内置这些音效并重载 或者 wont fix
 - 部分新版模型可能需要 `.molang` 函数文件桥接才能正常工作
 - 某些平行控制器动画的 sneak 回退仍使用硬编码动画名
 - 表情骨骼名称匹配基于启发式规则, 不同模型可能有差异
 - WebP 解码器基于外部实现, 没搞定ImageIO
 - 投射物/载具模型尚未完全移植
-- SIMD 加速渲染未完工
+- 部分模型无法读取轮盘动画 或者配置开关无效 或者音效生命周期时间不正确
+- 持有副手武器时 在一些特殊情况下会重复播放过渡动画 重开游戏才能重置该问题
+- 模型预览动画在选取过该模型后部分部件被隐藏
+- v.roaming长期变量目前不会永久保存 可能 wont fix
 
 ---
 
