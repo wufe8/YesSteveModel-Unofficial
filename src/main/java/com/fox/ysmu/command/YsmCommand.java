@@ -32,7 +32,7 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm <reload|play> [animationName]";
+        return "/ysm <reload|play|playsound> [soundName]";
     }
 
     @Override
@@ -49,6 +49,8 @@ public class YsmCommand extends CommandBase {
             processReload(sender);
         } else if ("play".equalsIgnoreCase(args[0])) {
             processPlay(sender, args);
+        } else if ("playsound".equalsIgnoreCase(args[0])) {
+            processPlaySound(sender, args);
         } else {
             throw new WrongUsageException(getCommandUsage(sender));
         }
@@ -91,6 +93,41 @@ public class YsmCommand extends CommandBase {
             eep.playAnimation(animName);
             player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
         }
+    }
+
+    private void processPlaySound(ICommandSender sender, String[] args) {
+        if (!(sender instanceof EntityPlayerMP)) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        EntityPlayerMP player = (EntityPlayerMP) sender;
+        // Merge remainder args into a single sound name
+        String soundName = "";
+        if (args.length >= 2) {
+            StringBuilder sb = new StringBuilder();
+            for (int i = 1; i < args.length; i++) {
+                if (sb.length() > 0) sb.append(" ");
+                sb.append(args[i]);
+            }
+            soundName = sb.toString().replaceAll("[\"']", "");
+        }
+        if (StringUtils.isBlank(soundName)) {
+            // List all cached sounds
+            Map<String, java.nio.file.Path> sounds = com.fox.ysmu.client.audio.YSMSoundManager.getSoundFiles();
+            if (sounds.isEmpty()) {
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r No cached sounds."));
+            } else {
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cached sounds:"));
+                for (Map.Entry<String, java.nio.file.Path> e : sounds.entrySet()) {
+                    String fn = e.getValue().getFileName().toString();
+                    player.addChatMessage(new ChatComponentText("  §e" + e.getKey() + "§r → §7" + fn));
+                }
+                player.addChatMessage(new ChatComponentText("§6Use §e/ysm playsound <name>§6 to play one."));
+            }
+            return;
+        }
+        // Try exact match first, then case-insensitive partial match
+        com.fox.ysmu.client.audio.YSMSoundManager.playSound(player, soundName, 1.0f, 1.0f);
+        player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Playing sound: " + soundName));
     }
 
     private void checkModelFiles(ICommandSender sender, Path rootPath) {

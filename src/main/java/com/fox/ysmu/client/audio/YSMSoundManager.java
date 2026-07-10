@@ -155,6 +155,11 @@ public final class YSMSoundManager {
         CONTROLLER_SOUNDS.clear();
     }
 
+    /** Returns an unmodifiable view of all registered sound files (name → path). */
+    public static Map<String, Path> getSoundFiles() {
+        return java.util.Collections.unmodifiableMap(SOUND_FILES);
+    }
+
     /** 清理注册的音效文件并停止播放 */
     public static void clear() {
         stopAll();
