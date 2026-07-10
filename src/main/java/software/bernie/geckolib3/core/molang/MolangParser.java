@@ -311,10 +311,6 @@ public class MolangParser extends MathBuilder {
                         userSet = com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.contains(lookupName);
                     }
                     double result = userSet ? l : (l != 0 ? l : r);
-                    if ((leftExpr.contains("player_root_size") || userSet) && com.fox.ysmu.ysmu.LOG.isInfoEnabled()) {
-                        com.fox.ysmu.ysmu.LOG.info("[YSMU-??] '{}': l={}, r={}, userSet={}, result={}",
-                            leftExpr, l, r, userSet, result);
-                    }
                     return result;
                 }
             });
