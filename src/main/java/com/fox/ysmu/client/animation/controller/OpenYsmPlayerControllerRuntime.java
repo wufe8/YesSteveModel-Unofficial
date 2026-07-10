@@ -18,6 +18,7 @@ import net.minecraft.util.ResourceLocation;
 
 import org.apache.commons.lang3.StringUtils;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.AnimationEntry;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Controller;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.ControllerSet;
@@ -117,7 +118,7 @@ public final class OpenYsmPlayerControllerRuntime {
         Double dbgHa = runtimeState.variables.get("ha");
         Double dbgHb = runtimeState.variables.get("hb");
         Double dbgVal = runtimeState.variables.get("value_kuzi");
-        if (dbgHa != null || dbgHb != null || dbgVal != null) {
+        if (Config.DEBUG_CONTROLLER && (dbgHa != null || dbgHb != null || dbgVal != null)) {
             com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL] {} roaming: ha={} hb={} value_kuzi={} (all: {})",
                 geckoControllerName, dbgHa, dbgHb, dbgVal, runtimeState.variables);
         }
@@ -253,10 +254,12 @@ public final class OpenYsmPlayerControllerRuntime {
                 continue;
             }
             boolean conditionMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context);
-            com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL]   trans: {} --[{}]--> {} = {}",
-                state.name,
-                transition.condition != null ? transition.condition.substring(0, Math.min(transition.condition.length(), 120)) : "null",
-                target.name, conditionMet);
+            if (Config.DEBUG_CONTROLLER) {
+                com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL]   trans: {} --[{}]--> {} = {}",
+                    state.name,
+                    transition.condition != null ? transition.condition.substring(0, Math.min(transition.condition.length(), 120)) : "null",
+                    target.name, conditionMet);
+            }
             if (!conditionMet) {
                 continue;
             }

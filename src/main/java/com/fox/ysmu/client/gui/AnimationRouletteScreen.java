@@ -60,40 +60,42 @@ public class AnimationRouletteScreen extends GuiScreen {
                     this.navigationStack.clear();
                     this.currentPage = 0;
                     this.currentConfigGroup = null;
-                    // ── Debug: dump full wheel structure ──
-                    ysmu.LOG.info("[YSMU-WHEEL] === Wheel Data for {} ===", mainId);
-                    ysmu.LOG.info("[YSMU-WHEEL] Total entries: {} ({} pages)", wheelData.entries.size(),
-                        (wheelData.entries.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE);
-                    int idx = 0;
-                    for (Map.Entry<String, String> e : wheelData.entries.entrySet()) {
-                        int page = idx / ITEMS_PER_PAGE;
-                        String marker = e.getKey().startsWith("#") ? "[SUB/CONFIG]" : "[ANIM]";
-                        ysmu.LOG.info("[YSMU-WHEEL]   page={} {} key='{}' label='{}'", page, marker, e.getKey(), e.getValue());
-                        idx++;
-                    }
-                    if (!wheelData.classifies.isEmpty()) {
-                        ysmu.LOG.info("[YSMU-WHEEL] === Sub-pages ({} total) ===", wheelData.classifies.size());
-                        for (Map.Entry<String, Map<String, String>> cp : wheelData.classifies.entrySet()) {
-                            ysmu.LOG.info("[YSMU-WHEEL]   Classify '{}': {} entries", cp.getKey(), cp.getValue().size());
-                            for (Map.Entry<String, String> ce : cp.getValue().entrySet()) {
-                                ysmu.LOG.info("[YSMU-WHEEL]     key='{}' label='{}'", ce.getKey(), ce.getValue());
+                    // ── Debug: dump full wheel structure (Config.DEBUG_WHEEL) ──
+                    if (Config.DEBUG_WHEEL) {
+                        ysmu.LOG.info("[YSMU-WHEEL] === Wheel Data for {} ===", mainId);
+                        ysmu.LOG.info("[YSMU-WHEEL] Total entries: {} ({} pages)", wheelData.entries.size(),
+                            (wheelData.entries.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE);
+                        int idx = 0;
+                        for (Map.Entry<String, String> e : wheelData.entries.entrySet()) {
+                            int page = idx / ITEMS_PER_PAGE;
+                            String marker = e.getKey().startsWith("#") ? "[SUB/CONFIG]" : "[ANIM]";
+                            ysmu.LOG.info("[YSMU-WHEEL]   page={} {} key='{}' label='{}'", page, marker, e.getKey(), e.getValue());
+                            idx++;
+                        }
+                        if (!wheelData.classifies.isEmpty()) {
+                            ysmu.LOG.info("[YSMU-WHEEL] === Sub-pages ({} total) ===", wheelData.classifies.size());
+                            for (Map.Entry<String, Map<String, String>> cp : wheelData.classifies.entrySet()) {
+                                ysmu.LOG.info("[YSMU-WHEEL]   Classify '{}': {} entries", cp.getKey(), cp.getValue().size());
+                                for (Map.Entry<String, String> ce : cp.getValue().entrySet()) {
+                                    ysmu.LOG.info("[YSMU-WHEEL]     key='{}' label='{}'", ce.getKey(), ce.getValue());
+                                }
                             }
                         }
-                    }
-                    if (!wheelData.configButtons.isEmpty()) {
-                        ysmu.LOG.info("[YSMU-WHEEL] === Config Buttons ({} total) ===", wheelData.configButtons.size());
-                        for (ExtraAnimationButton btn : wheelData.configButtons.values()) {
-                            ysmu.LOG.info("[YSMU-WHEEL]   btn id='{}' name='{}' desc='{}' forms={}",
-                                btn.id, btn.name, btn.description, btn.forms.size());
-                            for (int fi = 0; fi < btn.forms.size(); fi++) {
-                                ConfigForm f = btn.forms.get(fi);
-                                ysmu.LOG.info("[YSMU-WHEEL]     form[{}] type='{}' title='{}' desc='{}' default='{}' min={} max={} step={} labels={}",
-                                    fi, f.type, f.title, f.description, f.defaultValue,
-                                    f.min, f.max, f.step, f.labels);
+                        if (!wheelData.configButtons.isEmpty()) {
+                            ysmu.LOG.info("[YSMU-WHEEL] === Config Buttons ({} total) ===", wheelData.configButtons.size());
+                            for (ExtraAnimationButton btn : wheelData.configButtons.values()) {
+                                ysmu.LOG.info("[YSMU-WHEEL]   btn id='{}' name='{}' desc='{}' forms={}",
+                                    btn.id, btn.name, btn.description, btn.forms.size());
+                                for (int fi = 0; fi < btn.forms.size(); fi++) {
+                                    ConfigForm f = btn.forms.get(fi);
+                                    ysmu.LOG.info("[YSMU-WHEEL]     form[{}] type='{}' title='{}' desc='{}' default='{}' min={} max={} step={} labels={}",
+                                        fi, f.type, f.title, f.description, f.defaultValue,
+                                        f.min, f.max, f.step, f.labels);
+                                }
                             }
                         }
+                        ysmu.LOG.info("[YSMU-WHEEL] === End Wheel Dump ===");
                     }
-                    ysmu.LOG.info("[YSMU-WHEEL] === End Wheel Dump ===");
                     return;
                 }
                 String[] names = ClientModelManager.EXTRA_ANIMATION_NAME.get(mainId);
@@ -332,9 +334,11 @@ public class AnimationRouletteScreen extends GuiScreen {
             this.currentEntries = wheelData.classifies.get(classifyId);
             this.currentPage = 0;
             this.currentConfigGroup = null;
-            ysmu.LOG.info("[YSMU-WHEEL] Navigated into sub-page '{}': {} entries", classifyId, this.currentEntries.size());
-            for (Map.Entry<String, String> ce : this.currentEntries.entrySet()) {
-                ysmu.LOG.info("[YSMU-WHEEL]   sub entry: key='{}' label='{}'", ce.getKey(), ce.getValue());
+            if (Config.DEBUG_WHEEL) {
+                ysmu.LOG.info("[YSMU-WHEEL] Navigated into sub-page '{}': {} entries", classifyId, this.currentEntries.size());
+                for (Map.Entry<String, String> ce : this.currentEntries.entrySet()) {
+                    ysmu.LOG.info("[YSMU-WHEEL]   sub entry: key='{}' label='{}'", ce.getKey(), ce.getValue());
+                }
             }
             return;
         }
@@ -345,9 +349,11 @@ public class AnimationRouletteScreen extends GuiScreen {
                 this.currentEntries = cf.get(classifyId);
                 this.currentPage = 0;
                 this.currentConfigGroup = null;
-                ysmu.LOG.info("[YSMU-WHEEL] Navigated into sub-page '{}' (alt path): {} entries", classifyId, this.currentEntries.size());
-                for (Map.Entry<String, String> ce : this.currentEntries.entrySet()) {
-                    ysmu.LOG.info("[YSMU-WHEEL]   sub entry: key='{}' label='{}'", ce.getKey(), ce.getValue());
+                if (Config.DEBUG_WHEEL) {
+                    ysmu.LOG.info("[YSMU-WHEEL] Navigated into sub-page '{}' (alt path): {} entries", classifyId, this.currentEntries.size());
+                    for (Map.Entry<String, String> ce : this.currentEntries.entrySet()) {
+                        ysmu.LOG.info("[YSMU-WHEEL]   sub entry: key='{}' label='{}'", ce.getKey(), ce.getValue());
+                    }
                 }
             }
         }
@@ -480,7 +486,9 @@ public class AnimationRouletteScreen extends GuiScreen {
             .getOrDefault(roamingName, 0.0);
         double newValue = Double.isNaN(value) ? (oldValue > 0 ? 0 : 1) : value;
         OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(roamingName, newValue);
-        ysmu.LOG.info("[YSMU-ROAM] set '{}' = {} (was {}, from '{}')", roamingName, newValue, oldValue, expression);
+        if (Config.DEBUG_WHEEL) {
+            ysmu.LOG.info("[YSMU-ROAM] set '{}' = {} (was {}, from '{}')", roamingName, newValue, oldValue, expression);
+        }
     }
 
     /** Gets the current value of a roaming Molang variable. */
@@ -712,7 +720,9 @@ public class AnimationRouletteScreen extends GuiScreen {
                 display = StringUtils.isNotBlank(label) ? label : key;
             }
             if (StringUtils.isBlank(display)) display = key;
-            ysmu.LOG.debug("[YSMU-WHEEL] drawRouletteText: slot={} key='{}' label='{}' display='{}'", i, key, label, display);
+            if (Config.DEBUG_WHEEL) {
+                ysmu.LOG.debug("[YSMU-WHEEL] drawRouletteText: slot={} key='{}' label='{}' display='{}'", i, key, label, display);
+            }
             this.drawCenteredString(fontRendererObj, display, textX, textY - 8, 0xF3EFE0);
             // Show key binding hint only if a real key is assigned
             if (ExtraAnimationKey.EXTRA_ANIMATION_KEYS.size() > i) {

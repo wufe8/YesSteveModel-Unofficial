@@ -28,6 +28,10 @@ public class Config {
     // GUI Config
     public static boolean GUI_ENHANCEMENTS = true;
 
+    // Debug Config
+    public static boolean DEBUG_CONTROLLER = false;
+    public static boolean DEBUG_WHEEL = false;
+
     // OpenYSM model sync config
     public static boolean ENABLE_OPEN_YSM_SYNC_PROTOCOL = true;
     public static int THREAD_COUNT = 4;
@@ -82,6 +86,10 @@ public class Config {
 
         // GUI config values
         GUI_ENHANCEMENTS = syncBoolean("GuiEnhancements", "gui", GUI_ENHANCEMENTS, "Enable model selection GUI enhancements (foreground/background textures and GUI animations)", load);
+
+        // Debug config values
+        DEBUG_CONTROLLER = syncBoolean("DebugController", "debug", DEBUG_CONTROLLER, "Enable controller transition/roaming debug logging ([YSMU-CTRL])", load);
+        DEBUG_WHEEL = syncBoolean("DebugWheel", "debug", DEBUG_WHEEL, "Enable wheel GUI debug logging ([YSMU-WHEEL], [YSMU-ROAM])", load);
 
         // OpenYSM model sync config values
         ENABLE_OPEN_YSM_SYNC_PROTOCOL = syncBoolean("EnableOpenYsmSyncProtocol", "openysm_sync", ENABLE_OPEN_YSM_SYNC_PROTOCOL, "Whether to use the appended OpenYSM hash/cache/chunk sync path before legacy fallback", load);
