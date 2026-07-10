@@ -11,6 +11,7 @@ import com.fox.ysmu.model.resource.pojo.RawYsmModel.ExtraAnimationButton;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.SetPlayAnimation;
 import com.fox.ysmu.util.ModelIdUtil;
+import com.fox.ysmu.ysmu;
 import net.minecraft.client.audio.PositionedSoundRecord;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.renderer.Tessellator;
@@ -59,6 +60,40 @@ public class AnimationRouletteScreen extends GuiScreen {
                     this.navigationStack.clear();
                     this.currentPage = 0;
                     this.currentConfigGroup = null;
+                    // ── Debug: dump full wheel structure ──
+                    ysmu.LOG.info("[YSMU-WHEEL] === Wheel Data for {} ===", mainId);
+                    ysmu.LOG.info("[YSMU-WHEEL] Total entries: {} ({} pages)", wheelData.entries.size(),
+                        (wheelData.entries.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE);
+                    int idx = 0;
+                    for (Map.Entry<String, String> e : wheelData.entries.entrySet()) {
+                        int page = idx / ITEMS_PER_PAGE;
+                        String marker = e.getKey().startsWith("#") ? "[SUB/CONFIG]" : "[ANIM]";
+                        ysmu.LOG.info("[YSMU-WHEEL]   page={} {} key='{}' label='{}'", page, marker, e.getKey(), e.getValue());
+                        idx++;
+                    }
+                    if (!wheelData.classifies.isEmpty()) {
+                        ysmu.LOG.info("[YSMU-WHEEL] === Sub-pages ({} total) ===", wheelData.classifies.size());
+                        for (Map.Entry<String, Map<String, String>> cp : wheelData.classifies.entrySet()) {
+                            ysmu.LOG.info("[YSMU-WHEEL]   Classify '{}': {} entries", cp.getKey(), cp.getValue().size());
+                            for (Map.Entry<String, String> ce : cp.getValue().entrySet()) {
+                                ysmu.LOG.info("[YSMU-WHEEL]     key='{}' label='{}'", ce.getKey(), ce.getValue());
+                            }
+                        }
+                    }
+                    if (!wheelData.configButtons.isEmpty()) {
+                        ysmu.LOG.info("[YSMU-WHEEL] === Config Buttons ({} total) ===", wheelData.configButtons.size());
+                        for (ExtraAnimationButton btn : wheelData.configButtons.values()) {
+                            ysmu.LOG.info("[YSMU-WHEEL]   btn id='{}' name='{}' desc='{}' forms={}",
+                                btn.id, btn.name, btn.description, btn.forms.size());
+                            for (int fi = 0; fi < btn.forms.size(); fi++) {
+                                ConfigForm f = btn.forms.get(fi);
+                                ysmu.LOG.info("[YSMU-WHEEL]     form[{}] type='{}' title='{}' desc='{}' default='{}' min={} max={} step={} labels={}",
+                                    fi, f.type, f.title, f.description, f.defaultValue,
+                                    f.min, f.max, f.step, f.labels);
+                            }
+                        }
+                    }
+                    ysmu.LOG.info("[YSMU-WHEEL] === End Wheel Dump ===");
                     return;
                 }
                 String[] names = ClientModelManager.EXTRA_ANIMATION_NAME.get(mainId);
@@ -297,6 +332,10 @@ public class AnimationRouletteScreen extends GuiScreen {
             this.currentEntries = wheelData.classifies.get(classifyId);
             this.currentPage = 0;
             this.currentConfigGroup = null;
+            ysmu.LOG.info("[YSMU-WHEEL] Navigated into sub-page '{}': {} entries", classifyId, this.currentEntries.size());
+            for (Map.Entry<String, String> ce : this.currentEntries.entrySet()) {
+                ysmu.LOG.info("[YSMU-WHEEL]   sub entry: key='{}' label='{}'", ce.getKey(), ce.getValue());
+            }
             return;
         }
         if (!navigationStack.isEmpty() && !classifyId.isEmpty()) {
@@ -306,6 +345,10 @@ public class AnimationRouletteScreen extends GuiScreen {
                 this.currentEntries = cf.get(classifyId);
                 this.currentPage = 0;
                 this.currentConfigGroup = null;
+                ysmu.LOG.info("[YSMU-WHEEL] Navigated into sub-page '{}' (alt path): {} entries", classifyId, this.currentEntries.size());
+                for (Map.Entry<String, String> ce : this.currentEntries.entrySet()) {
+                    ysmu.LOG.info("[YSMU-WHEEL]   sub entry: key='{}' label='{}'", ce.getKey(), ce.getValue());
+                }
             }
         }
     }
@@ -437,6 +480,7 @@ public class AnimationRouletteScreen extends GuiScreen {
             .getOrDefault(roamingName, 0.0);
         double newValue = Double.isNaN(value) ? (oldValue > 0 ? 0 : 1) : value;
         OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(roamingName, newValue);
+        ysmu.LOG.info("[YSMU-ROAM] set '{}' = {} (was {}, from '{}')", roamingName, newValue, oldValue, expression);
     }
 
     /** Gets the current value of a roaming Molang variable. */
@@ -479,7 +523,11 @@ public class AnimationRouletteScreen extends GuiScreen {
     private void handleRadioChange(int formIndex, String expression) {
         ConfigForm form = currentConfigGroup.forms.get(formIndex);
         if (StringUtils.isNotBlank(expression)) {
-            setMolangVar(expression);
+            // Handle semicolon-separated multiple assignments (e.g., "v.value_kuzi=0;v.ha=1;...")
+            String[] parts = expression.split(";");
+            for (String part : parts) {
+                setMolangVar(part.trim());
+            }
         }
     }
 
@@ -612,7 +660,10 @@ public class AnimationRouletteScreen extends GuiScreen {
                     String optExpr = label.getValue();
                     if (StringUtils.isNotBlank(optExpr) && optExpr.contains("=")) {
                         String valStr = optExpr.substring(optExpr.indexOf('=') + 1).trim();
-                        valStr = valStr.replaceAll(";+$", "").trim();
+                        // Handle semicolon-separated multiple assignments (e.g., "v.value_kuzi=0;v.ha=1;...")
+                        int semiIdx = valStr.indexOf(';');
+                        if (semiIdx > 0) valStr = valStr.substring(0, semiIdx);
+                        valStr = valStr.trim();
                         try {
                             selected = Math.abs(curVal - Double.parseDouble(valStr)) < 0.001;
                         } catch (NumberFormatException e) {
@@ -644,8 +695,10 @@ public class AnimationRouletteScreen extends GuiScreen {
             // Determine display text
             String display;
             boolean isSubOrConfig = key.startsWith(SUBMENU_PREFIX);
-            if (isSubOrConfig && label != null && label.startsWith(SUBMENU_PREFIX)) {
-                // Config button — look up the button's name for display
+            boolean isLabelConfigRef = label != null && label.startsWith(SUBMENU_PREFIX);
+            if (isLabelConfigRef) {
+                // Config button reference — look up the button's name for display,
+                // works both for top-level (key starts with #) and sub-page entries
                 String btnId = label.substring(SUBMENU_PREFIX.length());
                 String btnName = null;
                 if (wd != null && wd.configButtons.containsKey(btnId)) {
@@ -659,6 +712,7 @@ public class AnimationRouletteScreen extends GuiScreen {
                 display = StringUtils.isNotBlank(label) ? label : key;
             }
             if (StringUtils.isBlank(display)) display = key;
+            ysmu.LOG.debug("[YSMU-WHEEL] drawRouletteText: slot={} key='{}' label='{}' display='{}'", i, key, label, display);
             this.drawCenteredString(fontRendererObj, display, textX, textY - 8, 0xF3EFE0);
             // Show key binding hint only if a real key is assigned
             if (ExtraAnimationKey.EXTRA_ANIMATION_KEYS.size() > i) {

@@ -113,6 +113,14 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
         }
+        // Debug: log roaming variables relevant to pants/coat switching
+        Double dbgHa = runtimeState.variables.get("ha");
+        Double dbgHb = runtimeState.variables.get("hb");
+        Double dbgVal = runtimeState.variables.get("value_kuzi");
+        if (dbgHa != null || dbgHb != null || dbgVal != null) {
+            com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL] {} roaming: ha={} hb={} value_kuzi={} (all: {})",
+                geckoControllerName, dbgHa, dbgHb, dbgVal, runtimeState.variables);
+        }
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
@@ -245,6 +253,10 @@ public final class OpenYsmPlayerControllerRuntime {
                 continue;
             }
             boolean conditionMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context);
+            com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL]   trans: {} --[{}]--> {} = {}",
+                state.name,
+                transition.condition != null ? transition.condition.substring(0, Math.min(transition.condition.length(), 120)) : "null",
+                target.name, conditionMet);
             if (!conditionMet) {
                 continue;
             }
