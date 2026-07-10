@@ -297,11 +297,12 @@ public final class YSMSoundManager {
             // directly, which understands Vorbis.
             java.net.URL absUrl = oggPath.toAbsolutePath().toUri().toURL();
             try {
+                // boolean参数: priority=false, toLoop=false → 不循环播放
                 ss.getClass().getMethod("newSource", boolean.class, String.class,
                     java.net.URL.class, String.class, boolean.class, float.class,
                     float.class, float.class, int.class, float.class)
                     .invoke(ss, false, srcName, absUrl, absUrl.toString(),
-                        true, px, py, pz, 0, 16f);
+                        false, px, py, pz, 0, 16f);
             } catch (NoSuchMethodException e) {
                 ysmu.LOG.warn("[YSM Sound] newSource(URL) not available");
                 return;

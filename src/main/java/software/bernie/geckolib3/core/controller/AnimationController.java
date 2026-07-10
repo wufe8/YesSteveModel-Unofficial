@@ -733,17 +733,6 @@ public class AnimationController<T extends IAnimatable> {
                     currentAnimation = this.animationQueue.peek();
                 }
             } else {
-                // Debug: detect zero-length animation looping (rapid retrigger)
-                double animLen = currentAnimation.animationLength == null ? -1.0 : currentAnimation.animationLength;
-                if (animLen <= 0.0) {
-                    String ctrlName = getName() != null ? getName() : "null";
-                    com.fox.ysmu.ysmu.LOG.warn(
-                        "[YSM Sound DEBUG] LOOPING ZERO-LENGTH ANIMATION: ctrl='{}' anim='{}' len={} soundKeyFrames={}",
-                        ctrlName,
-                        currentAnimation.animationName != null ? currentAnimation.animationName : "null",
-                        String.format("%.3f", animLen),
-                        currentAnimation.soundKeyFrames.size());
-                }
                 processKeyFrameEvents(currentAnimation.animationLength);
                 resetEventKeyFrames();
                 tick = wrapLoopTick(actualTick, tick, currentAnimation.animationLength);
@@ -836,17 +825,6 @@ public class AnimationController<T extends IAnimatable> {
         if (soundListener != null) {
             for (EventKeyFrame<String> soundKeyFrame : currentAnimation.soundKeyFrames) {
                 if (!this.executedKeyFrames.contains(soundKeyFrame) && tick >= soundKeyFrame.getStartTick()) {
-                    double animLen = currentAnimation.animationLength == null ? -1.0 : currentAnimation.animationLength;
-                    String ctrlName = getName() != null ? getName() : "null";
-                    String animName = currentAnimation.animationName != null ? currentAnimation.animationName : "null";
-                    com.fox.ysmu.ysmu.LOG.info(
-                        "[YSM Sound DEBUG] KEYFRAME FIRE: ctrl='{}' anim='{}' sound='{}' tick={} animLen={} loop={} entityId={}",
-                        ctrlName, animName, soundKeyFrame.getEventData(),
-                        String.format("%.3f", tick),
-                        String.format("%.3f", animLen),
-                        currentAnimation.loop,
-                        System.identityHashCode(this.animatable));
-
                     SoundKeyframeEvent<T> event = new SoundKeyframeEvent<>(
                         this.animatable,
                         tick,

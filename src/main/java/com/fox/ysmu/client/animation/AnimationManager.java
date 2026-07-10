@@ -209,11 +209,11 @@ public final class AnimationManager {
         return playAnimation(event, animationName, ILoopType.EDefaultLoopTypes.LOOP);
     }
 
-    /** 播放 GUI 预览动画（focus/hover/hover_fadeout），使用 HOLD_ON_LAST_FRAME
-     *  使音效关键帧只在首次播放时触发，不会循环重复。 */
+    /** 播放 GUI 预览动画（focus/hover/hover_fadeout），使用 LOOP
+     *  模型作者设计为每 1000 秒循环一次触发音效，保持原设计行为。 */
     @NotNull
     private static <P extends IAnimatable> PlayState playGuiPreviewAnimation(AnimationEvent<P> event, String animationName) {
-        return playAnimation(event, animationName, ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME);
+        return playAnimation(event, animationName, ILoopType.EDefaultLoopTypes.LOOP);
     }
 
     @NotNull
@@ -339,8 +339,13 @@ public final class AnimationManager {
                 return PlayState.STOP;
             }
             if (animatable.hasPreviewAnimation()) {
+                // 控制器从 STOP → PLAY 时强制重载，使动画从 tick 0 重新开始，
+                // 这样音效关键帧每次选中模型时都会重新触发，但不会循环重复。
+                if (event.getController().getAnimationState() == software.bernie.geckolib3.core.AnimationState.Stopped) {
+                    event.getController().markNeedsReload();
+                }
                 // GUI 预览动画（focus/hover）使用 HOLD_ON_LAST_FRAME，
-                // 这样音效关键帧只在首次播放时触发一次，不会循环重复。
+                // 动画播放到最后一帧后保持，音效关键帧只触发一次。
                 return playGuiPreviewAnimation(event, animatable.getPreviewAnimation());
             }
             return PlayState.STOP;
