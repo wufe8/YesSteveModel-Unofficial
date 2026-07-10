@@ -22,7 +22,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
-import com.fox.ysmu.ysmu;
 
 import com.google.common.collect.Lists;
 
@@ -499,13 +498,6 @@ public final class AnimationManager {
                     String targetName = mappedName != null ? mappedName : animationName;
                     if (animFile != null && animFile.animations.containsKey(targetName)) {
                         Animation anim = animFile.animations.get(targetName);
-                        // if ("sneak".equals(animationName) || "sneaking".equals(animationName)
-                        //     || "sneaking_sky".equals(animationName) || "sneaking_start".equals(animationName)) {
-                        //     com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG] predicateMain: state={} mapped={} exists={} nonEmpty={} limbSwing={} isMoving={} isSneaking={}",
-                        //         animationName, targetName, true, isAnimationNonEmpty(anim),
-                        //         String.format("%.4f", event.getLimbSwingAmount()),
-                        //         event.isMoving(), player.isSneaking());
-                        // }
                         // 跳过空桩动画（loop:true 无 bones）
                         if (!isAnimationNonEmpty(anim)) {
                             continue;

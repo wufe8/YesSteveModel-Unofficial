@@ -54,11 +54,9 @@ public final class RawYsmModelAdapter {
             return false;
         }
         if (!hasGeometry(raw.mainEntity.mainModel)) {
-            ysmu.LOG.warn("[YSMU-DBG] isBridgeable false: no main geometry for {}", raw.modelId);
             return false;
         }
         if (!hasGeometry(raw.mainEntity.armModel)) {
-            ysmu.LOG.warn("[YSMU-DBG] isBridgeable false: no arm geometry for {}", raw.modelId);
             return false;
         }
         boolean hasTexture = false;

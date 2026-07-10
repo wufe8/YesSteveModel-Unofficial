@@ -135,7 +135,6 @@ public final class YSMSoundManager {
      */
     public static void onSoundKeyframe(String controllerName, String soundName) {
         if (controllerName == null || soundName == null) return;
-        ysmu.LOG.info("[YSM Sound DEBUG] KEYFRAME sound: controller='{}' sound='{}'", controllerName, soundName);
         // If this controller was playing a different sound, stop the old one
         String oldSound = CONTROLLER_SOUNDS.get(controllerName);
         if (oldSound != null && !oldSound.equals(soundName)) {

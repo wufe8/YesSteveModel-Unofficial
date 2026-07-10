@@ -13,7 +13,6 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
@@ -25,7 +24,6 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
-import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
@@ -120,9 +118,6 @@ public final class OpenYsmPlayerControllerRuntime {
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
         State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
-            if (geckoControllerName.contains("parallel") || geckoControllerName.contains("main")) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG] ctrl={} state=null (no initial state)", geckoControllerName);
-            }
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
@@ -168,12 +163,6 @@ public final class OpenYsmPlayerControllerRuntime {
         // "animations" list plays all entries simultaneously; selectAnimation
         // only returns the first match for historical code that expects one.
         List<String> activeAnimations = collectActiveAnimations(state, animationId, context);
-        if (!activeAnimations.isEmpty() && (geckoControllerName.contains("parallel") || geckoControllerName.contains("main"))) {
-            com.fox.ysmu.ysmu.LOG.debug("[YSMU-DBG] ctrl={} state={} anims={} isMoving={} isSneaking={}",
-                geckoControllerName, state.name, String.join(",", activeAnimations),
-                event.isMoving(),
-                Minecraft.getMinecraft().thePlayer != null ? Minecraft.getMinecraft().thePlayer.isSneaking() : "?");
-        }
         if (activeAnimations.isEmpty()) {
             State initialState = match.controller.getInitialState();
             if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
@@ -239,8 +228,6 @@ public final class OpenYsmPlayerControllerRuntime {
         if (initial == null) {
             return null;
         }
-        ysmu.LOG.info("[YSMU-DBG] ensureState: entering initial state '{}' for ctrl '{}'",
-            initial.name, controller.name);
         runtimeState.currentState = initial.name;
         runtimeState.enteredTick = event.getAnimationTick();
         runtimeState.lastSelectedAnimationState = "";
@@ -261,8 +248,6 @@ public final class OpenYsmPlayerControllerRuntime {
             if (!conditionMet) {
                 continue;
             }
-            com.fox.ysmu.ysmu.LOG.debug("[YSMU-DBG] ctrl transition: {} -> {} (cond={})", state.name, target.name,
-                transition.condition != null ? transition.condition.substring(0, Math.min(transition.condition.length(), 80)) : "null");
             // Delay start→sky so sneaking_start is visible for at least 5
             // ticks before transitioning to the stationary crouch pose.
             if ("sky".equals(target.name) && "start".equals(state.name)
@@ -286,7 +271,6 @@ public final class OpenYsmPlayerControllerRuntime {
     private static void playStateSounds(State state, EntityPlayer player) {
         if (state.soundEffects == null || state.soundEffects.isEmpty()) return;
         if (player == null) return;
-        ysmu.LOG.info("[YSM Sound DEBUG] STATE sound: state='{}' sounds={}", state.name, state.soundEffects);
         for (String soundName : state.soundEffects) {
             if (soundName != null && !soundName.isEmpty()) {
                 com.fox.ysmu.client.audio.YSMSoundManager.playSound(player, soundName, 1.0f, 1.0f);
