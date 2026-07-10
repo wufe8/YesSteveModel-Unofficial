@@ -36,9 +36,10 @@ public final class YSMSoundManager {
     /** Lazily cached SoundSystem reflection handle */
     private static Object sndSystem = null;
     private static boolean sndSystemSearched = false;
-    /** Debug: track last play time per sound name to detect rapid retriggering */
-    private static final Map<String, Long> LAST_PLAY_TIME = new ConcurrentHashMap<>();
-    private static final long MIN_PLAY_INTERVAL_MS = 100L;
+    // Cooldown: disabled — the real issue is sounds playing when they shouldn't,
+    // not rapid retriggering. See cap_controller '使用' keyframe on GUI model select.
+    // private static final Map<String, Long> LAST_PLAY_TIME = new ConcurrentHashMap<>();
+    // private static final long SOUND_COOLDOWN_MS = 500L;
 
     private YSMSoundManager() {}
 
@@ -74,31 +75,41 @@ public final class YSMSoundManager {
     public static void playSound(EntityPlayer player, String soundName, float volume, float pitch) {
         if (soundName == null || soundName.isEmpty()) return;
 
-        // Debug: detect rapid retriggering of the same sound
-        long now = System.currentTimeMillis();
-        Long lastPlay = LAST_PLAY_TIME.get(soundName);
-        if (lastPlay != null && (now - lastPlay) < MIN_PLAY_INTERVAL_MS) {
-            ysmu.LOG.warn("[YSM Sound DEBUG] SOUND RAPID RETRIGGER: '{}' last={}ms ago (interval={}ms) — possible infinite loop!",
-                soundName, (now - lastPlay), MIN_PLAY_INTERVAL_MS);
-            // Log caller stack (throttled: once per sound per 5 seconds)
-            String throttleKey = "stack_" + soundName;
-            Long lastStack = LAST_PLAY_TIME.get(throttleKey);
-            if (lastStack == null || (now - lastStack) > 5000L) {
-                LAST_PLAY_TIME.put(throttleKey, now);
-                java.io.StringWriter sw = new java.io.StringWriter();
-                new Throwable("playSound caller stack").printStackTrace(new java.io.PrintWriter(sw));
-                String[] lines = sw.toString().split("\n");
-                StringBuilder sb = new StringBuilder();
-                for (int i = 0; i < Math.min(lines.length, 20); i++) {
-                    sb.append(lines[i]).append("\n");
+        // Cooldown disabled — the real issue is sounds playing when they shouldn't.
+        // long now = System.currentTimeMillis();
+        // Long lastPlay = LAST_PLAY_TIME.get(soundName);
+        // if (lastPlay != null && (now - lastPlay) < SOUND_COOLDOWN_MS) {
+        //     ysmu.LOG.warn("[YSM Sound] COOLDOWN: '{}' blocked ({}ms since last play, min={}ms)",
+        //         soundName, (now - lastPlay), SOUND_COOLDOWN_MS);
+        //     String throttleKey = "stack_" + soundName;
+        //     Long lastStack = LAST_PLAY_TIME.get(throttleKey);
+        //     if (lastStack == null || (now - lastStack) > 10000L) {
+        //         LAST_PLAY_TIME.put(throttleKey, now);
+        //         java.io.StringWriter sw = new java.io.StringWriter();
+        //         new Throwable("playSound rapid retrigger caller").printStackTrace(new java.io.PrintWriter(sw));
+        //         String[] lines = sw.toString().split("\n");
+        //         StringBuilder sb = new StringBuilder();
+        //         for (int i = 0; i < Math.min(lines.length, 20); i++) {
+        //             sb.append(lines[i]).append("\n");
+        //         }
+        //         ysmu.LOG.warn("[YSM Sound] COOLDOWN caller stack for '{}':\n{}", soundName, sb);
+        //     }
+        //     return;
+        // }
+        // LAST_PLAY_TIME.put(soundName, now);
+
+        // Model sound: try exact name lookup first, then filename-based lookup
+        Path file = SOUND_FILES.get(soundName);
+        if (file == null) {
+            // Fallback: search by the cached filename (e.g. ___93154897.ogg → '使用')
+            for (Map.Entry<String, Path> e : SOUND_FILES.entrySet()) {
+                if (e.getValue().getFileName().toString().equals(soundName)
+                    || e.getValue().getFileName().toString().equalsIgnoreCase(soundName)) {
+                    file = e.getValue();
+                    break;
                 }
-                ysmu.LOG.warn("[YSM Sound DEBUG] Caller stack for '{}':\n{}", soundName, sb);
             }
         }
-        LAST_PLAY_TIME.put(soundName, now);
-
-        // Model sound
-        Path file = SOUND_FILES.get(soundName);
         if (file != null) {
             // Stop previous sound with same name
             stopSound(soundName);

@@ -22,6 +22,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
+import com.fox.ysmu.ysmu;
 
 import com.google.common.collect.Lists;
 
@@ -331,7 +332,10 @@ public final class AnimationManager {
                 return PlayState.STOP;
             }
             if (animatable.hasPreviewAnimation()) {
-                return playLoopAnimation(event, animatable.getPreviewAnimation());
+                String previewAnim = animatable.getPreviewAnimation();
+                ysmu.LOG.info("[YSMU-DBG] predicateCap GUI: playing previewAnim='{}' entityId={}",
+                    previewAnim, System.identityHashCode(animatable));
+                return playLoopAnimation(event, previewAnim);
             }
             return PlayState.STOP;
         }
