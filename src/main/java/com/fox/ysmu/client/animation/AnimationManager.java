@@ -209,6 +209,13 @@ public final class AnimationManager {
         return playAnimation(event, animationName, ILoopType.EDefaultLoopTypes.LOOP);
     }
 
+    /** 播放 GUI 预览动画（focus/hover/hover_fadeout），使用 HOLD_ON_LAST_FRAME
+     *  使音效关键帧只在首次播放时触发，不会循环重复。 */
+    @NotNull
+    private static <P extends IAnimatable> PlayState playGuiPreviewAnimation(AnimationEvent<P> event, String animationName) {
+        return playAnimation(event, animationName, ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME);
+    }
+
     @NotNull
     private static <P extends IAnimatable> PlayState playAnimation(AnimationEvent<P> event, String animationName,
         ILoopType loopType) {
@@ -332,10 +339,9 @@ public final class AnimationManager {
                 return PlayState.STOP;
             }
             if (animatable.hasPreviewAnimation()) {
-                String previewAnim = animatable.getPreviewAnimation();
-                ysmu.LOG.info("[YSMU-DBG] predicateCap GUI: playing previewAnim='{}' entityId={}",
-                    previewAnim, System.identityHashCode(animatable));
-                return playLoopAnimation(event, previewAnim);
+                // GUI 预览动画（focus/hover）使用 HOLD_ON_LAST_FRAME，
+                // 这样音效关键帧只在首次播放时触发一次，不会循环重复。
+                return playGuiPreviewAnimation(event, animatable.getPreviewAnimation());
             }
             return PlayState.STOP;
         }
