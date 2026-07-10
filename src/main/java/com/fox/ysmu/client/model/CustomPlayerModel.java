@@ -166,22 +166,25 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 // Hide expression/effect overlay bones by default.
                 // Extra (wheel) animations explicitly set these bones' visibility:
                 // when extraAnimActive we setHidden(false) so the animation takes control.
-                boolean isExpression = name.equals("Effects") || name.equals("Sweat")
-                    || name.contains("Effect") || name.contains("LaughEyes")
-                    || name.contains("CryEyes") || name.contains("DizzinessEyes")
-                    || name.contains("SpeechlessBrow") || name.contains("EyeBrow2")
-                    || name.equals("AngerFace1") || name.equals("BlackFace1") || name.equals("BlackFace2")
-                    || name.equals("AngryMouth1") || name.equals("AngryEffects1")
-                    || name.equals("SurprisedEffects1") || name.equals("SurprisedEffects2")
-                    || name.equals("SurprisedMouth1") || name.equals("SurprisedMouth2")
-                    || name.equals("SpeechlessEffects1") || name.equals("SpeechlessEffects2")
-                    || name.equals("SpeechlessEffects3") || name.equals("SpeechlessEffects4")
-                    || name.equals("SpeechlessEffects5") || name.equals("SpeechlessEffects6")
-                    || name.equals("SpeechlessMouth1") || name.equals("CryMouth1") || name.equals("CryMouth2")
-                    || name.equals("LaughMouth1") || name.equals("LaughMouth2") || name.equals("LaughMouth3")
-                    || name.equals("LaughMouth4") || name.equals("IdiotMouth1") || name.equals("ZheMeQiang")
-                    || name.equals("ConfusionEffects1") || name.equals("SoundEffects1")
-                    || name.contains("RightSpeechless") || name.contains("LeftSpeechless");
+                // TODO: 2025-06: 之前硬编码列表不完整，不同模型命名有差异。
+                // 暂时注释掉，依赖动画控制器 Molang 表达式处理表情骨骼可见性。
+                boolean isExpression = false;
+                //boolean isExpression = name.equals("Effects") || name.equals("Sweat")
+                //    || name.contains("Effect") || name.contains("LaughEyes")
+                //    || name.contains("CryEyes") || name.contains("DizzinessEyes")
+                //    || name.contains("SpeechlessBrow") || name.contains("EyeBrow2")
+                //    || name.equals("AngerFace1") || name.equals("BlackFace1") || name.equals("BlackFace2")
+                //    || name.equals("AngryMouth1") || name.equals("AngryEffects1")
+                //    || name.equals("SurprisedEffects1") || name.equals("SurprisedEffects2")
+                //    || name.equals("SurprisedMouth1") || name.equals("SurprisedMouth2")
+                //    || name.equals("SpeechlessEffects1") || name.equals("SpeechlessEffects2")
+                //    || name.equals("SpeechlessEffects3") || name.equals("SpeechlessEffects4")
+                //    || name.equals("SpeechlessEffects5") || name.equals("SpeechlessEffects6")
+                //    || name.equals("SpeechlessMouth1") || name.equals("CryMouth1") || name.equals("CryMouth2")
+                //    || name.equals("LaughMouth1") || name.equals("LaughMouth2") || name.equals("LaughMouth3")
+                //    || name.equals("LaughMouth4") || name.equals("IdiotMouth1") || name.equals("ZheMeQiang")
+                //    || name.equals("ConfusionEffects1") || name.equals("SoundEffects1")
+                //    || name.contains("RightSpeechless") || name.contains("LeftSpeechless");
                 // Hide bones belonging to the model's preview animation (e.g. gui decoration).
                 // Skip in GUI screens (model selection/roulette preview) so decorative
                 // background objects from the preview animation remain visible.

@@ -269,10 +269,11 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             // Delay start→sky so sneaking_start is visible for at least 5
             // ticks before transitioning to the stationary crouch pose.
-            if ("sky".equals(target.name) && "start".equals(state.name)
-                && event.getAnimationTick() - runtimeState.enteredTick < 5.0) {
-                continue;
-            }
+            // TODO: 2025-06: 暂时注释掉硬编码的 sky/start 延迟，测试 Molang 表达式是否已能正确处理
+            //if ("sky".equals(target.name) && "start".equals(state.name)
+            //    && event.getAnimationTick() - runtimeState.enteredTick < 5.0) {
+            //    continue;
+            //}
             OpenYsmControllerExpressionEvaluator.executeStatements(state.onExit, context);
             runtimeState.currentState = target.name;
             runtimeState.hasLeftInitial = true;
