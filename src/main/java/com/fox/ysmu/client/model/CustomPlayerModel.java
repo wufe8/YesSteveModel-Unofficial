@@ -84,8 +84,10 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             AnimationRegister.setParserValue(animationEvent, parser, data, player);
             try {
                 super.setLivingAnimations(animatable, instanceId, animationEvent);
-                this.codeAnimation(animationEvent, data, player);
-                applyWeaponBoneVisibility(customPlayer, player);
+                if (!TEST_SKIP_EXTRA_STEPS) {
+                    this.codeAnimation(animationEvent, data, player);
+                    applyWeaponBoneVisibility(customPlayer, player);
+                }
             } finally {
                 MolangPhysicsRuntime.end();
             }
@@ -325,6 +327,10 @@ public class CustomPlayerModel extends AnimatedGeoModel {
     }
 
     /** Clears the static preview bone cache (e.g. during /ysm reload). */
+    /** TEMP TEST FLAG: when true, skip codeAnimation + applyWeaponBoneVisibility during gameplay.
+     *  Set to false after testing to restore normal behavior. */
+    public static boolean TEST_SKIP_EXTRA_STEPS = false;
+
     public static void clearPreviewBoneCache() {
         PREVIEW_BONE_CACHE.clear();
         VISIBILITY_LOG_THROTTLE.clear();

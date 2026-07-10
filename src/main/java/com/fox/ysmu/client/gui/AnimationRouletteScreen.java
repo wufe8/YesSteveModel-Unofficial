@@ -486,6 +486,7 @@ public class AnimationRouletteScreen extends GuiScreen {
             .getOrDefault(roamingName, 0.0);
         double newValue = Double.isNaN(value) ? (oldValue > 0 ? 0 : 1) : value;
         OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(roamingName, newValue);
+        OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.add(roamingName);
         if (Config.DEBUG_WHEEL) {
             ysmu.LOG.info("[YSMU-ROAM] set '{}' = {} (was {}, from '{}')", roamingName, newValue, oldValue, expression);
         }

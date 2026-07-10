@@ -37,6 +37,8 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
     private final Set<String> missingGeoModelLogged = Collections.synchronizedSet(new HashSet<>());
     /** Tracks the last main model per player to detect model switches. */
     private final Map<UUID, ResourceLocation> lastPlayerModel = new ConcurrentHashMap<>();
+    /** Frame counter for throttled render diagnostics. */
+    private int renderDiagFrame = 0;
 
     @SuppressWarnings("all")
     public CustomPlayerRenderer() {
@@ -85,13 +87,6 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
             .getGeoModels()
             .get(location);
         if (geoModel != null) {
-            // Throttled render diagnostic: confirm rendering path is reached
-            String rKey = "render:" + location;
-            if (missingGeoModelLogged.add(rKey)) {
-                com.fox.ysmu.ysmu.LOG.info("YSM rendering '{}' (mainModel={}, topLevelBones={})",
-                    location, actualMain,
-                    geoModel.topLevelBones != null ? geoModel.topLevelBones.size() : 0);
-            }
             this.geoModel = geoModel;
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
         } else {

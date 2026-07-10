@@ -40,6 +40,10 @@ public final class OpenYsmPlayerControllerRuntime {
     /** Roaming variables set from outside the render loop (e.g. GUI config panel).
      *  Key is the variable name WITHOUT the "v." prefix (e.g. "roaming.ef"). */
     public static final Map<String, Double> PENDING_ROAMING = new ConcurrentHashMap<>();
+    /** Tracks which PENDING_ROAMING keys were explicitly set by user interaction
+     *  (not just default-initialized). Used by the ?? operator to distinguish
+     *  "user set to 0" from "never set (defaults to 0)". */
+    public static final java.util.Set<String> EXPLICIT_ROAMING = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     private OpenYsmPlayerControllerRuntime() {}
 

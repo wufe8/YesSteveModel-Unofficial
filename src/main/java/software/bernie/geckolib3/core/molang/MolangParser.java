@@ -300,15 +300,22 @@ public class MolangParser extends MathBuilder {
                 @Override
                 public double get() {
                     double l = leftVal.get();
-                    // If the variable was explicitly set in the MolangPhysicsRuntime
-                    // context (even to 0), prefer the actual value.  This is checked
-                    // directly here because the anonymous IValue does not know whether
-                    // its left side is a ScopedMolangVariable or a constant.
+                    double r = rightVal.get();
+                    // Check if the variable was EXPLICITLY set by the user (via GUI/config),
+                    // not just default-initialized.  Default-initialized variables are in
+                    // PENDING_ROAMING but NOT in EXPLICIT_ROAMING, so they still fall
+                    // through to the default when their value is 0.
+                    boolean userSet = false;
+                    String lookupName = leftExpr.startsWith("v.") ? leftExpr.substring(2) : leftExpr;
                     if (com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.containsKey(leftExpr)) {
-                        return l;
+                        userSet = com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.contains(lookupName);
                     }
-                    // Original fallback: treat unset/zero as "use default"
-                    return l != 0 ? l : rightVal.get();
+                    double result = userSet ? l : (l != 0 ? l : r);
+                    if ((leftExpr.contains("player_root_size") || userSet) && com.fox.ysmu.ysmu.LOG.isInfoEnabled()) {
+                        com.fox.ysmu.ysmu.LOG.info("[YSMU-??] '{}': l={}, r={}, userSet={}, result={}",
+                            leftExpr, l, r, userSet, result);
+                    }
+                    return result;
                 }
             });
         }

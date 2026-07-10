@@ -91,6 +91,7 @@ final class OpenYsmControllerExpressionEvaluator {
                 // tryApplyController() 的注入循环用陈旧值覆盖刚设的值
                 if (varName.startsWith("roaming.")) {
                     OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(varName, value);
+                    OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.add(varName);
                 }
             }
         }
