@@ -36,6 +36,9 @@ public final class YSMSoundManager {
     /** Lazily cached SoundSystem reflection handle */
     private static Object sndSystem = null;
     private static boolean sndSystemSearched = false;
+    /** Debug: track last play time per sound name to detect rapid retriggering */
+    private static final Map<String, Long> LAST_PLAY_TIME = new ConcurrentHashMap<>();
+    private static final long MIN_PLAY_INTERVAL_MS = 100L;
 
     private YSMSoundManager() {}
 
@@ -70,6 +73,30 @@ public final class YSMSoundManager {
      */
     public static void playSound(EntityPlayer player, String soundName, float volume, float pitch) {
         if (soundName == null || soundName.isEmpty()) return;
+
+        // Debug: detect rapid retriggering of the same sound
+        long now = System.currentTimeMillis();
+        Long lastPlay = LAST_PLAY_TIME.get(soundName);
+        if (lastPlay != null && (now - lastPlay) < MIN_PLAY_INTERVAL_MS) {
+            ysmu.LOG.warn("[YSM Sound DEBUG] SOUND RAPID RETRIGGER: '{}' last={}ms ago (interval={}ms) — possible infinite loop!",
+                soundName, (now - lastPlay), MIN_PLAY_INTERVAL_MS);
+            // Log caller stack (throttled: once per sound per 5 seconds)
+            String throttleKey = "stack_" + soundName;
+            Long lastStack = LAST_PLAY_TIME.get(throttleKey);
+            if (lastStack == null || (now - lastStack) > 5000L) {
+                LAST_PLAY_TIME.put(throttleKey, now);
+                java.io.StringWriter sw = new java.io.StringWriter();
+                new Throwable("playSound caller stack").printStackTrace(new java.io.PrintWriter(sw));
+                String[] lines = sw.toString().split("\n");
+                StringBuilder sb = new StringBuilder();
+                for (int i = 0; i < Math.min(lines.length, 20); i++) {
+                    sb.append(lines[i]).append("\n");
+                }
+                ysmu.LOG.warn("[YSM Sound DEBUG] Caller stack for '{}':\n{}", soundName, sb);
+            }
+        }
+        LAST_PLAY_TIME.put(soundName, now);
+
         // Model sound
         Path file = SOUND_FILES.get(soundName);
         if (file != null) {
@@ -97,6 +124,7 @@ public final class YSMSoundManager {
      */
     public static void onSoundKeyframe(String controllerName, String soundName) {
         if (controllerName == null || soundName == null) return;
+        ysmu.LOG.info("[YSM Sound DEBUG] KEYFRAME sound: controller='{}' sound='{}'", controllerName, soundName);
         // If this controller was playing a different sound, stop the old one
         String oldSound = CONTROLLER_SOUNDS.get(controllerName);
         if (oldSound != null && !oldSound.equals(soundName)) {

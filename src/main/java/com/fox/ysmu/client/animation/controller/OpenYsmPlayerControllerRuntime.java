@@ -239,6 +239,8 @@ public final class OpenYsmPlayerControllerRuntime {
         if (initial == null) {
             return null;
         }
+        ysmu.LOG.info("[YSMU-DBG] ensureState: entering initial state '{}' for ctrl '{}'",
+            initial.name, controller.name);
         runtimeState.currentState = initial.name;
         runtimeState.enteredTick = event.getAnimationTick();
         runtimeState.lastSelectedAnimationState = "";
@@ -259,6 +261,8 @@ public final class OpenYsmPlayerControllerRuntime {
             if (!conditionMet) {
                 continue;
             }
+            com.fox.ysmu.ysmu.LOG.debug("[YSMU-DBG] ctrl transition: {} -> {} (cond={})", state.name, target.name,
+                transition.condition != null ? transition.condition.substring(0, Math.min(transition.condition.length(), 80)) : "null");
             // Delay start→sky so sneaking_start is visible for at least 5
             // ticks before transitioning to the stationary crouch pose.
             if ("sky".equals(target.name) && "start".equals(state.name)
@@ -282,6 +286,7 @@ public final class OpenYsmPlayerControllerRuntime {
     private static void playStateSounds(State state, EntityPlayer player) {
         if (state.soundEffects == null || state.soundEffects.isEmpty()) return;
         if (player == null) return;
+        ysmu.LOG.info("[YSM Sound DEBUG] STATE sound: state='{}' sounds={}", state.name, state.soundEffects);
         for (String soundName : state.soundEffects) {
             if (soundName != null && !soundName.isEmpty()) {
                 com.fox.ysmu.client.audio.YSMSoundManager.playSound(player, soundName, 1.0f, 1.0f);

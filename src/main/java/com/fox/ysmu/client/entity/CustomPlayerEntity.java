@@ -119,6 +119,9 @@ public class CustomPlayerEntity implements IAnimatable {
 
     public void setMainModel(ResourceLocation mainModel) {
         this.mainModel = mainModel;
+        // When the model changes, stop all YSM sounds from the previous model
+        // to prevent lingering audio.
+        com.fox.ysmu.client.audio.YSMSoundManager.stopAll();
     }
 
     public ResourceLocation getAnimation() {
