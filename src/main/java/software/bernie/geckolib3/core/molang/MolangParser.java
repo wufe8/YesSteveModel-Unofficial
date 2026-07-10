@@ -287,7 +287,9 @@ public class MolangParser extends MathBuilder {
         }
 
         // Handle null-coalescing operator: a ?? b
-        // Equivalent to: a != 0 ? a : b
+        // Intended semantics: use a if it was explicitly set (even to 0),
+        // otherwise fall back to b.  The original implementation checked
+        // l != 0, which treated explicit 0 the same as "never set".
         int ncIdx = findNullCoalesce(expression);
         if (ncIdx > 0) {
             String leftExpr = expression.substring(0, ncIdx).trim();
@@ -298,6 +300,14 @@ public class MolangParser extends MathBuilder {
                 @Override
                 public double get() {
                     double l = leftVal.get();
+                    // If the variable was explicitly set in the MolangPhysicsRuntime
+                    // context (even to 0), prefer the actual value.  This is checked
+                    // directly here because the anonymous IValue does not know whether
+                    // its left side is a ScopedMolangVariable or a constant.
+                    if (com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.containsKey(leftExpr)) {
+                        return l;
+                    }
+                    // Original fallback: treat unset/zero as "use default"
                     return l != 0 ? l : rightVal.get();
                 }
             });

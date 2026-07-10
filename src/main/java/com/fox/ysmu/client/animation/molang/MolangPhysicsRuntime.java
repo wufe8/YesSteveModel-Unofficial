@@ -118,6 +118,17 @@ public final class MolangPhysicsRuntime {
         return value == null ? fallback : value;
     }
 
+    /**
+     * Checks whether a variable was explicitly set in the current frame context.
+     * This is used by the null-coalescing operator (??) to distinguish between
+     * "variable was explicitly set to 0" and "variable was never set (defaults to 0)".
+     */
+    public static boolean containsKey(String name) {
+        FrameContext context = CURRENT.get();
+        if (context == null) return false;
+        return context.state.variables.containsKey(name);
+    }
+
     public static boolean setVariable(String name, double value) {
         FrameContext context = CURRENT.get();
         if (context == null) {
