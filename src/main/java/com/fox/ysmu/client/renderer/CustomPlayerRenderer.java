@@ -67,6 +67,7 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 // Detect model switch and reset stale per-player animation state
                 if (oldModel != null && !oldModel.equals(newModel)) {
                     com.fox.ysmu.client.animation.AnimationManager.getInstance().resetPlayerState(pid);
+                    com.fox.ysmu.client.audio.YSMSoundManager.stopAll();
                 }
                 lastPlayerModel.put(pid, newModel);
             }
