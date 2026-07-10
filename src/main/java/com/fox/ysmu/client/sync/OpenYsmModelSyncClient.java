@@ -13,6 +13,7 @@ import net.minecraft.util.ResourceLocation;
 
 import org.apache.commons.io.FileUtils;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.model.ServerModelManager;
@@ -151,6 +152,10 @@ public final class OpenYsmModelSyncClient {
         List<ModelHash> modelsToRequest = new ArrayList<>();
         int serverModelCount = buf.readVarInt();
         ysmu.LOG.info("OpenYSM client received sync index: models={}", serverModelCount);
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
+                serverModelCount, localCacheMap.size());
+        }
 
         for (int i = 0; i < serverModelCount; i++) {
             long hash1 = buf.readVarLong();
@@ -166,12 +171,21 @@ public final class OpenYsmModelSyncClient {
                 cacheHitCount++;
                 byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
                 byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Client cache HIT for {} ({}), cachedFile={}",
+                        modelId, context.uuid, cachedFile);
+                }
                 if (parseAndRegisterModel(clearBytes, context)) {
                     loadedModelsCount++;
                 }
                 ysmu.LOG.info("OpenYSM client cache hit for {} ({})", modelId, context.uuid);
             } else {
                 modelsToRequest.add(new ModelHash(hash1, hash2));
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Client cache MISS for {} ({}), cachedFile={}",
+                        modelId, context.uuid,
+                        cachedFile != null ? cachedFile : "(no local cache)");
+                }
                 ysmu.LOG.info("OpenYSM client cache miss for {} ({})", modelId, context.uuid);
             }
         }
@@ -254,6 +268,15 @@ public final class OpenYsmModelSyncClient {
             deserializer.parseYSMFooter(raw);
             raw.modelId = context.modelId;
             ResourceLocation modelId = ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, context.modelId));
+
+            if (Config.DEBUG_MODEL_LOAD) {
+                int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
+                int animCount = raw.mainEntity != null ? raw.mainEntity.animationFiles.size() : 0;
+                ysmu.LOG.info("[YSMU-MODEL] Client parseAndRegisterModel: {} (uuid={}), "
+                    + "formatVersion={}, textures={}, animations={}",
+                    context.modelId, context.uuid, raw.formatVersion, texCount, animCount);
+            }
+
             // Always register extra wheel data, even for non-bridgeable models
             Minecraft.getMinecraft().func_152344_a(() -> {
                 ClientModelManager.registerExtraWheel(modelId, raw);
@@ -262,7 +285,16 @@ public final class OpenYsmModelSyncClient {
                 ysmu.LOG.warn("OpenYSM synced model {} is not bridgeable to legacy ModelData, skipped", context.modelId);
                 return false;
             }
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Client bridgeable OK, converting to legacy ModelData...");
+            }
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, context.modelId);
+
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Client registering model {}: models={}, textures={}, animations={}",
+                    context.modelId, data.getModel().keySet(), data.getTexture().keySet(), data.getAnimation().keySet());
+            }
+
             Minecraft.getMinecraft().func_152344_a(() -> {
                 ClientModelManager.registerAll(data);
             });

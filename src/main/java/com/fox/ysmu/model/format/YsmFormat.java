@@ -12,9 +12,11 @@ import java.util.Map;
 import org.apache.commons.io.FileUtils;
 import org.jetbrains.annotations.NotNull;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.util.ModelIdUtil;
 import com.fox.ysmu.util.YesModelUtils;
+import com.fox.ysmu.ysmu;
 import com.google.common.collect.Maps;
 
 import software.bernie.geckolib3.geo.raw.pojo.Converter;
@@ -24,11 +26,21 @@ public final class YsmFormat {
 
     public static void cacheAllModels(Path rootPath) {
         Collection<File> ysmFiles = FileUtils.listFiles(rootPath.toFile(), new String[] { "ysm" }, false);
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat scanning {}: found {} .ysm files", rootPath, ysmFiles.size());
+        }
         for (File ysmFile : ysmFiles) {
             String modelId = ModelIdUtil.getInternalModelId(removeExtension(ysmFile.getName()));
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat processing: {} -> modelId={}, size={}",
+                    ysmFile.getName(), modelId, ysmFile.length());
+            }
             try {
                 Map<String, byte[]> data = YesModelUtils.input(ysmFile);
                 if (data.isEmpty()) {
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: YesModelUtils.input returned empty (not legacy format or corrupt)", ysmFile.getName());
+                    }
                     continue;
                 }
                 if (!data.containsKey(MAIN_MODEL_FILE_NAME)) {
@@ -40,12 +52,22 @@ public final class YsmFormat {
                 if (data.keySet()
                     .stream()
                     .noneMatch(fileName -> fileName.endsWith(".png"))) {
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: no .png texture found, files={}",
+                            ysmFile.getName(), data.keySet());
+                    }
                     continue;
                 }
 
                 ServerModelInfo info = cacheModel(data, modelId);
                 if (info != null) {
                     CACHE_NAME_INFO.put(modelId, info);
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: cached to CACHE_NAME_INFO as {}",
+                            ysmFile.getName(), modelId);
+                    }
+                } else if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: cacheModel returned null", ysmFile.getName());
                 }
             } catch (IOException e) {
                 e.printStackTrace();

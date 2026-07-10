@@ -22,6 +22,7 @@ import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.filefilter.FileFileFilter;
 import org.apache.commons.lang3.StringUtils;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.animation.AnimationManager;
 import com.fox.ysmu.client.animation.condition.ConditionManager;
 import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
@@ -115,6 +116,9 @@ public class ClientModelManager {
             data.getModel().keySet(),
             data.getTexture().keySet(),
             data.getAnimation().keySet());
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] registerAll start: modelId={}", modelId);
+        }
         registerGeometry(modelId, data);
         registerModelTextures(modelId, data);
         try {
@@ -122,11 +126,17 @@ public class ClientModelManager {
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to register animations for model {}", modelId, e);
         }
+        boolean inModels = MODELS.containsKey(modelId);
+        int texCount = MODELS.get(modelId) == null ? 0 : MODELS.get(modelId).size();
         ysmu.LOG.info(
             "YSM client registered model {}: totalModelEntries={}, textureCount={}",
             modelId,
             MODELS.size(),
-            MODELS.get(modelId) == null ? 0 : MODELS.get(modelId).size());
+            texCount);
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] registerAll done: modelId={}, inMODELS={}, textures={}, totalModels={}",
+                modelId, inModels, texCount, MODELS.size());
+        }
         detectModelPacks();
     }
 
@@ -251,6 +261,9 @@ public class ClientModelManager {
         for (String name : mapData.keySet()) {
             byte[] data = mapData.get(name);
             ResourceLocation textureId = ModelIdUtil.getSubModelId(id, name);
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL]   registering texture {} ({} bytes)", textureId, data.length);
+            }
             try {
                 registerTexture(textureId, data);
             } catch (Exception e) {

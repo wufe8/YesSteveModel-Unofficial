@@ -106,6 +106,12 @@ public final class ServerModelManager {
     }
 
     public static void reloadPacks() {
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] ===== Starting model reload =====");
+            ysmu.LOG.info("[YSMU-MODEL] CUSTOM dir: {} (exists={})", CUSTOM, Files.isDirectory(CUSTOM));
+            ysmu.LOG.info("[YSMU-MODEL] BUILT dir: {} (exists={})", BUILT, Files.isDirectory(BUILT));
+        }
+
         clearModelCaches();
         createConfigDirectories();
         extractBuiltinModels();
@@ -116,6 +122,20 @@ public final class ServerModelManager {
         scanDirectoryPacks(CUSTOM);
         scanDirectoryPacks(BUILT);
         rebuildModelCaches();
+
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] ===== Model reload complete =====");
+            ysmu.LOG.info("[YSMU-MODEL] CACHE_NAME_INFO size: {}", CACHE_NAME_INFO.size());
+            ysmu.LOG.info("[YSMU-MODEL] RAW_MODEL_INFO size: {}", RAW_MODEL_INFO.size());
+            ysmu.LOG.info("[YSMU-MODEL] OPEN_YSM_SYNC_INFO size: {}", OPEN_YSM_SYNC_INFO.size());
+            ysmu.LOG.info("[YSMU-MODEL] PACKS size: {}", PACKS.size());
+            if (!CACHE_NAME_INFO.isEmpty()) {
+                ysmu.LOG.info("[YSMU-MODEL] Cached model IDs: {}", CACHE_NAME_INFO.keySet());
+            }
+            if (!RAW_MODEL_INFO.isEmpty()) {
+                ysmu.LOG.info("[YSMU-MODEL] Raw model IDs: {}", RAW_MODEL_INFO.keySet());
+            }
+        }
     }
 
     private static void clearModelCaches() {

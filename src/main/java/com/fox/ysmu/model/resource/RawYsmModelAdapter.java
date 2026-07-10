@@ -26,6 +26,7 @@ import javax.imageio.ImageIO;
 
 import org.apache.commons.lang3.StringUtils;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.model.format.Type;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
@@ -50,18 +51,32 @@ public final class RawYsmModelAdapter {
     private RawYsmModelAdapter() {}
 
     public static boolean isBridgeable(RawYsmModel raw) {
-        if (raw == null || raw.mainEntity == null) {
+        if (raw == null) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] isBridgeable false: raw is null");
+            return false;
+        }
+        if (raw.mainEntity == null) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] isBridgeable false: mainEntity is null for {}", raw.modelId);
             return false;
         }
         if (!hasGeometry(raw.mainEntity.mainModel)) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] isBridgeable false: no mainModel geometry for {}", raw.modelId);
             return false;
         }
         if (!hasGeometry(raw.mainEntity.armModel)) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] isBridgeable false: no armModel geometry for {}", raw.modelId);
             return false;
         }
         boolean hasTexture = false;
         for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
-            if (hasLegacyTextureData(texture)) {
+            boolean texOk = hasLegacyTextureData(texture);
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL]   check texture {}: format={}, dataLen={}, w={}, h={}, ok={}",
+                    texture.name, texture.imageFormat,
+                    texture.data == null ? 0 : texture.data.length,
+                    texture.width, texture.height, texOk);
+            }
+            if (texOk) {
                 hasTexture = true;
                 break;
             }
@@ -146,38 +161,53 @@ public final class RawYsmModelAdapter {
 
     private static boolean hasLegacyTextureData(RawYsmModel.RawTexture texture) {
         if (texture == null || texture.data == null) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   hasLegacyTextureData: texture null or data null");
             return false;
         }
         // PNG 可直接使用
         if (texture.imageFormat == PNG_FORMAT) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   hasLegacyTextureData: PNG format, OK");
             return true;
         }
         // Raw RGBA 且数据尺寸足够
         if (texture.imageFormat == RGBA_FORMAT && canConvertRgba(texture)) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   hasLegacyTextureData: RGBA format, OK");
             return true;
         }
         // WebP（format=4）：尝试用 WebpDecoder 实际解码
         if (texture.imageFormat == 4) {
-            return tryDecodeWebp(texture.data);
+            boolean ok = tryDecodeWebp(texture.data);
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   hasLegacyTextureData: WebP format, tryDecodeWebp={}", ok);
+            return ok;
         }
         // 其他格式：尝试用 ImageIO 解码
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL]   hasLegacyTextureData: unknown format={}, trying ImageIO...", texture.imageFormat);
+        }
         BufferedImage img = readImageToBufferedImage(texture.data);
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL]   hasLegacyTextureData: ImageIO result={}", img != null);
+        }
         return img != null;
     }
 
     private static byte[] getLegacyTextureData(RawYsmModel.RawTexture texture) {
         if (texture.imageFormat == PNG_FORMAT) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   getLegacyTextureData: PNG, returning as-is ({} bytes)", texture.data.length);
             return texture.data;
         }
         if (texture.imageFormat == RGBA_FORMAT && canConvertRgba(texture)) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   getLegacyTextureData: RGBA->PNG ({}x{})", texture.width, texture.height);
             return convertRgbaToPng(texture.data, texture.width, texture.height);
         }
         // WebP（format=4）：用 WebpDecoder 解码后转 PNG
         if (texture.imageFormat == 4) {
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   getLegacyTextureData: WebP->PNG decode ({} bytes)", texture.data.length);
             BufferedImage webpImage = decodeWebpToImage(texture.data);
             if (webpImage != null) {
                 try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                     if (ImageIO.write(webpImage, "PNG", output)) {
+                        if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   getLegacyTextureData: WebP->PNG success, {} bytes", output.size());
                         return output.toByteArray();
                     }
                 } catch (Exception ignored) {}
@@ -187,10 +217,14 @@ public final class RawYsmModelAdapter {
             return null;
         }
         // 尝试用 ImageIO 解码（支持 PNG/JPEG/BMP，不保证 WebP）
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL]   getLegacyTextureData: format={}, trying ImageIO fallback...", texture.imageFormat);
+        }
         BufferedImage image = readImageToBufferedImage(texture.data);
         if (image != null) {
             try (ByteArrayOutputStream output = new ByteArrayOutputStream()) {
                 if (ImageIO.write(image, "PNG", output)) {
+                    if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   getLegacyTextureData: ImageIO fallback success, {} bytes", output.size());
                     return output.toByteArray();
                 }
             } catch (Exception ignored) {}

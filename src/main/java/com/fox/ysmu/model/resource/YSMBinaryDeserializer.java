@@ -100,7 +100,9 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         for (int i = 0; i < modelCount; ++i) {
             int modelId = reader.readVarInt(); // 棄用或僅作為內部ID
             int unknownMustBeOneFlag = reader.readVarInt();
-            if (unknownMustBeOneFlag != 1) throw new RuntimeException("Expected 1");
+            if (unknownMustBeOneFlag != 1) {
+                ysmu.LOG.warn("YSMBinaryDeserializer legacyV1: unexpected geometry padding {}, continuing", unknownMustBeOneFlag);
+            }
             RawYsmModel.RawGeometry rawGeometry = parseModels();
             rawGeometry.modelType = modelId;
             tempModels.add(rawGeometry);
@@ -112,7 +114,9 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         for (int i = 0; i < animationBlobCount; ++i) {
             int animationId = reader.readVarInt();
             int unknownPadding = reader.readVarInt();
-            if (unknownPadding != 1) throw new RuntimeException("Expected 1");
+            if (unknownPadding != 1) {
+                ysmu.LOG.warn("YSMBinaryDeserializer legacyV1: unexpected animation padding {}, continuing", unknownPadding);
+            }
             RawYsmModel.RawAnimationFile rawAnimationFile = parseAnimations();
 
             String animKey = YSMFolderDeserializer.getAnimKeyFromType(animationId);
@@ -138,7 +142,9 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             tex.name = reader.readString();
             if (format < 4) {
                 int unknownFormatFlag = reader.readVarInt();
-                if (unknownFormatFlag != 0x01) throw new RuntimeException("Expected 0x01");
+                if (unknownFormatFlag != 0x01) {
+                    ysmu.LOG.warn("YSMBinaryDeserializer legacyV1: unexpected format flag {}, continuing", unknownFormatFlag);
+                }
             }
             tex.data = reader.readByteArray();
             tex.width = reader.readVarInt();
@@ -190,7 +196,9 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         for (int i = 0; i < modelCount; ++i) {
             int modelId = reader.readVarInt();
             int unknownPadding = reader.readVarInt();
-            if (unknownPadding != 1) throw new RuntimeException("Expected 1");
+            if (unknownPadding != 1) {
+                ysmu.LOG.warn("YSMBinaryDeserializer legacyV15: unexpected geometry padding {}, continuing", unknownPadding);
+            }
             RawYsmModel.RawGeometry rawGeometry = parseModels();
             rawGeometry.modelType = modelId;
             tempModels.add(rawGeometry);
@@ -203,7 +211,9 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         for (int i = 0; i < animationBlobCount; ++i) {
             int animationId = reader.readVarInt();
             int unknownPadding = reader.readVarInt();
-            if (unknownPadding != 1) throw new RuntimeException("Expected 1");
+            if (unknownPadding != 1) {
+                ysmu.LOG.warn("YSMBinaryDeserializer legacyV15: unexpected animation padding {}, continuing", unknownPadding);
+            }
             RawYsmModel.RawAnimationFile rawAnimationFile = parseAnimations();
 
             String animKey = YSMFolderDeserializer.getAnimKeyFromType(animationId);
@@ -371,7 +381,9 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         }
 
         int unknownEntityFlag = reader.readVarInt();
-        if (unknownEntityFlag != 1) throw new RuntimeException("Expected 1 after SubEntities");
+        if (unknownEntityFlag != 1) {
+            ysmu.LOG.warn("YSMBinaryDeserializer: unexpected flag after SubEntities: {} (expected 1), continuing anyway", unknownEntityFlag);
+        }
 
         int animationCount = reader.readVarInt();
         for (int i = 0; i < animationCount; ++i) {
@@ -994,7 +1006,9 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                     model.projectiles.put(subEntity.identifier, subEntity);
                     break;
                 default:
-                    throw new RuntimeException("Unknown model type: " + tempMainModel.modelType);
+                    ysmu.LOG.warn("YSMBinaryDeserializer: unknown model type {} (hash={}), skipping",
+                        tempMainModel.modelType, tempMainModel.sha256);
+                    break;
             }
         }
     }

@@ -15,6 +15,7 @@ import java.nio.file.attribute.BasicFileAttributes;
 
 import org.jetbrains.annotations.NotNull;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.model.resource.RawYsmModelAdapter;
 import com.fox.ysmu.model.resource.YSMBinaryDeserializer;
@@ -34,6 +35,10 @@ public final class OpenYsmFormat {
     public static void cacheAllModels(Path rootPath) {
         if (rootPath == null || !Files.isDirectory(rootPath)) {
             return;
+        }
+
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] Scanning OpenYSM models under {}", rootPath);
         }
 
         try {
@@ -72,6 +77,12 @@ public final class OpenYsmFormat {
         try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(dir)) {
             RawYsmModel raw = deserializer.deserialize();
             raw.modelId = modelId;
+
+            if (Config.DEBUG_MODEL_LOAD) {
+                int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
+                ysmu.LOG.info("[YSMU-MODEL] Folder model {} ({}): textures={}", dir.getFileName(), modelId, texCount);
+            }
+
             RAW_MODEL_INFO.put(modelId, raw);
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
                 ysmu.LOG.warn("OpenYSM folder model {} parsed but cannot be bridged to legacy ModelData", dir);
@@ -81,6 +92,9 @@ public final class OpenYsmFormat {
             ServerModelInfo info = ModelCacheWriter.write(data);
             if (info != null) {
                 CACHE_NAME_INFO.put(modelId, info);
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Folder model {} cached to CACHE_NAME_INFO", modelId);
+                }
             }
             OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
             OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
@@ -92,25 +106,62 @@ public final class OpenYsmFormat {
     private static void cacheBinaryModel(Path rootPath, Path file) {
         try {
             byte[] encrypted = Files.readAllBytes(file);
+            String fileName = file.getFileName().toString();
+            long fileSize = encrypted.length;
+
             if (!isOpenYsmBinary(encrypted)) {
                 // 不以 YSGP 前缀开头 → 不是已知的 OpenYSM 二进制格式
                 String hexPrefix = bytesToHex(encrypted, Math.min(encrypted.length, 24));
                 ysmu.LOG.warn("OpenYSM binary model {} skipped: not a recognized YSGP format "
-                    + "(size={}, firstBytes={})", file, encrypted.length, hexPrefix);
+                    + "(size={}, firstBytes={})", file, fileSize, hexPrefix);
                 return;
             }
+
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Found OpenYSM .ysm file: {} (size={})", fileName, fileSize);
+            }
+
             byte[] rawBytes = YsmCrypt.decryptYsmFile(encrypted);
+
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Decrypted .ysm file {}: decompressed size={}", fileName, rawBytes.length);
+            }
+
             try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(rawBytes)) {
                 RawYsmModel raw = deserializer.deserializeKeepOpen();
                 deserializer.parseYSMFooter(raw);
                 String modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
                 raw.modelId = modelId;
+
+                if (Config.DEBUG_MODEL_LOAD) {
+                    int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
+                    int animCount = raw.mainEntity != null ? raw.mainEntity.animationFiles.size() : 0;
+                    boolean hasMainModel = raw.mainEntity != null && raw.mainEntity.mainModel != null;
+                    boolean hasArmModel = raw.mainEntity != null && raw.mainEntity.armModel != null;
+                    ysmu.LOG.info("[YSMU-MODEL] Parsed .ysm {} -> modelId={}, formatVersion={}, "
+                        + "mainModel={}, armModel={}, textures={}, animations={}, footer.version={}",
+                        fileName, modelId, raw.formatVersion,
+                        hasMainModel, hasArmModel, texCount, animCount, raw.footer.version);
+                    if (raw.mainEntity != null) {
+                        for (RawYsmModel.RawTexture tex : raw.mainEntity.textures.values()) {
+                            ysmu.LOG.info("[YSMU-MODEL]   texture: name={}, format={}, w={}, h={}, dataLen={}",
+                                tex.name, tex.imageFormat, tex.width, tex.height,
+                                tex.data == null ? 0 : tex.data.length);
+                        }
+                    }
+                }
+
                 RAW_MODEL_INFO.put(modelId, raw);
                 // 即使模型无法桥接 legacy 格式，仍写入 OpenYSM 同步缓存，
                 // 保证客户端可通过 OpenYSM 同步协议加载模型。
                 // 截断的 .ysm 文件核心数据（几何、动画、纹理）在
                 // parseYSMJson/parseYSMFooter 之前已解析完成。
                 boolean bridgeable = RawYsmModelAdapter.isBridgeable(raw);
+
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] isBridgeable({}) = {}", modelId, bridgeable);
+                }
+
                 OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
                 OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
                 if (bridgeable) {
@@ -118,7 +169,12 @@ public final class OpenYsmFormat {
                     ServerModelInfo info = ModelCacheWriter.write(data);
                     if (info != null) {
                         CACHE_NAME_INFO.put(modelId, info);
+                        if (Config.DEBUG_MODEL_LOAD) {
+                            ysmu.LOG.info("[YSMU-MODEL] Successfully cached model {} to CACHE_NAME_INFO", modelId);
+                        }
                     }
+                } else if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Model {} not bridgeable, skipped legacy cache but OpenYSM sync info written", modelId);
                 }
             }
         } catch (UnsupportedOperationException e) {
@@ -127,8 +183,8 @@ public final class OpenYsmFormat {
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load OpenYSM binary model {} (size={}): {}: {}",
                 file, file.toFile().length(), e.getClass().getSimpleName(), e.getMessage());
-            if (ysmu.LOG.isDebugEnabled()) {
-                ysmu.LOG.debug("OpenYSM binary model {} load failure detail", file, e);
+            if (Config.DEBUG_MODEL_LOAD || ysmu.LOG.isDebugEnabled()) {
+                ysmu.LOG.warn("[YSMU-MODEL] OpenYSM binary model {} load failure detail", file, e);
             }
         }
     }
