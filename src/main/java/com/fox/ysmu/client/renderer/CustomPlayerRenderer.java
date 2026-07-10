@@ -80,25 +80,31 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
             }
         }
         ResourceLocation location = this.modelProvider.getModelLocation(animatable);
+        ResourceLocation actualMain = this.animatable != null ? this.animatable.getMainModel() : null;
         GeoModel geoModel = GeckoLibCache.getInstance()
             .getGeoModels()
             .get(location);
         if (geoModel != null) {
+            // Throttled render diagnostic: confirm rendering path is reached
+            String rKey = "render:" + location;
+            if (missingGeoModelLogged.add(rKey)) {
+                com.fox.ysmu.ysmu.LOG.info("YSM rendering '{}' (mainModel={}, topLevelBones={})",
+                    location, actualMain,
+                    geoModel.topLevelBones != null ? geoModel.topLevelBones.size() : 0);
+            }
             this.geoModel = geoModel;
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
         } else {
-            // Throttled logging: only log once per missing model per game session
-            if (missingGeoModelLogged.add(location.toString())) {
-                com.fox.ysmu.ysmu.LOG.info(
-                    "YSM renderer cannot find geo model: location={}, mainModel={}, texture={}, geoModelsInCache={}",
-                    location,
-                    this.animatable != null ? this.animatable.getMainModel() : "null",
-                    this.animatable != null ? this.animatable.getTexture() : "null",
-                    GeckoLibCache.getInstance().getGeoModels().keySet().stream()
-                        .map(ResourceLocation::toString)
-                        .filter(s -> s.contains(location.getResourceDomain() + ":" + location.getResourcePath().replace("/main", "")))
-                        .collect(java.util.stream.Collectors.joining(", ")));
-            }
+            // Always log missing geo model (not throttled) to catch per-frame misses
+            com.fox.ysmu.ysmu.LOG.info(
+                "YSM MISSING geo model: location={}, mainModel={}, texture={}, geoModelsInCache={}",
+                location,
+                actualMain,
+                this.animatable != null ? this.animatable.getTexture() : "null",
+                GeckoLibCache.getInstance().getGeoModels().keySet().stream()
+                    .map(ResourceLocation::toString)
+                    .filter(s -> s.contains(location.getResourceDomain() + ":" + location.getResourcePath().replace("/main", "")))
+                    .collect(java.util.stream.Collectors.joining(", ")));
         }
     }
 

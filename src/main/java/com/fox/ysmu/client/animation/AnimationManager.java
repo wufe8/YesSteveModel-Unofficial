@@ -15,6 +15,7 @@ import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.animation.condition.*;
 import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
@@ -78,6 +79,8 @@ public final class AnimationManager {
     private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
     /** Tracks last swingProgressInt to detect rapid-click resets. */
     private final Map<UUID, Integer> lastSwingProgress = new ConcurrentHashMap<>();
+    /** Tracks last logged animation name per animId, to avoid spamming [YSMU-ANIM] log every frame. */
+    private final Map<ResourceLocation, String> lastLoggedAnim = new ConcurrentHashMap<>();
     // --- 硬编码的攻击组合动画已被注释掉 (2025-06-26) ---
     // 原 ATTACK_COMBO = {"attack_1", "attack_2", "attack_3"}
     // 原 ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"}
@@ -117,6 +120,19 @@ public final class AnimationManager {
 
     public static String getCurrentWheelAnimName() {
         return currentWheelAnim;
+    }
+
+    /** Sentinel key used in {@link #lastLoggedAnim} when the animId is null. */
+    private static final ResourceLocation NULL_ANIM_KEY = new ResourceLocation("ysmu", "__null_anim__");
+
+    /** Only log [YSMU-ANIM] when the animation (or animId) actually changes, to avoid per-frame spam. */
+    private void logAnimChange(ResourceLocation animId, String message) {
+        ResourceLocation key = animId != null ? animId : NULL_ANIM_KEY;
+        String prev = lastLoggedAnim.get(key);
+        if (prev == null || !prev.equals(message)) {
+            lastLoggedAnim.put(key, message);
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] {}", message);
+        }
     }
 
     /**
@@ -218,6 +234,14 @@ public final class AnimationManager {
     @NotNull
     private static <P extends IAnimatable> PlayState playAnimation(AnimationEvent<P> event, String animationName,
         ILoopType loopType) {
+        if (animationName != null && (animationName.equals("gui") || animationName.startsWith("extra"))) {
+            EntityPlayer p = event.getAnimatable() instanceof CustomPlayerEntity
+                ? ((CustomPlayerEntity) event.getAnimatable()).getPlayer() : null;
+            if (p != null) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] in-game playing '{}' on controller '{}'",
+                    animationName, event.getController().getName());
+            }
+        }
         event.getController()
             .setAnimation(new AnimationBuilder().addAnimation(animationName, loopType));
         return PlayState.CONTINUE;
@@ -503,6 +527,7 @@ public final class AnimationManager {
                             continue;
                         }
                         ILoopType loopType = state.getLoopType();
+                        logAnimChange(animId, "main_controller playing '" + targetName + "' (predicate '" + animationName + "') for " + animId);
                         return playAnimation(event, targetName, loopType);
                     }
                 }
@@ -517,6 +542,7 @@ public final class AnimationManager {
             if (idleName == null) idleName = "idle";
             Animation idleAnim = animFile.animations.get(idleName);
             if (isAnimationNonEmpty(idleAnim)) {
+                logAnimChange(animId, "main_controller fallback idle '" + idleName + "' for " + animId);
                 return playLoopAnimation(event, idleName);
             }
             // 遍历所有注册状态名，尝试从 molang 映射或直接名找非空动画
@@ -532,6 +558,7 @@ public final class AnimationManager {
                     String target = mapped != null ? mapped : name;
                     Animation anim = animFile.animations.get(target);
                     if (isAnimationNonEmpty(anim)) {
+                        logAnimChange(animId, "main_controller fallback '" + target + "' from state '" + name + "' for " + animId);
                         return playLoopAnimation(event, target);
                     }
                 }
@@ -542,10 +569,13 @@ public final class AnimationManager {
                 String animName = entry.getKey();
                 if ("death".equals(animName)) continue;
                 if (isAnimationNonEmpty(entry.getValue())) {
+                    logAnimChange(animId, "main_controller last-resort '" + animName + "' for " + animId);
                     return playLoopAnimation(event, animName);
                 }
             }
         }
+        logAnimChange(animId, "main_controller STOP for " + animId
+            + " (openYsm=" + (animId != null ? OpenYsmPlayerControllerRuntime.hasAnyController(animId) : "?") + ")");
         return PlayState.STOP;
     }
 

@@ -236,6 +236,43 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                     hiddenCount, totalBones, animId, extraAnimActive, extraAnimName, expressionCount, previewCount, hiddenBoneNames);
             }
         }
+        // Diagnostic: log root bone scale/pos once per model switch (throttled per animId)
+        if (!bones.isEmpty()) {
+            IBone firstBone = bones.get(0);
+            if (firstBone instanceof GeoBone) {
+                String name = ((GeoBone) firstBone).getName();
+                if (name != null) {
+                    String rbKey = "rb:" + animId;
+                    if (VISIBILITY_LOG_THROTTLE.add(rbKey)) {
+                        com.fox.ysmu.ysmu.LOG.info("YSM root bone '{}' scale=({},{},{}) pos=({},{},{}) hidden={}",
+                            name,
+                            firstBone.getScaleX(), firstBone.getScaleY(), firstBone.getScaleZ(),
+                            firstBone.getPositionX(), firstBone.getPositionY(), firstBone.getPositionZ(),
+                            firstBone.isHidden());
+                    }
+                }
+            }
+        }
+        // Diagnostic: find any bone with scale=(0,0,0) which would make the entire branch invisible
+        java.util.List<String> zeroScaleBones = new java.util.ArrayList<>();
+        for (IBone bone : bones) {
+            if (bone instanceof GeoBone && ((GeoBone) bone).getName() != null) {
+                String bName = ((GeoBone) bone).getName();
+                float sx = bone.getScaleX();
+                float sy = bone.getScaleY();
+                float sz = bone.getScaleZ();
+                if (sx == 0f && sy == 0f && sz == 0f) {
+                    GeoBone gb = (GeoBone) bone;
+                    zeroScaleBones.add(bName + "(parent=" + (gb.parent != null ? gb.parent.getName() : "null") + ")");
+                }
+            }
+        }
+        if (!zeroScaleBones.isEmpty()) {
+            String zsKey = "zs:" + animId;
+            if (VISIBILITY_LOG_THROTTLE.add(zsKey)) {
+                com.fox.ysmu.ysmu.LOG.info("YSM zero-scale bones (branch invisible!): {}", zeroScaleBones);
+            }
+        }
     }
 
     /**
