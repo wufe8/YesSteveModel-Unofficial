@@ -182,8 +182,11 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                     || name.equals("LaughMouth4") || name.equals("IdiotMouth1") || name.equals("ZheMeQiang")
                     || name.equals("ConfusionEffects1") || name.equals("SoundEffects1")
                     || name.contains("RightSpeechless") || name.contains("LeftSpeechless");
-                // Hide bones belonging to the model's preview animation (e.g. gui decoration)
-                boolean isPreviewBone = isPreviewAnimationBone(name, animId);
+                // Hide bones belonging to the model's preview animation (e.g. gui decoration).
+                // Skip in GUI screens (model selection/roulette preview) so decorative
+                // background objects from the preview animation remain visible.
+                boolean isPreviewBone = Minecraft.getMinecraft().currentScreen == null
+                    && isPreviewAnimationBone(name, animId);
                 // Hide reference/guide bones that are only used during modeling
                 // (e.g. zero-thickness positioning grids at Y=0 like "dingwei").
                 boolean isReferenceBone = name.equals("dingwei");
