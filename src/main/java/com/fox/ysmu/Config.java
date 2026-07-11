@@ -31,7 +31,7 @@ public class Config {
     // Debug Config
     public static boolean DEBUG_CONTROLLER = false;
     public static boolean DEBUG_WHEEL = false;
-    public static boolean DEBUG_MODEL_LOAD = false;
+    public static boolean DEBUG_MODEL_LOAD = true;
 
     // OpenYSM model sync config
     public static boolean ENABLE_OPEN_YSM_SYNC_PROTOCOL = true;

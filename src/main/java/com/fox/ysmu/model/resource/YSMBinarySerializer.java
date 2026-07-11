@@ -189,7 +189,7 @@ public class YSMBinarySerializer {
             buf.writeFloat(anim.length * 20f); // 还原ticks
             buf.writeVarInt(anim.loopMode);
 
-            if (format > 9) {
+            if (format > 9 && format < 30) {
                 buf.writeVarInt(anim.unkInt1);
                 buf.writeVarInt(anim.unkInt2);
 
@@ -218,8 +218,8 @@ public class YSMBinarySerializer {
                 buf.writeFloat(event.timestamp * 20f);
             }
 
-            // sound effects
-            if (format > 9) {
+            // sound effects — C++ 编译版对 format >= 30 跳过 sound effects
+            if (format > 9 && format < 30) {
                 buf.writeVarInt(anim.soundEffects.size());
                 for (RawYsmModel.RawSoundEffect sfx : anim.soundEffects) {
                     buf.writeString(sfx.effectName);
