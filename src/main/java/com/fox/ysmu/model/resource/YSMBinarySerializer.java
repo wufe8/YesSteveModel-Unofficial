@@ -99,7 +99,15 @@ public class YSMBinarySerializer {
                 writeAnimationFileContent(buf, animFile, format);
             }
 
-            writeAnimationControllers(buf, sub.animationControllerFiles, format, false);
+            // 子实体的 controller：先写 flag，再写 controllerHash，最后写 body。
+            boolean hasController = !sub.animationControllerFiles.isEmpty();
+            buf.writeVarInt(hasController ? 1 : 0);
+            if (hasController) {
+                RawYsmModel.RawAnimationControllerFile cf = sub.animationControllerFiles.get(0);
+                buf.writeString(cf.hash != null ? cf.hash : "");
+                // 子实体没有 [fileCount][name][hash] 外层包装，直接写 body。
+                writeAnimationControllerBody(buf, cf.controllers, format);
+            }
 
             RawYsmModel.RawTexture baseTex = sub.textures.values().iterator().next();
             byte[] baseData = baseTex.data;
@@ -189,7 +197,7 @@ public class YSMBinarySerializer {
             buf.writeFloat(anim.length * 20f); // 还原ticks
             buf.writeVarInt(anim.loopMode);
 
-            if (format > 9 && format < 30) {
+            if (format > 9) {
                 buf.writeVarInt(anim.unkInt1);
                 buf.writeVarInt(anim.unkInt2);
 
@@ -218,8 +226,8 @@ public class YSMBinarySerializer {
                 buf.writeFloat(event.timestamp * 20f);
             }
 
-            // sound effects — C++ 编译版对 format >= 30 跳过 sound effects
-            if (format > 9 && format < 30) {
+            // sound effects — 所有 format > 9 的版本都有 sound effects 块
+            if (format > 9) {
                 buf.writeVarInt(anim.soundEffects.size());
                 for (RawYsmModel.RawSoundEffect sfx : anim.soundEffects) {
                     buf.writeString(sfx.effectName);
@@ -262,7 +270,9 @@ public class YSMBinarySerializer {
         buf.writeVarInt(files.size());
 
         for (RawYsmModel.RawAnimationControllerFile file : files) {
-            if (writeName) buf.writeString(file.name != null ? file.name : "");
+            // 所有格式 > 15 的版本，每个 controller file 都写入 name + hash + body。
+            // writeName 仅标记调用者是否使用该 name，但数据格式始终包含它。
+            buf.writeString(file.name != null ? file.name : "");
             buf.writeString(file.hash != null ? file.hash : "");
             writeAnimationControllerBody(buf, file.controllers, format);
         }

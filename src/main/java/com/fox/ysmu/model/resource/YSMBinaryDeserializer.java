@@ -481,9 +481,16 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         if (hasSubController != 0) {
             logOffset("parseSubEntity controller HASH start");
             String controllerHash = reader.readString(); // consumed but not stored for now
-            logOffset("parseSubEntity controller HASH done -> call parseAnimationControllers");
-            parseAnimationControllers(subEntity.animationControllerFiles, false);
-            logOffset("parseSubEntity parseAnimationControllers DONE");
+            logOffset("parseSubEntity controller HASH done -> call parseAnimationControllerBody");
+            // C++: 子实体 controller 没有 [fileCount][name][hash] 外层包装，
+            // 只有 [animationCount][name][initialState][statesCount][states...] body 本身。
+            // 直接解析 body，跳过 parseAnimationControllers 的文件级嵌套。
+            RawYsmModel.RawAnimationControllerFile file = new RawYsmModel.RawAnimationControllerFile();
+            file.name = categoryName + "_" + index;
+            file.hash = controllerHash;
+            parseAnimationControllerBody(file.controllers);
+            subEntity.animationControllerFiles.add(file);
+            logOffset("parseSubEntity parseAnimationControllerBody DONE");
         } else {
             logOffset("parseSubEntity NO controller (hasSubController=0)");
         }
@@ -807,7 +814,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             anim.length = reader.readFloat() / 20.0f;
             anim.loopMode = reader.readVarInt();
 
-            if (format > 9 && format < 30) {
+            if (format > 9) {
                 anim.unkInt1 = reader.readVarInt();
                 anim.unkInt2 = reader.readVarInt();
                 logOffset("parseAnimations anim[" + animIndex + "] blendWeight");
@@ -865,8 +872,8 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 anim.timelineEvents.add(event);
             }
 
-            // Effects — C++ 编译版对 format >= 30 跳过 sound effects
-            if (format > 9 && format < 30) {
+            // Effects — 所有 format > 9 的版本都有 sound effects 块
+            if (format > 9) {
                 logOffset("parseAnimations anim[" + animIndex + "] effects");
                 int soundEffectsCount = reader.readVarInt();
                 if (Config.DEBUG_MODEL_LOAD && soundEffectsCount > 0) {
@@ -952,14 +959,10 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 file.legacyUnknownInt = reader.readVarInt();
                 file.name = "legacy_controller_" + i;
             } else {
-                if (readName) {
-                    // Main entity: external name + hash per controller
-                    file.name = reader.readString();
-                    file.hash = reader.readString();
-                }
-                // Sub-entity: hash was already read as controllerHash in parseSubEntity,
-                // C++ ParseAnimationControllers only reads count + body (no per-controller hash).
-                // So skip hash here when readName=false.
+                // 所有格式 > 15 的版本，每个 controller file 都写入 name + hash + body。
+                // 子实体路径不再经过此函数，直接调用 parseAnimationControllerBody。
+                file.name = reader.readString();
+                file.hash = reader.readString();
             }
 
             parseAnimationControllerBody(file.controllers);
