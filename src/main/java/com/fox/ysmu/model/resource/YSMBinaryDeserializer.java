@@ -380,12 +380,20 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             for (int i = 0; i < projectilesTotalCount; ++i) parseSubEntity(model.projectiles, "Projectile", i);
         }
 
-        int unknownEntityFlag = reader.readVarInt();
-        if (unknownEntityFlag != 1) {
-            ysmu.LOG.warn("YSMBinaryDeserializer: unexpected flag after SubEntities: {} (expected 1), continuing anyway", unknownEntityFlag);
+        // Read animation count — handles two binary formats:
+        // Old (serializer): [flag=1:varint] [count:varint] [animations...]
+        // New (real .ysm):  [count:varint] [animations...]
+        // When v==1 it's ambiguous; read next varint as count (old path).
+        // When v!=1 it's definitely new format's count.
+        int maybeFlag = reader.readVarInt();
+        int animationCount;
+        if (maybeFlag == 1) {
+            // Could be old flag=1 or new count=1. Assume old format (2 varints).
+            animationCount = reader.readVarInt();
+        } else {
+            // Definitely new format (1 varint = count).
+            animationCount = maybeFlag;
         }
-
-        int animationCount = reader.readVarInt();
         for (int i = 0; i < animationCount; ++i) {
             int type = reader.readVarInt();
             String hash = reader.readString();
@@ -428,18 +436,23 @@ public class YSMBinaryDeserializer implements AutoCloseable {
         } else {
             subEntity.identifier = categoryName + "_" + index; // >=26沒有Header Name
         }
-        int animationCount = reader.readVarInt();
-        for (int i = 0; i < animationCount; ++i) {
-            String hash = reader.readString();
+        // C++ parser: this is a flag (0/1), not a count — no per-animation hash
+        int hasSubAnim = reader.readVarInt();
+        if (hasSubAnim != 0) {
+            // C++ ParseAnimations reads SHA256 hash internally when format > 15.
+            // The serializer also writes it, so we must consume it here to keep sync.
+            String animHash = reader.readString();
             RawYsmModel.RawAnimationFile rawAnimationFile = parseAnimations();
-            subEntity.animationFiles.put(
-                    categoryName,
-                    rawAnimationFile
-            );
-            rawAnimationFile.fileHash = hash;
+            rawAnimationFile.fileHash = animHash;
+            subEntity.animationFiles.put(categoryName, rawAnimationFile);
         }
 
-        parseAnimationControllers(subEntity.animationControllerFiles, false);
+        // C++ parser: flag + optional controller hash before controller data
+        int hasSubController = reader.readVarInt();
+        if (hasSubController != 0) {
+            String controllerHash = reader.readString(); // consumed but not stored for now
+            parseAnimationControllers(subEntity.animationControllerFiles, false);
+        }
 
         RawYsmModel.RawTexture baseTex = new RawYsmModel.RawTexture();
         SpecialImageResult imgRes = parseSpecialImage();
@@ -473,9 +486,15 @@ public class YSMBinaryDeserializer implements AutoCloseable {
 
 
         if (format > 26) {
-            int footerFlag = reader.readVarInt(); // always 01
-            String footerSubModuleName = reader.readString();
-            subEntity.identifier = footerSubModuleName;
+            // C++ parser: this is a COUNT of sub-models, not a flag!
+            int subModels = reader.readVarInt();
+            String lastName = subEntity.identifier;
+            for (int j = 0; j < subModels; j++) {
+                lastName = reader.readString();
+            }
+            subEntity.identifier = lastName;
+            // C++ does an early return and doesn't add to targetMap for format > 26,
+            // but we still add with the last model name for compatibility.
         }
 
         targetMap.put(subEntity.identifier, subEntity);
@@ -850,8 +869,14 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 file.legacyUnknownInt = reader.readVarInt();
                 file.name = "legacy_controller_" + i;
             } else {
-                if (readName) file.name = reader.readString();
-                file.hash = reader.readString();
+                if (readName) {
+                    // Main entity: external name + hash per controller
+                    file.name = reader.readString();
+                    file.hash = reader.readString();
+                }
+                // Sub-entity: hash was already read as controllerHash in parseSubEntity,
+                // C++ ParseAnimationControllers only reads count + body (no per-controller hash).
+                // So skip hash here when readName=false.
             }
 
             parseAnimationControllerBody(file.controllers);
