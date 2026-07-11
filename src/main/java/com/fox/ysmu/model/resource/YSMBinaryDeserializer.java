@@ -430,7 +430,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
 
     private void logOffset(String label) {
         if (Config.DEBUG_MODEL_LOAD) {
-            ysmu.LOG.info("[YSMU-DBG] {} @ 0x{}", label, Integer.toHexString(reader.getOffset()));
+            ysmu.LOG.info("[YSMU-MODEL] {} @ 0x{}", label, Integer.toHexString(reader.getOffset()));
         }
     }
 
@@ -469,7 +469,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             int dumpLen = Math.min(200, reader.getRawBuf().readableBytes());
             byte[] raw = new byte[dumpLen];
             reader.getRawBuf().getBytes(pos, raw);
-            StringBuilder sb = new StringBuilder("[YSMU-DBG] HEXDUMP @ 0x");
+            StringBuilder sb = new StringBuilder("[YSMU-MODEL] HEXDUMP @ 0x");
             sb.append(Integer.toHexString(pos)).append(" (").append(dumpLen).append(" bytes):");
             for (int bi = 0; bi < raw.length; bi++) {
                 if (bi % 32 == 0) sb.append('\n');
@@ -534,7 +534,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             logOffset("parseSubEntity footer names start");
             // C++ parser: this is a COUNT of sub-models, not a flag!
             int subModels = reader.readVarInt();
-            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-DBG] parseSubEntity footer subModels={}", subModels);
+            if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] parseSubEntity footer subModels={}", subModels);
             String lastName = subEntity.identifier;
             for (int j = 0; j < subModels; j++) {
                 lastName = reader.readString();
@@ -806,7 +806,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
 
         logOffset("parseAnimations ENTER (before animCount)");
         int animationCount = reader.readVarInt();
-        if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-DBG] parseAnimations animCount={}", animationCount);
+        if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] parseAnimations animCount={}", animationCount);
         for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
             logOffset("parseAnimations anim[" + animIndex + "] name start");
             RawYsmModel.RawAnimation anim = new RawYsmModel.RawAnimation();
@@ -836,7 +836,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             logOffset("parseAnimations anim[" + animIndex + "] bones");
             int boneCount = reader.readVarInt();
             if (Config.DEBUG_MODEL_LOAD && boneCount > 3) {
-                ysmu.LOG.info("[YSMU-DBG]   bones={}", boneCount);
+                ysmu.LOG.info("[YSMU-MODEL]   bones={}", boneCount);
             }
             for (int i = 0; i < boneCount; ++i) {
                 RawYsmModel.RawBoneAnimation ba = new RawYsmModel.RawBoneAnimation();
@@ -854,7 +854,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             logOffset("parseAnimations anim[" + animIndex + "] timeline");
             int timelineEventGroupsCount = reader.readVarInt();
             if (Config.DEBUG_MODEL_LOAD && timelineEventGroupsCount > 10) {
-                ysmu.LOG.info("[YSMU-DBG]   timeline groups={}", timelineEventGroupsCount);
+                ysmu.LOG.info("[YSMU-MODEL]   timeline groups={}", timelineEventGroupsCount);
             }
             for (int i = 0; i < timelineEventGroupsCount; ++i) {
                 RawYsmModel.RawTimelineEvent event = new RawYsmModel.RawTimelineEvent();
@@ -863,7 +863,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 }
                 int timelineEventsCount = reader.readVarInt();
                 if (Config.DEBUG_MODEL_LOAD && timelineEventsCount > 15) {
-                    ysmu.LOG.info("[YSMU-DBG]   timeline group[{}] events={}", i, timelineEventsCount);
+                    ysmu.LOG.info("[YSMU-MODEL]   timeline group[{}] events={}", i, timelineEventsCount);
                 }
                 for (int j = 0; j < timelineEventsCount; ++j) {
                     event.events.add(reader.readString());
@@ -877,7 +877,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 logOffset("parseAnimations anim[" + animIndex + "] effects");
                 int soundEffectsCount = reader.readVarInt();
                 if (Config.DEBUG_MODEL_LOAD && soundEffectsCount > 0) {
-                    ysmu.LOG.info("[YSMU-DBG]   soundEffects={}", soundEffectsCount);
+                    ysmu.LOG.info("[YSMU-MODEL]   soundEffects={}", soundEffectsCount);
                 }
                 for (int i = 0; i < soundEffectsCount; i++) {
                     RawYsmModel.RawSoundEffect sfx = new RawYsmModel.RawSoundEffect();
@@ -925,7 +925,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
             int hasPreVal = reader.readVarInt();
             kf.hasPreData = hasPreVal > 0;
             if (Config.DEBUG_MODEL_LOAD && hasPreVal > 1) {
-                ysmu.LOG.info("[YSMU-DBG]  " + label + " kf[" + i + "] hasPre={} (unexpected!)", hasPreVal);
+                ysmu.LOG.info("[YSMU-MODEL]  " + label + " kf[" + i + "] hasPre={} (unexpected!)", hasPreVal);
             }
             if (kf.hasPreData) {
                 for (int j = 0; j < 3; j++) {
@@ -951,7 +951,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
     private void parseAnimationControllers(List<RawYsmModel.RawAnimationControllerFile> targetList, boolean readName) {
         logOffset("parseAnimationControllers ENTER count");
         int controllerCount = reader.readVarInt();
-        if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-DBG] parseAnimationControllers count={}, readName={}", controllerCount, readName);
+        if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] parseAnimationControllers count={}, readName={}", controllerCount, readName);
         for (int i = 0; i < controllerCount; i++) {
             RawYsmModel.RawAnimationControllerFile file = new RawYsmModel.RawAnimationControllerFile();
 
@@ -973,7 +973,7 @@ public class YSMBinaryDeserializer implements AutoCloseable {
     private void parseAnimationControllerBody(Map<String, RawYsmModel.RawAnimationController> targetMap) {
         logOffset("parseAnimationControllerBody ENTER");
         int animationCount = reader.readVarInt();
-        if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-DBG] parseAnimationControllerBody animationCount={}", animationCount);
+        if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL] parseAnimationControllerBody animationCount={}", animationCount);
         for (int animIndex = 0; animIndex < animationCount; ++animIndex) {
             RawYsmModel.RawAnimationController entry = new RawYsmModel.RawAnimationController();
             entry.animationName = reader.readString();

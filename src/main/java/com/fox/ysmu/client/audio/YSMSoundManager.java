@@ -15,6 +15,7 @@ import net.minecraft.client.audio.SoundManager;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.model.ServerModelManager;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.ysmu;
@@ -61,7 +62,7 @@ public final class YSMSoundManager {
             try {
                 if (!Files.exists(path)) Files.write(path, sf.data);
                 SOUND_FILES.put(name, path);
-                ysmu.LOG.info("[YSM Sound] cached '{}' → {} ({} bytes)", name, file, sf.data.length);
+                if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSM Sound] cached '{}' → {} ({} bytes)", name, file, sf.data.length);
             } catch (IOException ex) {
                 ysmu.LOG.warn("Failed to cache sound {}: {}", name, ex.getMessage());
             }
@@ -316,7 +317,7 @@ public final class YSMSoundManager {
             if (soundName != null) {
                 ACTIVE_SOURCES.put(soundName, srcName);
             }
-            ysmu.LOG.info("[YSM Sound] playing '{}' as {}", oggPath.getFileName(), srcName);
+            if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSM Sound] playing '{}' as {}", oggPath.getFileName(), srcName);
         } catch (Exception e) {
             ysmu.LOG.warn("[YSM Sound] Failed to play: {}", e.getMessage());
         }

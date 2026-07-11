@@ -32,6 +32,8 @@ public class Config {
     public static boolean DEBUG_CONTROLLER = false;
     public static boolean DEBUG_WHEEL = false;
     public static boolean DEBUG_MODEL_LOAD = false;
+    public static boolean DEBUG_ANIMATION = false;
+    public static boolean DEBUG_SOUND = false;
 
     // OpenYSM model sync config
     public static boolean ENABLE_OPEN_YSM_SYNC_PROTOCOL = true;
@@ -92,6 +94,8 @@ public class Config {
         DEBUG_CONTROLLER = syncBoolean("DebugController", "debug", DEBUG_CONTROLLER, "Enable controller transition/roaming debug logging ([YSMU-CTRL])", load);
         DEBUG_WHEEL = syncBoolean("DebugWheel", "debug", DEBUG_WHEEL, "Enable wheel GUI debug logging ([YSMU-WHEEL], [YSMU-ROAM])", load);
         DEBUG_MODEL_LOAD = syncBoolean("DebugModelLoad", "debug", DEBUG_MODEL_LOAD, "Enable model loading/debug logging ([YSMU-MODEL])", load);
+        DEBUG_ANIMATION = syncBoolean("DebugAnimation", "debug", DEBUG_ANIMATION, "Enable animation playback debug logging ([YSMU-ANIM])", load);
+        DEBUG_SOUND = syncBoolean("DebugSound", "debug", DEBUG_SOUND, "Enable sound cache/playback debug logging ([YSM Sound])", load);
 
         // OpenYSM model sync config values
         ENABLE_OPEN_YSM_SYNC_PROTOCOL = syncBoolean("EnableOpenYsmSyncProtocol", "openysm_sync", ENABLE_OPEN_YSM_SYNC_PROTOCOL, "Whether to use the appended OpenYSM hash/cache/chunk sync path before legacy fallback", load);

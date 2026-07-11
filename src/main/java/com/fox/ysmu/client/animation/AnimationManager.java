@@ -127,6 +127,7 @@ public final class AnimationManager {
 
     /** Only log [YSMU-ANIM] when the animation (or animId) actually changes, to avoid per-frame spam. */
     private void logAnimChange(ResourceLocation animId, String message) {
+        if (!Config.DEBUG_ANIMATION) return;
         ResourceLocation key = animId != null ? animId : NULL_ANIM_KEY;
         String prev = lastLoggedAnim.get(key);
         if (prev == null || !prev.equals(message)) {
@@ -237,7 +238,7 @@ public final class AnimationManager {
         if (animationName != null && (animationName.equals("gui") || animationName.startsWith("extra"))) {
             EntityPlayer p = event.getAnimatable() instanceof CustomPlayerEntity
                 ? ((CustomPlayerEntity) event.getAnimatable()).getPlayer() : null;
-            if (p != null) {
+            if (p != null && Config.DEBUG_ANIMATION) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] in-game playing '{}' on controller '{}'",
                     animationName, event.getController().getName());
             }
