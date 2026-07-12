@@ -191,8 +191,6 @@ public class AnimationController<T extends IAnimatable> {
     protected boolean needsAnimationReload = false;
     public double animationSpeed = 1D;
     private final Set<EventKeyFrame<?>> executedKeyFrames = new HashSet<>();
-    /** 仅用于调试：记录已输出过一次日志的 (controllerName, boneName)，防止刷屏 */
-    private static final Set<String> DEBUG_LOGGED_BONES = ConcurrentHashMap.newKeySet();
 
     /**
      * This method sets the current animation with an animation builder. You can run
@@ -663,12 +661,6 @@ public class AnimationController<T extends IAnimatable> {
                 }
             }
         } else if (getAnimationState() == AnimationState.Running) {
-            // One-time diagnostic: log when main_controller runs a non-builtin animation
-            if ("main_controller".equals(getName()) && currentAnimation != null
-                && DEBUG_LOGGED_BONES.add("procRun|" + currentAnimation.animationName)) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-GECKO] process() Running: anim='{}' tick={}",
-                    currentAnimation.animationName, tick);
-            }
             // Actually run the animation
             processCurrentAnimation(tick, actualTick, parser, crashWhenCantFindBone);
         }
@@ -765,45 +757,7 @@ public class AnimationController<T extends IAnimatable> {
             VectorKeyFrameList<KeyFrame<IValue>> positionKeyFrames = boneAnimation.positionKeyFrames;
             VectorKeyFrameList<KeyFrame<IValue>> scaleKeyFrames = boneAnimation.scaleKeyFrames;
 
-            // DEBUG (throttled): Log per-bone processing only once per (controller, bone) pair
-            if (getName() != null && (getName().startsWith("pre_parallel") || getName().startsWith("parallel"))) {
-                String debugKey = getName() + "|" + boneAnimation.boneName;
-                if (DEBUG_LOGGED_BONES.add(debugKey)) {
-                    boolean hasRot = !rotationKeyFrames.xKeyFrames.isEmpty();
-                    boolean hasPos = !positionKeyFrames.xKeyFrames.isEmpty();
-                    boolean hasScale = !scaleKeyFrames.xKeyFrames.isEmpty();
-                    String scaleExpr = "none";
-                    if (hasScale && !scaleKeyFrames.xKeyFrames.isEmpty()) {
-                        scaleExpr = scaleKeyFrames.xKeyFrames.get(0).getStartValue().toString();
-                        if (scaleExpr.length() > 100) scaleExpr = scaleExpr.substring(0, 100);
-                    }
-                }
-            }
-
             if (!rotationKeyFrames.xKeyFrames.isEmpty()) {
-                // One-time diagnostic: dump first keyframe values for 待机1/待机2
-                if ("main_controller".equals(getName()) && currentAnimation != null
-                    && DEBUG_LOGGED_BONES.add("kfDump|" + boneAnimation.boneName + "|" + currentAnimation.animationName)) {
-                    KeyFrame<IValue> kf = rotationKeyFrames.xKeyFrames.get(0);
-                    com.fox.ysmu.ysmu.LOG.info("[YSMU-KEY] bone '{}' anim='{}' rotX: start={} end={} len={} constant={}",
-                        boneAnimation.boneName, currentAnimation.animationName,
-                        kf.getStartValue().get(), kf.getEndValue().get(), kf.getLength(),
-                        kf.getStartValue().getClass().getSimpleName());
-                    if (!rotationKeyFrames.yKeyFrames.isEmpty()) {
-                        KeyFrame<IValue> kfY = rotationKeyFrames.yKeyFrames.get(0);
-                        com.fox.ysmu.ysmu.LOG.info("[YSMU-KEY] bone '{}' anim='{}' rotY: start={} end={} constant={}",
-                            boneAnimation.boneName, currentAnimation.animationName,
-                            kfY.getStartValue().get(), kfY.getEndValue().get(),
-                            kfY.getStartValue().getClass().getSimpleName());
-                    }
-                    if (!rotationKeyFrames.zKeyFrames.isEmpty()) {
-                        KeyFrame<IValue> kfZ = rotationKeyFrames.zKeyFrames.get(0);
-                        com.fox.ysmu.ysmu.LOG.info("[YSMU-KEY] bone '{}' anim='{}' rotZ: start={} end={} constant={}",
-                            boneAnimation.boneName, currentAnimation.animationName,
-                            kfZ.getStartValue().get(), kfZ.getEndValue().get(),
-                            kfZ.getStartValue().getClass().getSimpleName());
-                    }
-                }
                 boneAnimationQueue.rotationXQueue
                     .add(getAnimationPointAtTick(rotationKeyFrames.xKeyFrames, tick, true, Axis.X));
                 boneAnimationQueue.rotationYQueue

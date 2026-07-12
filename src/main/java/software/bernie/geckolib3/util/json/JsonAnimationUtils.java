@@ -91,7 +91,21 @@ public class JsonAnimationUtils {
                     JsonObject valueObject = entrySet.getValue()
                         .getAsJsonObject();
                     if (valueObject.has("post")) {
-                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), valueObject.get("post")));
+                        JsonElement postValue = valueObject.get("post");
+                        JsonObject wrapped = new JsonObject();
+                        if (postValue.isJsonPrimitive()) {
+                            JsonArray arr = new JsonArray();
+                            arr.add(postValue);
+                            arr.add(postValue);
+                            arr.add(postValue);
+                            wrapped.add("vector", arr);
+                        } else {
+                            wrapped.add("vector", postValue);
+                        }
+                        if (valueObject.has("lerp_mode")) {
+                            wrapped.add("lerp_mode", valueObject.get("lerp_mode"));
+                        }
+                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), wrapped));
                     }
                 } else {
                     output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
@@ -129,7 +143,21 @@ public class JsonAnimationUtils {
                     JsonObject valueObject = entrySet.getValue()
                         .getAsJsonObject();
                     if (valueObject.has("post")) {
-                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), valueObject.get("post")));
+                        JsonElement postValue = valueObject.get("post");
+                        JsonObject wrapped = new JsonObject();
+                        if (postValue.isJsonPrimitive()) {
+                            JsonArray arr = new JsonArray();
+                            arr.add(postValue);
+                            arr.add(postValue);
+                            arr.add(postValue);
+                            wrapped.add("vector", arr);
+                        } else {
+                            wrapped.add("vector", postValue);
+                        }
+                        if (valueObject.has("lerp_mode")) {
+                            wrapped.add("lerp_mode", valueObject.get("lerp_mode"));
+                        }
+                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), wrapped));
                     }
                 } else {
                     output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
@@ -167,7 +195,21 @@ public class JsonAnimationUtils {
                     JsonObject valueObject = entrySet.getValue()
                         .getAsJsonObject();
                     if (valueObject.has("post")) {
-                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), valueObject.get("post")));
+                        JsonElement postValue = valueObject.get("post");
+                        JsonObject wrapped = new JsonObject();
+                        if (postValue.isJsonPrimitive()) {
+                            JsonArray arr = new JsonArray();
+                            arr.add(postValue);
+                            arr.add(postValue);
+                            arr.add(postValue);
+                            wrapped.add("vector", arr);
+                        } else {
+                            wrapped.add("vector", postValue);
+                        }
+                        if (valueObject.has("lerp_mode")) {
+                            wrapped.add("lerp_mode", valueObject.get("lerp_mode"));
+                        }
+                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), wrapped));
                     }
                 } else {
                     output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));

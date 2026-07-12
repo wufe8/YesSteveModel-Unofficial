@@ -129,34 +129,6 @@ public final class OpenYsmPlayerControllerRuntime {
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
-        // Debug: log v.idle_time and v.idle_t for main controller ysm-builtin tracking
-        // Rate-limited: at most once per second, and only when something changed.
-        if ("player.main".equals(match.controller.name) || "main".equals(match.controller.name)) {
-            Double idleTime = runtimeState.variables.get("idle_time");
-            Double idleT = runtimeState.variables.get("idle_t");
-            Double idleBq = runtimeState.variables.get("idle_bq");
-            if (idleTime != null || idleT != null) {
-                long now = System.currentTimeMillis();
-                String curState = runtimeState.currentState;
-                boolean changed = !curState.equals(runtimeState.lastLoggedState)
-                    || (idleTime != null && !idleTime.equals(runtimeState.lastLoggedIdleTime))
-                    || (idleTime == null && runtimeState.lastLoggedIdleTime != null)
-                    || (idleT != null && !idleT.equals(runtimeState.lastLoggedIdleT))
-                    || (idleT == null && runtimeState.lastLoggedIdleT != null)
-                    || (idleBq != null && !idleBq.equals(runtimeState.lastLoggedIdleBq))
-                    || (idleBq == null && runtimeState.lastLoggedIdleBq != null);
-                if (changed && (now - runtimeState.lastIdleLogTime) >= 1000) {
-                    com.fox.ysmu.ysmu.LOG.info("[YSMU-IDLE] {} ctrl='{}' state='{}' idle_time={} idle_t={} idle_bq={}",
-                        geckoControllerName, match.controller.name, curState,
-                        idleTime, idleT, idleBq);
-                    runtimeState.lastIdleLogTime = now;
-                    runtimeState.lastLoggedState = curState;
-                    runtimeState.lastLoggedIdleTime = idleTime;
-                    runtimeState.lastLoggedIdleT = idleT;
-                    runtimeState.lastLoggedIdleBq = idleBq;
-                }
-            }
-        }
         State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
@@ -170,8 +142,6 @@ public final class OpenYsmPlayerControllerRuntime {
             if (nextState == state) {
                 break;
             }
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-IDLE] {} transition: '{}' -> '{}' (count={})",
-                geckoControllerName, prevStateName, nextState.name, transitionCount);
             transitionCount++;
             state = nextState;
         }
@@ -220,14 +190,6 @@ public final class OpenYsmPlayerControllerRuntime {
             // Do NOT clear the animation builder — let the legacy predicate system
             // in predicateMain select the correct animation (idle/walk/run/etc.).
             if ("ysm-builtin".equals(runtimeState.currentState)) {
-                // Rate-limited: at most once per second, only when state changes
-                long now = System.currentTimeMillis();
-                if ((now - runtimeState.lastIdleLogTime) >= 1000 && !"ysm-builtin".equals(runtimeState.lastLoggedState)) {
-                    com.fox.ysmu.ysmu.LOG.info("[YSMU-IDLE] {} ysm-builtin active, animations empty, falling back to legacy",
-                        geckoControllerName);
-                    runtimeState.lastIdleLogTime = now;
-                    runtimeState.lastLoggedState = "ysm-builtin";
-                }
             } else {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
                 event.getController().currentAnimationBuilder = new AnimationBuilder();
@@ -304,23 +266,11 @@ public final class OpenYsmPlayerControllerRuntime {
                 continue;
             }
             boolean conditionMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(transition.condition, context);
-            if (Config.DEBUG_CONTROLLER || state.transitions.size() <= 3) {
-                // Rate-limited: at most once per second, only when state/transition/result changes
-                long now = System.currentTimeMillis();
-                if ((now - runtimeState.lastIdleLogTime) >= 1000) {
-                    // Build a compact key to detect real changes
-                    String transKey = state.name + "|" + (transition.condition != null ? transition.condition : "null") + "|" + target.name + "|" + conditionMet;
-                    if (!transKey.equals(runtimeState.lastTransKey)) {
-                        Double tidleTime = runtimeState.variables.get("idle_time");
-                        Double tidleT = runtimeState.variables.get("idle_t");
-                        com.fox.ysmu.ysmu.LOG.info("[YSMU-IDLE]   trans: {} --[{}]--> {} = {} (idle_time={}, idle_t={})",
-                            state.name,
-                            transition.condition != null ? transition.condition.substring(0, Math.min(transition.condition.length(), 120)) : "null",
-                            target.name, conditionMet, tidleTime, tidleT);
-                        runtimeState.lastIdleLogTime = now;
-                        runtimeState.lastTransKey = transKey;
-                    }
-                }
+            if (Config.DEBUG_CONTROLLER) {
+                com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL]   trans: {} --[{}]--> {} = {}",
+                    state.name,
+                    transition.condition != null ? transition.condition.substring(0, Math.min(transition.condition.length(), 120)) : "null",
+                    target.name, conditionMet);
             }
             if (!conditionMet) {
                 continue;
@@ -494,14 +444,6 @@ public final class OpenYsmPlayerControllerRuntime {
         if (sameAnim) {
             return;
         }
-        // Rate-limited log: animation change detected
-        long now = System.currentTimeMillis();
-        if ((now - runtimeState.lastIdleLogTime) >= 1000) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] controller '{}' change: state='{}' anim='{}' bones={}",
-                event.getController().getName(), state.name, primaryName,
-                primaryAnim != null && primaryAnim.boneAnimations != null ? primaryAnim.boneAnimations.size() : 0);
-            runtimeState.lastIdleLogTime = now;
-        }
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
         double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);
         if (event.getController()
@@ -670,13 +612,6 @@ public final class OpenYsmPlayerControllerRuntime {
         boolean lastSwingActive;
         int lastSwingProgress = -1;
         final Map<String, Double> variables = new ConcurrentHashMap<>();
-        // Rate-limiting for [YSMU-IDLE] debug logs
-        long lastIdleLogTime = 0;
-        String lastLoggedState = "";
-        String lastTransKey = "";
-        Double lastLoggedIdleTime = null;
-        Double lastLoggedIdleT = null;
-        Double lastLoggedIdleBq = null;
     }
 
     private static final class ControllerMatch {
