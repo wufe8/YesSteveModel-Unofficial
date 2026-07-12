@@ -1,8 +1,16 @@
 package com.fox.ysmu.client.model;
 
+import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+
+import com.fox.ysmu.client.animation.VirtualBone;
+import software.bernie.geckolib3.core.builder.Animation;
+import software.bernie.geckolib3.core.keyframe.BoneAnimation;
+import software.bernie.geckolib3.file.AnimationFile;
+import software.bernie.geckolib3.geo.render.built.GeoModel;
 
 import javax.annotation.Nullable;
 
@@ -343,6 +351,49 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         private HeadPoseOffset(float rotationX, float rotationY) {
             this.rotationX = rotationX;
             this.rotationY = rotationY;
+        }
+    }
+
+    @Override
+    public GeoModel getModel(ResourceLocation location) {
+        GeoModel oldModel = getCurrentModel();
+        GeoModel model = super.getModel(location);
+        if (model == null) return model;
+        if (model != oldModel) {
+            injectVirtualBones(location);
+        }
+        return model;
+    }
+
+    private void injectVirtualBones(ResourceLocation location) {
+        AnimationFile animFile = GeckoLibCache.getInstance().getAnimations().get(location);
+        if (animFile == null) return;
+        List<IBone> modelBones = getAnimationProcessor().getModelRendererList();
+        Set<String> boneNames = new HashSet<>();
+        for (IBone bone : modelBones) {
+            boneNames.add(bone.getName());
+        }
+        boolean needsInjection = false;
+        outer:
+        for (Animation anim : animFile.getAllAnimations()) {
+            if (anim.boneAnimations == null) continue;
+            for (BoneAnimation ba : anim.boneAnimations) {
+                if (!boneNames.contains(ba.boneName)) {
+                    needsInjection = true;
+                    break outer;
+                }
+            }
+        }
+        if (!needsInjection) return;
+        for (Animation anim : animFile.getAllAnimations()) {
+            if (anim.boneAnimations == null) continue;
+            for (BoneAnimation ba : anim.boneAnimations) {
+                if (!boneNames.contains(ba.boneName)) {
+                    getAnimationProcessor().registerModelRenderer(
+                        new VirtualBone(ba.boneName));
+                    boneNames.add(ba.boneName);
+                }
+            }
         }
     }
 

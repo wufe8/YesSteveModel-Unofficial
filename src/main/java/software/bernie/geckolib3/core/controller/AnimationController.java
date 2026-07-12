@@ -54,8 +54,6 @@ import software.bernie.geckolib3.core.processor.IBone;
 import software.bernie.geckolib3.core.snapshot.BoneSnapshot;
 import software.bernie.geckolib3.core.util.Axis;
 
-import com.fox.ysmu.client.animation.VirtualBone;
-
 /**
  * The type Animation controller.
  *
@@ -567,27 +565,14 @@ public class AnimationController<T extends IAnimatable> {
                     if (!first.isPresent()) {
                         if (crashWhenCantFindBone) {
                             throw new RuntimeException("Could not find bone: " + boneAnimation.boneName);
+                        } else {
+                            continue;
                         }
-                        // Virtual bone: create placeholder entries so that Molang
-                        // expressions in keyframes (with side effects like variable
-                        // assignments) are still evaluated during transition setup.
-                        VirtualBone vb = new VirtualBone(boneAnimation.boneName);
-                        boneAnimationQueue = boneAnimationQueues.computeIfAbsent(
-                            boneAnimation.boneName, k -> new BoneAnimationQueue(vb));
-                        if (boneSnapshot == null) {
-                            vb.saveInitialSnapshot();
-                            boneSnapshot = vb.getInitialSnapshot();
-                            this.boneSnapshots.put(boneAnimation.boneName, boneSnapshot);
-                        }
-                        // Skip markActiveBoneAnimationQueue — virtual bones
-                        // don't affect rendering.
-                        // Proceed to keyframe evaluation below.
-                    } else {
-                        markActiveBoneAnimationQueue(boneAnimationQueue);
                     }
-                    BoneSnapshot initialSnapshot = first.isPresent()
-                        ? first.get().getInitialSnapshot()
-                        : boneAnimationQueue.bone.getInitialSnapshot();
+                    markActiveBoneAnimationQueue(boneAnimationQueue);
+                    BoneSnapshot initialSnapshot = first.get()
+                        .getInitialSnapshot();
+                    assert boneSnapshot != null : "Bone snapshot was null";
 
                     VectorKeyFrameList<KeyFrame<IValue>> rotationKeyFrames = boneAnimation.rotationKeyFrames;
                     VectorKeyFrameList<KeyFrame<IValue>> positionKeyFrames = boneAnimation.positionKeyFrames;
@@ -761,22 +746,14 @@ public class AnimationController<T extends IAnimatable> {
         List<BoneAnimation> boneAnimations = currentAnimation.boneAnimations;
         for (BoneAnimation boneAnimation : boneAnimations) {
             BoneAnimationQueue boneAnimationQueue = boneAnimationQueues.get(boneAnimation.boneName);
-            boolean isVirtualBone = false;
             if (boneAnimationQueue == null) {
                 if (crashWhenCantFindBone) {
                     throw new RuntimeException("Could not find bone: " + boneAnimation.boneName);
+                } else {
+                    continue;
                 }
-                // Virtual bone: create a placeholder so that Molang expressions
-                // in rotation/position/scale keyframes (used for side effects
-                // like variable assignments) are still evaluated.
-                isVirtualBone = true;
-                boneAnimationQueue = new BoneAnimationQueue(
-                    new VirtualBone(boneAnimation.boneName));
-                boneAnimationQueues.put(boneAnimation.boneName, boneAnimationQueue);
             }
-            if (!isVirtualBone) {
-                markActiveBoneAnimationQueue(boneAnimationQueue);
-            }
+            markActiveBoneAnimationQueue(boneAnimationQueue);
 
             VectorKeyFrameList<KeyFrame<IValue>> rotationKeyFrames = boneAnimation.rotationKeyFrames;
             VectorKeyFrameList<KeyFrame<IValue>> positionKeyFrames = boneAnimation.positionKeyFrames;
