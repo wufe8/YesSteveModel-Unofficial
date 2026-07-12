@@ -423,14 +423,6 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         if (primaryAnim != null && primaryAnim.boneAnimations != null) {
             mergedBones = new ArrayList<>(primaryAnim.boneAnimations);
-            if (com.fox.ysmu.Config.DEBUG_ANIMATION && "main_controller".equals(event.getController().getName())) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] anim '{}' loaded: {} bones, length={}, loop={}",
-                    primaryName, primaryAnim.boneAnimations.size(),
-                    primaryAnim.animationLength, primaryAnim.loop);
-            }
-        } else if (com.fox.ysmu.Config.DEBUG_ANIMATION && "main_controller".equals(event.getController().getName())) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] anim '{}' NOT FOUND or has no boneAnimations (primaryAnim={})",
-                primaryName, primaryAnim);
         }
         // Merge additional animations' bones on top (for multi-animation states)
         for (int i = 1; i < animationNames.size(); i++) {
@@ -501,6 +493,14 @@ public final class OpenYsmPlayerControllerRuntime {
         // Same state + same animation → nothing to change, skip setAnimation entirely.
         if (sameAnim) {
             return;
+        }
+        // Rate-limited log: animation change detected
+        long now = System.currentTimeMillis();
+        if ((now - runtimeState.lastIdleLogTime) >= 1000) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] controller '{}' change: state='{}' anim='{}' bones={}",
+                event.getController().getName(), state.name, primaryName,
+                primaryAnim != null && primaryAnim.boneAnimations != null ? primaryAnim.boneAnimations.size() : 0);
+            runtimeState.lastIdleLogTime = now;
         }
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
         double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);

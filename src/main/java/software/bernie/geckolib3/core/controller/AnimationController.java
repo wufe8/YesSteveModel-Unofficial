@@ -663,6 +663,12 @@ public class AnimationController<T extends IAnimatable> {
                 }
             }
         } else if (getAnimationState() == AnimationState.Running) {
+            // One-time diagnostic: log when main_controller runs a non-builtin animation
+            if ("main_controller".equals(getName()) && currentAnimation != null
+                && DEBUG_LOGGED_BONES.add("procRun|" + currentAnimation.animationName)) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-GECKO] process() Running: anim='{}' tick={}",
+                    currentAnimation.animationName, tick);
+            }
             // Actually run the animation
             processCurrentAnimation(tick, actualTick, parser, crashWhenCantFindBone);
         }
@@ -775,6 +781,29 @@ public class AnimationController<T extends IAnimatable> {
             }
 
             if (!rotationKeyFrames.xKeyFrames.isEmpty()) {
+                // One-time diagnostic: dump first keyframe values for 待机1/待机2
+                if ("main_controller".equals(getName()) && currentAnimation != null
+                    && DEBUG_LOGGED_BONES.add("kfDump|" + boneAnimation.boneName + "|" + currentAnimation.animationName)) {
+                    KeyFrame<IValue> kf = rotationKeyFrames.xKeyFrames.get(0);
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-KEY] bone '{}' anim='{}' rotX: start={} end={} len={} constant={}",
+                        boneAnimation.boneName, currentAnimation.animationName,
+                        kf.getStartValue().get(), kf.getEndValue().get(), kf.getLength(),
+                        kf.getStartValue().getClass().getSimpleName());
+                    if (!rotationKeyFrames.yKeyFrames.isEmpty()) {
+                        KeyFrame<IValue> kfY = rotationKeyFrames.yKeyFrames.get(0);
+                        com.fox.ysmu.ysmu.LOG.info("[YSMU-KEY] bone '{}' anim='{}' rotY: start={} end={} constant={}",
+                            boneAnimation.boneName, currentAnimation.animationName,
+                            kfY.getStartValue().get(), kfY.getEndValue().get(),
+                            kfY.getStartValue().getClass().getSimpleName());
+                    }
+                    if (!rotationKeyFrames.zKeyFrames.isEmpty()) {
+                        KeyFrame<IValue> kfZ = rotationKeyFrames.zKeyFrames.get(0);
+                        com.fox.ysmu.ysmu.LOG.info("[YSMU-KEY] bone '{}' anim='{}' rotZ: start={} end={} constant={}",
+                            boneAnimation.boneName, currentAnimation.animationName,
+                            kfZ.getStartValue().get(), kfZ.getEndValue().get(),
+                            kfZ.getStartValue().getClass().getSimpleName());
+                    }
+                }
                 boneAnimationQueue.rotationXQueue
                     .add(getAnimationPointAtTick(rotationKeyFrames.xKeyFrames, tick, true, Axis.X));
                 boneAnimationQueue.rotationYQueue

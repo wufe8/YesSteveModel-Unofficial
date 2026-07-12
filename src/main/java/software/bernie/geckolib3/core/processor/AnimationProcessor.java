@@ -28,6 +28,8 @@ public class AnimationProcessor<T extends IAnimatable> {
     private List<IBone> modelRendererList = new ArrayList();
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
     private final IAnimatableModel animatedModel;
+    private static final java.util.Set<String> DEBUG_LOG_BONES = java.util.Collections.newSetFromMap(
+        new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
     public AnimationProcessor(IAnimatableModel animatedModel) {
         this.animatedModel = animatedModel;
@@ -110,6 +112,16 @@ public class AnimationProcessor<T extends IAnimatable> {
                     snapshot.rotationValueZ = bone.getRotationZ();
                     snapshot.isCurrentlyRunningRotationAnimation = true;
                     dirtyTracker.hasRotationChanged = true;
+                    // One-time diagnostic: log bone rotation values being applied
+                    if ("main_controller".equals(controller.getName())) {
+                        String dbgBoneKey = "boneVal|" + controller.getName() + "|" + bone.getName();
+                        if (DEBUG_LOG_BONES.add(dbgBoneKey)) {
+                            com.fox.ysmu.ysmu.LOG.info("[YSMU-GECKO] bone '{}' rot=({}, {}, {}) init=({}, {}, {}) ctrl='{}'",
+                                bone.getName(), valueX, valueY, valueZ,
+                                initialSnapshot.rotationValueX, initialSnapshot.rotationValueY, initialSnapshot.rotationValueZ,
+                                controller.getName());
+                        }
+                    }
                 }
 
                 // If there's any position points for this bone
