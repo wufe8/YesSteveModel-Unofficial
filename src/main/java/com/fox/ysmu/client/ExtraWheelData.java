@@ -43,12 +43,24 @@ public class ExtraWheelData {
             entries.put(k, v);
         }
 
+        // Collect which classify ids are explicitly referenced in the main
+        // extra_animation (keys starting with "#id").  Only those should be
+        // auto-added to root entries; nested classifies (e.g. "自定义动作"
+        // only referenced from within "可配置动作"'s sub-page) must NOT be
+        // promoted to the root level — they are reachable via sub-page navigation.
+        java.util.Set<String> referencedClassifyIds = new java.util.HashSet<>();
+        for (String k : raw.properties.extraAnimations.keySet()) {
+            if (k.startsWith("#")) {
+                referencedClassifyIds.add(k.substring(1));
+            }
+        }
+
         for (RawYsmModel.ExtraAnimationClassify classify : raw.properties.extraAnimationClassifies) {
             if (StringUtils.isNotBlank(classify.id)) {
                 classifies.put(classify.id, new LinkedHashMap<>(classify.extras));
-                // Add classify as a navigable submenu entry if not already present
+                // Only add to root entries if explicitly referenced in extra_animation
                 String key = "#" + classify.id;
-                if (!entries.containsKey(key)) {
+                if (referencedClassifyIds.contains(classify.id) && !entries.containsKey(key)) {
                     entries.put(key, classify.id);
                 }
             }

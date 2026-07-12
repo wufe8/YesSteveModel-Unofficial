@@ -680,27 +680,22 @@ public class AnimationRouletteScreen extends GuiScreen {
                 drawCenteredString(fontRendererObj, valStr, panelX + panelW / 2, sliderY + 6, 0xFFFF55);
             } else if ("radio".equals(form.type)) {
                 double curVal = getMolangVar(form.defaultValue);
+                int selectedIndex = (int) Math.round(curVal);
+                if (selectedIndex < 0 || selectedIndex >= form.labels.size()) {
+                    selectedIndex = 0;
+                }
                 int yOff = fy + 24;
+                int idx = 0;
                 for (Map.Entry<String, String> label : form.labels.entrySet()) {
                     boolean hovered = mouseX >= panelX && mouseX <= panelX + panelW && mouseY >= yOff && mouseY <= yOff + 14;
                     int color = hovered ? 0xFFB100 : 0xF3EFE0;
-                    // Check if this option matches current value
-                    boolean selected = false;
-                    String optExpr = label.getValue();
-                    if (StringUtils.isNotBlank(optExpr) && optExpr.contains("=")) {
-                        String valStr = optExpr.substring(optExpr.indexOf('=') + 1).trim();
-                        // Handle semicolon-separated multiple assignments (e.g., "v.value_kuzi=0;v.ha=1;...")
-                        int semiIdx = valStr.indexOf(';');
-                        if (semiIdx > 0) valStr = valStr.substring(0, semiIdx);
-                        valStr = valStr.trim();
-                        try {
-                            selected = Math.abs(curVal - Double.parseDouble(valStr)) < 0.001;
-                        } catch (NumberFormatException e) {
-                            // not a numeric comparison
-                        }
-                    }
+                    // OpenYSM convention: the evaluated expression value IS the
+                    // 0-based label index (not compared against label values).
+                    // This allows expressions like "v.roaming.bq_eye+1" to work.
+                    boolean selected = (idx == selectedIndex);
                     drawString(fontRendererObj, selected ? "(\u2713) " + label.getKey() : "( ) " + label.getKey(), panelX, yOff, selected ? 0x55FF55 : color);
                     yOff += 14;
+                    idx++;
                 }
             }
         }

@@ -496,6 +496,10 @@ public final class OpenYsmPlayerControllerRuntime {
             // that a new swing began and transition from the default state.
             // The sub-state's on_entry clears v.swing = 0.
             state.variables.put("swing", 1.0d);
+            // Clear swing_end so that subsequent swings can transition to
+            // sword states again (previous swing state's on_entry set
+            // v.swing_end = 1, which would block !v.swing_end conditions).
+            state.variables.put("swing_end", 0.0d);
             // Also detect sword swings for roaming.swing_sword compatibility
             boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                 "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
