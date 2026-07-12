@@ -492,13 +492,33 @@ public class AnimationRouletteScreen extends GuiScreen {
         }
     }
 
-    /** Gets the current value of a roaming Molang variable. */
+    /** Gets the current value of a roaming Molang variable or expression.
+     *  Evaluates the expression through the Molang parser so that values like
+     *  {@code "v.roaming.bq_eye+1"} work correctly (OpenYSM spec allows
+     *  expressions, not just simple variable names, in {@code radio} form values). */
     private static double getMolangVar(String expression) {
         if (StringUtils.isBlank(expression)) return 0;
-        String varName = expression.contains("=") ? expression.substring(0, expression.indexOf('=')).trim() : expression.trim();
-        String roamingName = varName.startsWith("v.") ? varName.substring(2) : varName;
-        Double v = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(roamingName);
-        return v != null ? v : 0;
+        // Inject PENDING_ROAMING into the Molang parser so expressions like
+        // "v.roaming.bq_eye+1" resolve "v.roaming.bq_eye" correctly.
+        for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+            String key = "v." + entry.getKey();
+            software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
+                .computeIfAbsent(key, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
+                .set(entry.getValue());
+        }
+        try {
+            software.bernie.geckolib3.core.molang.MolangParser parser =
+                software.bernie.geckolib3.resource.GeckoLibCache.getInstance().parser;
+            com.eliotlash.mclib.math.IValue result = parser.parseExpression(expression);
+            return result.get();
+        } catch (Exception e) {
+            // Fallback: try simple variable lookup
+            String varName = expression.contains("=")
+                ? expression.substring(0, expression.indexOf('=')).trim() : expression.trim();
+            String roamingName = varName.startsWith("v.") ? varName.substring(2) : varName;
+            Double v = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(roamingName);
+            return v != null ? v : 0;
+        }
     }
 
     private void handleRangeChange(int formIndex, int mouseX, int panelX, int panelW) {

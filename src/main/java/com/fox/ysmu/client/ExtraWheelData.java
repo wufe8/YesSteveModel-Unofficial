@@ -37,14 +37,10 @@ public class ExtraWheelData {
         for (Map.Entry<String, String> entry : raw.properties.extraAnimations.entrySet()) {
             String k = entry.getKey();
             String v = entry.getValue();
-            // If value starts with #, it's a config button reference — prefix key with #
-            // so the wheel UI displays it as a config entry and the inner-ring click
-            // handler can find the btnId from the value.
-            if (v != null && v.startsWith("#")) {
-                entries.put("#" + k, v);
-            } else {
-                entries.put(k, v);
-            }
+            // Config button references (value starts with #) keep their original key —
+            // the inner-ring click handler checks the VALUE for "#" prefix, not the key.
+            // Sub-page references (key starts with #) preserve the # prefix for navigation.
+            entries.put(k, v);
         }
 
         for (RawYsmModel.ExtraAnimationClassify classify : raw.properties.extraAnimationClassifies) {
@@ -58,16 +54,12 @@ public class ExtraWheelData {
             }
         }
 
+        // Register config buttons so they can be opened from any navigation level.
+        // Do NOT auto-add them to root entries — they only appear via explicit
+        // #btnId references in extra_animation or classify extras (inner ring).
         for (ExtraAnimationButton btn : raw.properties.extraAnimationButtons) {
             if (StringUtils.isNotBlank(btn.id)) {
                 configButtons.put(btn.id, btn);
-                // Auto-add to entries only if no entry already references this btn_id
-                // (extraAnimations may already have added it with key="#extraN").
-                String btnRef = "#" + btn.id;
-                boolean alreadyReferenced = entries.values().stream().anyMatch(v -> btnRef.equals(v));
-                if (!alreadyReferenced) {
-                    entries.put(btnRef, btnRef);
-                }
             }
         }
 

@@ -486,12 +486,17 @@ public final class OpenYsmPlayerControllerRuntime {
         // Run on EVERY controller so that parallel_2 (and others without a
         // post_swing OpenYSM controller) can detect swings independently.
         // Each controller uses its OWN lastSwingActive/lastSwingProgress so that
-        // on_exit variable clearance (v.swing_sword=0) is never overwritten.
+        // on_exit variable clearance is never overwritten.
         boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
         boolean swingReset = player.isSwingInProgress && state.lastSwingActive
             && player.swingProgressInt < state.lastSwingProgress;
         boolean newSwing = swingJustStarted || swingReset;
         if (newSwing) {
+            // Set v.swing = 1 so OpenYSM post_swing controllers can detect
+            // that a new swing began and transition from the default state.
+            // The sub-state's on_entry clears v.swing = 0.
+            state.variables.put("swing", 1.0d);
+            // Also detect sword swings for roaming.swing_sword compatibility
             boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                 "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
                 context);
