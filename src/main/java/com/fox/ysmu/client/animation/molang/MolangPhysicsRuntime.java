@@ -141,7 +141,7 @@ public final class MolangPhysicsRuntime {
     /**
      * Syncs v.* variables set by animation keyframe Molang expressions
      * (e.g. {@code v.idle_time = v.idle_time + 3}) back into the controller's
-     * RuntimeState so that OpenYSM controller transition conditions can see
+     * RuntimeState so that YSM controller transition conditions can see
      * the updated values.
      * <p>
      * Keyframes write to {@link ScopeState#variables} (via

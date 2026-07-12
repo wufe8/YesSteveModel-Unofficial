@@ -36,7 +36,7 @@ public final class OpenYsmModelSyncServer {
     private OpenYsmModelSyncServer() {}
 
     public static void startSync(EntityPlayerMP player) {
-        if (player == null || !Config.ENABLE_OPEN_YSM_SYNC_PROTOCOL) {
+        if (player == null || !Config.ENABLE_SYNC_PROTOCOL) {
             return;
         }
         byte[] serverKey = ServerModelManager.OPEN_YSM_SERVER_KEY;

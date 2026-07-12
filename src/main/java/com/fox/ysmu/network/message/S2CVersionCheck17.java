@@ -39,7 +39,7 @@ public class S2CVersionCheck17 implements IMessage {
 
         @Override
         public IMessage onMessage(S2CVersionCheck17 message, MessageContext ctx) {
-            if (ctx.side == Side.CLIENT && Config.ENABLE_OPEN_YSM_SYNC_PROTOCOL) {
+            if (ctx.side == Side.CLIENT && Config.ENABLE_SYNC_PROTOCOL) {
                 OpenYsmModelSyncClient.resetConnectionState();
                 NetworkHandler.CHANNEL.sendToServer(new C2SVersionCheck17(NetworkHandler.PROTOCOL_VERSION));
             }

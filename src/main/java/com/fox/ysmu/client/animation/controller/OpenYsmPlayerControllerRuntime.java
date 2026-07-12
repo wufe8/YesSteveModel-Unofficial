@@ -184,8 +184,15 @@ public final class OpenYsmPlayerControllerRuntime {
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
             }
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
-            event.getController().currentAnimationBuilder = new AnimationBuilder();
+            // Special handling for the "ysm-builtin" state (YSM 2.6.3+ feature):
+            // This is an intentionally empty state that signals "fall back to the
+            // built-in hardcoded animation logic" (same as when no controller exists).
+            // Do NOT clear the animation builder — let the legacy predicate system
+            // in predicateMain select the correct animation (idle/walk/run/etc.).
+            if (!"ysm-builtin".equals(runtimeState.currentState)) {
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+                event.getController().currentAnimationBuilder = new AnimationBuilder();
+            }
             return null;
         }
         // Filter to animations that actually exist

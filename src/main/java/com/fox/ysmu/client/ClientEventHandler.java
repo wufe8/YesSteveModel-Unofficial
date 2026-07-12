@@ -72,7 +72,7 @@ public class ClientEventHandler {
             return;
         }
         RemotePlayerAnimationQueries.clear();
-        if (!Config.ENABLE_OPEN_YSM_SYNC_PROTOCOL) {
+        if (!Config.ENABLE_SYNC_PROTOCOL) {
             ClientModelManager.sendSyncModelMessage();
         }
     }

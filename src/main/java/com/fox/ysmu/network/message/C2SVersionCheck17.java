@@ -42,7 +42,7 @@ public class C2SVersionCheck17 implements IMessage {
         @Override
         public IMessage onMessage(C2SVersionCheck17 message, MessageContext ctx) {
             EntityPlayerMP sender = ctx.getServerHandler().playerEntity;
-            if (sender == null || !Config.ENABLE_OPEN_YSM_SYNC_PROTOCOL) {
+            if (sender == null || !Config.ENABLE_SYNC_PROTOCOL) {
                 return null;
             }
             if (!NetworkHandler.PROTOCOL_VERSION.equals(message.version)) {

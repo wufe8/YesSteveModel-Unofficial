@@ -99,7 +99,7 @@ public final class ServerModelManager {
     }
 
     public static void sendRequestSyncModelMessage(EntityPlayer player) {
-        if (Config.ENABLE_OPEN_YSM_SYNC_PROTOCOL) {
+        if (Config.ENABLE_SYNC_PROTOCOL) {
             NetworkHandler.sendToClientPlayer(new S2CVersionCheck17(NetworkHandler.PROTOCOL_VERSION), player);
         }
         NetworkHandler.sendToClientPlayer(new RequestSyncModel(), player);

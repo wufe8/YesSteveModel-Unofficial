@@ -35,8 +35,8 @@ public class Config {
     public static boolean DEBUG_ANIMATION = false;
     public static boolean DEBUG_SOUND = false;
 
-    // OpenYSM model sync config
-    public static boolean ENABLE_OPEN_YSM_SYNC_PROTOCOL = true;
+    // Model sync config
+    public static boolean ENABLE_SYNC_PROTOCOL = true;
     public static int THREAD_COUNT = 4;
     public static int BANDWIDTH_LIMIT = 0;
     public static int PLAYER_SYNC_TIMEOUT = 60;
@@ -97,13 +97,13 @@ public class Config {
         DEBUG_ANIMATION = syncBoolean("DebugAnimation", "debug", DEBUG_ANIMATION, "Enable animation playback debug logging ([YSMU-ANIM])", load);
         DEBUG_SOUND = syncBoolean("DebugSound", "debug", DEBUG_SOUND, "Enable sound cache/playback debug logging ([YSM Sound])", load);
 
-        // OpenYSM model sync config values
-        ENABLE_OPEN_YSM_SYNC_PROTOCOL = syncBoolean("EnableOpenYsmSyncProtocol", "openysm_sync", ENABLE_OPEN_YSM_SYNC_PROTOCOL, "Whether to use the appended OpenYSM hash/cache/chunk sync path before legacy fallback", load);
-        THREAD_COUNT = syncInt("ThreadCount", "openysm_sync", THREAD_COUNT, "Target worker count for OpenYSM model sync tasks", 1, 32, load);
-        BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "openysm_sync", BANDWIDTH_LIMIT, "OpenYSM model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
-        PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "openysm_sync", PLAYER_SYNC_TIMEOUT, "OpenYSM model sync timeout in seconds", 5, Integer.MAX_VALUE, load);
-        LOW_BANDWIDTH_USAGE = syncBoolean("LowBandwidthUsage", "openysm_sync", LOW_BANDWIDTH_USAGE, "Whether OpenYSM sync should use smaller chunks and conservative throttling", load);
-        ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "openysm_sync", ACCEPT_SOUND_FX, "Whether OpenYSM sync should accept model sound effect resources", load);
+        // Model sync config values
+        ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Whether to use the appended hash/cache/chunk sync path before legacy fallback", load);
+        THREAD_COUNT = syncInt("ThreadCount", "ysm_sync", THREAD_COUNT, "Target worker count for YSM model sync tasks", 1, 32, load);
+        BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
+        PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);
+        LOW_BANDWIDTH_USAGE = syncBoolean("LowBandwidthUsage", "ysm_sync", LOW_BANDWIDTH_USAGE, "Whether sync should use smaller chunks and conservative throttling", load);
+        ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "ysm_sync", ACCEPT_SOUND_FX, "Whether sync should accept model sound effect resources", load);
 
         // 检查配置是否已更改，如果已更改，则保存
         if (configuration.hasChanged()) {

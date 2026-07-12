@@ -409,6 +409,12 @@ final class OpenYsmControllerExpressionEvaluator {
             if (normalized.startsWith("ysm.")) {
                 return ysmValue(normalized.substring("ysm.".length()));
             }
+            if ("math.pi".equals(normalized)) {
+                return Math.PI;
+            }
+            if ("math.e".equals(normalized)) {
+                return Math.E;
+            }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "var:" + normalized,
                 "Unsupported OpenYSM controller variable: " + normalized);
@@ -428,15 +434,90 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("ctrl.ride".equals(name)) {
                 return player.isRiding() ? TRUE : FALSE;
             }
-            if ("math.mod".equals(name) && arguments.size() >= 2) {
+            // --- math 单参数函数 ---
+            if (("math.floor".equals(name) || "math.round".equals(name) || "math.ceil".equals(name)
+                || "math.trunc".equals(name) || "math.abs".equals(name) || "math.sqrt".equals(name)
+                || "math.exp".equals(name) || "math.ln".equals(name) || "math.hermite_blend".equals(name)
+                || "math.hermite".equals(name)
+                || "math.sin".equals(name) || "math.cos".equals(name) || "math.atan".equals(name))
+                && arguments.size() >= 1) {
+                double v = arguments.get(0).asNumber();
+                if ("math.floor".equals(name)) return Math.floor(v);
+                if ("math.round".equals(name)) return Math.round(v);
+                if ("math.ceil".equals(name)) return Math.ceil(v);
+                if ("math.trunc".equals(name)) return v < 0 ? Math.ceil(v) : Math.floor(v);
+                if ("math.abs".equals(name)) return Math.abs(v);
+                if ("math.sqrt".equals(name)) return v < 0 ? 0.0d : Math.sqrt(v);
+                if ("math.exp".equals(name)) return Math.exp(v);
+                if ("math.ln".equals(name)) return v <= 0 ? 0.0d : Math.log(v);
+                if ("math.hermite_blend".equals(name) || "math.hermite".equals(name)) return v * v * (3 - 2 * v);
+                if ("math.sin".equals(name)) return Math.sin(Math.toRadians(v));
+                if ("math.cos".equals(name)) return Math.cos(Math.toRadians(v));
+                if ("math.atan".equals(name)) return Math.toDegrees(Math.atan(v));
+            }
+            // --- math 双参数函数 ---
+            if (("math.mod".equals(name) || "math.max".equals(name) || "math.min".equals(name)
+                || "math.pow".equals(name) || "math.atan2".equals(name) || "math.min_angle".equals(name))
+                && arguments.size() >= 2) {
                 double a = arguments.get(0).asNumber();
                 double b = arguments.get(1).asNumber();
-                if (b == 0.0d) return FALSE;
-                double result = a % b;
-                // 兼容负数的取模行为
-                if (result < 0) result += Math.abs(b);
-                return result;
+                if ("math.mod".equals(name)) {
+                    if (b == 0.0d) return FALSE;
+                    double r = a % b;
+                    if (r < 0) r += Math.abs(b);
+                    return r;
+                }
+                if ("math.max".equals(name)) return Math.max(a, b);
+                if ("math.min".equals(name)) return Math.min(a, b);
+                if ("math.pow".equals(name)) return Math.pow(a, b);
+                if ("math.atan2".equals(name)) return Math.toDegrees(Math.atan2(a, b));
+                if ("math.min_angle".equals(name)) {
+                    double diff = (b - a) % 360;
+                    if (diff > 180) diff -= 360;
+                    if (diff <= -180) diff += 360;
+                    return diff;
+                }
             }
+            // --- math 三参数函数 ---
+            if (("math.clamp".equals(name) || "math.lerp".equals(name) || "math.lerprotate".equals(name)
+                || "math.die_roll".equals(name) || "math.die_roll_integer".equals(name)
+                || "math.roll".equals(name) || "math.rolli".equals(name))
+                && arguments.size() >= 3) {
+                double a = arguments.get(0).asNumber();
+                double b = arguments.get(1).asNumber();
+                double c = arguments.get(2).asNumber();
+                if ("math.clamp".equals(name)) return Math.max(b, Math.min(c, a));
+                if ("math.lerp".equals(name)) return a + (b - a) * c;
+                if ("math.lerprotate".equals(name)) {
+                    double diff = (b - a) % 360;
+                    if (diff > 180) diff -= 360;
+                    if (diff <= -180) diff += 360;
+                    double r = a + diff * c;
+                    if (r >= 360) r -= 360;
+                    if (r < 0) r += 360;
+                    return r;
+                }
+                if ("math.die_roll".equals(name) || "math.roll".equals(name)) {
+                    double sum = 0;
+                    for (int i = 0; i < (int) a && i < 100; i++) sum += b + Math.random() * (c - b);
+                    return sum;
+                }
+                if ("math.die_roll_integer".equals(name) || "math.rolli".equals(name)) {
+                    int sum = 0;
+                    int min = (int) b, max = (int) c;
+                    if (min > max) { int t = min; min = max; max = t; }
+                    for (int i = 0; i < (int) a && i < 100; i++) sum += min + (int)(Math.random() * (max - min + 1));
+                    return sum;
+                }
+            }
+            // --- math 无参数常量 ---
+            if ("math.pi".equals(name) && arguments.isEmpty()) return Math.PI;
+            if ("math.e".equals(name) && arguments.isEmpty()) return Math.E;
+            // --- math 单参数 + 别名 ---
+            if ("math.randomi".equals(name) && arguments.size() >= 1) {
+                return (int)(Math.random() * ((int) arguments.get(0).asNumber()));
+            }
+            // --- math 双参数 + 别名 ---
             if ("math.random_integer".equals(name) && arguments.size() >= 2) {
                 int min = (int) arguments.get(0).asNumber();
                 int max = (int) arguments.get(1).asNumber();
