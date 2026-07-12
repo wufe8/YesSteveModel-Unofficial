@@ -423,6 +423,14 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         if (primaryAnim != null && primaryAnim.boneAnimations != null) {
             mergedBones = new ArrayList<>(primaryAnim.boneAnimations);
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION && "main_controller".equals(event.getController().getName())) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] anim '{}' loaded: {} bones, length={}, loop={}",
+                    primaryName, primaryAnim.boneAnimations.size(),
+                    primaryAnim.animationLength, primaryAnim.loop);
+            }
+        } else if (com.fox.ysmu.Config.DEBUG_ANIMATION && "main_controller".equals(event.getController().getName())) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] anim '{}' NOT FOUND or has no boneAnimations (primaryAnim={})",
+                primaryName, primaryAnim);
         }
         // Merge additional animations' bones on top (for multi-animation states)
         for (int i = 1; i < animationNames.size(); i++) {
@@ -484,19 +492,21 @@ public final class OpenYsmPlayerControllerRuntime {
         // Only call setAnimation ONCE with the final name, so GeckoLib does NOT
         // reset shouldResetTick every frame (which would freeze the animation at tick 0).
         finalName = finalName != null ? finalName : primaryName;
-        AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
         boolean sameState = state.name.equals(runtimeState.lastSelectedAnimationState);
-        boolean changedInSameState = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
-            && !runtimeState.lastSelectedAnimation.equals(primaryName);
+        boolean sameAnim = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
+            && runtimeState.lastSelectedAnimation.equals(primaryName);
         runtimeState.lastAnimation = primaryName;
         runtimeState.lastSelectedAnimationState = state.name;
         runtimeState.lastSelectedAnimation = primaryName;
-        if (changedInSameState) {
-            double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);
-            if (event.getController()
-                .setAnimationPreservingTick(builder, event.getAnimationTick(), elapsedTick)) {
-                return;
-            }
+        // Same state + same animation → nothing to change, skip setAnimation entirely.
+        if (sameAnim) {
+            return;
+        }
+        AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
+        double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);
+        if (event.getController()
+            .setAnimationPreservingTick(builder, event.getAnimationTick(), elapsedTick)) {
+            return;
         }
         event.getController().setAnimation(builder);
     }
