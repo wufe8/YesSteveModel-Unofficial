@@ -496,6 +496,11 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         state.lastSwingActive = player.isSwingInProgress;
         state.lastSwingProgress = player.isSwingInProgress ? player.swingProgressInt : -1;
+        // Sync v.* variables set by animation keyframe Molang expressions
+        // (e.g. v.idle_time = v.idle_time + 3) back from MolangPhysicsRuntime
+        // into this controller's RuntimeState, so that OpenYSM controller
+        // transition conditions can see the updated values.
+        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
     }
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {

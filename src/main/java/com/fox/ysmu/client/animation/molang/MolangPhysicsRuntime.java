@@ -138,6 +138,29 @@ public final class MolangPhysicsRuntime {
         return true;
     }
 
+    /**
+     * Syncs v.* variables set by animation keyframe Molang expressions
+     * (e.g. {@code v.idle_time = v.idle_time + 3}) back into the controller's
+     * RuntimeState so that OpenYSM controller transition conditions can see
+     * the updated values.
+     * <p>
+     * Keyframes write to {@link ScopeState#variables} (via
+     * {@link ScopedMolangVariable}), while controller conditions read from
+     * {@link com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.RuntimeState#variables}.
+     * Without this sync, variables only updated in keyframe Molang would
+     * appear stuck at their initial value to the controller.
+     */
+    public static void syncToRuntimeState(Map<String, Double> target) {
+        FrameContext context = CURRENT.get();
+        if (context == null) return;
+        for (Map.Entry<String, Double> entry : context.state.variables.entrySet()) {
+            String key = entry.getKey();
+            if (key.startsWith("v.")) {
+                target.put(key.substring(2), entry.getValue());
+            }
+        }
+    }
+
     public static double boneRotation(int nameId, char axis) {
         IBone bone = bone(nameId);
         if (bone == null) {

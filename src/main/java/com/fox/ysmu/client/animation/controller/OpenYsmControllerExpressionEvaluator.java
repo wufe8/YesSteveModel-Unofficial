@@ -443,6 +443,15 @@ final class OpenYsmControllerExpressionEvaluator {
                 if (min > max) return min;
                 return min + (int)(Math.random() * (max - min + 1));
             }
+            if ("math.random".equals(name) && arguments.size() >= 2) {
+                double low = arguments.get(0).asNumber();
+                double high = arguments.get(1).asNumber();
+                if (low >= high) return low;
+                return low + Math.random() * (high - low);
+            }
+            if ("query.position".equals(name) && arguments.size() >= 1) {
+                return queryPositionValue((int) arguments.get(0).asNumber());
+            }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "func:" + name,
                 "Unsupported OpenYSM controller function: " + name);
@@ -526,7 +535,14 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("hurt_time".equals(name)) {
                 return player.hurtTime;
             }
-            if ("time_of_day".equals(name) || "time_stamp".equals(name)) {
+            if ("time_of_day".equals(name)) {
+                Minecraft mc = Minecraft.getMinecraft();
+                if (mc.theWorld == null) return 0.0d;
+                long dayTime = mc.theWorld.getWorldTime() % 24000L;
+                // Normalize to [0,1): midnight=0, sunrise=0.25, noon=0.5, sunset=0.75
+                return dayTime / 24000.0d;
+            }
+            if ("time_stamp".equals(name)) {
                 Minecraft mc = Minecraft.getMinecraft();
                 return mc.theWorld == null ? 0.0d : mc.theWorld.getWorldTime();
             }
@@ -537,6 +553,13 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         private double ctrlValue(String name) {
+            // playing_extra_animation is NOT a controller state predicate like
+            // walk/idle/death — it's a standalone check that should NOT be
+            // included in hasNonIdleControllerState() (otherwise ctrl.idle
+            // would return false whenever the wheel is open).
+            if ("playing_extra_animation".equals(name)) {
+                return isPlayingExtraAnimation() ? TRUE : FALSE;
+            }
             return isControllerState(name) ? TRUE : FALSE;
         }
 
@@ -619,10 +642,46 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("attack_time".equals(name)) {
                 return player.isSwingInProgress ? 1.0d : 0.0d;
             }
+            if ("arrow_count".equals(name)) {
+                return player.getArrowCountInEntity();
+            }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "ysm:" + name,
                 "Unsupported OpenYSM controller ysm variable: ysm." + name);
             return FALSE;
+        }
+
+        /** Returns true when the cap controller is playing an extra animation
+         *  (wheel or EEP).  Used by ctrl.playing_extra_animation. */
+        private boolean isPlayingExtraAnimation() {
+            // Check EEP (persistent animation from wheel GUI or /ysm play)
+            com.fox.ysmu.eep.ExtendedModelInfo eep = com.fox.ysmu.eep.ExtendedModelInfo.get(player);
+            if (eep != null && eep.isPlayAnimation()) {
+                return true;
+            }
+            // Check wheel lock animation
+            if (OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) > 0
+                && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
+                return true;
+            }
+            return false;
+        }
+
+        /** Returns the entity's position component (0=x, 1=y, 2=z), using
+         *  partial tick interpolation.  Implements query.position(index). */
+        private double queryPositionValue(int index) {
+            if (index < 0 || index > 2) return 0.0d;
+            float partialTicks = event.getPartialTick();
+            switch (index) {
+                case 0:
+                    return player.prevPosX + (player.posX - player.prevPosX) * partialTicks;
+                case 1:
+                    return player.prevPosY + (player.posY - player.prevPosY) * partialTicks;
+                case 2:
+                    return player.prevPosZ + (player.posZ - player.prevPosZ) * partialTicks;
+                default:
+                    return 0.0d;
+            }
         }
 
         private boolean isControllerState(String name) {
