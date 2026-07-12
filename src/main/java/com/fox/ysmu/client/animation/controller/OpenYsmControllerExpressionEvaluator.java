@@ -544,6 +544,21 @@ final class OpenYsmControllerExpressionEvaluator {
                 return isJumping() ? TRUE : FALSE;
             }
             Double value = state.variables.get(name);
+            // Log idle_time/idle_t reads for debugging idle cycle (rate-limited: at most once per second, only when changed)
+            if (("idle_time".equals(name) || "idle_t".equals(name) || "idle_bq".equals(name))
+                && com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                long now = System.currentTimeMillis();
+                boolean changed = ("idle_time".equals(name) && !java.util.Objects.equals(value, state.lastLoggedIdleTime))
+                    || ("idle_t".equals(name) && !java.util.Objects.equals(value, state.lastLoggedIdleT))
+                    || ("idle_bq".equals(name) && !java.util.Objects.equals(value, state.lastLoggedIdleBq));
+                if (changed && (now - state.lastIdleLogTime) >= 1000) {
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-IDLE] v.{} = {} (from state.variables)", name, value);
+                    state.lastIdleLogTime = now;
+                    if ("idle_time".equals(name)) state.lastLoggedIdleTime = value;
+                    if ("idle_t".equals(name)) state.lastLoggedIdleT = value;
+                    if ("idle_bq".equals(name)) state.lastLoggedIdleBq = value;
+                }
+            }
             return value == null ? FALSE : value;
         }
 
