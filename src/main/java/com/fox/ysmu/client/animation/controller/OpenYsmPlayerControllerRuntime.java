@@ -487,6 +487,20 @@ public final class OpenYsmPlayerControllerRuntime {
         // post_swing OpenYSM controller) can detect swings independently.
         // Each controller uses its OWN lastSwingActive/lastSwingProgress so that
         // on_exit variable clearance is never overwritten.
+
+        // Sync v.* variables set by animation keyframe Molang expressions
+        // (e.g. v.idle_time = v.idle_time + 3) back from MolangPhysicsRuntime
+        // into this controller's RuntimeState, so that OpenYSM controller
+        // transition conditions can see the updated values.
+        // IMPORTANT: this MUST run BEFORE the swing detection block below.
+        // The on_entry/on_exit statements of OpenYSM controller states
+        // (e.g. v.swing_sword=0) also write into MolangPhysicsRuntime via
+        // MolangPhysicsRuntime.setVariable(). If syncToRuntimeState ran AFTER
+        // the swing detection, it would overwrite the freshly-set swing
+        // variables with stale values from the previous frame, preventing
+        // the attack combo (default→attack1) transition.
+        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
+
         boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
         boolean swingReset = player.isSwingInProgress && state.lastSwingActive
             && player.swingProgressInt < state.lastSwingProgress;
@@ -512,14 +526,20 @@ public final class OpenYsmPlayerControllerRuntime {
                 OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                     "q.is_jumping&&(q.vertical_speed<0)",
                     context) ? 1.0d : 0.0d);
+        } else {
+            // No new swing this frame: clear swing_sword to prevent stale
+            // values from MolangRuntime (set by the swing:sword animation
+            // timeline during codeAnimation AFTER controller predicates)
+            // from causing premature attack combo transitions.  The attack
+            // combo states' on_entry also sets swing_sword=0, but that
+            // only fires on state entry, not every frame, so a stale 1.0
+            // from syncToRuntimeState above would otherwise persist and
+            // trigger the next combo state (attack1→attack2) on the very
+            // next frame of the same swing.
+            state.variables.put("swing_sword", 0.0d);
         }
         state.lastSwingActive = player.isSwingInProgress;
         state.lastSwingProgress = player.isSwingInProgress ? player.swingProgressInt : -1;
-        // Sync v.* variables set by animation keyframe Molang expressions
-        // (e.g. v.idle_time = v.idle_time + 3) back from MolangPhysicsRuntime
-        // into this controller's RuntimeState, so that OpenYSM controller
-        // transition conditions can see the updated values.
-        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
     }
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {

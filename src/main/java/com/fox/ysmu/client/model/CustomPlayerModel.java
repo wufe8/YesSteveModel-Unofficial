@@ -170,6 +170,16 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                         : isLeftHand ? hasOffhandItem
                         : hasMainhandItem || hasOffhandItem;
                     bone.setHidden(!visible);
+                    // 当玩家持有匹配武器时，强制武器骨骼 scale=1。
+                    // 修复 hold 动画因 setAnimation 每帧调用导致 tick 卡在 0，
+                    // 武器骨骼 scale 停留在初始关键帧值（如 0.0）的问题。
+                    if (visible) {
+                        if (bone.getScaleX() < 0.01f || bone.getScaleY() < 0.01f || bone.getScaleZ() < 0.01f) {
+                            bone.setScaleX(1.0f);
+                            bone.setScaleY(1.0f);
+                            bone.setScaleZ(1.0f);
+                        }
+                    }
                 }
                 // Hide expression/effect overlay bones by default.
                 // Extra (wheel) animations explicitly set these bones' visibility:

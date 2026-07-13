@@ -9,6 +9,7 @@ import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Items;
 import net.minecraft.item.EnumAction;
+import net.minecraft.util.ResourceLocation;
 import net.minecraft.item.ItemBlock;
 import net.minecraft.item.ItemStack;
 import net.minecraftforge.client.IItemRenderer;
@@ -16,7 +17,10 @@ import net.minecraftforge.client.MinecraftForgeClient;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
+import com.fox.ysmu.client.ClientModelManager;
+import com.fox.ysmu.client.animation.condition.InnerClassify;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.util.ModelIdUtil;
 import cpw.mods.fml.common.Optional;
 import software.bernie.geckolib3.core.IAnimatable;
 import software.bernie.geckolib3.core.util.Color;
@@ -57,10 +61,23 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
             ItemStack mainHandItem = player.getHeldItem();
             ItemStack offhandItem = BackhandCompat.getOffhandItem(player);
 
-            if (mainHandItem != null || offhandItem != null) {
+            // 如果模型有武器骨骼（含 _Sword 等），隐藏原版物品渲染，
+            // 让模型自己的武器骨骼显示。没有武器骨骼的模型不受影响。
+            boolean hasWeaponBones = !isVanilla && modelHasWeaponBones(geoModel);
+            // 仅对剑/斧等主战武器类型隐藏物品，不影响副手非武器物品
+            String mainItemType = mainHandItem != null ? InnerClassify.getItemType(mainHandItem) : null;
+            String offItemType = offhandItem != null ? InnerClassify.getItemType(offhandItem) : null;
+            boolean suppressMain = hasWeaponBones && isWeaponType(mainItemType);
+            boolean suppressOff = hasWeaponBones && isWeaponType(offItemType);
+
+            if ((mainHandItem != null && !suppressMain) || (offhandItem != null && !suppressOff)) {
                 GlStateManager.pushMatrix();
-                renderArmWithItem(player, mainHandItem, geoModel.rightHandBones, true, isVanilla);
-                renderArmWithItem(player, offhandItem, geoModel.leftHandBones, false, isVanilla);
+                if (mainHandItem != null && !suppressMain) {
+                    renderArmWithItem(player, mainHandItem, geoModel.rightHandBones, true, isVanilla);
+                }
+                if (offhandItem != null && !suppressOff) {
+                    renderArmWithItem(player, offhandItem, geoModel.leftHandBones, false, isVanilla);
+                }
                 GlStateManager.popMatrix();
             }
         }
@@ -112,6 +129,39 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
         RenderUtils.translateToPivotPoint(lastBone);
         RenderUtils.rotateMatrixAroundBone(lastBone);
         RenderUtils.scaleMatrixForBone(lastBone);
+    }
+
+    /**
+     * 检查模型是否有武器骨骼（名称含 _Sword、_Blade 等）。
+     * 只有模型确实有武器骨骼时，才隐藏原版物品渲染。
+     */
+    private static boolean modelHasWeaponBones(GeoModel geoModel) {
+        if (geoModel == null) return false;
+        for (GeoBone bone : geoModel.topLevelBones) {
+            if (boneHasWeaponDescendant(bone)) return true;
+        }
+        return false;
+    }
+
+    /** 判断物品类型是否为模型通常会内置武器骨骼的主战类型。
+     *  1.7.10 中只处理剑，斧/镐等是工具而非模型武器。 */
+    private static boolean isWeaponType(String itemType) {
+        return "sword".equals(itemType) || "spear".equals(itemType);
+    }
+
+    private static boolean boneHasWeaponDescendant(GeoBone bone) {
+        String name = bone.getName();
+        if (name != null && (name.contains("_Sword") || name.contains("_Blade")
+            || name.contains("_Handle") || name.contains("_Thruster")
+            || name.contains("_WolfHead") || name.contains("Knife"))) {
+            return true;
+        }
+        if (bone.childBones != null) {
+            for (GeoBone child : bone.childBones) {
+                if (boneHasWeaponDescendant(child)) return true;
+            }
+        }
+        return false;
     }
 
     private void doRenderItem(EntityPlayer player, ItemStack itemInHand) {
