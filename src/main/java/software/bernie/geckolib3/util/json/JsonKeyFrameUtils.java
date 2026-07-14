@@ -141,14 +141,22 @@ public class JsonKeyFrameUtils {
     private static JsonArray getKeyFrameVector(JsonElement element) {
         if (element.isJsonArray()) {
             return element.getAsJsonArray();
-        } else {
+        } else if (element.isJsonObject()) {
             return element.getAsJsonObject()
                 .get("vector")
                 .getAsJsonArray();
+        } else {
+            // Primitive value (e.g. "1.4583": 0.0) — expand to [val, val, val]
+            JsonArray arr = new JsonArray();
+            arr.add(element);
+            arr.add(element);
+            arr.add(element);
+            return arr;
         }
     }
 
     private static boolean hasEasingType(JsonElement element) {
+        if (!element.isJsonObject()) return false;
         return element.getAsJsonObject()
             .has("easing")
             || element.getAsJsonObject()

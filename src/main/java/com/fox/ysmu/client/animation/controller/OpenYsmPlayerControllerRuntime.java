@@ -45,6 +45,19 @@ public final class OpenYsmPlayerControllerRuntime {
      *  "user set to 0" from "never set (defaults to 0)". */
     public static final java.util.Set<String> EXPLICIT_ROAMING = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
+    /** Throttle for DEBUG_CONTROLLER logs: maps log key → next allowed log time (ms). */
+    private static final java.util.Map<String, Long> DEBUG_LOG_THROTTLE = new ConcurrentHashMap<>();
+    private static final long DEBUG_LOG_INTERVAL_MS = 5000; // 5 seconds between repeats
+
+    /** Log a debug message at most once per DEBUG_LOG_INTERVAL_MS per key. */
+    private static void debugLogOnce(String key, String message) {
+        long now = System.currentTimeMillis();
+        Long nextAllowed = DEBUG_LOG_THROTTLE.get(key);
+        if (nextAllowed != null && now < nextAllowed) return;
+        DEBUG_LOG_THROTTLE.put(key, now + DEBUG_LOG_INTERVAL_MS);
+        com.fox.ysmu.ysmu.LOG.info(message);
+    }
+
     private OpenYsmPlayerControllerRuntime() {}
 
     public static PlayState tryApply(AnimationEvent<CustomPlayerEntity> event) {
@@ -139,7 +152,8 @@ public final class OpenYsmPlayerControllerRuntime {
         for (int i = 0; i < 4; i++) {
             String prevStateName = state.name;
             // 记录 post_swing 的每次 transition 判定细节
-            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
+                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
                 StringBuilder sb = new StringBuilder();
                 sb.append("[YSMU-PS-DETAIL] from='").append(prevStateName).append("' vars: ");
                 sb.append("swing=").append(runtimeState.variables.getOrDefault("swing", -999.0));
@@ -156,7 +170,7 @@ public final class OpenYsmPlayerControllerRuntime {
                         sb.append(" | ").append(t.targetState).append(": ").append(condMet).append(" [").append(condStr).append("]");
                     }
                 }
-                com.fox.ysmu.ysmu.LOG.info(sb.toString());
+                debugLogOnce("PS-DETAIL", sb.toString());
             }
             State nextState = applyTransition(event, match.controller, state, runtimeState, context);
             if (nextState == state) {
@@ -164,12 +178,14 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             transitionCount++;
             state = nextState;
-            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-PS-LOOP] iter={}: {} -> {} (swing={} attack={} hasLeft={})",
-                    i, prevStateName, state.name,
-                    runtimeState.variables.getOrDefault("swing", -999.0),
-                    runtimeState.variables.getOrDefault("attack", -999.0),
-                    runtimeState.hasLeftInitial);
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
+                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
+                debugLogOnce("PS-LOOP-" + prevStateName + "->" + state.name,
+                    String.format("[YSMU-PS-LOOP] iter=%d: %s -> %s (swing=%s attack=%s hasLeft=%s)",
+                        i, prevStateName, state.name,
+                        runtimeState.variables.getOrDefault("swing", -999.0),
+                        runtimeState.variables.getOrDefault("attack", -999.0),
+                        runtimeState.hasLeftInitial));
             }
         }
 
@@ -203,13 +219,15 @@ public final class OpenYsmPlayerControllerRuntime {
         // "animations" list plays all entries simultaneously; selectAnimation
         // only returns the first match for historical code that expects one.
         List<String> activeAnimations = collectActiveAnimations(state, animationId, context);
-        if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-PS] {} state='{}' swing={} attack={} swing_end={} hasLeft={} trans={} anims={}",
-                geckoControllerName, runtimeState.currentState,
-                runtimeState.variables.getOrDefault("swing", -999.0),
-                runtimeState.variables.getOrDefault("attack", -999.0),
-                runtimeState.variables.getOrDefault("swing_end", -999.0),
-                runtimeState.hasLeftInitial, transitionCount, activeAnimations);
+        if (com.fox.ysmu.Config.DEBUG_CONTROLLER
+            && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
+            debugLogOnce("PS-" + runtimeState.currentState,
+                String.format("[YSMU-PS] %s state='%s' swing=%s attack=%s swing_end=%s hasLeft=%s trans=%s anims=%s",
+                    geckoControllerName, runtimeState.currentState,
+                    runtimeState.variables.getOrDefault("swing", -999.0),
+                    runtimeState.variables.getOrDefault("attack", -999.0),
+                    runtimeState.variables.getOrDefault("swing_end", -999.0),
+                    runtimeState.hasLeftInitial, transitionCount, activeAnimations));
         }
         if (activeAnimations.isEmpty()) {
             State initialState = match.controller.getInitialState();
@@ -229,9 +247,11 @@ public final class OpenYsmPlayerControllerRuntime {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
                 event.getController().currentAnimationBuilder = new AnimationBuilder();
             }
-            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-PS-RET] {} NULL (no active anims) state='{}'",
-                    geckoControllerName, runtimeState.currentState);
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
+                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
+                debugLogOnce("PS-RET-null-anims",
+                    String.format("[YSMU-PS-RET] %s NULL (no active anims) state='%s'",
+                        geckoControllerName, runtimeState.currentState));
             }
             return null;
         }
@@ -245,9 +265,11 @@ public final class OpenYsmPlayerControllerRuntime {
         if (existing.isEmpty()) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
-            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-PS-RET] {} NULL (no existing anims) state='{}'",
-                    geckoControllerName, runtimeState.currentState);
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
+                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
+                debugLogOnce("PS-RET-no-exist",
+                    String.format("[YSMU-PS-RET] %s NULL (no existing anims) state='%s'",
+                        geckoControllerName, runtimeState.currentState));
             }
             return null;
         }

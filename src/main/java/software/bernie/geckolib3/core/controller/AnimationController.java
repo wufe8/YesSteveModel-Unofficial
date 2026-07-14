@@ -208,11 +208,12 @@ public class AnimationController<T extends IAnimatable> {
                 .equals(this.currentAnimationBuilder.getRawAnimationList());
             if (builder.getRawAnimationList()
                 .equals(this.currentAnimationBuilder.getRawAnimationList()) && !this.needsAnimationReload) {
-                if (builder.getRawAnimationList()
-                    .get(
-                        builder.getRawAnimationList()
-                            .size() - 1).loopType
-                    == ILoopType.EDefaultLoopTypes.LOOP && currentAnimation == null) {
+                // Restart animation when the controller is Stopped (PLAY_ONCE ended)
+                // or restart LOOP animations when currentAnimation was lost.
+                if (animationState == AnimationState.Stopped
+                    || (builder.getRawAnimationList()
+                        .get(builder.getRawAnimationList().size() - 1).loopType
+                        == ILoopType.EDefaultLoopTypes.LOOP && currentAnimation == null)) {
                     needsAnimationReload = true;
                 }
             }
@@ -260,14 +261,17 @@ public class AnimationController<T extends IAnimatable> {
                     }
                     currentAnimationBuilder = builder;
 
-                    // When transitioning from STOPPED to Transitioning, clear the stale
-                    // currentAnimation so process() properly dequeues the new animation.
-                    // Without this, rapid re-clicks keep using the old animation object
-                    // because tick >= transitionLengthTicks skips the dequeue path.
-                    if (animationState == AnimationState.Stopped) {
-                        this.currentAnimation = null;
-                        resetEventKeyFrames();
-                    }
+                    // Always clear stale currentAnimation when a new animation is queued,
+                    // so that process() can dequeue it.  Without this, a Running
+                    // controller (e.g. playing "idle") keeps the old currentAnimation
+                    // when setAnimation queues the next animation, and the Transitioning
+                    // branch skips dequeuing because tick != 0, leaving the new
+                    // animation stuck in the queue forever.
+                    // The one-frame delay before the new animation starts is handled
+                    // by the Transitioning→Running transition check in process() which
+                    // polls from the queue when currentAnimation is null.
+                    this.currentAnimation = null;
+                    resetEventKeyFrames();
 
                     // Reset the adjusted tick to 0 on next animation process call
                     shouldResetTick = true;
@@ -520,20 +524,6 @@ public class AnimationController<T extends IAnimatable> {
 
         // This tests the animation predicate
         PlayState playState = this.testAnimationPredicate(event);
-        // YSMU DEBUG: Log active animations for swing/post_swing/cap controllers
-        if ("swing_controller".equals(name) || "player.post_swing".equals(name) || "cap_controller".equals(name)) {
-            StringBuilder animInfo = new StringBuilder();
-            animInfo.append("[YSMU-ANIM] ctrl='").append(name).append("'");
-            animInfo.append(" state=").append(animationState);
-            animInfo.append(" pred=").append(playState);
-            animInfo.append(" currAnim=").append(currentAnimation != null ? currentAnimation.animationName : "null");
-            animInfo.append(" queueSize=").append(animationQueue.size());
-            if (currentAnimation != null) {
-                animInfo.append(" length=").append(currentAnimation.animationLength);
-                animInfo.append(" loop=").append(currentAnimation.loop);
-            }
-            com.fox.ysmu.ysmu.LOG.info(animInfo.toString());
-        }
         if (playState == PlayState.STOP || (currentAnimation == null && animationQueue.size() == 0)) {
             // The animation should transition to the model's initial state
             animationState = AnimationState.Stopped;
