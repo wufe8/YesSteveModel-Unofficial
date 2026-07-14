@@ -515,9 +515,23 @@ public class AnimationController<T extends IAnimatable> {
                 this.currentAnimation = this.animationQueue.poll();
             }
         }
-        tick = adjustTick(tick);
+        boolean tickWasReset = false;
+        double afterReset = adjustTick(tick);
+        if (afterReset == 0.0D && tick != 0.0D) {
+            tickWasReset = true;
+        }
+        tick = afterReset;
         if (animationState == AnimationState.Running) {
             tick = adjustTick(actualTick);
+            // If the first adjustTick performed a reset (shouldResetTick was true),
+            // the second adjustTick should not undo it — it returned the original
+            // actualTick because shouldResetTick was already cleared.  In that case,
+            // honour the reset and keep tick at 0 so the animation starts from the
+            // beginning (e.g. after a setAnimation triggered by a Stopped→Running
+            // transition).
+            if (tickWasReset) {
+                tick = 0.0D;
+            }
         }
 
         assert tick >= 0 : "GeckoLib: Tick was less than zero";

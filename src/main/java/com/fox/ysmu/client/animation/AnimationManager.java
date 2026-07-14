@@ -597,11 +597,10 @@ public final class AnimationManager {
         // 修改为使用BackhandCompat兼容层
         ItemStack offhandItem = BackhandCompat.getOffhandItem(player);
         if (offhandItem != null) {
-            // 攻击/使用期间暂停持握动画，让挥砍/使用控制器接管；但不标记为空(-1)
-            // 这样攻击结束后持握控制器恢复时，last == hash 不会触发 markNeedsReload()，
-            // 避免了过渡动画重复播放
+            // 攻击/使用期间不暂停持握控制器。swing/use 控制器在之后处理，
+            // 其骨骼动画会覆盖 hold 控制器的值。保持 Running 避免重复播放掏出动画。
             if (!checkSwingAndUse(player, false)) {
-                return PlayState.STOP;
+                return PlayState.CONTINUE;
             }
             int hash = itemHash(offhandItem);
             Integer last = lastOffhandItemHash.put(player.getUniqueID(), hash);
@@ -643,9 +642,12 @@ public final class AnimationManager {
         }
 
         if (player.getHeldItem() != null) {
-            // 攻击/使用期间暂停持握动画，让挥砍/使用控制器接管；但不标记为空(-1)
+            // 攻击/使用期间不暂停持握控制器。swing_controller/swing_controller
+            // 在 hold_mainhand_controller 之后处理，其骨骼动画会覆盖 hold 控制器的值，
+            // 所以视觉上挥动动画正常显示。保持 Running 状态可以避免动画结束后
+            // setAnimation 因 Stopped 状态而重新从头播放掏出动画。
             if (!checkSwingAndUse(player, true)) {
-                return PlayState.STOP;
+                return PlayState.CONTINUE;
             }
             int hash = itemHash(player.getHeldItem());
             Integer last = lastMainhandItemHash.put(player.getUniqueID(), hash);
@@ -653,7 +655,39 @@ public final class AnimationManager {
             if (last == null || last != hash || last == -1 || last == 0) {
                 event.getController().markNeedsReload();
             }
-            return playIfPresent(event, findHoldAnimation(event, player, true));
+            String holdAnim = findHoldAnimation(event, player, true);
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER && StringUtils.isNoneBlank(holdAnim)) {
+                String loopStr = "?";
+                ResourceLocation animId = getAnimationId(event);
+                if (animId != null) {
+                    software.bernie.geckolib3.file.AnimationFile f = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
+                    if (f != null) {
+                        software.bernie.geckolib3.core.builder.Animation a = f.getAnimation(holdAnim);
+                        if (a != null) {
+                            loopStr = String.valueOf(a.loop);
+                            // Force correct loop type for hold animations
+                            a.loop = ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
+                        }
+                    }
+                }
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-HOLD] model='{}' anim='{}' state={} loop={}",
+                    animId, holdAnim,
+                    event.getController().getAnimationState(),
+                    loopStr + "->HOLD_ON_LAST_FRAME");
+            } else if (StringUtils.isNoneBlank(holdAnim)) {
+                // Always ensure hold animations have the correct loop type
+                ResourceLocation animId = getAnimationId(event);
+                if (animId != null) {
+                    software.bernie.geckolib3.file.AnimationFile f = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
+                    if (f != null) {
+                        software.bernie.geckolib3.core.builder.Animation a = f.getAnimation(holdAnim);
+                        if (a != null) {
+                            a.loop = ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
+                        }
+                    }
+                }
+            }
+            return playIfPresent(event, holdAnim);
         } else {
             // 尝试空手持握动画 (hold_mainhand:empty)
             String emptyAnim = findHoldAnimation(event, player, true);
@@ -749,7 +783,7 @@ public final class AnimationManager {
             } else {
                 boolean swingHandExists = animationExistsInFile(animId, "swing_hand");
             }
-            return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.LOOP);
+            return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.PLAY_ONCE);
         }
         return PlayState.STOP;
     }
