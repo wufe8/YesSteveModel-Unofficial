@@ -138,12 +138,39 @@ public final class OpenYsmPlayerControllerRuntime {
         int transitionCount = 0;
         for (int i = 0; i < 4; i++) {
             String prevStateName = state.name;
+            // 记录 post_swing 的每次 transition 判定细节
+            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
+                StringBuilder sb = new StringBuilder();
+                sb.append("[YSMU-PS-DETAIL] from='").append(prevStateName).append("' vars: ");
+                sb.append("swing=").append(runtimeState.variables.getOrDefault("swing", -999.0));
+                sb.append(" attack=").append(runtimeState.variables.getOrDefault("attack", -999.0));
+                sb.append(" swing_end=").append(runtimeState.variables.getOrDefault("swing_end", -999.0));
+                sb.append(" roaming.swing_sword=").append(runtimeState.variables.getOrDefault("roaming.swing_sword", -999.0));
+                // 列出所有 transition 条件及结果
+                Controller ctrl = match.controller;
+                State curState = ctrl.states.get(prevStateName);
+                if (curState != null && curState.transitions != null) {
+                    for (Transition t : curState.transitions) {
+                        boolean condMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(t.condition, context);
+                        String condStr = t.condition != null ? t.condition.substring(0, Math.min(t.condition.length(), 80)) : "null";
+                        sb.append(" | ").append(t.targetState).append(": ").append(condMet).append(" [").append(condStr).append("]");
+                    }
+                }
+                com.fox.ysmu.ysmu.LOG.info(sb.toString());
+            }
             State nextState = applyTransition(event, match.controller, state, runtimeState, context);
             if (nextState == state) {
                 break;
             }
             transitionCount++;
             state = nextState;
+            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-PS-LOOP] iter={}: {} -> {} (swing={} attack={} hasLeft={})",
+                    i, prevStateName, state.name,
+                    runtimeState.variables.getOrDefault("swing", -999.0),
+                    runtimeState.variables.getOrDefault("attack", -999.0),
+                    runtimeState.hasLeftInitial);
+            }
         }
 
         // If the current state has no animations, try to force transition to any
@@ -176,6 +203,14 @@ public final class OpenYsmPlayerControllerRuntime {
         // "animations" list plays all entries simultaneously; selectAnimation
         // only returns the first match for historical code that expects one.
         List<String> activeAnimations = collectActiveAnimations(state, animationId, context);
+        if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-PS] {} state='{}' swing={} attack={} swing_end={} hasLeft={} trans={} anims={}",
+                geckoControllerName, runtimeState.currentState,
+                runtimeState.variables.getOrDefault("swing", -999.0),
+                runtimeState.variables.getOrDefault("attack", -999.0),
+                runtimeState.variables.getOrDefault("swing_end", -999.0),
+                runtimeState.hasLeftInitial, transitionCount, activeAnimations);
+        }
         if (activeAnimations.isEmpty()) {
             State initialState = match.controller.getInitialState();
             if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
@@ -445,11 +480,12 @@ public final class OpenYsmPlayerControllerRuntime {
             return;
         }
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
-        double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);
-        if (event.getController()
-            .setAnimationPreservingTick(builder, event.getAnimationTick(), elapsedTick)) {
-            return;
-        }
+        // 使用 setAnimation（设置 shouldResetTick=true）而非
+        // setAnimationPreservingTick。因为 setAnimationPreservingTick
+        // 在新状态入场时 elapsedTick=0，会设置 tickOffset=absoluteTick，
+        // 导致 adjustedTick = tickOffset + currentTick 远超动画长度，
+        // 动画直接从最后一帧的关键帧位置开始（手臂向上旋转等异常）。
+        // setAnimation 通过 shouldResetTick 让 nextTick 从 0 开始。
         event.getController().setAnimation(builder);
     }
 

@@ -683,6 +683,10 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
+        // 有 player.post_swing 的模型仍然走标准挥剑路径（播放 swing:sword 等）。
+        // swing:sword 通常只有 Molang 时间轴没有骨骼关键帧，不会与 post_swing
+        // 控制器的攻击动画产生骨骼冲突。同时让 swing_controller 保持 CONTINUE
+        // 状态，避免 GeckoLib 因 STOP 而可能产生的状态异常。
         UUID pid = player.getUniqueID();
         // 检测新挥剑：完整 false→true 转换，或 swingProgressInt 跳高（快速连点）
         boolean nowSwinging = player.isSwingInProgress;
