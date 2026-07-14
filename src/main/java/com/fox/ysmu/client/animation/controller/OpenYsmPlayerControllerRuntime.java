@@ -229,6 +229,10 @@ public final class OpenYsmPlayerControllerRuntime {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
                 event.getController().currentAnimationBuilder = new AnimationBuilder();
             }
+            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-PS-RET] {} NULL (no active anims) state='{}'",
+                    geckoControllerName, runtimeState.currentState);
+            }
             return null;
         }
         // Filter to animations that actually exist
@@ -241,6 +245,10 @@ public final class OpenYsmPlayerControllerRuntime {
         if (existing.isEmpty()) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
+            if (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing")) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-PS-RET] {} NULL (no existing anims) state='{}'",
+                    geckoControllerName, runtimeState.currentState);
+            }
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && existing.contains("attack_empty") && existing.size() == 1) {
@@ -538,6 +546,8 @@ public final class OpenYsmPlayerControllerRuntime {
         com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
 
         boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
+        // swingProgressInt 在 1.7.10 中是递增的（0→swingDuration），
+        // 新连击时 swingProgressInt 会跳低（重置到 0），所以用 < 检测连击重置。
         boolean swingReset = player.isSwingInProgress && state.lastSwingActive
             && player.swingProgressInt < state.lastSwingProgress;
         boolean newSwing = swingJustStarted || swingReset;
@@ -573,6 +583,11 @@ public final class OpenYsmPlayerControllerRuntime {
             // trigger the next combo state (attack1→attack2) on the very
             // next frame of the same swing.
             state.variables.put("swing_sword", 0.0d);
+            // Also clear v.swing to prevent the swing:sword animation's
+            // Molang timeline (which sets v.swing = 1 at time 0 with
+            // loop: true) from causing the post_swing controller to
+            // perpetually re-trigger attack state transitions.
+            state.variables.put("swing", 0.0d);
         }
         state.lastSwingActive = player.isSwingInProgress;
         state.lastSwingProgress = player.isSwingInProgress ? player.swingProgressInt : -1;

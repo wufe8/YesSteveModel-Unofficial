@@ -520,6 +520,20 @@ public class AnimationController<T extends IAnimatable> {
 
         // This tests the animation predicate
         PlayState playState = this.testAnimationPredicate(event);
+        // YSMU DEBUG: Log active animations for swing/post_swing/cap controllers
+        if ("swing_controller".equals(name) || "player.post_swing".equals(name) || "cap_controller".equals(name)) {
+            StringBuilder animInfo = new StringBuilder();
+            animInfo.append("[YSMU-ANIM] ctrl='").append(name).append("'");
+            animInfo.append(" state=").append(animationState);
+            animInfo.append(" pred=").append(playState);
+            animInfo.append(" currAnim=").append(currentAnimation != null ? currentAnimation.animationName : "null");
+            animInfo.append(" queueSize=").append(animationQueue.size());
+            if (currentAnimation != null) {
+                animInfo.append(" length=").append(currentAnimation.animationLength);
+                animInfo.append(" loop=").append(currentAnimation.loop);
+            }
+            com.fox.ysmu.ysmu.LOG.info(animInfo.toString());
+        }
         if (playState == PlayState.STOP || (currentAnimation == null && animationQueue.size() == 0)) {
             // The animation should transition to the model's initial state
             animationState = AnimationState.Stopped;

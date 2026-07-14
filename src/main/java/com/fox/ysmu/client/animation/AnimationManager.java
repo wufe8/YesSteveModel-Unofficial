@@ -415,6 +415,21 @@ public final class AnimationManager {
             if ("extra1".equals(anim)) anim = "extra1";
             else if ("extra2".equals(anim)) anim = "extra2";
             else if ("extra3".equals(anim)) anim = "extra3";
+            // YSMU DEBUG: verify animation exists in cache
+            ResourceLocation animId = event.getAnimatable().getAnimation();
+            boolean exists = GeckoLibCache.getInstance().getAnimations().containsKey(animId)
+                && GeckoLibCache.getInstance().getAnimations().get(animId).animations.containsKey(anim);
+            if (!exists) {
+                // Search all files as fallback
+                for (AnimationFile f : GeckoLibCache.getInstance().getAnimations().values()) {
+                    if (f.animations.containsKey(anim)) {
+                        exists = true;
+                        break;
+                    }
+                }
+            }
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-EEP] cap_controller playing '{}' existsInMain={} animId={}",
+                anim, exists, animId);
             capWasPlaying = true;
             return playAnimation(event, anim);
         }
@@ -743,21 +758,21 @@ public final class AnimationManager {
 
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
-                //com.fox.ysmu.ysmu.LOG.info(
-                //    "YSM predicateSwing: conditional='{}', exists={}, animId={}, "
-                //    + "idle={}, moving={}, onGround={}",
-                //    conditionalAnimation, exists, animId,
-                //    !event.isMoving() && player.onGround, event.isMoving(), player.onGround);
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-SWING] conditional='{}', exists={}, animId={}, "
+                    + "idle={}, moving={}, onGround={}",
+                    conditionalAnimation, exists, animId,
+                    !event.isMoving() && player.onGround, event.isMoving(), player.onGround);
                 if (exists) {
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
                 }
             } else {
                 boolean swingHandExists = animationExistsInFile(animId, "swing_hand");
-                //com.fox.ysmu.ysmu.LOG.info(
-                //    "YSM predicateSwing: no conditional, fallback swing_hand exists={}, animId={}, "
-                //    + "idle={}, moving={}, onGround={}",
-                //    swingHandExists, animId,
-                //    !event.isMoving() && player.onGround, event.isMoving(), player.onGround);
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-SWING] no conditional, fallback swing_hand exists={}, animId={}, "
+                    + "idle={}, moving={}, onGround={}",
+                    swingHandExists, animId,
+                    !event.isMoving() && player.onGround, event.isMoving(), player.onGround);
             }
             return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.LOOP);
         }

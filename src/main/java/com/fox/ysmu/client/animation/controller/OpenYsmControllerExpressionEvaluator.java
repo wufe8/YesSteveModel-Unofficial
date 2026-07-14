@@ -929,6 +929,9 @@ final class OpenYsmControllerExpressionEvaluator {
             if (current == null || current.animationLength == null || current.animationLength <= 0.0d) {
                 return false;
             }
+            // event.getAnimationTick() 和 current.animationLength 都是 tick 数（20 TPS），
+            // 两者单位一致，直接比较。注意 anim_time 查询会除以 20 转成秒给 Molang 用，
+            // 但这里不应该除。
             return event.getAnimationTick() - state.enteredTick >= current.animationLength;
         }
 
