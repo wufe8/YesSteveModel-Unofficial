@@ -412,11 +412,21 @@ public final class OpenYsmPlayerControllerRuntime {
                 a = lookupAnimation(animationNames.get(i));
             }
             if (a != null && a.customInstructionKeyframes != null) {
-                // Merge non-duplicate keyframes (by trigger time) from each source
+                // Merge non-duplicate keyframes (by trigger time) from each source.
+                // When two keyframes share the same tick, CONCATENATE their instruction
+                // strings instead of dropping the second one — otherwise important
+                // timeline instructions (e.g. v.bq_eye in pre_parallel7) can be lost
+                // when another animation (e.g. pre_parallel3) already registered a
+                // keyframe at the same tick.
                 for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : a.customInstructionKeyframes) {
                     boolean dup = false;
-                    for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> existing : mergedTimeline) {
+                    for (int j = 0; j < mergedTimeline.size(); j++) {
+                        software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> existing = mergedTimeline.get(j);
                         if (Math.abs(existing.getStartTick() - kf.getStartTick()) < 0.001d) {
+                            // Merge: concatenate existing and new instructions with ";;"
+                            String merged = existing.getEventData() + ";;" + kf.getEventData();
+                            mergedTimeline.set(j, new software.bernie.geckolib3.core.keyframe.EventKeyFrame<>(
+                                existing.getStartTick(), merged));
                             dup = true;
                             break;
                         }
