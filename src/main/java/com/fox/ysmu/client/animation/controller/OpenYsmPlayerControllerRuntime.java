@@ -532,6 +532,13 @@ public final class OpenYsmPlayerControllerRuntime {
         if (sameAnim) {
             return;
         }
+        // Force reload: GeckoLib's setAnimation skips restart when the same
+        // animation name is passed while the controller is still Running with
+        // a non-null currentAnimation.  Without this, re-entering a state
+        // (e.g. 挥剑_default on each new swing) would NOT restart the
+        // animation from tick 0 — the old playback position would persist,
+        // causing bones to jump to the mid/end pose instead of the start.
+        event.getController().markNeedsReload();
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
         // Use setAnimation (sets shouldResetTick=true) instead of
         // setAnimationPreservingTick.  setAnimationPreservingTick calculates
@@ -631,6 +638,13 @@ public final class OpenYsmPlayerControllerRuntime {
                 ysmu.LOG.info("[YSMU-PS-SYNC] after syncToRuntimeState: attack={} swing_end={}",
                     postSyncAttack, postSyncSwingEnd);
             }
+            // Log v.qh variables that drive the 默认挥剑 animation combo
+            double qh = state.variables.getOrDefault("qh", Double.NaN);
+            double qh2 = state.variables.getOrDefault("qh2", Double.NaN);
+            double jump = state.variables.getOrDefault("jump", Double.NaN);
+            double vrandom = state.variables.getOrDefault("random", Double.NaN);
+            ysmu.LOG.info("[YSMU-PS-QH] qh={} qh2={} jump={} random={}",
+                qh, qh2, jump, vrandom);
         }
 
         boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;

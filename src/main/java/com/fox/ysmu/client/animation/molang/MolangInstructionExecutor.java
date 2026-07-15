@@ -59,6 +59,12 @@ public final class MolangInstructionExecutor {
                             // ScopedMolangVariable was previously registered for this key
                             // (e.g. v.bq_eye set by pre_parallel7's timeline).
                             com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setVariable(target, d);
+                            // Log v.qh timeline variable assignments for debugging
+                            if (("v.qh".equals(target) || "v.qh2".equals(target)
+                                || "v.jump".equals(target) || "v.random".equals(target))
+                                && com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                                ysmu.LOG.info("[YSMU-TL-SET] {} = {} (from '{}')", target, d, valueExpr);
+                            }
                         }
                     } catch (Exception e) {
                         warnOnce(trimmed, e);
