@@ -257,19 +257,6 @@ public class AnimationController<T extends IAnimatable> {
                     if (encounteredError.get()) {
                         return;
                     } else {
-                        // DEBUG: log pre_parallel animation queue
-                        if (name != null && name.startsWith("pre_parallel_")) {
-                            System.out.printf("[YSMU-GECKO] %s setAnimation queue(%d):",
-                                name, animations.size());
-                            for (Animation a : animations) {
-                                String bones = a != null && a.boneAnimations != null
-                                    ? a.boneAnimations.stream().map(ba -> ba.boneName).collect(Collectors.joining(","))
-                                    : "NULL";
-                                System.out.printf(" '%s'(%d bones)", a != null ? a.animationName : "null",
-                                    a != null && a.boneAnimations != null ? a.boneAnimations.size() : 0);
-                            }
-                            System.out.println();
-                        }
                         animationQueue = animations;
                     }
                     currentAnimationBuilder = builder;
@@ -773,25 +760,6 @@ public class AnimationController<T extends IAnimatable> {
         // Loop through every boneanimation in the current animation and process the
         // values
         List<BoneAnimation> boneAnimations = currentAnimation.boneAnimations;
-        // DEBUG: log pre_parallel bone processing
-        if (name != null && name.startsWith("pre_parallel_")) {
-            StringBuilder sb = new StringBuilder();
-            sb.append(String.format("[YSMU-GECKO] %s process tick=%.2f anim='%s' bones(%d):",
-                name, tick, currentAnimation.animationName,
-                boneAnimations != null ? boneAnimations.size() : 0));
-            if (boneAnimations != null) {
-                for (BoneAnimation ba : boneAnimations) {
-                    if (ba.boneName.contains("Mouth") || ba.boneName.contains("Eye")
-                        || ba.boneName.contains("眼") || ba.boneName.contains("嘴")
-                        || ba.boneName.contains("Eyebrow") || ba.boneName.contains("LeftEye2")) {
-                        boolean hasScale = ba.scaleKeyFrames != null
-                            && !ba.scaleKeyFrames.xKeyFrames.isEmpty();
-                        sb.append(String.format(" '%s'(s=%s)", ba.boneName, hasScale ? "Y" : "N"));
-                    }
-                }
-            }
-            System.out.println(sb.toString());
-        }
         for (BoneAnimation boneAnimation : boneAnimations) {
             BoneAnimationQueue boneAnimationQueue = boneAnimationQueues.get(boneAnimation.boneName);
             if (boneAnimationQueue == null) {
@@ -889,21 +857,9 @@ public class AnimationController<T extends IAnimatable> {
         }
 
         if (customInstructionListener != null) {
-            int cicCount = currentAnimation.customInstructionKeyframes != null ? currentAnimation.customInstructionKeyframes.size() : 0;
-            boolean hasListener = customInstructionListener != null;
-            if (name != null && (name.startsWith("pre_parallel_") || name.startsWith("parallel_") || name.startsWith("main"))) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-PKE] {}: listener={}, cic.size={}, executed={}, tick={}",
-                    name, hasListener, cicCount, executedKeyFrames.size(), tick);
-                System.out.printf("[STDOUT-PKE] %s: listener=%s, cic.size=%d, executed=%d, tick=%.2f%n",
-                    name, hasListener, cicCount, executedKeyFrames.size(), tick);
-            }
             for (EventKeyFrame<String> customInstructionKeyFrame : currentAnimation.customInstructionKeyframes) {
                 if (!this.executedKeyFrames.contains(customInstructionKeyFrame)
                     && tick >= customInstructionKeyFrame.getStartTick()) {
-                    if (name != null && (name.startsWith("pre_parallel_") || name.startsWith("parallel_"))) {
-                        com.fox.ysmu.ysmu.LOG.info("[YSMU-PKE-FIRE] {}: executing '{}' at tick={}",
-                            name, customInstructionKeyFrame.getEventData(), tick);
-                    }
                     CustomInstructionKeyframeEvent<T> event = new CustomInstructionKeyframeEvent<>(
                         this.animatable,
                         tick,
@@ -914,9 +870,6 @@ public class AnimationController<T extends IAnimatable> {
                     this.executedKeyFrames.add(customInstructionKeyFrame);
                 }
             }
-        } else if (name != null && (name.startsWith("pre_parallel_") || name.startsWith("parallel_"))) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-PKE] {}: NO CUSTOM INSTRUCTION LISTENER! cic.size={}",
-                name, currentAnimation.customInstructionKeyframes != null ? currentAnimation.customInstructionKeyframes.size() : 0);
         }
     }
 

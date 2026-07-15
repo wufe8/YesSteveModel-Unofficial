@@ -25,10 +25,6 @@ public final class MolangInstructionExecutor {
         if (StringUtils.isBlank(instructions)) {
             return;
         }
-        // DEBUG: trace timeline execution
-        if (instructions.contains("bq_eye") || instructions.contains("bq_mouth")) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-TL] EXEC received: {}...", instructions.substring(0, Math.min(instructions.length(), 200)));
-        }
         MolangParser parser = GeckoLibCache.getInstance().parser;
         Iterable<String> statements;
         try {
@@ -52,10 +48,6 @@ public final class MolangInstructionExecutor {
                         IValue val = parser.parseExpression(valueExpr);
                         if (val != null) {
                             double d = val.get();
-                            // DEBUG
-                            if ("v.bq_eye".equals(target) || "v.bq_mouth".equals(target)) {
-                                com.fox.ysmu.ysmu.LOG.info("[YSMU-TL] EXEC {} = {} (from '{}')", target, d, trimmed.substring(0, Math.min(trimmed.length(), 120)));
-                            }
                             // Write through MolangParser.VARIABLES so ScopedMolangVariable
                             // (if it exists) sees the change. This works because
                             // LazyVariable.set() / ScopedMolangVariable.set() will

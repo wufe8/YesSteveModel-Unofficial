@@ -481,21 +481,6 @@ public final class OpenYsmPlayerControllerRuntime {
         // Only call setAnimation ONCE with the final name, so GeckoLib does NOT
         // reset shouldResetTick every frame (which would freeze the animation at tick 0).
         finalName = finalName != null ? finalName : primaryName;
-        // DEBUG: log pre_parallel_0 collected animations
-        if (ctrlName != null && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))) {
-            Double bqEye = runtimeState.variables.get("bq_eye");
-            Double bqMouth = runtimeState.variables.get("bq_mouth");
-            software.bernie.geckolib3.file.AnimationFile cf = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
-            int cachedSize = -1;
-            if (cf != null) {
-                software.bernie.geckolib3.core.builder.Animation ca = cf.getAnimation(finalName);
-                if (ca != null && ca.boneAnimations != null) cachedSize = ca.boneAnimations.size();
-            }
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-EXP] {} state='{}' final='{}' anims({}): {} | cacheBones={} v.bq_eye={} v.bq_mouth={}",
-                ctrlName, state.name, finalName,
-                animationNames.size(), animationNames,
-                cachedSize, bqEye, bqMouth);
-        }
         boolean sameState = state.name.equals(runtimeState.lastSelectedAnimationState);
         boolean sameAnim = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
             && runtimeState.lastSelectedAnimation.equals(primaryName);
@@ -508,14 +493,9 @@ public final class OpenYsmPlayerControllerRuntime {
         // that processKeyFrameEvents() can re-fire the timeline instructions.
         // Without this, the instructions only fire once at startup and any subsequent
         // changes to v.roaming.* variables are never reflected in v.bq_eye etc.
-        boolean primaryHasTimeline = primaryAnim != null && primaryAnim.customInstructionKeyframes != null
-            && !primaryAnim.customInstructionKeyframes.isEmpty();
-        boolean mergedHasTimeline = !mergedTimeline.isEmpty();
-        boolean hasTimeline = primaryHasTimeline || mergedHasTimeline;
-        if (ctrlName != null && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("main_controller"))) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-SAME] {}: sameAnim={}, hasTimeline={}, primaryTL={}, mergedTL={}, names={}",
-                ctrlName, sameAnim, hasTimeline, primaryHasTimeline, mergedTimeline.size(), animationNames);
-        }
+        boolean hasTimeline = (primaryAnim != null && primaryAnim.customInstructionKeyframes != null
+            && !primaryAnim.customInstructionKeyframes.isEmpty())
+            || !mergedTimeline.isEmpty();
         if (sameAnim && !hasTimeline) {
             return;
         }

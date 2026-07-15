@@ -77,9 +77,6 @@ public final class MolangPhysicsRuntime {
                         .computeIfAbsent(lcKey, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
                         .set(entry.getValue());
                 }
-                if (entry.getKey().startsWith("roaming.bq_eye") || entry.getKey().startsWith("roaming.bq_mouth")) {
-                    com.fox.ysmu.ysmu.LOG.info("[YSMU-BEGIN] Injected PENDING_ROAMING['{}'] = {} into MolangParser.VARIABLES", entry.getKey(), entry.getValue());
-                }
             }
         }
         state.physics.update(renderTicks);
