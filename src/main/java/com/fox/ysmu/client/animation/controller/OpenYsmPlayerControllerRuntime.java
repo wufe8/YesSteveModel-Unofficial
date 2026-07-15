@@ -136,14 +136,40 @@ public final class OpenYsmPlayerControllerRuntime {
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
-        int transitionCount = 0;
+        // Debug: log post_swing transition evaluation details
+        if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")) {
+            StringBuilder sb = new StringBuilder();
+            sb.append("[YSMU-PS-EVAL] from='").append(state.name).append("' vars:");
+            sb.append(" swing=").append(runtimeState.variables.getOrDefault("swing", -999.0));
+            sb.append(" attack=").append(runtimeState.variables.getOrDefault("attack", -999.0));
+            sb.append(" swing_end=").append(runtimeState.variables.getOrDefault("swing_end", -999.0));
+            sb.append(" roaming.swing_sword=").append(runtimeState.variables.getOrDefault("roaming.swing_sword", -999.0));
+            if (state.transitions != null) {
+                for (Transition t : state.transitions) {
+                    State target = match.controller.states.get(t.targetState);
+                    boolean condMet = target != null && OpenYsmControllerExpressionEvaluator.evaluateBoolean(t.condition, context);
+                    String condStr = t.condition != null ? t.condition.substring(0, Math.min(t.condition.length(), 80)) : "null";
+                    sb.append(" | ").append(t.targetState).append("=").append(condMet).append("[").append(condStr).append("]");
+                }
+            }
+            ysmu.LOG.info(sb.toString());
+        }
+        int preTransCount = 0;
         for (int i = 0; i < 4; i++) {
             String prevStateName = state.name;
             State nextState = applyTransition(event, match.controller, state, runtimeState, context);
+            // Log state transitions for post_swing
+            if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing") && nextState != state) {
+                ysmu.LOG.info("[YSMU-PS-TRANS] iter={}: {} -> {} (swing={} attack={} swing_end={})",
+                    i, prevStateName, nextState.name,
+                    runtimeState.variables.getOrDefault("swing", -999.0),
+                    runtimeState.variables.getOrDefault("attack", -999.0),
+                    runtimeState.variables.getOrDefault("swing_end", -999.0));
+            }
             if (nextState == state) {
                 break;
             }
-            transitionCount++;
+            preTransCount++;
             state = nextState;
         }
 
@@ -186,9 +212,13 @@ public final class OpenYsmPlayerControllerRuntime {
             if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
                 runtimeState.currentState = initialState.name;
                 runtimeState.enteredTick = event.getAnimationTick();
-                runtimeState.lastSelectedAnimationState = "";
-                runtimeState.lastSelectedAnimation = "";
             }
+            // Reset animation tracking so a future re-entry of the same state
+            // (e.g. 挥剑1→default→挥剑1) won't incorrectly match via sameAnim
+            // and skip setAnimation, causing the animation to start from a
+            // stale position instead of tick 0.
+            runtimeState.lastSelectedAnimationState = "";
+            runtimeState.lastSelectedAnimation = "";
             if ("ysm-builtin".equals(runtimeState.currentState)) {
             } else {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
@@ -547,6 +577,58 @@ public final class OpenYsmPlayerControllerRuntime {
         // during a swing, causing v.swing=1 to be set repeatedly and the controller
         // state machine to bounce between sub-states.  Use a simple boolean flag
         // to detect the first frame of each new swing instead.
+        //
+        // IMPORTANT: syncToRuntimeState MUST run BEFORE the swing detection below.
+        // The on_entry statements of swing states (e.g. v.swing=0, v.swing_end=1)
+        // write into MolangPhysicsRuntime via setVariable(). These values PERSIST
+        // in ScopeState across frames. If syncToRuntimeState ran AFTER the swing
+        // detection, it would overwrite the freshly-set v.swing=1 / v.swing_end=0
+        // with the stale values (v.swing=0, v.swing_end=1) from the previous
+        // swing's on_entry, permanently trapping the controller in the default
+        // state.
+        //
+        // However, the MOLANGPARSER.VARIABLES sync (step 1 below) must run BEFORE
+        // syncToRuntimeState (step 2).  MolangParser.VARIABLES is a GLOBAL static
+        // map that may contain stale values for controller-managed variables like
+        // v.attack, v.swing_end, etc.  If it ran AFTER syncToRuntimeState, it would
+        // overwrite the correct ScopeState values (set by on_entry) with stale
+        // global values.  By running it first, the global values are loaded into
+        // RuntimeState as a baseline, and then syncToRuntimeState overwrites them
+        // with the authoritative ScopeState values from on_entry/on_exit.
+        //
+        // Step 1: Sync v.* variables written by timeline custom instructions
+        // (via MolangInstructionExecutor → MolangParser.VARIABLES set()).
+        // This is necessary because MolangPhysicsRuntime.end() is called before
+        // tickAnimation() processes the timeline, so the values set by timeline
+        // instructions DON'T reach MolangPhysicsRuntime.ScopeState and thus
+        // wouldn't be picked up by syncToRuntimeState() below.
+        for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
+            software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.entrySet()) {
+            String key = entry.getKey();
+            if (key.startsWith("v.")) {
+                double oldVal = state.variables.getOrDefault(key.substring(2), Double.NaN);
+                double newVal = entry.getValue().get();
+                state.variables.put(key.substring(2), newVal);
+                // Log if MolangParser.VARIABLES overwrites attack or swing_end
+                if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")
+                    && ("v.attack".equals(key) || "v.swing_end".equals(key))) {
+                    ysmu.LOG.info("[YSMU-PS-MP] MolangParser.VARIABLES {}: {} -> {}", key, oldVal, newVal);
+                }
+            }
+        }
+        // Step 2: Sync ScopeState → RuntimeState (overwrites global values with
+        // authoritative on_entry/on_exit values).
+        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
+        // Log values from syncToRuntimeState for post_swing
+        if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")) {
+            double postSyncAttack = state.variables.getOrDefault("attack", -999.0);
+            double postSyncSwingEnd = state.variables.getOrDefault("swing_end", -999.0);
+            if (postSyncAttack != -999.0 || postSyncSwingEnd != -999.0) {
+                ysmu.LOG.info("[YSMU-PS-SYNC] after syncToRuntimeState: attack={} swing_end={}",
+                    postSyncAttack, postSyncSwingEnd);
+            }
+        }
+
         boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
         boolean newSwing = swingJustStarted;
         if (Config.DEBUG_CONTROLLER && newSwing) {
@@ -577,26 +659,15 @@ public final class OpenYsmPlayerControllerRuntime {
                 OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                     "q.is_jumping&&(q.vertical_speed<0)",
                     context) ? 1.0d : 0.0d);
+        } else {
+            // No new swing this frame: clear swing_sword and swing to prevent
+            // stale values from MolangRuntime (set by the swing:sword animation
+            // timeline during codeAnimation AFTER controller predicates)
+            // from causing premature attack transitions.
+            state.variables.put("swing_sword", 0.0d);
+            state.variables.put("swing", 0.0d);
         }
         state.lastSwingActive = player.isSwingInProgress;
-        // Sync v.* variables set by animation keyframe Molang expressions
-        // (e.g. v.idle_time = v.idle_time + 3) back from MolangPhysicsRuntime
-        // into this controller's RuntimeState, so that OpenYSM controller
-        // transition conditions can see the updated values.
-        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
-        // Also sync v.* variables written by timeline custom instructions
-        // (via MolangInstructionExecutor → MolangParser.VARIABLES set()).
-        // This is necessary because MolangPhysicsRuntime.end() is called before
-        // tickAnimation() processes the timeline, so the values set by timeline
-        // instructions DON'T reach MolangPhysicsRuntime.ScopeState and thus
-        // wouldn't be picked up by syncToRuntimeState() above.
-        for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
-            software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.entrySet()) {
-            String key = entry.getKey();
-            if (key.startsWith("v.")) {
-                state.variables.put(key.substring(2), entry.getValue().get());
-            }
-        }
     }
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {

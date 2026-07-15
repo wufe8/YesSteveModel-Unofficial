@@ -32,7 +32,7 @@ public final class MolangPhysicsRuntime {
             return;
         }
         EntityPlayer player = animatable.getPlayer();
-        ScopeKey key = ScopeKey.from(player, animatable.getMainModel(), animatable.getAnimation());
+        ScopeKey key = ScopeKey.from(player, animatable.getMainModel());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
         if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.isEmpty()) {
             // 先注入所有 PENDING_ROAMING 变量
@@ -248,22 +248,15 @@ public final class MolangPhysicsRuntime {
     private static final class ScopeKey {
         private final UUID playerId;
         private final ResourceLocation modelId;
-        private final ResourceLocation animationId;
-        private final int fallbackIdentity;
 
-        private ScopeKey(UUID playerId, ResourceLocation modelId, ResourceLocation animationId, int fallbackIdentity) {
+        private ScopeKey(UUID playerId, ResourceLocation modelId) {
             this.playerId = playerId;
             this.modelId = modelId;
-            this.animationId = animationId;
-            this.fallbackIdentity = fallbackIdentity;
         }
 
-        private static ScopeKey from(EntityPlayer player, ResourceLocation modelId, ResourceLocation animationId) {
+        private static ScopeKey from(EntityPlayer player, ResourceLocation modelId) {
             UUID playerId = player == null ? null : player.getUniqueID();
-            int fallbackIdentity = playerId == null
-                ? 31 * System.identityHashCode(modelId) + System.identityHashCode(animationId)
-                : 0;
-            return new ScopeKey(playerId, modelId, animationId, fallbackIdentity);
+            return new ScopeKey(playerId, modelId);
         }
 
         @Override
@@ -275,24 +268,16 @@ public final class MolangPhysicsRuntime {
                 return false;
             }
             ScopeKey other = (ScopeKey) obj;
-            if (fallbackIdentity != other.fallbackIdentity) {
-                return false;
-            }
             if (playerId == null ? other.playerId != null : !playerId.equals(other.playerId)) {
                 return false;
             }
-            if (modelId == null ? other.modelId != null : !modelId.equals(other.modelId)) {
-                return false;
-            }
-            return animationId == null ? other.animationId == null : animationId.equals(other.animationId);
+            return modelId == null ? other.modelId == null : modelId.equals(other.modelId);
         }
 
         @Override
         public int hashCode() {
             int result = playerId == null ? 0 : playerId.hashCode();
             result = 31 * result + (modelId == null ? 0 : modelId.hashCode());
-            result = 31 * result + (animationId == null ? 0 : animationId.hashCode());
-            result = 31 * result + fallbackIdentity;
             return result;
         }
     }
