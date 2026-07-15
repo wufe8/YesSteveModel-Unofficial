@@ -20,8 +20,15 @@ public class ScopedMolangVariable extends LazyVariable {
     @Override
     public void set(double value) {
         if (!MolangPhysicsRuntime.setVariable(getName(), value)) {
+            if ("v.roaming.bq_eye".equals(getName()) || "v.roaming.bq_mouth".equals(getName())) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-SCOPED] set({}) = {} – NO FRAME CTX, fallback=() -> {}", getName(), value, (int) value);
+            }
             this.fallbackSupplier = () -> value;
             super.set(value);
+        } else {
+            if ("v.roaming.bq_eye".equals(getName()) || "v.roaming.bq_mouth".equals(getName())) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-SCOPED] set({}) = {} – FRAME CTX ALIVE, written to ScopeState", getName(), value);
+            }
         }
     }
 
@@ -33,6 +40,11 @@ public class ScopedMolangVariable extends LazyVariable {
 
     @Override
     public double get() {
-        return MolangPhysicsRuntime.getVariable(getName(), fallbackSupplier.getAsDouble());
+        double fallback = fallbackSupplier.getAsDouble();
+        double result = MolangPhysicsRuntime.getVariable(getName(), fallback);
+        if ("v.roaming.bq_eye".equals(getName()) || "v.roaming.bq_mouth".equals(getName())) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-SCOPED] get({}) = {} (fallback={})", getName(), result, fallback);
+        }
+        return result;
     }
 }

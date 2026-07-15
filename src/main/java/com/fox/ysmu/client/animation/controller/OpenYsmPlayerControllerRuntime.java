@@ -395,6 +395,38 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
         }
+        // Collect all custom instruction keyframes (timeline) from all animations.
+        // The primary animation's timeline is included; additional animations'
+        // timelines are merged so that Molang variable assignments in their
+        // timelines (e.g. v.bq_eye = v.roaming.bq_eye) are not lost.
+        java.util.List<software.bernie.geckolib3.core.keyframe.EventKeyFrame<String>> mergedTimeline = new java.util.ArrayList<>();
+        if (primaryAnim != null && primaryAnim.customInstructionKeyframes != null) {
+            mergedTimeline.addAll(primaryAnim.customInstructionKeyframes);
+        }
+        for (int i = 1; i < animationNames.size(); i++) {
+            software.bernie.geckolib3.core.builder.Animation a = null;
+            if (animFile != null) {
+                a = animFile.getAnimation(animationNames.get(i));
+            }
+            if (a == null) {
+                a = lookupAnimation(animationNames.get(i));
+            }
+            if (a != null && a.customInstructionKeyframes != null) {
+                // Merge non-duplicate keyframes (by trigger time) from each source
+                for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : a.customInstructionKeyframes) {
+                    boolean dup = false;
+                    for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> existing : mergedTimeline) {
+                        if (Math.abs(existing.getStartTick() - kf.getStartTick()) < 0.001d) {
+                            dup = true;
+                            break;
+                        }
+                    }
+                    if (!dup) {
+                        mergedTimeline.add(kf);
+                    }
+                }
+            }
+        }
         // Determine the final animation name: if we have merged bones and either
         // need Root filtering or have multiple animations, use a cached merged copy.
         boolean needsMergedCopy = mergedBones != null
@@ -421,6 +453,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
             mergedAnim.boneAnimations = mergedBones;
+            mergedAnim.customInstructionKeyframes = mergedTimeline;
             if (primaryAnim != null) {
                 mergedAnim.animationLength = primaryAnim.animationLength;
                 mergedAnim.loop = primaryAnim.loop;
@@ -548,6 +581,19 @@ public final class OpenYsmPlayerControllerRuntime {
         // into this controller's RuntimeState, so that OpenYSM controller
         // transition conditions can see the updated values.
         com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
+        // Also sync v.* variables written by timeline custom instructions
+        // (via MolangInstructionExecutor → MolangParser.VARIABLES set()).
+        // This is necessary because MolangPhysicsRuntime.end() is called before
+        // tickAnimation() processes the timeline, so the values set by timeline
+        // instructions DON'T reach MolangPhysicsRuntime.ScopeState and thus
+        // wouldn't be picked up by syncToRuntimeState() above.
+        for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
+            software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.entrySet()) {
+            String key = entry.getKey();
+            if (key.startsWith("v.")) {
+                state.variables.put(key.substring(2), entry.getValue().get());
+            }
+        }
     }
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {

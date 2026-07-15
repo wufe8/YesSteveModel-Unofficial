@@ -60,6 +60,27 @@ public final class MolangPhysicsRuntime {
                 state.variables.put("v.show_car", showCar);
                 OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("show_car", showCar);
             }
+            // ALSO inject PENDING_ROAMING values into MolangParser.VARIABLES so
+            // that timeline custom instructions (executed by tickAnimation() AFTER
+            // MolangPhysicsRuntime.end() has been called) can still read them.
+            // Without this, ScopedMolangVariable.get("v.roaming.bq_eye") would
+            // find no MolangPhysicsRuntime context and fall back to the LazyVariable
+            // value in MolangParser.VARIABLES, which was never set from the GUI.
+            for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+                String prefixedKey = "v." + entry.getKey();
+                software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
+                    .computeIfAbsent(prefixedKey, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
+                    .set(entry.getValue());
+                String lcKey = "v." + entry.getKey().toLowerCase(java.util.Locale.ROOT);
+                if (!lcKey.equals(prefixedKey)) {
+                    software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
+                        .computeIfAbsent(lcKey, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
+                        .set(entry.getValue());
+                }
+                if (entry.getKey().startsWith("roaming.bq_eye") || entry.getKey().startsWith("roaming.bq_mouth")) {
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-BEGIN] Injected PENDING_ROAMING['{}'] = {} into MolangParser.VARIABLES", entry.getKey(), entry.getValue());
+                }
+            }
         }
         state.physics.update(renderTicks);
         CURRENT.set(new FrameContext(state, processor));
