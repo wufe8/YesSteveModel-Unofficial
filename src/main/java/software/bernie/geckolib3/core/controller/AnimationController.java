@@ -889,9 +889,21 @@ public class AnimationController<T extends IAnimatable> {
         }
 
         if (customInstructionListener != null) {
+            int cicCount = currentAnimation.customInstructionKeyframes != null ? currentAnimation.customInstructionKeyframes.size() : 0;
+            boolean hasListener = customInstructionListener != null;
+            if (name != null && (name.startsWith("pre_parallel_") || name.startsWith("parallel_") || name.startsWith("main"))) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-PKE] {}: listener={}, cic.size={}, executed={}, tick={}",
+                    name, hasListener, cicCount, executedKeyFrames.size(), tick);
+                System.out.printf("[STDOUT-PKE] %s: listener=%s, cic.size=%d, executed=%d, tick=%.2f%n",
+                    name, hasListener, cicCount, executedKeyFrames.size(), tick);
+            }
             for (EventKeyFrame<String> customInstructionKeyFrame : currentAnimation.customInstructionKeyframes) {
                 if (!this.executedKeyFrames.contains(customInstructionKeyFrame)
                     && tick >= customInstructionKeyFrame.getStartTick()) {
+                    if (name != null && (name.startsWith("pre_parallel_") || name.startsWith("parallel_"))) {
+                        com.fox.ysmu.ysmu.LOG.info("[YSMU-PKE-FIRE] {}: executing '{}' at tick={}",
+                            name, customInstructionKeyFrame.getEventData(), tick);
+                    }
                     CustomInstructionKeyframeEvent<T> event = new CustomInstructionKeyframeEvent<>(
                         this.animatable,
                         tick,
@@ -902,6 +914,9 @@ public class AnimationController<T extends IAnimatable> {
                     this.executedKeyFrames.add(customInstructionKeyFrame);
                 }
             }
+        } else if (name != null && (name.startsWith("pre_parallel_") || name.startsWith("parallel_"))) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-PKE] {}: NO CUSTOM INSTRUCTION LISTENER! cic.size={}",
+                name, currentAnimation.customInstructionKeyframes != null ? currentAnimation.customInstructionKeyframes.size() : 0);
         }
     }
 

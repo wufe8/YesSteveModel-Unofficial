@@ -493,7 +493,20 @@ public final class OpenYsmPlayerControllerRuntime {
         runtimeState.lastSelectedAnimationState = state.name;
         runtimeState.lastSelectedAnimation = primaryName;
         // Same state + same animation → nothing to change, skip setAnimation entirely.
-        if (sameAnim) {
+        // EXCEPTION: if any animation in the merged set has custom instruction
+        // keyframes (timeline), we must rebuild the merged animation every frame so
+        // that processKeyFrameEvents() can re-fire the timeline instructions.
+        // Without this, the instructions only fire once at startup and any subsequent
+        // changes to v.roaming.* variables are never reflected in v.bq_eye etc.
+        boolean primaryHasTimeline = primaryAnim != null && primaryAnim.customInstructionKeyframes != null
+            && !primaryAnim.customInstructionKeyframes.isEmpty();
+        boolean mergedHasTimeline = !mergedTimeline.isEmpty();
+        boolean hasTimeline = primaryHasTimeline || mergedHasTimeline;
+        if (ctrlName != null && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("main_controller"))) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-SAME] {}: sameAnim={}, hasTimeline={}, primaryTL={}, mergedTL={}, names={}",
+                ctrlName, sameAnim, hasTimeline, primaryHasTimeline, mergedTimeline.size(), animationNames);
+        }
+        if (sameAnim && !hasTimeline) {
             return;
         }
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
