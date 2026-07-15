@@ -496,8 +496,14 @@ public final class OpenYsmPlayerControllerRuntime {
             mergedAnim.customInstructionKeyframes = mergedTimeline;
             if (primaryAnim != null) {
                 mergedAnim.animationLength = primaryAnim.animationLength;
-                mergedAnim.loop = primaryAnim.loop;
-                finalLoop = primaryAnim.loop;
+                // When the animation file has no explicit loop field (null),
+                // default to HOLD_ON_LAST_FRAME so the last frame is held
+                // instead of snapping bones back to bind pose.
+                ILoopType loop = primaryAnim.loop != null
+                    ? primaryAnim.loop
+                    : ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
+                mergedAnim.loop = loop;
+                finalLoop = loop;
             } else {
                 mergedAnim.animationLength = null;
                 mergedAnim.loop = ILoopType.EDefaultLoopTypes.LOOP;
@@ -506,7 +512,12 @@ public final class OpenYsmPlayerControllerRuntime {
             finalName = mergedName;
         } else {
             finalName = primaryName;
-            finalLoop = primaryAnim != null ? primaryAnim.loop : ILoopType.EDefaultLoopTypes.LOOP;
+            // When the animation file has no explicit loop field (null),
+            // default to HOLD_ON_LAST_FRAME so the last frame is held
+            // instead of snapping bones back to bind pose.
+            finalLoop = primaryAnim != null
+                ? (primaryAnim.loop != null ? primaryAnim.loop : ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME)
+                : ILoopType.EDefaultLoopTypes.LOOP;
         }
         // Only call setAnimation ONCE with the final name, so GeckoLib does NOT
         // reset shouldResetTick every frame (which would freeze the animation at tick 0).
@@ -518,23 +529,16 @@ public final class OpenYsmPlayerControllerRuntime {
         runtimeState.lastSelectedAnimationState = state.name;
         runtimeState.lastSelectedAnimation = primaryName;
         // Same state + same animation → nothing to change, skip setAnimation entirely.
-        // EXCEPTION: if any animation in the merged set has custom instruction
-        // keyframes (timeline), we must rebuild the merged animation every frame so
-        // that processKeyFrameEvents() can re-fire the timeline instructions.
-        // Without this, the instructions only fire once at startup and any subsequent
-        // changes to v.roaming.* variables are never reflected in v.bq_eye etc.
-        boolean hasTimeline = (primaryAnim != null && primaryAnim.customInstructionKeyframes != null
-            && !primaryAnim.customInstructionKeyframes.isEmpty())
-            || !mergedTimeline.isEmpty();
-        if (sameAnim && !hasTimeline) {
+        if (sameAnim) {
             return;
         }
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
-        double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);
-        if (event.getController()
-            .setAnimationPreservingTick(builder, event.getAnimationTick(), elapsedTick)) {
-            return;
-        }
+        // Use setAnimation (sets shouldResetTick=true) instead of
+        // setAnimationPreservingTick.  setAnimationPreservingTick calculates
+        // tickOffset=absoluteTick at state entry, which causes the adjusted
+        // tick to far exceed animation length, making the animation start
+        // from the last keyframe (arm rotation artifacts).
+        // setAnimation resets nextTick to 0 via shouldResetTick.
         event.getController().setAnimation(builder);
     }
 
