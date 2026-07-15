@@ -54,9 +54,6 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         CustomPlayerEntity animatable = event.getAnimatable();
         EntityPlayer player = animatable.getPlayer();
-        if (player == null) {
-            return null;
-        }
         ResourceLocation animationId = animatable.getAnimation();
         ControllerSet set = OpenYsmAnimationControllerRegistry.get(animationId);
         if (set == null) {
@@ -262,9 +259,13 @@ public final class OpenYsmPlayerControllerRuntime {
         return PlayState.CONTINUE;
     }
 
+    /** Sentinel UUID used as the player key when player is null (GUI preview). */
+    private static final UUID NULL_PLAYER_UUID = UUID.fromString("00000000-0000-0000-0000-000000000000");
+
     private static RuntimeState runtimeState(EntityPlayer player, ResourceLocation animationId,
         String geckoControllerName, String openYsmControllerName) {
-        StateKey key = new StateKey(player.getUniqueID(), animationId, geckoControllerName, openYsmControllerName);
+        UUID playerId = player != null ? player.getUniqueID() : NULL_PLAYER_UUID;
+        StateKey key = new StateKey(playerId, animationId, geckoControllerName, openYsmControllerName);
         RuntimeState state = STATES.get(key);
         if (state == null) {
             state = new RuntimeState();
@@ -647,45 +648,36 @@ public final class OpenYsmPlayerControllerRuntime {
                 qh, qh2, jump, vrandom);
         }
 
-        boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
-        boolean newSwing = swingJustStarted;
-        if (Config.DEBUG_CONTROLLER && newSwing) {
-            ysmu.LOG.info("[YSMU-CTRL] {}: newSwing detected, swing={} lastSwingActive={}",
-                geckoControllerName, player.isSwingInProgress, state.lastSwingActive);
-        }
-        if (newSwing) {
-            // Set v.swing = 1 so OpenYSM post_swing controllers can detect
-            // that a new swing began and transition from the default state.
-            // The sub-state's on_entry clears v.swing = 0.
-            state.variables.put("swing", 1.0d);
-            // Clear swing_end so that subsequent swings can transition to
-            // sword states again (previous swing state's on_entry set
-            // v.swing_end = 1, which would block !v.swing_end conditions).
-            state.variables.put("swing_end", 0.0d);
-            // Also detect sword swings for roaming.swing_sword compatibility
-            boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
-                "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
-                context);
-            if (swordSwing) {
-                state.variables.put("swing_sword", 1.0d);
-                if (Config.DEBUG_CONTROLLER) {
-                    ysmu.LOG.info("[YSMU-CTRL] {}: sword swing detected, set swing_sword=1", geckoControllerName);
-                }
+        if (player != null) {
+            boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
+            boolean newSwing = swingJustStarted;
+            if (Config.DEBUG_CONTROLLER && newSwing) {
+                ysmu.LOG.info("[YSMU-CTRL] {}: newSwing detected, swing={} lastSwingActive={}",
+                    geckoControllerName, player.isSwingInProgress, state.lastSwingActive);
             }
-            state.variables.put(
-                "jump",
-                OpenYsmControllerExpressionEvaluator.evaluateBoolean(
-                    "q.is_jumping&&(q.vertical_speed<0)",
-                    context) ? 1.0d : 0.0d);
-        } else {
-            // No new swing this frame: clear swing_sword and swing to prevent
-            // stale values from MolangRuntime (set by the swing:sword animation
-            // timeline during codeAnimation AFTER controller predicates)
-            // from causing premature attack transitions.
-            state.variables.put("swing_sword", 0.0d);
-            state.variables.put("swing", 0.0d);
+            if (newSwing) {
+                state.variables.put("swing", 1.0d);
+                state.variables.put("swing_end", 0.0d);
+                boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
+                    "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
+                    context);
+                if (swordSwing) {
+                    state.variables.put("swing_sword", 1.0d);
+                    if (Config.DEBUG_CONTROLLER) {
+                        ysmu.LOG.info("[YSMU-CTRL] {}: sword swing detected, set swing_sword=1", geckoControllerName);
+                    }
+                }
+                state.variables.put(
+                    "jump",
+                    OpenYsmControllerExpressionEvaluator.evaluateBoolean(
+                        "q.is_jumping&&(q.vertical_speed<0)",
+                        context) ? 1.0d : 0.0d);
+            } else {
+                state.variables.put("swing_sword", 0.0d);
+                state.variables.put("swing", 0.0d);
+            }
+            state.lastSwingActive = player.isSwingInProgress;
         }
-        state.lastSwingActive = player.isSwingInProgress;
     }
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {

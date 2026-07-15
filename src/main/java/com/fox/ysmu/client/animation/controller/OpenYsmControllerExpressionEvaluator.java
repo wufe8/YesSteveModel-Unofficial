@@ -422,6 +422,7 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         double functionValue(String name, List<Argument> arguments) {
+            if (player == null) return FALSE;
             if ("ctrl.hold".equals(name)) {
                 return handMatch(arguments, false, false);
             }
@@ -548,6 +549,7 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         private double queryValue(String name) {
+            if (player == null) return FALSE;
             if ("anim_time".equals(name)) {
                 return Math.max(0.0d, event.getAnimationTick() - state.enteredTick) / 20.0d;
             }
@@ -645,6 +647,7 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         private double ysmValue(String name) {
+            if (player == null) return FALSE;
             if ("is_fishing".equals(name)) {
                 return player.fishEntity != null ? TRUE : FALSE;
             }
@@ -735,6 +738,7 @@ final class OpenYsmControllerExpressionEvaluator {
         /** Returns true when the cap controller is playing an extra animation
          *  (wheel or EEP).  Used by ctrl.playing_extra_animation. */
         private boolean isPlayingExtraAnimation() {
+            if (player == null) return false;
             // Check EEP (persistent animation from wheel GUI or /ysm play)
             com.fox.ysmu.eep.ExtendedModelInfo eep = com.fox.ysmu.eep.ExtendedModelInfo.get(player);
             if (eep != null && eep.isPlayAnimation()) {
@@ -751,7 +755,7 @@ final class OpenYsmControllerExpressionEvaluator {
         /** Returns the entity's position component (0=x, 1=y, 2=z), using
          *  partial tick interpolation.  Implements query.position(index). */
         private double queryPositionValue(int index) {
-            if (index < 0 || index > 2) return 0.0d;
+            if (index < 0 || index > 2 || player == null) return 0.0d;
             float partialTicks = event.getPartialTick();
             switch (index) {
                 case 0:
@@ -792,6 +796,7 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         private boolean isControllerStateDirect(String name) {
+            if (player == null) return false;
             if ("death".equals(name)) {
                 return player.isDead;
             }
@@ -936,6 +941,7 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         private boolean isOnGround() {
+            if (player == null) return false;
             if (player == Minecraft.getMinecraft().thePlayer) {
                 return player.onGround;
             }
@@ -943,6 +949,7 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         private boolean isFlying() {
+            if (player == null) return false;
             if (player == Minecraft.getMinecraft().thePlayer) {
                 return player.capabilities.isFlying;
             }
@@ -950,11 +957,13 @@ final class OpenYsmControllerExpressionEvaluator {
         }
 
         private boolean isJumping() {
+            if (player == null) return false;
             return !isFlying() && !player.isRiding() && !isOnGround() && !player.isInWater()
                 && motionYState(0.0d) != 0;
         }
 
         private double horizontalSpeed() {
+            if (player == null) return 0.0d;
             double x = player.posX - player.prevPosX;
             double z = player.posZ - player.prevPosZ;
             return MathHelper.sqrt_double(x * x + z * z) * 20.0d;

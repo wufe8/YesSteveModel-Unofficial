@@ -100,6 +100,12 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         } else {
             try {
                 super.setLivingAnimations(animatable, instanceId, animationEvent);
+                // GUI preview path: also hide expression/weapon bones
+                // (same as the in-game path above, but the preview entity
+                // has no real player so hold detection returns empty).
+                if (animatable instanceof CustomPlayerEntity customPlayer) {
+                    applyWeaponBoneVisibility(customPlayer, null);
+                }
             } finally {
                 MolangPhysicsRuntime.end();
             }
@@ -127,13 +133,17 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             String offResult = offHand != null ? offHand.doTest(player, false) : null;
             hasOffhandItem = offResult != null && offResult.contains(":sword");
         } catch (Exception e) {
-            // Fallback: use InnerClassify for type detection
-            net.minecraft.item.ItemStack mainStack = player.getHeldItem();
-            hasMainhandItem = mainStack != null && "sword".equals(
-                com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(mainStack));
-            net.minecraft.item.ItemStack offStack = com.fox.ysmu.compat.BackhandCompat.getOffhandItem(player);
-            hasOffhandItem = offStack != null && "sword".equals(
-                com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(offStack));
+            if (player == null) {
+                // GUI preview — no real player, nothing to detect.
+            } else {
+                // Fallback: use InnerClassify for type detection
+                net.minecraft.item.ItemStack mainStack = player.getHeldItem();
+                hasMainhandItem = mainStack != null && "sword".equals(
+                    com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(mainStack));
+                net.minecraft.item.ItemStack offStack = com.fox.ysmu.compat.BackhandCompat.getOffhandItem(player);
+                hasOffhandItem = offStack != null && "sword".equals(
+                    com.fox.ysmu.client.animation.condition.InnerClassify.getItemType(offStack));
+            }
         }
         // 攻击组合技 (hasActiveCombo) 已注释掉 (2025-06-26)
         // if (com.fox.ysmu.client.animation.AnimationManager.hasActiveCombo(player)) {

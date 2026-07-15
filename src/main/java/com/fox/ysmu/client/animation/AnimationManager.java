@@ -18,7 +18,6 @@ import org.jetbrains.annotations.Nullable;
 import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.animation.condition.*;
-import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
@@ -75,10 +74,6 @@ public final class AnimationManager {
     private final Map<UUID, String> dismountAnim = new ConcurrentHashMap<>();
     /** Remaining ticks to suppress other controllers during dismount. */
     private final Map<UUID, Integer> dismountTimer = new ConcurrentHashMap<>();
-    /** Tracks isSwingInProgress across frames to detect new swing cycles (false→true). */
-    private final Map<UUID, Boolean> swingWasActive = new ConcurrentHashMap<>();
-    /** Tracks last swingProgressInt to detect rapid-click resets. */
-    private final Map<UUID, Integer> lastSwingProgress = new ConcurrentHashMap<>();
     /** Tracks last logged animation name per animId, to avoid spamming [YSMU-ANIM] log every frame. */
     private final Map<ResourceLocation, String> lastLoggedAnim = new ConcurrentHashMap<>();
     // --- 硬编码的攻击组合动画已被注释掉 (2025-06-26) ---
@@ -99,8 +94,6 @@ public final class AnimationManager {
         useDurationByPlayer.remove(playerId);
         lastMainhandItemHash.remove(playerId);
         lastOffhandItemHash.remove(playerId);
-        swingWasActive.remove(playerId);
-        lastSwingProgress.remove(playerId);
         dismountAnim.remove(playerId);
         dismountTimer.remove(playerId);
         wasRiding.remove(playerId);
@@ -253,18 +246,6 @@ public final class AnimationManager {
         event.getController()
             .setAnimation(new AnimationBuilder().addAnimation(animationName));
         return PlayState.CONTINUE;
-    }
-
-    /**
-     * 只在动画存在时播放。防止 GeckoLib 的 setAnimation() 在动画不存在时静默失败
-     * （不设 animationQueue），导致控制器处于 Stopped 状态且模型冻结。
-     */
-    private static <P extends IAnimatable> PlayState playIfAnimExists(AnimationEvent<P> event, String animationName,
-        ILoopType loopType, ResourceLocation animId) {
-        if (animationExistsInFile(animId, animationName)) {
-            return playAnimation(event, animationName, loopType);
-        }
-        return PlayState.STOP;
     }
 
     private static boolean animationExistsInFile(ResourceLocation animId, String animationName) {
@@ -722,24 +703,24 @@ public final class AnimationManager {
         // 控制器的攻击动画产生骨骼冲突。同时让 swing_controller 保持 CONTINUE
         // 状态，避免 GeckoLib 因 STOP 而可能产生的状态异常。
         UUID pid = player.getUniqueID();
-        // 检测新挥剑：完整 false→true 转换，或 swingProgressInt 跳高（快速连点）
         boolean nowSwinging = player.isSwingInProgress;
-        boolean wasSwinging = swingWasActive.getOrDefault(pid, false);
-        swingWasActive.put(pid, nowSwinging);
-        boolean swingStarted = !wasSwinging && nowSwinging;
-        boolean progressReset = false;
-        if (nowSwinging) {
-            int prev = lastSwingProgress.getOrDefault(pid, -1);
-            if (prev >= 0 && player.swingProgressInt < prev) progressReset = true;
-            lastSwingProgress.put(pid, player.swingProgressInt);
-        } else {
-            lastSwingProgress.remove(pid);
-        }
 
         if (!nowSwinging) {
+            // Let the swing animation play to completion before stopping.
+            // Without this, the animation is cut short as soon as the vanilla
+            // swing progress ends (~0.5s), even when the animation itself is
+            // much longer (e.g. swing:sword has animation_length=1.54s).
+            // Always remove swingProgressByPlayer here so that a subsequent
+            // click during the follow-through is detected as a new swing
+            // (markSwingStart returns true when the key is absent).
             swingProgressByPlayer.remove(pid);
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
-            return PlayState.STOP;
+            if (event.getController().getAnimationState()
+                == software.bernie.geckolib3.core.AnimationState.Stopped) {
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                return PlayState.STOP;
+            }
+            // Still playing — keep going without interfering.
+            return PlayState.CONTINUE;
         }
         if (!player.isPlayerSleeping()) {
             boolean newSwing = markSwingStart(player);
@@ -778,10 +759,8 @@ public final class AnimationManager {
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
                 if (exists) {
-                    return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.LOOP);
+                    return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.PLAY_ONCE);
                 }
-            } else {
-                boolean swingHandExists = animationExistsInFile(animId, "swing_hand");
             }
             return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.PLAY_ONCE);
         }
