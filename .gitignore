@@ -38,5 +38,6 @@ layout.json
 __pycache__/
 /tools/*.log
 /res/
+/local/
 /*-Clone/
 /src/main/resources/assets/ysmu/builtin/wine_fox/

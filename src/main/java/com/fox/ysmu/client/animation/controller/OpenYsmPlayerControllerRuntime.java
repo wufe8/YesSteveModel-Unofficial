@@ -19,6 +19,7 @@ import net.minecraft.util.ResourceLocation;
 import org.apache.commons.lang3.StringUtils;
 
 import com.fox.ysmu.Config;
+import com.fox.ysmu.ysmu;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.AnimationEntry;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Controller;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.ControllerSet;
@@ -44,19 +45,6 @@ public final class OpenYsmPlayerControllerRuntime {
      *  (not just default-initialized). Used by the ?? operator to distinguish
      *  "user set to 0" from "never set (defaults to 0)". */
     public static final java.util.Set<String> EXPLICIT_ROAMING = java.util.concurrent.ConcurrentHashMap.newKeySet();
-
-    /** Throttle for DEBUG_CONTROLLER logs: maps log key → next allowed log time (ms). */
-    private static final java.util.Map<String, Long> DEBUG_LOG_THROTTLE = new ConcurrentHashMap<>();
-    private static final long DEBUG_LOG_INTERVAL_MS = 5000; // 5 seconds between repeats
-
-    /** Log a debug message at most once per DEBUG_LOG_INTERVAL_MS per key. */
-    private static void debugLogOnce(String key, String message) {
-        long now = System.currentTimeMillis();
-        Long nextAllowed = DEBUG_LOG_THROTTLE.get(key);
-        if (nextAllowed != null && now < nextAllowed) return;
-        DEBUG_LOG_THROTTLE.put(key, now + DEBUG_LOG_INTERVAL_MS);
-        com.fox.ysmu.ysmu.LOG.info(message);
-    }
 
     private OpenYsmPlayerControllerRuntime() {}
 
@@ -151,42 +139,12 @@ public final class OpenYsmPlayerControllerRuntime {
         int transitionCount = 0;
         for (int i = 0; i < 4; i++) {
             String prevStateName = state.name;
-            // 记录 post_swing 的每次 transition 判定细节
-            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
-                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
-                StringBuilder sb = new StringBuilder();
-                sb.append("[YSMU-PS-DETAIL] from='").append(prevStateName).append("' vars: ");
-                sb.append("swing=").append(runtimeState.variables.getOrDefault("swing", -999.0));
-                sb.append(" attack=").append(runtimeState.variables.getOrDefault("attack", -999.0));
-                sb.append(" swing_end=").append(runtimeState.variables.getOrDefault("swing_end", -999.0));
-                sb.append(" roaming.swing_sword=").append(runtimeState.variables.getOrDefault("roaming.swing_sword", -999.0));
-                // 列出所有 transition 条件及结果
-                Controller ctrl = match.controller;
-                State curState = ctrl.states.get(prevStateName);
-                if (curState != null && curState.transitions != null) {
-                    for (Transition t : curState.transitions) {
-                        boolean condMet = OpenYsmControllerExpressionEvaluator.evaluateBoolean(t.condition, context);
-                        String condStr = t.condition != null ? t.condition.substring(0, Math.min(t.condition.length(), 80)) : "null";
-                        sb.append(" | ").append(t.targetState).append(": ").append(condMet).append(" [").append(condStr).append("]");
-                    }
-                }
-                debugLogOnce("PS-DETAIL", sb.toString());
-            }
             State nextState = applyTransition(event, match.controller, state, runtimeState, context);
             if (nextState == state) {
                 break;
             }
             transitionCount++;
             state = nextState;
-            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
-                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
-                debugLogOnce("PS-LOOP-" + prevStateName + "->" + state.name,
-                    String.format("[YSMU-PS-LOOP] iter=%d: %s -> %s (swing=%s attack=%s hasLeft=%s)",
-                        i, prevStateName, state.name,
-                        runtimeState.variables.getOrDefault("swing", -999.0),
-                        runtimeState.variables.getOrDefault("attack", -999.0),
-                        runtimeState.hasLeftInitial));
-            }
         }
 
         // If the current state has no animations, try to force transition to any
@@ -219,17 +177,11 @@ public final class OpenYsmPlayerControllerRuntime {
         // "animations" list plays all entries simultaneously; selectAnimation
         // only returns the first match for historical code that expects one.
         List<String> activeAnimations = collectActiveAnimations(state, animationId, context);
-        if (com.fox.ysmu.Config.DEBUG_CONTROLLER
-            && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
-            debugLogOnce("PS-" + runtimeState.currentState,
-                String.format("[YSMU-PS] %s state='%s' swing=%s attack=%s swing_end=%s hasLeft=%s trans=%s anims=%s",
-                    geckoControllerName, runtimeState.currentState,
-                    runtimeState.variables.getOrDefault("swing", -999.0),
-                    runtimeState.variables.getOrDefault("attack", -999.0),
-                    runtimeState.variables.getOrDefault("swing_end", -999.0),
-                    runtimeState.hasLeftInitial, transitionCount, activeAnimations));
-        }
         if (activeAnimations.isEmpty()) {
+            if (Config.DEBUG_CONTROLLER) {
+                ysmu.LOG.info("[YSMU-CTRL] {}: no active animations, state='{}'",
+                    geckoControllerName, runtimeState.currentState);
+            }
             State initialState = match.controller.getInitialState();
             if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
                 runtimeState.currentState = initialState.name;
@@ -237,21 +189,10 @@ public final class OpenYsmPlayerControllerRuntime {
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
             }
-            // Special handling for the "ysm-builtin" state (YSM 2.6.3+ feature):
-            // This is an intentionally empty state that signals "fall back to the
-            // built-in hardcoded animation logic" (same as when no controller exists).
-            // Do NOT clear the animation builder — let the legacy predicate system
-            // in predicateMain select the correct animation (idle/walk/run/etc.).
             if ("ysm-builtin".equals(runtimeState.currentState)) {
             } else {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
                 event.getController().currentAnimationBuilder = new AnimationBuilder();
-            }
-            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
-                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
-                debugLogOnce("PS-RET-null-anims",
-                    String.format("[YSMU-PS-RET] %s NULL (no active anims) state='%s'",
-                        geckoControllerName, runtimeState.currentState));
             }
             return null;
         }
@@ -263,14 +204,12 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
         if (existing.isEmpty()) {
+            if (Config.DEBUG_CONTROLLER) {
+                ysmu.LOG.info("[YSMU-CTRL] {}: animations exist but none found in file, state='{}'",
+                    geckoControllerName, runtimeState.currentState);
+            }
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
-            if (com.fox.ysmu.Config.DEBUG_CONTROLLER
-                && (geckoControllerName.contains("post_swing") || geckoControllerName.contains("player.post_swing"))) {
-                debugLogOnce("PS-RET-no-exist",
-                    String.format("[YSMU-PS-RET] %s NULL (no existing anims) state='%s'",
-                        geckoControllerName, runtimeState.currentState));
-            }
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && existing.contains("attack_empty") && existing.size() == 1) {
@@ -499,6 +438,21 @@ public final class OpenYsmPlayerControllerRuntime {
         // Only call setAnimation ONCE with the final name, so GeckoLib does NOT
         // reset shouldResetTick every frame (which would freeze the animation at tick 0).
         finalName = finalName != null ? finalName : primaryName;
+        // DEBUG: log pre_parallel_0 collected animations
+        if (ctrlName != null && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))) {
+            Double bqEye = runtimeState.variables.get("bq_eye");
+            Double bqMouth = runtimeState.variables.get("bq_mouth");
+            software.bernie.geckolib3.file.AnimationFile cf = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
+            int cachedSize = -1;
+            if (cf != null) {
+                software.bernie.geckolib3.core.builder.Animation ca = cf.getAnimation(finalName);
+                if (ca != null && ca.boneAnimations != null) cachedSize = ca.boneAnimations.size();
+            }
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-EXP] {} state='{}' final='{}' anims({}): {} | cacheBones={} v.bq_eye={} v.bq_mouth={}",
+                ctrlName, state.name, finalName,
+                animationNames.size(), animationNames,
+                cachedSize, bqEye, bqMouth);
+        }
         boolean sameState = state.name.equals(runtimeState.lastSelectedAnimationState);
         boolean sameAnim = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
             && runtimeState.lastSelectedAnimation.equals(primaryName);
@@ -510,12 +464,11 @@ public final class OpenYsmPlayerControllerRuntime {
             return;
         }
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
-        // 使用 setAnimation（设置 shouldResetTick=true）而非
-        // setAnimationPreservingTick。因为 setAnimationPreservingTick
-        // 在新状态入场时 elapsedTick=0，会设置 tickOffset=absoluteTick，
-        // 导致 adjustedTick = tickOffset + currentTick 远超动画长度，
-        // 动画直接从最后一帧的关键帧位置开始（手臂向上旋转等异常）。
-        // setAnimation 通过 shouldResetTick 让 nextTick 从 0 开始。
+        double elapsedTick = Math.max(0.0D, event.getAnimationTick() - runtimeState.enteredTick);
+        if (event.getController()
+            .setAnimationPreservingTick(builder, event.getAnimationTick(), elapsedTick)) {
+            return;
+        }
         event.getController().setAnimation(builder);
     }
 
@@ -551,28 +504,19 @@ public final class OpenYsmPlayerControllerRuntime {
         OpenYsmControllerExpressionEvaluator.Context context) {
         // Run on EVERY controller so that parallel_2 (and others without a
         // post_swing OpenYSM controller) can detect swings independently.
-        // Each controller uses its OWN lastSwingActive/lastSwingProgress so that
+        // Each controller uses its OWN lastSwingActive so that
         // on_exit variable clearance is never overwritten.
-
-        // Sync v.* variables set by animation keyframe Molang expressions
-        // (e.g. v.idle_time = v.idle_time + 3) back from MolangPhysicsRuntime
-        // into this controller's RuntimeState, so that OpenYSM controller
-        // transition conditions can see the updated values.
-        // IMPORTANT: this MUST run BEFORE the swing detection block below.
-        // The on_entry/on_exit statements of OpenYSM controller states
-        // (e.g. v.swing_sword=0) also write into MolangPhysicsRuntime via
-        // MolangPhysicsRuntime.setVariable(). If syncToRuntimeState ran AFTER
-        // the swing detection, it would overwrite the freshly-set swing
-        // variables with stale values from the previous frame, preventing
-        // the attack combo (default→attack1) transition.
-        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
-
+        // In 1.7.10 swingProgressInt DECREASES (max→0), unlike Bedrock where it
+        // increases.  swingReset comparing progress values would fire every frame
+        // during a swing, causing v.swing=1 to be set repeatedly and the controller
+        // state machine to bounce between sub-states.  Use a simple boolean flag
+        // to detect the first frame of each new swing instead.
         boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
-        // swingProgressInt 在 1.7.10 中是递增的（0→swingDuration），
-        // 新连击时 swingProgressInt 会跳低（重置到 0），所以用 < 检测连击重置。
-        boolean swingReset = player.isSwingInProgress && state.lastSwingActive
-            && player.swingProgressInt < state.lastSwingProgress;
-        boolean newSwing = swingJustStarted || swingReset;
+        boolean newSwing = swingJustStarted;
+        if (Config.DEBUG_CONTROLLER && newSwing) {
+            ysmu.LOG.info("[YSMU-CTRL] {}: newSwing detected, swing={} lastSwingActive={}",
+                geckoControllerName, player.isSwingInProgress, state.lastSwingActive);
+        }
         if (newSwing) {
             // Set v.swing = 1 so OpenYSM post_swing controllers can detect
             // that a new swing began and transition from the default state.
@@ -588,31 +532,22 @@ public final class OpenYsmPlayerControllerRuntime {
                 context);
             if (swordSwing) {
                 state.variables.put("swing_sword", 1.0d);
+                if (Config.DEBUG_CONTROLLER) {
+                    ysmu.LOG.info("[YSMU-CTRL] {}: sword swing detected, set swing_sword=1", geckoControllerName);
+                }
             }
             state.variables.put(
                 "jump",
                 OpenYsmControllerExpressionEvaluator.evaluateBoolean(
                     "q.is_jumping&&(q.vertical_speed<0)",
                     context) ? 1.0d : 0.0d);
-        } else {
-            // No new swing this frame: clear swing_sword to prevent stale
-            // values from MolangRuntime (set by the swing:sword animation
-            // timeline during codeAnimation AFTER controller predicates)
-            // from causing premature attack combo transitions.  The attack
-            // combo states' on_entry also sets swing_sword=0, but that
-            // only fires on state entry, not every frame, so a stale 1.0
-            // from syncToRuntimeState above would otherwise persist and
-            // trigger the next combo state (attack1→attack2) on the very
-            // next frame of the same swing.
-            state.variables.put("swing_sword", 0.0d);
-            // Also clear v.swing to prevent the swing:sword animation's
-            // Molang timeline (which sets v.swing = 1 at time 0 with
-            // loop: true) from causing the post_swing controller to
-            // perpetually re-trigger attack state transitions.
-            state.variables.put("swing", 0.0d);
         }
         state.lastSwingActive = player.isSwingInProgress;
-        state.lastSwingProgress = player.isSwingInProgress ? player.swingProgressInt : -1;
+        // Sync v.* variables set by animation keyframe Molang expressions
+        // (e.g. v.idle_time = v.idle_time + 3) back from MolangPhysicsRuntime
+        // into this controller's RuntimeState, so that OpenYSM controller
+        // transition conditions can see the updated values.
+        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
     }
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {
@@ -712,7 +647,6 @@ public final class OpenYsmPlayerControllerRuntime {
         String lastSelectedAnimation = "";
         double enteredTick;
         boolean lastSwingActive;
-        int lastSwingProgress = -1;
         final Map<String, Double> variables = new ConcurrentHashMap<>();
     }
 
