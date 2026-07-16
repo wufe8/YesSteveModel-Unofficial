@@ -229,7 +229,7 @@ public final class RawYsmModelAdapter {
         return img != null;
     }
 
-    private static byte[] getLegacyTextureData(RawYsmModel.RawTexture texture) {
+    public static byte[] getLegacyTextureData(RawYsmModel.RawTexture texture) {
         if (texture.imageFormat == PNG_FORMAT) {
             if (Config.DEBUG_MODEL_LOAD) ysmu.LOG.info("[YSMU-MODEL]   getLegacyTextureData: PNG, returning as-is ({} bytes)", texture.data.length);
             return texture.data;
@@ -363,7 +363,7 @@ public final class RawYsmModelAdapter {
         return null;
     }
 
-    private static byte[] toGeometryJson(RawYsmModel raw, RawYsmModel.RawGeometry geometry, boolean includeModelInfo)
+    public static byte[] toGeometryJson(RawYsmModel raw, RawYsmModel.RawGeometry geometry, boolean includeModelInfo)
         throws IOException {
         JsonObject root;
         if (geometry.sourceJson != null) {

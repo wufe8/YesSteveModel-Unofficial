@@ -287,7 +287,29 @@ public final class OpenYsmModelSyncClient {
                 ClientModelManager.registerExtraWheel(modelId, raw);
             });
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
-                ysmu.LOG.warn("OpenYSM synced model {} is not bridgeable to legacy ModelData, skipped", context.modelId);
+                // Even when the model can't be bridged to legacy ModelData, we still
+                // need to register projectile sub-entity models so arrow rendering works.
+                // Must run on the main render thread because registerProjectilesFromRaw
+                // calls OpenGL via registerTexture -> TextureManager -> glGenTextures.
+                if (raw.projectiles != null && !raw.projectiles.isEmpty()) {
+                    Minecraft.getMinecraft().func_152344_a(() -> {
+                        try {
+                            ResourceLocation baseModelId = ModelIdUtil.getModelIdFromMainId(modelId);
+                            registerProjectilesFromRaw(raw, baseModelId);
+                            if (Config.DEBUG_MODEL_LOAD) {
+                                ysmu.LOG.info("[YSMU-MODEL] Registered projectile models from non-bridgeable model {}",
+                                    context.modelId);
+                            }
+                        } catch (Exception e) {
+                            ysmu.LOG.warn("Failed to register projectile models for non-bridgeable model {}",
+                                context.modelId, e);
+                        }
+                    });
+                }
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] OpenYSM synced model {} is not bridgeable, but projectiles registered",
+                        context.modelId);
+                }
                 return false;
             }
             if (Config.DEBUG_MODEL_LOAD) {
@@ -307,6 +329,53 @@ public final class OpenYsmModelSyncClient {
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to parse OpenYSM synced model " + context.modelId, e);
             return false;
+        }
+    }
+
+    /**
+     * Register projectile sub-entity models/textures directly from a RawYsmModel,
+     * without requiring full legacy ModelData bridging.
+     * Used when isBridgeable() returns false but projectiles still need to render.
+     */
+    private static void registerProjectilesFromRaw(RawYsmModel raw, ResourceLocation baseModelId) {
+        if (raw.projectiles == null || raw.projectiles.isEmpty()) return;
+        for (Map.Entry<String, RawYsmModel.RawSubEntity> entry : raw.projectiles.entrySet()) {
+            RawYsmModel.RawSubEntity sub = entry.getValue();
+            if (sub.model == null) continue;
+            String[] matchIds = sub.matchIds != null && sub.matchIds.length > 0
+                ? sub.matchIds : new String[]{sub.identifier};
+            for (String matchId : matchIds) {
+                if (matchId == null || matchId.isEmpty()) continue;
+                try {
+                    // Register geometry
+                    byte[] geoBytes = RawYsmModelAdapter.toGeometryJson(null, sub.model, false);
+                    ResourceLocation geoId = ModelIdUtil.getSubModelId(baseModelId, "projectile_" + matchId);
+                    ClientModelManager.registerGeo(geoId, geoBytes);
+                    ClientModelManager.PROJECTILE_MODEL_IDS
+                        .computeIfAbsent(baseModelId, k -> new ArrayList<>())
+                        .add(matchId);
+                    // Register textures
+                    for (RawYsmModel.RawTexture tex : sub.textures.values()) {
+                        if (tex.data == null) continue;
+                        byte[] texData = RawYsmModelAdapter.getLegacyTextureData(tex);
+                        if (texData == null) continue;
+                        String texKey = "projectile_" + matchId + "_" + tex.name;
+                        if (!texKey.endsWith(".png")) texKey += ".png";
+                        ResourceLocation texId = ModelIdUtil.getSubModelId(baseModelId, texKey);
+                        ClientModelManager.registerTexture(texId, texData);
+                        ClientModelManager.PROJECTILE_TEXTURE_IDS
+                            .computeIfAbsent(baseModelId, k -> new ArrayList<>())
+                            .add(texId);
+                    }
+                } catch (Exception e) {
+                    ysmu.LOG.warn("Failed to register projectile {} for model {}",
+                        matchId, baseModelId, e);
+                }
+            }
+        }
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] Inline-registered projectile models for {}: {}",
+                baseModelId, ClientModelManager.PROJECTILE_MODEL_IDS.get(baseModelId));
         }
     }
 

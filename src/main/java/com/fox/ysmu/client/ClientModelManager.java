@@ -296,7 +296,7 @@ public class ClientModelManager {
         }
     }
 
-    private static void registerGeo(ResourceLocation id, byte[] data) {
+    public static void registerGeo(ResourceLocation id, byte[] data) {
         Map<ResourceLocation, GeoModel> geoModels = GeckoLibCache.getInstance()
             .getGeoModels();
         try {
@@ -366,7 +366,7 @@ public class ClientModelManager {
         ysmu.LOG.info("YSM client registered textures for {}: {}", id, textures);
     }
 
-    private static void registerTexture(ResourceLocation id, byte[] data) {
+    public static void registerTexture(ResourceLocation id, byte[] data) {
         Minecraft.getMinecraft()
             .getTextureManager()
             .loadTexture(id, new OuterFileTexture(data));
