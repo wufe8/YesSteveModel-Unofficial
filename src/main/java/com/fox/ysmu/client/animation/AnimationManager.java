@@ -698,6 +698,16 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
+        // 1.7.10: 剑右键格挡会触发 isSwingInProgress, 但不应播放挥动动画。
+        if (player.getItemInUseCount() > 0
+            && player.getItemInUse() != null
+            && player.getItemInUse().getItemUseAction() == net.minecraft.item.EnumAction.block) {
+            if (event.getController().getAnimationState()
+                == software.bernie.geckolib3.core.AnimationState.Stopped) {
+                return PlayState.STOP;
+            }
+            return PlayState.CONTINUE;
+        }
         // 有 player.post_swing 的模型仍然走标准挥剑路径（播放 swing:sword 等）。
         // swing:sword 通常只有 Molang 时间轴没有骨骼关键帧，不会与 post_swing
         // 控制器的攻击动画产生骨骼冲突。同时让 swing_controller 保持 CONTINUE

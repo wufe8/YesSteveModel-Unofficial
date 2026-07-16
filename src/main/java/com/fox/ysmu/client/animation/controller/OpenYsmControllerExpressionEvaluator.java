@@ -609,6 +609,11 @@ final class OpenYsmControllerExpressionEvaluator {
                     ? TRUE
                     : FALSE;
             }
+            if ("is_blocking".equals(name)) {
+                return player.getItemInUse() != null && player.getItemInUse().getItemUseAction() == EnumAction.block
+                    ? TRUE
+                    : FALSE;
+            }
             if ("health".equals(name)) {
                 return player.getHealth();
             }

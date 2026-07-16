@@ -146,6 +146,50 @@ public class ClientEventHandler {
     }
 
     @SubscribeEvent
+    public static void onRenderOverlay(RenderGameOverlayEvent.Post event) {
+        if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
+        if (!Config.SHOW_LOADING_PROGRESS) return;
+        if (!ClientModelManager.SYNC_IN_PROGRESS) return;
+
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.theWorld == null || mc.fontRenderer == null) return;
+
+        int total = ClientModelManager.SYNC_TOTAL;
+        int loaded = ClientModelManager.SYNC_LOADED;
+        String currentModel = ClientModelManager.SYNC_CURRENT_MODEL;
+
+        int screenWidth = event.resolution.getScaledWidth();
+        int screenHeight = event.resolution.getScaledHeight();
+
+        // Model name text (top line)
+        if (!currentModel.isEmpty()) {
+            String modelText = net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_model")
+                + currentModel;
+            int mx = (screenWidth - mc.fontRenderer.getStringWidth(modelText)) / 2;
+            int my = screenHeight - 60;
+            mc.fontRenderer.drawStringWithShadow(modelText, mx, my, 0xFFFFFF);
+        }
+
+        if (total > 0) {
+            // Progress bar
+            int barWidth = 150;
+            int barHeight = 8;
+            int barX = (screenWidth - barWidth) / 2;
+            int barY = screenHeight - 40;
+
+            net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + barWidth, barY + barHeight, 0xAA222222);
+            int fillWidth = loaded >= total ? barWidth : (int) (barWidth * ((float) loaded / total));
+            net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + fillWidth, barY + barHeight, 0xFF44AA44);
+
+            // Progress text
+            String text = loaded + " / " + total;
+            int textX = (screenWidth - mc.fontRenderer.getStringWidth(text)) / 2;
+            int textY = barY - mc.fontRenderer.FONT_HEIGHT - 2;
+            mc.fontRenderer.drawStringWithShadow(text, textX, textY, 0xFFFFFF);
+        }
+    }
+
+    @SubscribeEvent
     public static void onRenderScreen(RenderGameOverlayEvent.Pre event) {
         if (event.type != RenderGameOverlayEvent.ElementType.HOTBAR) return;
         if (Config.DISABLE_PLAYER_RENDER) return;

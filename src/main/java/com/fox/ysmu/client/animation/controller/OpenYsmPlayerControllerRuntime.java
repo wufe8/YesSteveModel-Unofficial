@@ -666,34 +666,49 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         if (player != null) {
-            boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
-            boolean newSwing = swingJustStarted;
-            if (Config.DEBUG_CONTROLLER && newSwing) {
-                ysmu.LOG.info("[YSMU-CTRL] {}: newSwing detected, swing={} lastSwingActive={}",
-                    geckoControllerName, player.isSwingInProgress, state.lastSwingActive);
-            }
-            if (newSwing) {
-                state.variables.put("swing", 1.0d);
-                state.variables.put("swing_end", 0.0d);
-                boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
-                    "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
-                    context);
-                if (swordSwing) {
-                    state.variables.put("swing_sword", 1.0d);
-                    if (Config.DEBUG_CONTROLLER) {
-                        ysmu.LOG.info("[YSMU-CTRL] {}: sword swing detected, set swing_sword=1", geckoControllerName);
-                    }
-                }
-                state.variables.put(
-                    "jump",
-                    OpenYsmControllerExpressionEvaluator.evaluateBoolean(
-                        "q.is_jumping&&(q.vertical_speed<0)",
-                        context) ? 1.0d : 0.0d);
-            } else {
-                state.variables.put("swing_sword", 0.0d);
+            // 1.7.10: 剑右键格挡会触发 isSwingInProgress, 但不应播放挥动动画。
+            // 格挡姿态应由 use_controller (query.is_using_item) 处理。
+            boolean isBlocking = player.getItemInUseCount() > 0
+                && player.getItemInUse() != null
+                && player.getItemInUse().getItemUseAction() == net.minecraft.item.EnumAction.block;
+
+            if (isBlocking) {
+                state.lastSwingActive = player.isSwingInProgress;
                 state.variables.put("swing", 0.0d);
+                state.variables.put("swing_sword", 0.0d);
+                if (Config.DEBUG_CONTROLLER) {
+                    ysmu.LOG.info("[YSMU-CTRL] {}: blocking, suppressed swing", geckoControllerName);
+                }
+            } else {
+                boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
+                boolean newSwing = swingJustStarted;
+                if (Config.DEBUG_CONTROLLER && newSwing) {
+                    ysmu.LOG.info("[YSMU-CTRL] {}: newSwing detected, swing={} lastSwingActive={}",
+                        geckoControllerName, player.isSwingInProgress, state.lastSwingActive);
+                }
+                if (newSwing) {
+                    state.variables.put("swing", 1.0d);
+                    state.variables.put("swing_end", 0.0d);
+                    boolean swordSwing = OpenYsmControllerExpressionEvaluator.evaluateBoolean(
+                        "ctrl.swing('mainhand', ':sword')||ctrl.swing('offhand', ':sword')",
+                        context);
+                    if (swordSwing) {
+                        state.variables.put("swing_sword", 1.0d);
+                        if (Config.DEBUG_CONTROLLER) {
+                            ysmu.LOG.info("[YSMU-CTRL] {}: sword swing detected, set swing_sword=1", geckoControllerName);
+                        }
+                    }
+                    state.variables.put(
+                        "jump",
+                        OpenYsmControllerExpressionEvaluator.evaluateBoolean(
+                            "q.is_jumping&&(q.vertical_speed<0)",
+                            context) ? 1.0d : 0.0d);
+                } else {
+                    state.variables.put("swing_sword", 0.0d);
+                    state.variables.put("swing", 0.0d);
+                }
+                state.lastSwingActive = player.isSwingInProgress;
             }
-            state.lastSwingActive = player.isSwingInProgress;
         }
     }
 

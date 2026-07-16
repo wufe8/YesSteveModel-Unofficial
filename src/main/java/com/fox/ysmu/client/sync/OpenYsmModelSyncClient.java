@@ -151,6 +151,9 @@ public final class OpenYsmModelSyncClient {
         Map<UUID, File> localCacheMap = YSMClientCache.buildCacheIndex(cacheDir, clientKey);
         List<ModelHash> modelsToRequest = new ArrayList<>();
         int serverModelCount = buf.readVarInt();
+        ClientModelManager.SYNC_TOTAL = serverModelCount;
+        ClientModelManager.SYNC_LOADED = 0;
+        ClientModelManager.SYNC_IN_PROGRESS = true;
         ysmu.LOG.info("OpenYSM client received sync index: models={}", serverModelCount);
         if (Config.DEBUG_MODEL_LOAD) {
             ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
@@ -380,6 +383,7 @@ public final class OpenYsmModelSyncClient {
                 downloadedModelsCount,
                 cacheHitCount);
         }
+        ClientModelManager.SYNC_IN_PROGRESS = false;
         resetConnectionState();
     }
 

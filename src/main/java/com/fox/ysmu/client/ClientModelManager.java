@@ -72,6 +72,16 @@ public class ClientModelManager {
      */
     public static final Map<ResourceLocation, int[]> MODEL_STATS = Maps.newHashMap();
 
+    // ── Sync progress tracking ──────────────────────────────────────────
+    /** Total models to load (-1 = unknown, used by legacy sync). */
+    public static volatile int SYNC_TOTAL = -1;
+    /** Models loaded so far. */
+    public static volatile int SYNC_LOADED = 0;
+    /** True while a model sync is in progress. */
+    public static volatile boolean SYNC_IN_PROGRESS = false;
+    /** Display name of the model currently being registered (for progress overlay). */
+    public static volatile String SYNC_CURRENT_MODEL = "";
+
     public static Map<ResourceLocation, List<ResourceLocation>> MODELS = Maps.newHashMap();
     public static Map<ResourceLocation, Pair<Double, Double>> SCALE_INFO = Maps.newHashMap();
     public static Map<ResourceLocation, List<IChatComponent>> EXTRA_INFO = Maps.newHashMap();
@@ -117,6 +127,7 @@ public class ClientModelManager {
 
     public static void registerAll(ModelData data) {
         ResourceLocation modelId = getModelId(data);
+        SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
         ysmu.LOG.info(
             "YSM client registering model {}: geometry={}, textures={}, animations={}",
             modelId,
@@ -159,6 +170,7 @@ public class ClientModelManager {
             totalAnims = animFile.animations.size();
         }
         MODEL_STATS.put(mainId, new int[]{totalBones, totalCubes * 6, totalAnims});
+        SYNC_LOADED++;
         if (Config.DEBUG_MODEL_LOAD) {
             ysmu.LOG.info("[YSMU-MODEL] registerAll done: modelId={}, inMODELS={}, textures={}, totalModels={}, bones={}, faces={}, anims={}",
                 modelId, inModels, texCount, MODELS.size(), totalBones, totalCubes * 6, totalAnims);
@@ -528,6 +540,9 @@ public class ClientModelManager {
         PASSWORD = null;
         PASSWORD_UUID = null;
         clearCachedModelMd5();
+        SYNC_TOTAL = -1;
+        SYNC_LOADED = 0;
+        SYNC_IN_PROGRESS = true;
         Minecraft.getMinecraft()
             .func_152344_a(ClientModelManager::clearRuntimeModelCaches);
         String[] md5Info = getMd5Info();
@@ -600,6 +615,10 @@ public class ClientModelManager {
         OpenYsmAnimationControllerRegistry.clear();
         MolangPhysicsRuntime.clear();
         MolangInstructionExecutor.clearWarnings();
+        SYNC_TOTAL = -1;
+        SYNC_LOADED = 0;
+        SYNC_IN_PROGRESS = false;
+        SYNC_CURRENT_MODEL = "";
         ysmu.LOG.info("YSM client runtime model caches cleared");
     }
 

@@ -27,6 +27,7 @@ public class Config {
 
     // GUI Config
     public static boolean GUI_ENHANCEMENTS = true;
+    public static boolean SHOW_LOADING_PROGRESS = true;
 
     // Debug Config
     public static boolean DEBUG_CONTROLLER = false;
@@ -89,6 +90,7 @@ public class Config {
 
         // GUI config values
         GUI_ENHANCEMENTS = syncBoolean("GuiEnhancements", "gui", GUI_ENHANCEMENTS, "Enable model selection GUI enhancements (foreground/background textures and GUI animations)", load);
+        SHOW_LOADING_PROGRESS = syncBoolean("ShowLoadingProgress", "gui", SHOW_LOADING_PROGRESS, "Show model sync progress bar overlay", load);
 
         // Debug config values
         DEBUG_CONTROLLER = syncBoolean("DebugController", "debug", DEBUG_CONTROLLER, "Enable controller transition/roaming debug logging ([YSMU-CTRL])", load);
