@@ -59,11 +59,18 @@ import software.bernie.geckolib3.geo.raw.pojo.FormatVersion;
 import software.bernie.geckolib3.geo.raw.pojo.RawGeoModel;
 import software.bernie.geckolib3.geo.raw.tree.RawGeometryTree;
 import software.bernie.geckolib3.geo.render.GeoBuilder;
+import software.bernie.geckolib3.geo.render.built.GeoBone;
 import software.bernie.geckolib3.geo.render.built.GeoModel;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 import software.bernie.geckolib3.util.json.JsonAnimationUtils;
 
 public class ClientModelManager {
+
+    /**
+     * Model statistics for tooltip display: [totalBones, totalFaces, totalAnimations].
+     * Computed after model registration in registerAll().
+     */
+    public static final Map<ResourceLocation, int[]> MODEL_STATS = Maps.newHashMap();
 
     public static Map<ResourceLocation, List<ResourceLocation>> MODELS = Maps.newHashMap();
     public static Map<ResourceLocation, Pair<Double, Double>> SCALE_INFO = Maps.newHashMap();
@@ -133,9 +140,28 @@ public class ClientModelManager {
             modelId,
             MODELS.size(),
             texCount);
+
+        // Compute model stats for tooltip display
+        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+        int totalBones = 0;
+        int totalCubes = 0;
+        for (String geoName : data.getModel().keySet()) {
+            ResourceLocation geoId = ModelIdUtil.getSubModelId(modelId, geoName);
+            GeoModel geoModel = GeckoLibCache.getInstance().getGeoModels().get(geoId);
+            if (geoModel != null) {
+                totalBones += countTotalBones(geoModel);
+                totalCubes += countTotalCubes(geoModel);
+            }
+        }
+        int totalAnims = 0;
+        AnimationFile animFile = GeckoLibCache.getInstance().getAnimations().get(mainId);
+        if (animFile != null && animFile.animations != null) {
+            totalAnims = animFile.animations.size();
+        }
+        MODEL_STATS.put(mainId, new int[]{totalBones, totalCubes * 6, totalAnims});
         if (Config.DEBUG_MODEL_LOAD) {
-            ysmu.LOG.info("[YSMU-MODEL] registerAll done: modelId={}, inMODELS={}, textures={}, totalModels={}",
-                modelId, inModels, texCount, MODELS.size());
+            ysmu.LOG.info("[YSMU-MODEL] registerAll done: modelId={}, inMODELS={}, textures={}, totalModels={}, bones={}, faces={}, anims={}",
+                modelId, inModels, texCount, MODELS.size(), totalBones, totalCubes * 6, totalAnims);
         }
         detectModelPacks();
     }
@@ -537,11 +563,12 @@ public class ClientModelManager {
 
     private static void clearRuntimeModelCaches() {
         ysmu.LOG.info(
-            "YSM client clearing runtime model caches: models={}, scales={}, extraInfo={}, extraAnimations={}, previewAnimations={}, molangStateMaps={}, molangConditionalMaps={}, previewBoneCache={}, geoModels={}, animations={}",
+            "YSM client clearing runtime model caches: models={}, scales={}, extraInfo={}, extraAnimations={}, modelStats={}, previewAnimations={}, molangStateMaps={}, molangConditionalMaps={}, previewBoneCache={}, geoModels={}, animations={}",
             MODELS.size(),
             SCALE_INFO.size(),
             EXTRA_INFO.size(),
             EXTRA_ANIMATION_NAME.size(),
+            MODEL_STATS.size(),
             PREVIEW_ANIMATION.size(),
             com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.size(),
             com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.size(),
@@ -562,6 +589,7 @@ public class ClientModelManager {
         GUI_BACKGROUND_IMAGE.clear();
         DISABLE_PREVIEW_ROTATION.clear();
         GUI_NO_LIGHTING.clear();
+        MODEL_STATS.clear();
         GeckoLibCache.getInstance().getGeoModels().clear();
         GeckoLibCache.getInstance().getAnimations().clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
@@ -583,6 +611,11 @@ public class ClientModelManager {
             for (RawYsmModel.ConfigForm form : btn.forms) {
                 if (!"range".equals(form.type)) continue;
                 String varName = form.defaultValue.startsWith("v.") ? form.defaultValue.substring(2) : form.defaultValue;
+                // Sanitize min/max: if unset (both 0) or invalid, fall back to [0.0, 1.0]
+                if (form.min >= form.max) {
+                    form.max = 1.0f;
+                    form.min = 0.0f;
+                }
                 if (!com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(varName)) {
                     double initVal;
                     if (form.min <= 0.0f && 0.0f < form.max) {
@@ -632,6 +665,42 @@ public class ClientModelManager {
         DISABLE_PREVIEW_ROTATION.put(modelId, raw.properties.disablePreviewRotation);
         // Store gui_no_lighting flag
         GUI_NO_LIGHTING.put(modelId, raw.properties.guiNoLighting);
+    }
+
+    // ── Model stats helpers ───────────────────────────────────────
+
+    /** Counts all bones (including children) in a GeoModel. */
+    public static int countTotalBones(GeoModel model) {
+        int count = 0;
+        for (GeoBone bone : model.topLevelBones) {
+            count += countBoneTree(bone);
+        }
+        return count;
+    }
+
+    private static int countBoneTree(GeoBone bone) {
+        int count = 1;
+        for (GeoBone child : bone.childBones) {
+            count += countBoneTree(child);
+        }
+        return count;
+    }
+
+    /** Counts all cubes (including children) in a GeoModel. */
+    public static int countTotalCubes(GeoModel model) {
+        int count = 0;
+        for (GeoBone bone : model.topLevelBones) {
+            count += countCubesInBone(bone);
+        }
+        return count;
+    }
+
+    private static int countCubesInBone(GeoBone bone) {
+        int count = bone.childCubes.size();
+        for (GeoBone child : bone.childBones) {
+            count += countCubesInBone(child);
+        }
+        return count;
     }
 
     public static void rememberCachedModel(String md5) {

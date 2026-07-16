@@ -38,6 +38,20 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public final class OpenYsmPlayerControllerRuntime {
 
     private static final Map<StateKey, RuntimeState> STATES = new ConcurrentHashMap<>();
+    /** Simple per-tag rate limiter for debug logs: tag → last log time (ms). */
+    private static final java.util.Map<String, Long> DEBUG_LOG_LAST_TIME = new ConcurrentHashMap<>();
+
+    /** Returns true if the given debug tag should log now (at most once per 1000ms). */
+    private static boolean allowDebugLog(String tag) {
+        long now = System.currentTimeMillis();
+        Long last = DEBUG_LOG_LAST_TIME.get(tag);
+        if (last != null && now - last < 1000) {
+            return false;
+        }
+        DEBUG_LOG_LAST_TIME.put(tag, now);
+        return true;
+    }
+
     /** Roaming variables set from outside the render loop (e.g. GUI config panel).
      *  Key is the variable name WITHOUT the "v." prefix (e.g. "roaming.ef"). */
     public static final Map<String, Double> PENDING_ROAMING = new ConcurrentHashMap<>();
@@ -133,8 +147,8 @@ public final class OpenYsmPlayerControllerRuntime {
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
-        // Debug: log post_swing transition evaluation details
-        if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")) {
+        // Debug: log post_swing transition evaluation details (rate-limited to 1s)
+        if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing") && allowDebugLog("PS-EVAL")) {
             StringBuilder sb = new StringBuilder();
             sb.append("[YSMU-PS-EVAL] from='").append(state.name).append("' vars:");
             sb.append(" swing=").append(runtimeState.variables.getOrDefault("swing", -999.0));
@@ -155,8 +169,8 @@ public final class OpenYsmPlayerControllerRuntime {
         for (int i = 0; i < 4; i++) {
             String prevStateName = state.name;
             State nextState = applyTransition(event, match.controller, state, runtimeState, context);
-            // Log state transitions for post_swing
-            if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing") && nextState != state) {
+            // Log state transitions for post_swing (rate-limited to 1s)
+            if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing") && nextState != state && allowDebugLog("PS-TRANS")) {
                 ysmu.LOG.info("[YSMU-PS-TRANS] iter={}: {} -> {} (swing={} attack={} swing_end={})",
                     i, prevStateName, nextState.name,
                     runtimeState.variables.getOrDefault("swing", -999.0),
@@ -621,9 +635,10 @@ public final class OpenYsmPlayerControllerRuntime {
                 double oldVal = state.variables.getOrDefault(key.substring(2), Double.NaN);
                 double newVal = entry.getValue().get();
                 state.variables.put(key.substring(2), newVal);
-                // Log if MolangParser.VARIABLES overwrites attack or swing_end
+                // Log if MolangParser.VARIABLES overwrites attack or swing_end (rate-limited)
                 if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")
-                    && ("v.attack".equals(key) || "v.swing_end".equals(key))) {
+                    && ("v.attack".equals(key) || "v.swing_end".equals(key))
+                    && allowDebugLog("PS-MP")) {
                     ysmu.LOG.info("[YSMU-PS-MP] MolangParser.VARIABLES {}: {} -> {}", key, oldVal, newVal);
                 }
             }
@@ -631,21 +646,23 @@ public final class OpenYsmPlayerControllerRuntime {
         // Step 2: Sync ScopeState → RuntimeState (overwrites global values with
         // authoritative on_entry/on_exit values).
         com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
-        // Log values from syncToRuntimeState for post_swing
+        // Log values from syncToRuntimeState for post_swing (rate-limited to 1s)
         if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")) {
             double postSyncAttack = state.variables.getOrDefault("attack", -999.0);
             double postSyncSwingEnd = state.variables.getOrDefault("swing_end", -999.0);
-            if (postSyncAttack != -999.0 || postSyncSwingEnd != -999.0) {
+            if ((postSyncAttack != -999.0 || postSyncSwingEnd != -999.0) && allowDebugLog("PS-SYNC")) {
                 ysmu.LOG.info("[YSMU-PS-SYNC] after syncToRuntimeState: attack={} swing_end={}",
                     postSyncAttack, postSyncSwingEnd);
             }
-            // Log v.qh variables that drive the 默认挥剑 animation combo
-            double qh = state.variables.getOrDefault("qh", Double.NaN);
-            double qh2 = state.variables.getOrDefault("qh2", Double.NaN);
-            double jump = state.variables.getOrDefault("jump", Double.NaN);
-            double vrandom = state.variables.getOrDefault("random", Double.NaN);
-            ysmu.LOG.info("[YSMU-PS-QH] qh={} qh2={} jump={} random={}",
-                qh, qh2, jump, vrandom);
+            // Log v.qh variables that drive the 默认挥剑 animation combo (rate-limited to 1s)
+            if (allowDebugLog("PS-QH")) {
+                double qh = state.variables.getOrDefault("qh", Double.NaN);
+                double qh2 = state.variables.getOrDefault("qh2", Double.NaN);
+                double jump = state.variables.getOrDefault("jump", Double.NaN);
+                double vrandom = state.variables.getOrDefault("random", Double.NaN);
+                ysmu.LOG.info("[YSMU-PS-QH] qh={} qh2={} jump={} random={}",
+                    qh, qh2, jump, vrandom);
+            }
         }
 
         if (player != null) {

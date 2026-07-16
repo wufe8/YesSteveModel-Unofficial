@@ -343,6 +343,12 @@ public class PlayerModelScreen extends GuiScreen {
             if (button instanceof ModelButton m) {
                 if (m.func_146115_a() && m.tooltips != null && !m.tooltips.isEmpty()) {
                     List<String> tooltipStrings = m.tooltips.stream().map(IChatComponent::getFormattedText).collect(Collectors.toList());
+                    // Append model stats (bones, faces, animations) to tooltip
+                    ResourceLocation mainId = ModelIdUtil.getMainId(m.modelInfo.getLeft());
+                    int[] stats = ClientModelManager.MODEL_STATS.get(mainId);
+                    if (stats != null) {
+                        tooltipStrings.add(I18n.format("gui.yes_steve_model.model.stats", stats[0], stats[1], stats[2]));
+                    }
                     this.func_146283_a(tooltipStrings, mouseX, mouseY);
                 }
             }

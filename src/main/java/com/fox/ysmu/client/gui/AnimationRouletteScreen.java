@@ -644,12 +644,17 @@ public class AnimationRouletteScreen extends GuiScreen {
             } else if ("range".equals(form.type)) {
                 // Initialise roaming variable with a sensible default if unset.
                 String rangeVar = form.defaultValue.startsWith("v.") ? form.defaultValue.substring(2) : form.defaultValue;
+                // Sanitize min/max: if unset (both 0) or invalid, fall back to [0.0, 1.0]
+                if (form.min >= form.max) {
+                    form.max = 1.0f;
+                    form.min = 0.0f;
+                }
                 if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(rangeVar)) {
                     double initVal;
-                    if (form.min <= 1.0f && 1.0f < form.max) {
-                        initVal = 1.0;
-                    } else if (form.min <= 0.0f && 0.0f < form.max) {
+                    if (form.min <= 0.0f && 0.0f < form.max) {
                         initVal = 0.0;
+                    } else if (form.min <= 1.0f && 1.0f < form.max) {
+                        initVal = 1.0;
                     } else {
                         initVal = form.min;
                     }

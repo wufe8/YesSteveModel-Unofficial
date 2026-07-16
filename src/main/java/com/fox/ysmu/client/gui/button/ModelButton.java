@@ -34,7 +34,7 @@ import java.util.List;
 
 public class ModelButton extends GuiButton {
     private final static ResourceLocation ICON = new ResourceLocation(ysmu.MODID, "texture/icon.png");
-    private final Pair<ResourceLocation, List<ResourceLocation>> modelInfo;
+    public final Pair<ResourceLocation, List<ResourceLocation>> modelInfo;
     private final ResourceLocation mainModelId;
     private final int color;
     public final List<IChatComponent> tooltips;
