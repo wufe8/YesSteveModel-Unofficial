@@ -50,6 +50,8 @@ import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 
 import it.unimi.dsi.fastutil.Pair;
+
+import it.unimi.dsi.fastutil.Pair;
 import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.molang.MolangParser;
 import software.bernie.geckolib3.file.AnimationFile;
@@ -120,6 +122,32 @@ public class ClientModelManager {
      */
     public static final Map<ResourceLocation, String> MODEL_DISPLAY_NAMES = Maps.newHashMap();
 
+    /**
+     * Projectile sub-entity model IDs per player model.
+     * Maps player model ID → list of projectile entity type strings (e.g. "minecraft:arrow").
+     */
+    public static final Map<ResourceLocation, List<String>> PROJECTILE_MODEL_IDS = Maps.newHashMap();
+
+    /**
+     * Projectile texture ResourceLocations per player model.
+     * Maps player model ID → list of texture IDs for projectile sub-entities.
+     */
+    public static final Map<ResourceLocation, List<ResourceLocation>> PROJECTILE_TEXTURE_IDS = Maps.newHashMap();
+
+    private static final String PROJECTILE_KEY_PREFIX = "projectile_";
+
+    private static boolean isProjectileKey(String key) {
+        return key.startsWith(PROJECTILE_KEY_PREFIX);
+    }
+
+    /**
+     * Extract the entity type from a projectile key like "projectile_minecraft:arrow".
+     */
+    private static String projectileEntityType(String key) {
+        // Everything after "projectile_"
+        return key.substring(PROJECTILE_KEY_PREFIX.length());
+    }
+
     public static AnimationFile DEFAULT_ANIMATION_FILE = new AnimationFile();
     public static List<String> CACHE_MD5 = Collections.synchronizedList(Lists.newArrayList());
     public static volatile byte[] PASSWORD;
@@ -137,20 +165,47 @@ public class ClientModelManager {
         if (Config.DEBUG_MODEL_LOAD) {
             ysmu.LOG.info("[YSMU-MODEL] registerAll start: modelId={}", modelId);
         }
-        registerGeometry(modelId, data);
-        registerModelTextures(modelId, data);
+
+        // Separate projectile sub-entity data from main model data
+        Map<String, byte[]> mainModelMap = new LinkedHashMap<>();
+        Map<String, byte[]> projModelMap = new LinkedHashMap<>();
+        for (Map.Entry<String, byte[]> e : data.getModel().entrySet()) {
+            if (isProjectileKey(e.getKey())) {
+                projModelMap.put(e.getKey(), e.getValue());
+            } else {
+                mainModelMap.put(e.getKey(), e.getValue());
+            }
+        }
+        Map<String, byte[]> mainTexMap = new LinkedHashMap<>();
+        Map<String, byte[]> projTexMap = new LinkedHashMap<>();
+        for (Map.Entry<String, byte[]> e : data.getTexture().entrySet()) {
+            if (isProjectileKey(e.getKey())) {
+                projTexMap.put(e.getKey(), e.getValue());
+            } else {
+                mainTexMap.put(e.getKey(), e.getValue());
+            }
+        }
+
+        // Register main model data normally
+        registerGeo(modelId, mainModelMap);
+        registerModelTextures(modelId, mainTexMap);
         try {
             registerModelAnimations(modelId, data);
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to register animations for model {}", modelId, e);
         }
+
+        // Register projectile sub-entity models/textures (no animation merging)
+        registerProjectileModels(modelId, projModelMap, projTexMap);
+
         boolean inModels = MODELS.containsKey(modelId);
         int texCount = MODELS.get(modelId) == null ? 0 : MODELS.get(modelId).size();
         ysmu.LOG.info(
-            "YSM client registered model {}: totalModelEntries={}, textureCount={}",
+            "YSM client registered model {}: totalModelEntries={}, textureCount={}, projectileModels={}",
             modelId,
             MODELS.size(),
-            texCount);
+            texCount,
+            PROJECTILE_MODEL_IDS.containsKey(modelId) ? PROJECTILE_MODEL_IDS.get(modelId).size() : 0);
 
         // Compute model stats for tooltip display
         ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
@@ -230,8 +285,8 @@ public class ClientModelManager {
         registerAnimations(ModelIdUtil.getMainId(modelId), data.getAnimation());
     }
 
-    private static void registerModelTextures(ResourceLocation modelId, ModelData data) {
-        registerTexture(modelId, data.getTexture());
+    private static void registerModelTextures(ResourceLocation modelId, Map<String, byte[]> texMap) {
+        registerTexture(modelId, texMap);
     }
 
     public static void registerGeo(ResourceLocation id, Map<String, byte[]> mapData) {
@@ -315,6 +370,47 @@ public class ClientModelManager {
         Minecraft.getMinecraft()
             .getTextureManager()
             .loadTexture(id, new OuterFileTexture(data));
+    }
+
+    /**
+     * Register projectile sub-entity models and textures separately from main model data.
+     * Projectile animations/controllers are NOT registered here — they will be loaded on-demand
+     * when the projectile entity system renders the model.
+     */
+    private static void registerProjectileModels(ResourceLocation modelId,
+        Map<String, byte[]> projModels, Map<String, byte[]> projTextures) {
+        if (projModels.isEmpty() && projTextures.isEmpty()) return;
+
+        // Register projectile geometries
+        for (Map.Entry<String, byte[]> e : projModels.entrySet()) {
+            String key = e.getKey();
+            ResourceLocation geoId = ModelIdUtil.getSubModelId(modelId, key);
+            registerGeo(geoId, e.getValue());
+            String entityType = projectileEntityType(key);
+            PROJECTILE_MODEL_IDS.computeIfAbsent(modelId, k -> new ArrayList<>())
+                .add(entityType);
+        }
+
+        // Register projectile textures
+        List<ResourceLocation> projTexIds = new ArrayList<>();
+        for (Map.Entry<String, byte[]> e : projTextures.entrySet()) {
+            String key = e.getKey();
+            ResourceLocation texId = ModelIdUtil.getSubModelId(modelId, key);
+            projTexIds.add(texId);
+            try {
+                registerTexture(texId, e.getValue());
+            } catch (Exception ex) {
+                ysmu.LOG.warn("Failed to register projectile texture {} for model {}", texId, modelId, ex);
+            }
+        }
+        if (!projTexIds.isEmpty()) {
+            PROJECTILE_TEXTURE_IDS.put(modelId, projTexIds);
+        }
+
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] Registered {} projectile models, {} textures for {}",
+                projModels.size(), projTextures.size(), modelId);
+        }
     }
 
     private static void registerAnimations(ResourceLocation id, Map<String, byte[]> mapData) {

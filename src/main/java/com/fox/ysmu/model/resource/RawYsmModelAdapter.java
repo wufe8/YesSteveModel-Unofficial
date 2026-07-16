@@ -103,6 +103,22 @@ public final class RawYsmModelAdapter {
         model.put("main", toGeometryJson(raw, raw.mainEntity.mainModel, true));
         model.put("arm", toGeometryJson(raw, raw.mainEntity.armModel, false));
 
+        // Include projectile sub-entity geometries (e.g. #arrow model from minecraft:arrow)
+        for (Map.Entry<String, RawYsmModel.RawSubEntity> entry : raw.projectiles.entrySet()) {
+            RawYsmModel.RawSubEntity sub = entry.getValue();
+            if (sub.model == null) continue;
+            String[] matchIds = sub.matchIds != null && sub.matchIds.length > 0
+                ? sub.matchIds : new String[]{sub.identifier};
+            for (String matchId : matchIds) {
+                if (StringUtils.isBlank(matchId)) continue;
+                try {
+                    model.put("projectile_" + matchId, toGeometryJson(null, sub.model, false));
+                } catch (Exception e) {
+                    ysmu.LOG.warn("Failed to convert projectile geometry {} for model {}", matchId, modelId, e);
+                }
+            }
+        }
+
         Map<String, byte[]> textures = new LinkedHashMap<>();
         for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
             if (texture.data == null) {
@@ -123,6 +139,26 @@ public final class RawYsmModelAdapter {
             }
             textures.put(fileName, textureData);
         }
+        // Include projectile sub-entity textures
+        for (Map.Entry<String, RawYsmModel.RawSubEntity> entry : raw.projectiles.entrySet()) {
+            RawYsmModel.RawSubEntity sub = entry.getValue();
+            String[] matchIds = sub.matchIds != null && sub.matchIds.length > 0
+                ? sub.matchIds : new String[]{sub.identifier};
+            for (String matchId : matchIds) {
+                if (StringUtils.isBlank(matchId)) continue;
+                for (RawYsmModel.RawTexture tex : sub.textures.values()) {
+                    if (tex.data == null) continue;
+                    byte[] texData = getLegacyTextureData(tex);
+                    if (texData == null) {
+                        ysmu.LOG.warn("Skipping unsupported projectile texture {} for {}", tex.name, matchId);
+                        continue;
+                    }
+                    String texKey = "projectile_" + matchId + "_" + tex.name;
+                    if (!texKey.endsWith(".png")) texKey += ".png";
+                    textures.put(texKey, texData);
+                }
+            }
+        }
         if (textures.isEmpty()) {
             throw new IOException("RawYsmModel has no legacy-compatible player textures");
         }
@@ -136,6 +172,8 @@ public final class RawYsmModelAdapter {
                 putAnimationFile(animations, entry.getKey(), entry.getValue());
             }
         }
+        // Note: projectile animation/controller files are deliberately NOT merged here.
+        // They will be registered separately when the full projectile entity system renders them.
         putAnimationControllers(animations, raw);
         putMolangFunctions(animations, raw);
 
