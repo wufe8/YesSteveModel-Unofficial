@@ -329,3 +329,7 @@ molang.yes_steve_model.ysm.elytra_rot_y.desc=玩家鞘翅的 Y 旋转角度
 molang.yes_steve_model.ysm.elytra_rot_z.desc=玩家鞘翅的 Z 旋转角度
 molang.yes_steve_model.ysm.food_level.desc=返回玩家饥饿值
 molang.yes_steve_model.ysm.first_person_mod_hide.desc=当玩家安装 First Person Mod 且需要隐藏玩家头部时为 true，否者为 false
+gui.yes_steve_model.sync_progress=正在同步模型：%d / %d
+gui.yes_steve_model.sync_model=正在加载： 
+molang.yes_steve_model.query.is_blocking.desc=玩家持剑格挡时为 true，否则为 false
+gui.yes_steve_model.sync_waiting=等待服务器...

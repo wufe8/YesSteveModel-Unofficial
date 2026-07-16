@@ -666,19 +666,15 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         if (player != null) {
-            // 1.7.10: 剑右键格挡会触发 isSwingInProgress, 但不应播放挥动动画。
-            // 格挡姿态应由 use_controller (query.is_using_item) 处理。
-            boolean isBlocking = player.getItemInUseCount() > 0
-                && player.getItemInUse() != null
-                && player.getItemInUse().getItemUseAction() == net.minecraft.item.EnumAction.block;
+            // 1.7.10: 剑右键格挡时抑制 swing 变量（不让 OpenYSM 控制器播放挥动动画）
+            boolean isBlocking = player.isUsingItem()
+                && player.getHeldItem() != null
+                && player.getHeldItem().getItemUseAction() == net.minecraft.item.EnumAction.block;
 
             if (isBlocking) {
                 state.lastSwingActive = player.isSwingInProgress;
                 state.variables.put("swing", 0.0d);
                 state.variables.put("swing_sword", 0.0d);
-                if (Config.DEBUG_CONTROLLER) {
-                    ysmu.LOG.info("[YSMU-CTRL] {}: blocking, suppressed swing", geckoControllerName);
-                }
             } else {
                 boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
                 boolean newSwing = swingJustStarted;

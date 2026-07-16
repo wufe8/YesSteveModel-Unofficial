@@ -329,3 +329,7 @@ molang.yes_steve_model.ysm.elytra_rot_y.desc=Returns the entity's elytra y rotat
 molang.yes_steve_model.ysm.elytra_rot_z.desc=Returns the entity's elytra z rotation.
 molang.yes_steve_model.ysm.food_level.desc=Returns the player's hunger value.
 molang.yes_steve_model.ysm.first_person_mod_hide.desc=Return 1.0 if the First Person Mod is installed and player's head needs to be hidden, else it returns 0.0
+gui.yes_steve_model.sync_progress=Syncing models: %d / %d
+gui.yes_steve_model.sync_model=Loading: 
+molang.yes_steve_model.query.is_blocking.desc=Returns 1.0 if the entity is blocking with a sword, else it returns 0.0.
+gui.yes_steve_model.sync_waiting=Waiting for server...

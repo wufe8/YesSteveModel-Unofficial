@@ -163,30 +163,36 @@ public class ClientEventHandler {
 
         // Model name text (top line)
         if (!currentModel.isEmpty()) {
-            String modelText = net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_model")
-                + currentModel;
+            String label = net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_model");
+            String modelText = label + currentModel;
             int mx = (screenWidth - mc.fontRenderer.getStringWidth(modelText)) / 2;
             int my = screenHeight - 60;
             mc.fontRenderer.drawStringWithShadow(modelText, mx, my, 0xFFFFFF);
         }
 
-        if (total > 0) {
-            // Progress bar
-            int barWidth = 150;
-            int barHeight = 8;
-            int barX = (screenWidth - barWidth) / 2;
-            int barY = screenHeight - 40;
+        // Progress bar (determinate when total known, indeterminate otherwise)
+        int barWidth = 150;
+        int barHeight = 8;
+        int barX = (screenWidth - barWidth) / 2;
+        int barY = screenHeight - 40;
 
-            net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + barWidth, barY + barHeight, 0xAA222222);
+        net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + barWidth, barY + barHeight, 0xAA222222);
+        if (total > 0) {
             int fillWidth = loaded >= total ? barWidth : (int) (barWidth * ((float) loaded / total));
             net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + fillWidth, barY + barHeight, 0xFF44AA44);
-
-            // Progress text
-            String text = loaded + " / " + total;
-            int textX = (screenWidth - mc.fontRenderer.getStringWidth(text)) / 2;
-            int textY = barY - mc.fontRenderer.FONT_HEIGHT - 2;
-            mc.fontRenderer.drawStringWithShadow(text, textX, textY, 0xFFFFFF);
+        } else {
+            // Indeterminate: pulsing highlight (first quarter)
+            int pulse = (int) ((System.currentTimeMillis() % 2000L) / 2000.0f * barWidth);
+            net.minecraft.client.gui.Gui.drawRect(barX + pulse, barY,
+                Math.min(barX + pulse + barWidth / 4, barX + barWidth), barY + barHeight, 0xFF44AA44);
         }
+
+        // Progress text
+        String text = total > 0 ? (loaded + " / " + total)
+            : net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_waiting");
+        int textX = (screenWidth - mc.fontRenderer.getStringWidth(text)) / 2;
+        int textY = barY - mc.fontRenderer.FONT_HEIGHT - 2;
+        mc.fontRenderer.drawStringWithShadow(text, textX, textY, 0xFFFFFF);
     }
 
     @SubscribeEvent
