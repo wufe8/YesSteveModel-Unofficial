@@ -87,6 +87,33 @@ public final class FolderFormat {
         }
     }
 
+    /**
+     * Collect legacy folder model-processing Runnable tasks for parallel execution.
+     */
+    public static void collectTasks(Path rootPath, java.util.List<java.lang.Runnable> tasks) {
+        java.io.File root = rootPath.toFile();
+        java.io.File[] dirs = root.listFiles(java.io.File::isDirectory);
+        if (dirs == null) return;
+        for (java.io.File dir : dirs) {
+            String dirName = dir.getName();
+            boolean noMain = true, noArm = true, noTex = true;
+            java.util.Collection<java.io.File> files = org.apache.commons.io.FileUtils.listFiles(dir, org.apache.commons.io.filefilter.FileFileFilter.FILE, null);
+            for (java.io.File f : files) {
+                String fn = f.getName();
+                if (MAIN_MODEL_FILE_NAME.equals(fn) && f.length() > 0) noMain = false;
+                if (ARM_MODEL_FILE_NAME.equals(fn) && f.length() > 0) noArm = false;
+                if (fn.endsWith(".png")) noTex = false;
+            }
+            if (noMain || noArm || noTex) continue;
+            String modelId = ModelIdUtil.getInternalModelId(dirName);
+            java.nio.file.Path dirPath = dir.toPath();
+            tasks.add(() -> {
+                ServerModelInfo info = cacheModel(dirPath, modelId);
+                if (info != null) CACHE_NAME_INFO.put(modelId, info);
+            });
+        }
+    }
+
     private static ServerModelInfo cacheModel(Path modelPath, String modelId) {
         try {
             ModelData data = getModelDataFromPath(modelPath, modelId);

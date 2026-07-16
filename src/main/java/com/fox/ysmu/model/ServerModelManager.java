@@ -10,10 +10,13 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardCopyOption;
 import java.security.SecureRandom;
+import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Enumeration;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.stream.Collectors;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipFile;
 
@@ -33,6 +36,7 @@ import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.RequestSyncModel;
 import com.fox.ysmu.network.message.S2CVersionCheck17;
 import com.fox.ysmu.util.GetJarResources;
+import com.fox.ysmu.util.ThreadTools;
 import com.fox.ysmu.ysmu;
 import com.google.common.collect.Maps;
 import com.google.gson.JsonElement;
@@ -73,9 +77,9 @@ public final class ServerModelManager {
      * 从而将服务器文件发送给玩家
      * 还可以获取其他服务端模型信息
      */
-    public static final Map<String, ServerModelInfo> CACHE_NAME_INFO = Maps.newHashMap();
-    public static final Map<String, RawYsmModel> RAW_MODEL_INFO = Maps.newHashMap();
-    public static final Map<String, OpenYsmSyncInfo> OPEN_YSM_SYNC_INFO = Maps.newHashMap();
+    public static final Map<String, ServerModelInfo> CACHE_NAME_INFO = Maps.newConcurrentMap();
+    public static final Map<String, RawYsmModel> RAW_MODEL_INFO = Maps.newConcurrentMap();
+    public static final Map<String, OpenYsmSyncInfo> OPEN_YSM_SYNC_INFO = Maps.newConcurrentMap();
     public static volatile byte[] OPEN_YSM_SERVER_KEY;
 
     /**
@@ -157,10 +161,37 @@ public final class ServerModelManager {
     }
 
     private static void rebuildModelCaches() {
-        OpenYsmFormat.cacheAllModels(BUILT);
-        OpenYsmFormat.cacheAllModels(CUSTOM);
-        cacheAllModels(BUILT);
-        cacheAllModels(CUSTOM);
+        // 收集所有模型处理任务
+        List<Runnable> tasks = new ArrayList<>();
+        OpenYsmFormat.collectTasks(BUILT, tasks);
+        OpenYsmFormat.collectTasks(CUSTOM, tasks);
+        collectLegacyTasks(BUILT, tasks);
+        collectLegacyTasks(CUSTOM, tasks);
+
+        if (tasks.isEmpty()) return;
+
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] Submitting {} model tasks to thread pool (max {} threads)",
+                tasks.size(), 10);
+        }
+
+        // 并行执行所有任务，等待全部完成
+        CompletableFuture.allOf(
+            tasks.stream()
+                .map(t -> CompletableFuture.runAsync(t, ThreadTools.THREAD_POOL))
+                .toArray(CompletableFuture[]::new))
+            .join();
+
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] All {} model tasks completed. "
+                + "CACHE_NAME_INFO={}, RAW_MODEL_INFO={}, OPEN_YSM_SYNC_INFO={}",
+                tasks.size(), CACHE_NAME_INFO.size(), RAW_MODEL_INFO.size(), OPEN_YSM_SYNC_INFO.size());
+        }
+    }
+
+    private static void collectLegacyTasks(Path rootPath, List<Runnable> tasks) {
+        YsmFormat.collectTasks(rootPath, tasks);
+        FolderFormat.collectTasks(rootPath, tasks);
     }
 
     /*====== 以下方法已废弃：模型已迁移到 builtin/ ======

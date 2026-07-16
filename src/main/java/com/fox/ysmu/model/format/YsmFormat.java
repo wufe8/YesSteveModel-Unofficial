@@ -75,6 +75,31 @@ public final class YsmFormat {
         }
     }
 
+    /**
+     * Collect legacy .ysm model-processing Runnable tasks for parallel execution.
+     */
+    public static void collectTasks(Path rootPath, java.util.List<java.lang.Runnable> tasks) {
+        java.io.File rootFile = rootPath.toFile();
+        java.io.File[] ysmFiles = rootFile.listFiles((dir, name) -> name.endsWith(".ysm"));
+        if (ysmFiles == null) return;
+        for (java.io.File ysmFile : ysmFiles) {
+            String modelId = ModelIdUtil.getInternalModelId(removeExtension(ysmFile.getName()));
+            java.io.File fileCopy = ysmFile;
+            tasks.add(() -> {
+                try {
+                    java.util.Map<String, byte[]> data = YesModelUtils.input(fileCopy);
+                    if (data.isEmpty() || !data.containsKey(MAIN_MODEL_FILE_NAME)
+                        || !data.containsKey(ARM_MODEL_FILE_NAME)) return;
+                    if (data.keySet().stream().noneMatch(fn -> fn.endsWith(".png"))) return;
+                    ServerModelInfo info = cacheModel(data, modelId);
+                    if (info != null) CACHE_NAME_INFO.put(modelId, info);
+                } catch (IOException e) {
+                    ysmu.LOG.warn("Failed to cache legacy YSM model {}", fileCopy, e);
+                }
+            });
+        }
+    }
+
     private static ServerModelInfo cacheModel(Map<String, byte[]> input, String modelId) {
         try {
             ModelData data = getModelData(input, modelId);

@@ -47,12 +47,13 @@ public final class EncryptTools {
     /**
      * 模型包密码
      */
-    private static SecretKey SECRET_KEY;
+    /** @see #createRandomPassword */
+    private static volatile SecretKey SECRET_KEY;
 
     /**
      * 模型包特征矩阵（还是密码）
      */
-    private static IvParameterSpec IV;
+    private static volatile IvParameterSpec IV;
 
     public static void createRandomPassword() {
         SECRET_KEY = AESUtil.generateKey();

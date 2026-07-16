@@ -201,6 +201,39 @@ public final class OpenYsmFormat {
         return true;
     }
 
+    /**
+     * Collect model-processing Runnable tasks for parallel execution.
+     */
+    public static void collectTasks(Path rootPath, java.util.List<java.lang.Runnable> tasks) {
+        if (rootPath == null || !Files.isDirectory(rootPath)) return;
+        try {
+            Files.walkFileTree(rootPath, new java.nio.file.SimpleFileVisitor<Path>() {
+                @Override
+                public java.nio.file.FileVisitResult preVisitDirectory(Path dir, java.nio.file.attribute.BasicFileAttributes attrs) {
+                    if (dir.equals(rootPath)) return java.nio.file.FileVisitResult.CONTINUE;
+                    if (!Files.isRegularFile(dir.resolve("ysm.json")) && !YSMFolderDeserializer.isModelFolder(dir))
+                        return java.nio.file.FileVisitResult.CONTINUE;
+                    String diskModelName = toModelName(rootPath, dir);
+                    String modelId = ModelIdUtil.getInternalModelId(diskModelName);
+                    Path dirCopy = dir;
+                    tasks.add(() -> cacheFolderModel(dirCopy, modelId));
+                    return java.nio.file.FileVisitResult.SKIP_SUBTREE;
+                }
+                @Override
+                public java.nio.file.FileVisitResult visitFile(Path file, java.nio.file.attribute.BasicFileAttributes attrs) {
+                    if (file.toFile().isFile() && file.toFile().getName().endsWith(".ysm")) {
+                        Path rootCopy = rootPath;
+                        Path fileCopy = file;
+                        tasks.add(() -> cacheBinaryModel(rootCopy, fileCopy));
+                    }
+                    return java.nio.file.FileVisitResult.CONTINUE;
+                }
+            });
+        } catch (IOException e) {
+            ysmu.LOG.warn("Failed to collect OpenYSM model tasks under {}", rootPath, e);
+        }
+    }
+
     private static String toModelName(Path rootPath, Path path) {
         return rootPath.relativize(path).toString().replace('\\', '/');
     }

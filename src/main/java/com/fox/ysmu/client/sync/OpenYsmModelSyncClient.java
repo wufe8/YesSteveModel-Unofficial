@@ -46,6 +46,7 @@ public final class OpenYsmModelSyncClient {
     private static volatile int loadedModelsCount;
     private static volatile int downloadedModelsCount;
     private static volatile int cacheHitCount;
+    private static volatile long syncStartTimeMs;
     private static byte[] key1;
     private static byte[] lastKey;
     private static byte[] serverKey;
@@ -154,6 +155,7 @@ public final class OpenYsmModelSyncClient {
         ClientModelManager.SYNC_TOTAL = serverModelCount;
         ClientModelManager.SYNC_LOADED = 0;
         ClientModelManager.SYNC_IN_PROGRESS = true;
+        syncStartTimeMs = System.currentTimeMillis();
         ysmu.LOG.info("OpenYSM client received sync index: models={}", serverModelCount);
         if (Config.DEBUG_MODEL_LOAD) {
             ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
@@ -377,11 +379,17 @@ public final class OpenYsmModelSyncClient {
         NetworkHandler.CHANNEL.sendToServer(
             new C2SCompleteFeedback17(status, loadedModelsCount, downloadedModelsCount, cacheHitCount, message));
         if (status == C2SCompleteFeedback17.STATUS_SUCCESS) {
+            long elapsed = System.currentTimeMillis() - syncStartTimeMs;
             ysmu.LOG.info(
-                "OpenYSM client sync complete: loaded={}, downloaded={}, cacheHits={}",
-                loadedModelsCount,
-                downloadedModelsCount,
-                cacheHitCount);
+                "OpenYSM client sync complete: loaded={}, downloaded={}, cacheHits={}, time={}ms",
+                loadedModelsCount, downloadedModelsCount, cacheHitCount, elapsed);
+            // 在聊天栏输出客户端完成信息
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            if (mc.thePlayer != null) {
+                mc.thePlayer.addChatMessage(
+                    new net.minecraft.util.ChatComponentTranslation(
+                        "message.yes_steve_model.sync.complete", elapsed));
+            }
         }
         ClientModelManager.SYNC_IN_PROGRESS = false;
         resetConnectionState();
