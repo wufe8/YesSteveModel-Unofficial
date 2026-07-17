@@ -1,17 +1,5 @@
 # YesSteveModel-Unofficial (YSMU)
 
-<p align="center">
-  <a href="https://github.com/wufe8/YesSteveModel-Unofficial/releases">
-    <img src="https://img.shields.io/badge/版本-1.9--alpha1--pre1--feat--ExtraUI--02-blue" alt="版本">
-  </a>
-  <a href="https://github.com/wufe8/YesSteveModel-Unofficial/releases">
-    <img src="https://img.shields.io/badge/Minecraft-1.7.10-green" alt="Minecraft">
-  </a>
-  <a href="https://github.com/wufe8/YesSteveModel-Unofficial/blob/1.0/LICENSE">
-    <img src="https://img.shields.io/badge/许可证-MIT-yellow" alt="许可证">
-  </a>
-</p>
-
 **该文档主要由ai生成 虽经人工修正 但不确保准确性**
 
 ---
@@ -24,9 +12,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ## 当前状态
 
-**最新版本：`1.9-alpha1-pre1-feat-ExtraUI-02`**（`feat-ExtraUI` 分支）
-
-从 `1.9-alpha1`（2025年6月）起，项目经历了 **106 次提交**，变更 **165 个文件，净增数万行代码**, 进行了大量重构, 修复和功能增强 (ai太好用了你们知道吗 改这么多只要100rmb)
+**最新版本：`1.9a1-03`**（`feat-ExtraUI` 分支）
 
 > [NOTE]
 > 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
@@ -113,6 +99,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9-alpha1-pre1-feat-ExtraUI-00` | 额外动画轮盘、平行动画、Molang 增强、配置面板重构 |
 | `1.9-alpha1-pre1-feat-ExtraUI-01` | GUI 预览动画、内置模型提取、WebP 解码器移植 |
 | `1.9-alpha1-pre1-feat-ExtraUI-02` | 潜行语义修正、头盔检测、范围滑块 roaming 变量初始化 |
+| `1.9a1-03` | 投射物渲染、攻击连击修复、并行模型缓存、格挡支持、滑条默认值修复 |
 
 ---
 
@@ -157,14 +144,14 @@ git checkout feat-ExtraUI
 ## 已知问题
 
 - [SKIP] 动画不兼容battlegear2的盾牌和et futurum的鞘翅
-- 持剑右键格挡会重复播放挥动动画 由于高版本没有该原版动作 可能添加条件判断跳过播放 或者 wont fix
+- [FIXED] 持剑右键格挡会重复播放挥动动画 由于高版本没有该原版动作 目前剑格挡重载为空动画 可使用query.is_blocking Molang查询
 - 无法播放高于1.7.10的原版音效 可能将来会选择内置这些音效并重载 或者 wont fix
 - 部分新版模型可能需要 `.molang` 函数文件桥接才能正常工作
 - [FIXED] 表情骨骼名称匹配基于启发式规则, 不同模型可能有差异
 - [SKIP] WebP 解码器基于外部实现, 没搞定ImageIO
-- 投射物/载具模型尚未完全移植
+- [SKIP] 投射物/载具模型尚未完全移植 目前仅保证默认模型投射物可用
 - [FIXED] 部分模型无法读取轮盘动画 或者配置开关无效 或者音效生命周期时间不正确
-- 持有副手武器时 在一些特殊情况下会重复播放过渡动画 重开游戏才能重置该问题
+- [TBC] 持有副手武器时 在一些特殊情况下会重复播放过渡动画 重开游戏才能重置该问题
 - [FIXED] 模型预览动画在选取过该模型后部分部件被隐藏
 - [SKIP] v.roaming长期变量目前不会永久保存 可能 wont fix
 

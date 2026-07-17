@@ -307,20 +307,7 @@ public class ClientModelManager {
             if (rawModel.getFormatVersion() == FormatVersion.VERSION_1_12_0
                 || rawModel.getFormatVersion() == FormatVersion.VERSION_1_14_0
                 || rawModel.getFormatVersion() == FormatVersion.VERSION_1_21_0) {
-                // DIAGNOSTIC: check bone cube count from Jackson-parsed RawGeoModel
-                if (rawModel.getMinecraftGeometry() != null && rawModel.getMinecraftGeometry().length > 0) {
-                    software.bernie.geckolib3.geo.raw.pojo.Bone[] bones = rawModel.getMinecraftGeometry()[0].getBones();
-                    if (bones != null) {
-                        for (software.bernie.geckolib3.geo.raw.pojo.Bone b : bones) {
-                            int cubeCount = (b.getCubes() != null) ? b.getCubes().length : 0;
-                            boolean hasPolyMesh = b.getPolyMesh() != null;
-                            if (cubeCount > 0 || hasPolyMesh) {
-                                ysmu.LOG.info("[YSMU-GEO] RawBone '{}': cubes={}, polyMesh={}",
-                                    b.getName(), cubeCount, hasPolyMesh);
-                            }
-                        }
-                    }
-                }
+                // NOTE: cube count diagnostic removed
                 RawGeometryTree rawGeometryTree = RawGeometryTree.parseHierarchy(rawModel);
                 GeoModel geoModel = GeoBuilder.getGeoBuilder(id.getResourceDomain())
                     .constructGeoModel(rawGeometryTree);
@@ -347,29 +334,13 @@ public class ClientModelManager {
                     .mapToInt(b -> countChildCubesRecursive(b))
                     .sum();
                 if (existing != null && existingCubeCount > 0 && newCubeCount == 0) {
-                    ysmu.LOG.warn("[YSMU-GEO] Skipping overwrite of {} (existing has {} cubes, new has 0)",
+                    ysmu.LOG.warn("Skipping overwrite of {} (existing has {} cubes, new has 0)",
                         id, existingCubeCount);
                     // Do NOT overwrite; keep the existing geoModel
                 } else {
                     geoModels.put(id, geoModel);
                 }
-                int boneCount = geoModel.topLevelBones != null ? geoModel.topLevelBones.size() : 0;
-                if (id.getResourcePath().contains("projectile")) {
-                    int finalCubeCount = existing != null && existingCubeCount > 0 && newCubeCount == 0
-                        ? existingCubeCount : newCubeCount;
-                    int totalChildBones = geoModel.topLevelBones.stream()
-                        .mapToInt(b -> b.childBones != null ? b.childBones.size() : 0)
-                        .sum();
-                    ysmu.LOG.info(
-                        "[YSMU-GEO] {}: topBones={}, childBones={}, actualCubes={}",
-                        id, boneCount, totalChildBones, finalCubeCount);
-                    // Log detail from whichever model is actually stored
-                    GeoModel modelToLog = (existing != null && existingCubeCount > 0 && newCubeCount == 0)
-                        ? existing : geoModel;
-                    for (software.bernie.geckolib3.geo.render.built.GeoBone topB : modelToLog.topLevelBones) {
-                        logBoneCubeDetail(topB, 1);
-                    }
-                }
+
             } else {
                 ysmu.LOG.warn("YSM geometry {} has unsupported format version: {}", id, rawModel.getFormatVersion());
             }
@@ -1000,23 +971,5 @@ public class ClientModelManager {
         return count;
     }
 
-    private static void logBoneCubeDetail(software.bernie.geckolib3.geo.render.built.GeoBone bone, int depth) {
-        StringBuilder sb = new StringBuilder();
-        for (int i = 0; i < depth; i++) sb.append("  ");
-        sb.append("'").append(bone.name).append("' cubes=");
-        sb.append(bone.childCubes != null ? bone.childCubes.size() : 0);
-        if (bone.childCubes != null) {
-            for (int ci = 0; ci < bone.childCubes.size(); ci++) {
-                software.bernie.geckolib3.geo.render.built.GeoCube c = bone.childCubes.get(ci);
-                sb.append(" [").append(ci).append("]:mesh=").append(c != null ? c.mesh : "null");
-                sb.append(" quads=").append(c != null && c.quads != null ? c.quads.length : 0);
-            }
-        }
-        ysmu.LOG.info("[YSMU-GEO] {}", sb.toString());
-        if (bone.childBones != null) {
-            for (software.bernie.geckolib3.geo.render.built.GeoBone child : bone.childBones) {
-                logBoneCubeDetail(child, depth + 1);
-            }
-        }
-    }
+
 }
