@@ -18,6 +18,8 @@ public final class MolangInstructionExecutor {
 
     private static final Set<String> WARNED_INSTRUCTIONS = Collections
         .newSetFromMap(new ConcurrentHashMap<String, Boolean>());
+    /** Cache for parsed Molang expressions — avoids re-parsing same string every frame. */
+    private static final ConcurrentHashMap<String, IValue> EXPRESSION_CACHE = new ConcurrentHashMap<>();
 
     private MolangInstructionExecutor() {}
 
@@ -45,7 +47,7 @@ public final class MolangInstructionExecutor {
                 String valueExpr = trimmed.substring(eqIdx + 1).trim();
                 if (target.startsWith("v.")) {
                     try {
-                        IValue val = parser.parseExpression(valueExpr);
+                        IValue val = parseCached(parser, valueExpr);
                         if (val != null) {
                             double d = val.get();
                             // Write through MolangParser.VARIABLES so ScopedMolangVariable
@@ -74,7 +76,7 @@ public final class MolangInstructionExecutor {
             }
             // Not an assignment — evaluate as a normal expression
             try {
-                IValue result = parser.parseExpression(trimmed);
+                IValue result = parseCached(parser, trimmed);
                 if (result == null) {
                     continue;
                 }
@@ -116,6 +118,26 @@ public final class MolangInstructionExecutor {
 
     public static void clearWarnings() {
         WARNED_INSTRUCTIONS.clear();
+    }
+
+    /** Cache lookup: returns cached parsed expression, or parses on first access. */
+    private static IValue parseCached(MolangParser parser, String expr) {
+        IValue cached = EXPRESSION_CACHE.get(expr);
+        if (cached != null) return cached;
+        try {
+            IValue parsed = parser.parseExpression(expr);
+            if (parsed != null) {
+                EXPRESSION_CACHE.put(expr, parsed);
+            }
+            return parsed;
+        } catch (MolangException e) {
+            return null;
+        }
+    }
+
+    /** Clear parsed expression cache — call when models are reloaded. */
+    public static void clearCache() {
+        EXPRESSION_CACHE.clear();
     }
 
     private static void warnOnce(String instruction, Exception e) {

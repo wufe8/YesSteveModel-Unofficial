@@ -156,6 +156,8 @@ public class ClientModelManager {
     public static void registerAll(ModelData data) {
         ResourceLocation modelId = getModelId(data);
         SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
+        // Clear expression cache when model changes
+        MolangInstructionExecutor.clearCache();
         ysmu.LOG.info(
             "YSM client registering model {}: geometry={}, textures={}, animations={}",
             modelId,

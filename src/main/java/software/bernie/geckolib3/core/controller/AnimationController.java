@@ -501,8 +501,6 @@ public class AnimationController<T extends IAnimatable> {
             }
         }
 
-        createInitialQueues(modelRendererList);
-
         double actualTick = tick;
         // Transition period has ended, reset the tick and set the animation to running.
         // Must check BEFORE adjustTick() because adjustTick may reset tick to 0
@@ -544,6 +542,11 @@ public class AnimationController<T extends IAnimatable> {
             justStopped = true;
             return;
         }
+
+        // Defer queue creation until we know the controller is active (not STOP).
+        // This saves 13%+ overhead for idle controllers that return STOP from
+        // their predicate (e.g. OpenYSM slot controllers with no matching definition).
+        createInitialQueues(modelRendererList);
         if (justStartedTransition && (shouldResetTick || justStopped)) {
             justStopped = false;
             tick = adjustTick(actualTick);

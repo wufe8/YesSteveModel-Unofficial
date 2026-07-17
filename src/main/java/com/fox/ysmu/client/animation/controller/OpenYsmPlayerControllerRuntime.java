@@ -41,6 +41,32 @@ public final class OpenYsmPlayerControllerRuntime {
     /** Simple per-tag rate limiter for debug logs: tag → last log time (ms). */
     private static final java.util.Map<String, Long> DEBUG_LOG_LAST_TIME = new ConcurrentHashMap<>();
 
+    /**
+     * Cached filtered snapshot of MolangParser.VARIABLES "v.*" entries.
+     * Avoids re-iterating the global static map for every controller in every frame.
+     * Invalidated when the global map's size changes (new variables added lazily).
+     */
+    private static int cachedVariablesSize = -1;
+    private static final java.util.List<java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable>> cachedVariables = new java.util.ArrayList<>();
+    private static void refreshCachedVariables() {
+        cachedVariables.clear();
+        for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
+            software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.entrySet()) {
+            if (entry.getKey().startsWith("v.")) {
+                cachedVariables.add(entry);
+            }
+        }
+        cachedVariablesSize = software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.size();
+    }
+    /** Returns the cached filtered snapshot, refreshing it if the global map grew. */
+    private static java.util.List<java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable>> getVariablesSnapshot() {
+        int currentSize = software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.size();
+        if (currentSize != cachedVariablesSize) {
+            refreshCachedVariables();
+        }
+        return cachedVariables;
+    }
+
     /** Returns true if the given debug tag should log now (at most once per 1000ms). */
     private static boolean allowDebugLog(String tag) {
         long now = System.currentTimeMillis();
@@ -628,20 +654,20 @@ public final class OpenYsmPlayerControllerRuntime {
         // tickAnimation() processes the timeline, so the values set by timeline
         // instructions DON'T reach MolangPhysicsRuntime.ScopeState and thus
         // wouldn't be picked up by syncToRuntimeState() below.
+        // Uses cached snapshot to avoid re-iterating the global map per controller.
         for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
-            software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.entrySet()) {
+            getVariablesSnapshot()) {
             String key = entry.getKey();
-            if (key.startsWith("v.")) {
-                double oldVal = state.variables.getOrDefault(key.substring(2), Double.NaN);
-                double newVal = entry.getValue().get();
-                state.variables.put(key.substring(2), newVal);
+            // key already starts with "v." per cached filter
+            double oldVal = state.variables.getOrDefault(key.substring(2), Double.NaN);
+            double newVal = entry.getValue().get();
+            state.variables.put(key.substring(2), newVal);
                 // Log if MolangParser.VARIABLES overwrites attack or swing_end (rate-limited)
                 if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")
                     && ("v.attack".equals(key) || "v.swing_end".equals(key))
                     && allowDebugLog("PS-MP")) {
                     ysmu.LOG.info("[YSMU-PS-MP] MolangParser.VARIABLES {}: {} -> {}", key, oldVal, newVal);
                 }
-            }
         }
         // Step 2: Sync ScopeState → RuntimeState (overwrites global values with
         // authoritative on_entry/on_exit values).

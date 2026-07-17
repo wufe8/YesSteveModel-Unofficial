@@ -16,7 +16,9 @@ import software.bernie.geckolib3.core.processor.IBone;
 
 public final class MolangPhysicsRuntime {
 
-    private static final ThreadLocal<FrameContext> CURRENT = new ThreadLocal<>();
+    /** Replaces ThreadLocal to avoid ThreadLocalMap hash-collision overhead (~9% of profile).
+     *  Safe because all client rendering happens on the Minecraft client thread. */
+    private static FrameContext currentFrameContext;
     private static final Map<ScopeKey, ScopeState> STATES = new ConcurrentHashMap<>();
 
     private MolangPhysicsRuntime() {}
@@ -28,7 +30,7 @@ public final class MolangPhysicsRuntime {
      */
     public static void begin(CustomPlayerEntity animatable, double renderTicks, AnimationProcessor<?> processor) {
         if (animatable == null || processor == null) {
-            CURRENT.remove();
+            currentFrameContext = null;
             return;
         }
         EntityPlayer player = animatable.getPlayer();
@@ -80,23 +82,23 @@ public final class MolangPhysicsRuntime {
             }
         }
         state.physics.update(renderTicks);
-        CURRENT.set(new FrameContext(state, processor));
+        currentFrameContext = new FrameContext(state, processor);
     }
 
     public static void end() {
-        CURRENT.remove();
+        currentFrameContext = null;
     }
 
     public static void clear() {
         STATES.clear();
-        CURRENT.remove();
+        currentFrameContext = null;
     }
 
     public static double firstOrder(int nameId, double input, double response) {
         if (nameId == MolangStringPool.EMPTY_ID) {
             return 0.0D;
         }
-        FrameContext context = CURRENT.get();
+        FrameContext context = currentFrameContext;
         if (context == null) {
             return input;
         }
@@ -107,7 +109,7 @@ public final class MolangPhysicsRuntime {
         if (nameId == MolangStringPool.EMPTY_ID) {
             return 0.0D;
         }
-        FrameContext context = CURRENT.get();
+        FrameContext context = currentFrameContext;
         if (context == null) {
             return input;
         }
@@ -117,7 +119,7 @@ public final class MolangPhysicsRuntime {
     private static final java.util.Set<String> LOGGED_VARS = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public static double getVariable(String name, double fallback) {
-        FrameContext context = CURRENT.get();
+        FrameContext context = currentFrameContext;
         if (context == null) {
             if (name.startsWith("v.roaming.") && LOGGED_VARS.add(name)) {
                 com.fox.ysmu.ysmu.LOG.info(
@@ -142,13 +144,13 @@ public final class MolangPhysicsRuntime {
      * "variable was explicitly set to 0" and "variable was never set (defaults to 0)".
      */
     public static boolean containsKey(String name) {
-        FrameContext context = CURRENT.get();
+        FrameContext context = currentFrameContext;
         if (context == null) return false;
         return context.state.variables.containsKey(name);
     }
 
     public static boolean setVariable(String name, double value) {
-        FrameContext context = CURRENT.get();
+        FrameContext context = currentFrameContext;
         if (context == null) {
             return false;
         }
@@ -169,7 +171,7 @@ public final class MolangPhysicsRuntime {
      * appear stuck at their initial value to the controller.
      */
     public static void syncToRuntimeState(Map<String, Double> target) {
-        FrameContext context = CURRENT.get();
+        FrameContext context = currentFrameContext;
         if (context == null) return;
         for (Map.Entry<String, Double> entry : context.state.variables.entrySet()) {
             String key = entry.getKey();
@@ -222,7 +224,7 @@ public final class MolangPhysicsRuntime {
     }
 
     private static IBone bone(int nameId) {
-        FrameContext context = CURRENT.get();
+        FrameContext context = currentFrameContext;
         if (context == null || nameId == MolangStringPool.EMPTY_ID) {
             return null;
         }
