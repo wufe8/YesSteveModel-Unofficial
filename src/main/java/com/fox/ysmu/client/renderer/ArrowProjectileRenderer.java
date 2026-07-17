@@ -14,7 +14,10 @@ import com.fox.ysmu.util.ModelIdUtil;
 
 import software.bernie.geckolib3.geo.IGeoRenderer;
 import software.bernie.geckolib3.geo.render.built.GeoBone;
+import software.bernie.geckolib3.geo.render.built.GeoCube;
 import software.bernie.geckolib3.geo.render.built.GeoModel;
+import software.bernie.geckolib3.geo.render.built.GeoQuad;
+import software.bernie.geckolib3.geo.render.built.GeoVertex;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 
 /**
@@ -94,51 +97,18 @@ public class ArrowProjectileRenderer {
         }
         com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] texture: {}", projTexId);
 
-        // === DIAGNOSTIC: render a solid red cube at entity position ===
-        GL11.glPushMatrix();
-        try {
-            GL11.glTranslated(x, y, z);
-
-            float interpYaw = entity.prevRotationYaw
-                + (entity.rotationYaw - entity.prevRotationYaw) * partialTicks;
-            float interpPitch = entity.prevRotationPitch
-                + (entity.rotationPitch - entity.prevRotationPitch) * partialTicks;
-            GL11.glRotatef(interpYaw - 90.0F, 0.0F, 1.0F, 0.0F);
-            GL11.glRotatef(interpPitch, 0.0F, 0.0F, 1.0F);
-            GL11.glScalef(0.7f, 0.7f, 0.7f);
-
-            // GL state setup
-            net.geckominecraft.client.renderer.GlStateManager.disableCull();
-            GL11.glEnable(GL11.GL_TEXTURE_2D);
-
-            // Bind the projectile texture
-            Minecraft.getMinecraft().renderEngine.bindTexture(projTexId);
-
-            // Manual quad: render a unit quad facing +Z at origin with the bound texture
-            Tessellator tess = Tessellator.instance;
-            tess.startDrawing(GL11.GL_QUADS);
-            tess.setColorRGBA_F(1.0F, 1.0F, 1.0F, 1.0F);
-            // A simple 1x1 quad centered at origin
-            tess.addVertexWithUV(-0.5, -0.5, 0, 0, 1);
-            tess.addVertexWithUV(-0.5,  0.5, 0, 0, 0);
-            tess.addVertexWithUV( 0.5,  0.5, 0, 1, 0);
-            tess.addVertexWithUV( 0.5, -0.5, 0, 1, 1);
-            tess.draw();
-
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] Diagnostic quad rendered at ({},{},{})", x, y, z);
-
-            // However, the actual model render is still needed
-            // (even if invisible, the vanilla render was already cancelled)
-        } catch (Exception e) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] Diagnostic render failed", e);
-        } finally {
-            GL11.glPopMatrix();
+        // === Do a quick sanity check: dump bone tree in debug mode ===
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] === Full bone tree dump for {} ===", projGeoId);
+            dumpBoneTree(projModel.topLevelBones, 0);
         }
 
-        // === Try the actual GeckoLib model render ===
+        // === Render the actual projectile GeoModel ===
         GL11.glPushMatrix();
         try {
             GL11.glTranslated(x, y, z);
+
+            // Rotate to match arrow flight direction (vanilla convention)
             float interpYaw = entity.prevRotationYaw
                 + (entity.rotationYaw - entity.prevRotationYaw) * partialTicks;
             float interpPitch = entity.prevRotationPitch
@@ -151,6 +121,8 @@ public class ArrowProjectileRenderer {
             GL11.glEnable(GL11.GL_TEXTURE_2D);
             Minecraft.getMinecraft().renderEngine.bindTexture(projTexId);
 
+            // Render all bone cubes through GeckoLib's renderRecursively
+            // which properly applies MATRIX_STACK bone transforms (pivot/rotation).
             Tessellator tess = Tessellator.instance;
             tess.startDrawing(GL11.GL_QUADS);
             for (GeoBone bone : projModel.topLevelBones) {
@@ -158,12 +130,61 @@ public class ArrowProjectileRenderer {
                     .renderRecursively(tess, entity, bone, 1.0F, 1.0F, 1.0F, 1.0F);
             }
             tess.draw();
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] GeckoLib model render completed");
         } catch (Exception e) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] GeckoLib model render failed", e);
+            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] Model render failed", e);
         } finally {
             GL11.glPopMatrix();
         }
         return true;
     }
+
+    /**
+     * Dump the full bone tree structure to the log for debugging.
+     */
+    private static void dumpBoneTree(List<GeoBone> bones, int indent) {
+        if (bones == null) return;
+        for (GeoBone bone : bones) {
+            if (bone == null) continue;
+            StringBuilder sb = new StringBuilder();
+            for (int i = 0; i < indent; i++) sb.append("  ");
+            sb.append("bone '").append(bone.name).append("'");
+            sb.append(" cubes=").append(bone.childCubes != null ? bone.childCubes.size() : 0);
+            sb.append(" childBones=").append(bone.childBones != null ? bone.childBones.size() : 0);
+            sb.append(" hidden=").append(bone.isHidden());
+            if (bone.childCubes != null) {
+                for (int ci = 0; ci < bone.childCubes.size(); ci++) {
+                    GeoCube c = bone.childCubes.get(ci);
+                    sb.append("\n");
+                    for (int j = 0; j < indent + 1; j++) sb.append("  ");
+                    sb.append("cube[").append(ci).append("]: mesh=").append(c != null ? c.mesh : "null");
+                    sb.append(" quads=").append((c != null && c.quads != null) ? c.quads.length : 0);
+                    sb.append(" pivot=").append(c != null && c.pivot != null ? 
+                        String.format("(%.3f,%.3f,%.3f)", c.pivot.x, c.pivot.y, c.pivot.z) : "null");
+                    sb.append(" size=").append(c != null && c.size != null ? 
+                        String.format("(%.3f,%.3f,%.3f)", c.size.x, c.size.y, c.size.z) : "null");
+                    if (c != null && c.quads != null) {
+                        for (int qi = 0; qi < c.quads.length; qi++) {
+                            GeoQuad q = c.quads[qi];
+                            if (q != null && q.vertices != null) {
+                                sb.append("\n");
+                                for (int j = 0; j < indent + 2; j++) sb.append("  ");
+                                sb.append("quad[").append(qi).append("]: verts=").append(q.vertices.length);
+                                if (q.vertices.length > 0 && q.vertices[0] != null) {
+                                    sb.append(" pos0=(")
+                                        .append(String.format("%.4f", q.vertices[0].position.x)).append(",")
+                                        .append(String.format("%.4f", q.vertices[0].position.y)).append(",")
+                                        .append(String.format("%.4f", q.vertices[0].position.z)).append(")");
+                                }
+                            } else {
+                                sb.append(" [null quad]");
+                            }
+                        }
+                    }
+                }
+            }
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] {}", sb.toString());
+            dumpBoneTree(bone.childBones, indent + 1);
+        }
+    }
+
 }
