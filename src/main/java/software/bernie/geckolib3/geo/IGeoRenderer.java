@@ -7,7 +7,9 @@ import javax.vecmath.Vector3f;
 import javax.vecmath.Vector4f;
 
 import net.geckominecraft.client.renderer.GlStateManager;
+import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.renderer.texture.ITextureObject;
 import net.minecraft.util.ResourceLocation;
 
 import org.lwjgl.opengl.GL11;
@@ -84,6 +86,19 @@ public interface IGeoRenderer<T> {
                 MATRIX_STACK.pop();
                 return;
             }
+
+            // Per-bone texture override: if this bone specifies a different texture,
+            // bind it before rendering cubes and restore afterwards.
+            int savedTextureId = -1;
+            if (bone.textureOverride != null) {
+                savedTextureId = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+                ITextureObject overrideTex = Minecraft.getMinecraft()
+                    .getTextureManager().getTexture(bone.textureOverride);
+                if (overrideTex != null) {
+                    GlStateManager.bindTexture(overrideTex.getGlTextureId());
+                }
+            }
+
             for (GeoCube cube : bone.childCubes) {
                 MATRIX_STACK.push();
                 GlStateManager.pushMatrix();
@@ -97,6 +112,11 @@ public interface IGeoRenderer<T> {
                     GlStateManager.popMatrix();
                     MATRIX_STACK.pop();
                 }
+            }
+
+            // Restore the original texture binding after rendering this bone's cubes.
+            if (savedTextureId >= 0) {
+                GlStateManager.bindTexture(savedTextureId);
             }
         }
         if (!bone.childBonesAreHiddenToo()) {

@@ -4,6 +4,10 @@ import java.io.Serializable;
 import java.util.ArrayList;
 import java.util.List;
 
+import javax.annotation.Nullable;
+
+import net.minecraft.util.ResourceLocation;
+
 import software.bernie.geckolib3.core.processor.IBone;
 import software.bernie.geckolib3.core.snapshot.BoneSnapshot;
 
@@ -45,6 +49,18 @@ public class GeoBone implements IBone, Serializable {
     private float rotateZ;
 
     public transient Object extraData;
+
+    /**
+     * Optional texture override for this bone. When set, the render pipeline
+     * binds this texture before rendering cubes of this bone instead of the
+     * model-level default texture.
+     * <p>
+     * Used by OpenYSM-style multi-texture models (e.g. bow bones that render
+     * with the projectile arrow texture while the rest of the model uses the
+     * player texture).
+     */
+    @Nullable
+    public ResourceLocation textureOverride;
 
     @Override
     public void setModelRendererName(String modelRendererName) {
