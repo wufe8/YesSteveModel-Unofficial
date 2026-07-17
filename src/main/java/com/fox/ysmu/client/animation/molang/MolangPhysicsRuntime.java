@@ -244,7 +244,8 @@ public final class MolangPhysicsRuntime {
 
     private static final class ScopeState {
         private final MolangPhysicsState physics = new MolangPhysicsState();
-        private final Map<String, Double> variables = new ConcurrentHashMap<>();
+        /** Regular HashMap is safe: all ScopeState access is on the client render thread. */
+        private final Map<String, Double> variables = new java.util.HashMap<>();
     }
 
     private static final class ScopeKey {

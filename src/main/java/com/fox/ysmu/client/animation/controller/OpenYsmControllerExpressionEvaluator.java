@@ -28,26 +28,334 @@ final class OpenYsmControllerExpressionEvaluator {
     private static final double TRUE = 1.0d;
     private static final double FALSE = 0.0d;
 
-    private final String expression;
-    private final Context context;
-    private int index;
+    /** Cache of compiled expressions — avoids re-parsing the same string every frame. */
+    private static final java.util.concurrent.ConcurrentHashMap<String, CompiledExpr> COMPILED_CACHE =
+        new java.util.concurrent.ConcurrentHashMap<>();
 
-    private OpenYsmControllerExpressionEvaluator(String expression, Context context) {
-        this.expression = expression == null ? "" : expression;
-        this.context = context;
+    @FunctionalInterface
+    interface CompiledExpr {
+        double eval(Context ctx);
     }
+
+    /** Holds a compiled argument for function calls: either a string constant or a compiled expression. */
+    static final class CompiledArg {
+        final boolean isString;
+        final String stringValue;
+        final CompiledExpr exprValue;
+        private CompiledArg(String s) { isString = true; stringValue = s; exprValue = null; }
+        private CompiledArg(CompiledExpr e) { isString = false; stringValue = null; exprValue = e; }
+        static CompiledArg ofString(String s) { return new CompiledArg(s); }
+        static CompiledArg ofExpr(CompiledExpr e) { return new CompiledArg(e); }
+        Argument toArgument(Context ctx) {
+            return isString ? Argument.string(stringValue) : Argument.number(exprValue.eval(ctx));
+        }
+    }
+
+    private static CompiledExpr compile(String expression) {
+        return COMPILED_CACHE.computeIfAbsent(expression, OpenYsmControllerExpressionEvaluator::doCompile);
+    }
+
+    /** Compile an expression string into a reusable CompiledExpr tree. */
+    private static CompiledExpr doCompile(String expr) {
+        if (StringUtils.isBlank(expr)) {
+            return ctx -> TRUE;
+        }
+        // Use a simple index-based parser that builds a CompiledExpr tree
+        int[] idx = {0};
+        CompiledExpr result = parseOrCompiled(expr, idx);
+        return result != null ? result : ctx -> FALSE;
+    }
+
+    private static CompiledExpr parseOrCompiled(String expr, int[] idx) {
+        CompiledExpr left = parseAndCompiled(expr, idx);
+        if (left == null) return null;
+        while (true) {
+            skipWhitespace(expr, idx);
+            if (match(expr, idx, "||")) {
+                CompiledExpr right = parseAndCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> truthy(l.eval(ctx)) || truthy(r.eval(ctx)) ? TRUE : FALSE;
+            } else {
+                return left;
+            }
+        }
+    }
+
+    private static CompiledExpr parseAndCompiled(String expr, int[] idx) {
+        CompiledExpr left = parseEqualityCompiled(expr, idx);
+        if (left == null) return null;
+        while (true) {
+            skipWhitespace(expr, idx);
+            if (match(expr, idx, "&&")) {
+                CompiledExpr right = parseEqualityCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> truthy(l.eval(ctx)) && truthy(r.eval(ctx)) ? TRUE : FALSE;
+            } else {
+                return left;
+            }
+        }
+    }
+
+    private static CompiledExpr parseEqualityCompiled(String expr, int[] idx) {
+        CompiledExpr left = parseComparisonCompiled(expr, idx);
+        if (left == null) return null;
+        while (true) {
+            skipWhitespace(expr, idx);
+            if (match(expr, idx, "==")) {
+                CompiledExpr right = parseComparisonCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> nearlyEqual(l.eval(ctx), r.eval(ctx)) ? TRUE : FALSE;
+            } else if (match(expr, idx, "!=")) {
+                CompiledExpr right = parseComparisonCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> !nearlyEqual(l.eval(ctx), r.eval(ctx)) ? TRUE : FALSE;
+            } else {
+                return left;
+            }
+        }
+    }
+
+    private static CompiledExpr parseComparisonCompiled(String expr, int[] idx) {
+        CompiledExpr left = parseAdditiveCompiled(expr, idx);
+        if (left == null) return null;
+        while (true) {
+            skipWhitespace(expr, idx);
+            if (match(expr, idx, ">=")) {
+                CompiledExpr right = parseAdditiveCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> l.eval(ctx) >= r.eval(ctx) ? TRUE : FALSE;
+            } else if (match(expr, idx, "<=")) {
+                CompiledExpr right = parseAdditiveCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> l.eval(ctx) <= r.eval(ctx) ? TRUE : FALSE;
+            } else if (match(expr, idx, ">")) {
+                CompiledExpr right = parseAdditiveCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> l.eval(ctx) > r.eval(ctx) ? TRUE : FALSE;
+            } else if (match(expr, idx, "<")) {
+                CompiledExpr right = parseAdditiveCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> l.eval(ctx) < r.eval(ctx) ? TRUE : FALSE;
+            } else {
+                return left;
+            }
+        }
+    }
+
+    private static CompiledExpr parseAdditiveCompiled(String expr, int[] idx) {
+        CompiledExpr left = parseMultiplicativeCompiled(expr, idx);
+        if (left == null) return null;
+        while (true) {
+            skipWhitespace(expr, idx);
+            if (match(expr, idx, "+")) {
+                CompiledExpr right = parseMultiplicativeCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> l.eval(ctx) + r.eval(ctx);
+            } else if (match(expr, idx, "-")) {
+                CompiledExpr right = parseMultiplicativeCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> l.eval(ctx) - r.eval(ctx);
+            } else {
+                return left;
+            }
+        }
+    }
+
+    private static CompiledExpr parseMultiplicativeCompiled(String expr, int[] idx) {
+        CompiledExpr left = parseUnaryCompiled(expr, idx);
+        if (left == null) return null;
+        while (true) {
+            skipWhitespace(expr, idx);
+            if (match(expr, idx, "*")) {
+                CompiledExpr right = parseUnaryCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> l.eval(ctx) * r.eval(ctx);
+            } else if (match(expr, idx, "/")) {
+                CompiledExpr right = parseUnaryCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> { double d = r.eval(ctx); return d == 0.0d ? 0.0d : l.eval(ctx) / d; };
+            } else if (match(expr, idx, "%")) {
+                CompiledExpr right = parseUnaryCompiled(expr, idx);
+                CompiledExpr l = left, r = right;
+                left = ctx -> { double d = r.eval(ctx); return d == 0.0d ? 0.0d : l.eval(ctx) % d; };
+            } else {
+                return left;
+            }
+        }
+    }
+
+    private static CompiledExpr parseUnaryCompiled(String expr, int[] idx) {
+        skipWhitespace(expr, idx);
+        if (match(expr, idx, "!")) {
+            CompiledExpr operand = parseUnaryCompiled(expr, idx);
+            return ctx -> truthy(operand.eval(ctx)) ? FALSE : TRUE;
+        }
+        if (match(expr, idx, "-")) {
+            CompiledExpr operand = parseUnaryCompiled(expr, idx);
+            return ctx -> -operand.eval(ctx);
+        }
+        return parsePrimaryCompiled(expr, idx);
+    }
+
+    private static CompiledExpr parsePrimaryCompiled(String expr, int[] idx) {
+        skipWhitespace(expr, idx);
+        if (idx[0] >= expr.length()) {
+            return ctx -> FALSE;
+        }
+        char c = expr.charAt(idx[0]);
+        if (c == '(') {
+            idx[0]++;
+            CompiledExpr inner = parseOrCompiled(expr, idx);
+            match(expr, idx, ")");
+            return inner;
+        }
+        if (c == '\'' || c == '"') {
+            readQuotedString(expr, idx);
+            return ctx -> FALSE;
+        }
+        if (Character.isDigit(c) || (c == '.' && idx[0] + 1 < expr.length()
+            && Character.isDigit(expr.charAt(idx[0] + 1)))) {
+            return parseNumberCompiled(expr, idx);
+        }
+        int start = idx[0];
+        String identifier = parseIdentifier(expr, idx);
+        if (identifier.isEmpty()) {
+            idx[0]++;
+            return ctx -> FALSE;
+        }
+        skipWhitespace(expr, idx);
+        if (match(expr, idx, "(")) {
+            // Function call — compile arguments
+            List<CompiledArg> compiledArgs = new ArrayList<>();
+            while (true) {
+                skipWhitespace(expr, idx);
+                if (match(expr, idx, ")")) break;
+                if (idx[0] >= expr.length()) break;
+                char ac = expr.charAt(idx[0]);
+                if (ac == '\'' || ac == '"') {
+                    String s = readQuotedString(expr, idx);
+                    compiledArgs.add(CompiledArg.ofString(s));
+                } else {
+                    String raw = readRawArgument(expr, idx);
+                    compiledArgs.add(CompiledArg.ofExpr(compile(raw)));
+                }
+                skipWhitespace(expr, idx);
+                if (!match(expr, idx, ",")) {
+                    match(expr, idx, ")");
+                    break;
+                }
+            }
+            String funcName = identifier;
+            return ctx -> {
+                List<Argument> evaluated = new ArrayList<>();
+                for (CompiledArg a : compiledArgs) {
+                    evaluated.add(a.toArgument(ctx));
+                }
+                return ctx.functionValue(funcName, evaluated);
+            };
+        }
+        // Variable reference
+        String varName = identifier;
+        return ctx -> ctx.variableValue(varName);
+    }
+
+    private static CompiledExpr parseNumberCompiled(String expr, int[] idx) {
+        int start = idx[0];
+        boolean dotSeen = false;
+        while (idx[0] < expr.length()) {
+            char c = expr.charAt(idx[0]);
+            if (Character.isDigit(c)) {
+                idx[0]++;
+            } else if (c == '.' && !dotSeen) {
+                dotSeen = true;
+                idx[0]++;
+            } else {
+                break;
+            }
+        }
+        double value = Double.parseDouble(expr.substring(start, idx[0]));
+        return ctx -> value;
+    }
+
+    // Reuse the original evaluator's static helper methods by delegating
+
+    private static void skipWhitespace(String expr, int[] idx) {
+        while (idx[0] < expr.length() && expr.charAt(idx[0]) <= ' ') {
+            idx[0]++;
+        }
+    }
+
+    private static boolean match(String expr, int[] idx, String expected) {
+        if (expr.regionMatches(idx[0], expected, 0, expected.length())) {
+            idx[0] += expected.length();
+            return true;
+        }
+        return false;
+    }
+
+    private static String parseIdentifier(String expr, int[] idx) {
+        int start = idx[0];
+        while (idx[0] < expr.length()) {
+            char c = expr.charAt(idx[0]);
+            if (Character.isLetter(c) || c == '_' || c == '.') {
+                idx[0]++;
+            } else {
+                break;
+            }
+        }
+        return expr.substring(start, idx[0]);
+    }
+
+    private static String readQuotedString(String expr, int[] idx) {
+        if (idx[0] >= expr.length()) return "";
+        char quote = expr.charAt(idx[0]);
+        idx[0]++;
+        int start = idx[0];
+        while (idx[0] < expr.length() && expr.charAt(idx[0]) != quote) {
+            idx[0]++;
+        }
+        String result = expr.substring(start, idx[0]);
+        if (idx[0] < expr.length()) idx[0]++; // skip closing quote
+        return result;
+    }
+
+    private static String readRawArgument(String expr, int[] idx) {
+        int start = idx[0];
+        int depth = 0;
+        boolean quoted = false;
+        char quote = 0;
+        while (idx[0] < expr.length()) {
+            char c = expr.charAt(idx[0]);
+            if (quoted) {
+                if (c == quote) quoted = false;
+            } else if (c == '\'' || c == '"') {
+                quoted = true;
+                quote = c;
+            } else if (c == '(') {
+                depth++;
+            } else if (c == ')') {
+                if (depth == 0) break;
+                depth--;
+            } else if ((c == ',' || c == ';') && depth == 0) {
+                break;
+            }
+            idx[0]++;
+        }
+        return expr.substring(start, idx[0]);
+    }
+
+    // ---- Compiled expression evaluation (cached, avoids re-parsing) ----
 
     static boolean evaluateBoolean(String expression, Context context) {
         if (StringUtils.isBlank(expression)) {
             return true;
         }
-        return truthy(evaluateNumber(expression, context));
+        return truthy(compile(expression).eval(context));
     }
 
     static double evaluateNumber(String expression, Context context) {
         try {
-            OpenYsmControllerExpressionEvaluator evaluator = new OpenYsmControllerExpressionEvaluator(expression, context);
-            return evaluator.parseExpression();
+            return compile(expression).eval(context);
         } catch (RuntimeException e) {
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "expr:" + expression,
@@ -94,255 +402,6 @@ final class OpenYsmControllerExpressionEvaluator {
                     OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.add(varName);
                 }
             }
-        }
-    }
-
-    private double parseExpression() {
-        return parseOr();
-    }
-
-    private double parseOr() {
-        double value = parseAnd();
-        while (true) {
-            skipWhitespace();
-            if (match("||")) {
-                double right = parseAnd();
-                value = truthy(value) || truthy(right) ? TRUE : FALSE;
-            } else {
-                return value;
-            }
-        }
-    }
-
-    private double parseAnd() {
-        double value = parseEquality();
-        while (true) {
-            skipWhitespace();
-            if (match("&&")) {
-                double right = parseEquality();
-                value = truthy(value) && truthy(right) ? TRUE : FALSE;
-            } else {
-                return value;
-            }
-        }
-    }
-
-    private double parseEquality() {
-        double value = parseComparison();
-        while (true) {
-            skipWhitespace();
-            if (match("==")) {
-                value = nearlyEqual(value, parseComparison()) ? TRUE : FALSE;
-            } else if (match("!=")) {
-                value = !nearlyEqual(value, parseComparison()) ? TRUE : FALSE;
-            } else {
-                return value;
-            }
-        }
-    }
-
-    private double parseComparison() {
-        double value = parseAdditive();
-        while (true) {
-            skipWhitespace();
-            if (match(">=")) {
-                value = value >= parseAdditive() ? TRUE : FALSE;
-            } else if (match("<=")) {
-                value = value <= parseAdditive() ? TRUE : FALSE;
-            } else if (match(">")) {
-                value = value > parseAdditive() ? TRUE : FALSE;
-            } else if (match("<")) {
-                value = value < parseAdditive() ? TRUE : FALSE;
-            } else {
-                return value;
-            }
-        }
-    }
-
-    private double parseAdditive() {
-        double value = parseMultiplicative();
-        while (true) {
-            skipWhitespace();
-            if (match("+")) {
-                value += parseMultiplicative();
-            } else if (match("-")) {
-                value -= parseMultiplicative();
-            } else {
-                return value;
-            }
-        }
-    }
-
-    private double parseMultiplicative() {
-        double value = parseUnary();
-        while (true) {
-            skipWhitespace();
-            if (match("*")) {
-                value *= parseUnary();
-            } else if (match("/")) {
-                double divisor = parseUnary();
-                value = divisor == 0.0d ? 0.0d : value / divisor;
-            } else if (match("%")) {
-                double divisor = parseUnary();
-                value = divisor == 0.0d ? 0.0d : value % divisor;
-            } else {
-                return value;
-            }
-        }
-    }
-
-    private double parseUnary() {
-        skipWhitespace();
-        if (match("!")) {
-            return truthy(parseUnary()) ? FALSE : TRUE;
-        }
-        if (match("-")) {
-            return -parseUnary();
-        }
-        return parsePrimary();
-    }
-
-    private double parsePrimary() {
-        skipWhitespace();
-        if (index >= expression.length()) {
-            return FALSE;
-        }
-        char c = expression.charAt(index);
-        if (c == '(') {
-            index++;
-            double value = parseExpression();
-            match(")");
-            return value;
-        }
-        if (c == '\'' || c == '"') {
-            readQuotedString();
-            return FALSE;
-        }
-        if (Character.isDigit(c) || (c == '.' && index + 1 < expression.length()
-            && Character.isDigit(expression.charAt(index + 1)))) {
-            return parseNumber();
-        }
-        String identifier = parseIdentifier();
-        if (identifier.isEmpty()) {
-            index++;
-            return FALSE;
-        }
-        skipWhitespace();
-        if (match("(")) {
-            List<Argument> arguments = parseArguments();
-            return context.functionValue(identifier, arguments);
-        }
-        return context.variableValue(identifier);
-    }
-
-    private List<Argument> parseArguments() {
-        List<Argument> arguments = new ArrayList<>();
-        while (true) {
-            skipWhitespace();
-            if (match(")")) {
-                return arguments;
-            }
-            if (index >= expression.length()) {
-                return arguments;
-            }
-            char c = expression.charAt(index);
-            if (c == '\'' || c == '"') {
-                arguments.add(Argument.string(readQuotedString()));
-            } else {
-                String raw = readRawArgument();
-                arguments.add(Argument.number(evaluateNumber(raw, context)));
-            }
-            skipWhitespace();
-            if (match(",")) {
-                continue;
-            }
-            match(")");
-            return arguments;
-        }
-    }
-
-    private String readRawArgument() {
-        int start = index;
-        int depth = 0;
-        boolean quoted = false;
-        char quote = 0;
-        while (index < expression.length()) {
-            char c = expression.charAt(index);
-            if (quoted) {
-                if (c == quote) {
-                    quoted = false;
-                }
-            } else if (c == '\'' || c == '"') {
-                quoted = true;
-                quote = c;
-            } else if (c == '(') {
-                depth++;
-            } else if (c == ')') {
-                if (depth == 0) {
-                    break;
-                }
-                depth--;
-            } else if (c == ',' && depth == 0) {
-                break;
-            }
-            index++;
-        }
-        return expression.substring(start, index).trim();
-    }
-
-    private String readQuotedString() {
-        char quote = expression.charAt(index++);
-        StringBuilder out = new StringBuilder();
-        while (index < expression.length()) {
-            char c = expression.charAt(index++);
-            if (c == quote) {
-                break;
-            }
-            if (c == '\\' && index < expression.length()) {
-                out.append(expression.charAt(index++));
-            } else {
-                out.append(c);
-            }
-        }
-        return out.toString();
-    }
-
-    private double parseNumber() {
-        int start = index;
-        while (index < expression.length()) {
-            char c = expression.charAt(index);
-            if (!Character.isDigit(c) && c != '.') {
-                break;
-            }
-            index++;
-        }
-        return Double.parseDouble(expression.substring(start, index));
-    }
-
-    private String parseIdentifier() {
-        int start = index;
-        while (index < expression.length()) {
-            char c = expression.charAt(index);
-            if (!Character.isLetterOrDigit(c) && c != '_' && c != '.' && c != '$' && c != ':') {
-                break;
-            }
-            index++;
-        }
-        return expression.substring(start, index);
-    }
-
-    private boolean match(String token) {
-        skipWhitespace();
-        if (expression.startsWith(token, index)) {
-            index += token.length();
-            return true;
-        }
-        return false;
-    }
-
-    private void skipWhitespace() {
-        while (index < expression.length() && Character.isWhitespace(expression.charAt(index))) {
-            index++;
         }
     }
 

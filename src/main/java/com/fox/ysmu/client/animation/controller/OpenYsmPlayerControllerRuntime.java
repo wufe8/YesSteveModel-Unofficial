@@ -831,7 +831,8 @@ public final class OpenYsmPlayerControllerRuntime {
         String lastSelectedAnimation = "";
         double enteredTick;
         boolean lastSwingActive;
-        final Map<String, Double> variables = new ConcurrentHashMap<>();
+        /** Regular HashMap is safe: all RuntimeState access is on the client render thread. */
+        final Map<String, Double> variables = new java.util.HashMap<>();
     }
 
     private static final class ControllerMatch {
