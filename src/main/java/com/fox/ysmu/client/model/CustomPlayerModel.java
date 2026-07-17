@@ -374,15 +374,23 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         }
     }
 
+    /** Caches which model locations have had virtual bones injected — prevents
+     *  re-running injectVirtualBones on every model switch in the preview GUI. */
+    private static final java.util.Set<ResourceLocation> INJECTED_LOCATIONS = new java.util.HashSet<>();
+
     @Override
     public GeoModel getModel(ResourceLocation location) {
-        GeoModel oldModel = getCurrentModel();
         GeoModel model = super.getModel(location);
         if (model == null) return model;
-        if (model != oldModel) {
+        if (INJECTED_LOCATIONS.add(location)) {
             injectVirtualBones(location);
         }
         return model;
+    }
+
+    /** Clears the virtual-bone injection cache — call when models are reloaded. */
+    public static void clearInjectedCache() {
+        INJECTED_LOCATIONS.clear();
     }
 
     private void injectVirtualBones(ResourceLocation location) {

@@ -659,14 +659,19 @@ public final class OpenYsmPlayerControllerRuntime {
             getVariablesSnapshot()) {
             String key = entry.getKey();
             // key already starts with "v." per cached filter
-            double oldVal = state.variables.getOrDefault(key.substring(2), Double.NaN);
+            String varKey = key.substring(2);
             double newVal = entry.getValue().get();
-            state.variables.put(key.substring(2), newVal);
+            // Only put if the value actually changed — avoids HashMap.put
+            // overhead for variables that remain the same across frames.
+            Double oldBoxed = state.variables.get(varKey);
+            if (oldBoxed == null || oldBoxed != newVal) {
+                state.variables.put(varKey, newVal);
+            }
                 // Log if MolangParser.VARIABLES overwrites attack or swing_end (rate-limited)
                 if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")
                     && ("v.attack".equals(key) || "v.swing_end".equals(key))
                     && allowDebugLog("PS-MP")) {
-                    ysmu.LOG.info("[YSMU-PS-MP] MolangParser.VARIABLES {}: {} -> {}", key, oldVal, newVal);
+                    ysmu.LOG.info("[YSMU-PS-MP] MolangParser.VARIABLES {}: {} -> {}", key, oldBoxed, newVal);
                 }
         }
         // Step 2: Sync ScopeState → RuntimeState (overwrites global values with
