@@ -651,9 +651,9 @@ public class AnimationRouletteScreen extends GuiScreen {
                 }
                 if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(rangeVar)) {
                     double initVal;
-                    if (form.min <= 0.0f && 0.0f < form.max) {
+                    if (form.min <= 0.0f && 0.0f <= form.max) {
                         initVal = 0.0;
-                    } else if (form.min <= 1.0f && 1.0f < form.max) {
+                    } else if (form.min <= 1.0f && 1.0f <= form.max) {
                         initVal = 1.0;
                     } else {
                         initVal = form.min;

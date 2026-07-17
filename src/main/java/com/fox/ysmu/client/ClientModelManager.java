@@ -768,9 +768,9 @@ public class ClientModelManager {
                 }
                 if (!com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(varName)) {
                     double initVal;
-                    if (form.min <= 0.0f && 0.0f < form.max) {
+                    if (form.min <= 0.0f && 0.0f <= form.max) {
                         initVal = 0.0;
-                    } else if (form.min <= 1.0f && 1.0f < form.max) {
+                    } else if (form.min <= 1.0f && 1.0f <= form.max) {
                         initVal = 1.0;
                     } else {
                         initVal = form.min;
