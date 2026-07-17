@@ -12,7 +12,6 @@ import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
-import java.util.Optional;
 import java.util.Queue;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
@@ -573,15 +572,16 @@ public class AnimationController<T extends IAnimatable> {
             }
             if (currentAnimation != null) {
                 setAnimTime(parser, 0);
+                // Pre-build bone name → IBone map for O(1) lookup instead of stream().filter().findFirst()
+                java.util.Map<String, IBone> boneByName = new java.util.HashMap<>();
+                for (IBone b : modelRendererList) {
+                    boneByName.put(b.getName(), b);
+                }
                 for (BoneAnimation boneAnimation : currentAnimation.boneAnimations) {
                     BoneAnimationQueue boneAnimationQueue = boneAnimationQueues.get(boneAnimation.boneName);
                     BoneSnapshot boneSnapshot = this.boneSnapshots.get(boneAnimation.boneName);
-                    Optional<IBone> first = modelRendererList.stream()
-                        .filter(
-                            x -> x.getName()
-                                .equals(boneAnimation.boneName))
-                        .findFirst();
-                    if (!first.isPresent()) {
+                    IBone first = boneByName.get(boneAnimation.boneName);
+                    if (first == null) {
                         if (crashWhenCantFindBone) {
                             throw new RuntimeException("Could not find bone: " + boneAnimation.boneName);
                         } else {
@@ -589,8 +589,7 @@ public class AnimationController<T extends IAnimatable> {
                         }
                     }
                     markActiveBoneAnimationQueue(boneAnimationQueue);
-                    BoneSnapshot initialSnapshot = first.get()
-                        .getInitialSnapshot();
+                    BoneSnapshot initialSnapshot = first.getInitialSnapshot();
                     assert boneSnapshot != null : "Bone snapshot was null";
 
                     VectorKeyFrameList<KeyFrame<IValue>> rotationKeyFrames = boneAnimation.rotationKeyFrames;
@@ -712,13 +711,16 @@ public class AnimationController<T extends IAnimatable> {
     // rotation, position, and scale values as the initial value to lerp from
     private void saveSnapshotsForAnimation(Animation animation,
         HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshotCollection) {
+        // Pre-build a set of bone animation names to avoid stream().anyMatch() per snapshot
+        java.util.Set<String> animBoneNames = java.util.Collections.emptySet();
+        if (animation != null && animation.boneAnimations != null) {
+            animBoneNames = new java.util.HashSet<>();
+            for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : animation.boneAnimations) {
+                animBoneNames.add(ba.boneName);
+            }
+        }
         for (Pair<IBone, BoneSnapshot> snapshot : boneSnapshotCollection.values()) {
-            if (animation != null && animation.boneAnimations != null) {
-                if (animation.boneAnimations.stream()
-                    .anyMatch(
-                        x -> x.boneName.equals(
-                            snapshot.getLeft()
-                                .getName()))) {
+            if (!animBoneNames.isEmpty() && animBoneNames.contains(snapshot.getLeft().getName())) {
                     this.boneSnapshots.put(
                         snapshot.getLeft()
                             .getName(),
@@ -726,7 +728,6 @@ public class AnimationController<T extends IAnimatable> {
                 }
             }
         }
-    }
 
     private void processCurrentAnimation(double tick, double actualTick, MolangParser parser,
         boolean crashWhenCantFindBone) {
