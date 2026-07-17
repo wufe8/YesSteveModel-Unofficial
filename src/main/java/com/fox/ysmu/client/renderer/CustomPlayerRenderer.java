@@ -2,18 +2,13 @@ package com.fox.ysmu.client.renderer;
 
 import java.util.Collections;
 import java.util.HashSet;
-import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
-import net.minecraft.client.Minecraft;
-import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.entity.EntityLivingBase;
 import net.minecraft.entity.player.EntityPlayer;
-import net.minecraft.item.ItemBow;
-import net.minecraft.item.ItemStack;
 import net.minecraft.scoreboard.Score;
 import net.minecraft.scoreboard.ScoreObjective;
 import net.minecraft.scoreboard.Scoreboard;
@@ -21,9 +16,7 @@ import net.minecraft.util.ResourceLocation;
 import net.minecraftforge.common.MinecraftForge;
 
 import org.jetbrains.annotations.Nullable;
-import org.lwjgl.opengl.GL11;
 
-import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.model.CustomPlayerModel;
 import com.fox.ysmu.client.renderer.layer.CustomPlayerItemInHandLayer;
@@ -33,10 +26,7 @@ import com.fox.ysmu.event.api.SpecialPlayerRenderEvent;
 import com.fox.ysmu.util.ModelIdUtil;
 
 import it.unimi.dsi.fastutil.Pair;
-import net.geckominecraft.client.renderer.GlStateManager;
 import software.bernie.geckolib3.geo.GeoReplacedEntityRenderer;
-import software.bernie.geckolib3.geo.IGeoRenderer;
-import software.bernie.geckolib3.geo.render.built.GeoBone;
 import software.bernie.geckolib3.geo.render.built.GeoModel;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 
@@ -95,8 +85,6 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         if (geoModel != null) {
             this.geoModel = geoModel;
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
-            // Render projectile overlay when holding a bow (nocked arrow + bow mechanism)
-            renderProjectileOverlay(entityObj, x, y, z, partialTicks);
         } else {
             // Throttled logging: only log once per missing model per game session
             if (missingGeoModelLogged.add(location.toString())) {
@@ -192,90 +180,4 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         return geoModel;
     }
 
-    /**
-     * Render a projectile sub-entity overlay (e.g. nocked arrow on bow)
-     * when the player is holding a bow. This makes the bow's shared parts
-     * (crossbow mechanism, arrow on string) visible even without an arrow entity.
-     */
-    @SuppressWarnings("unchecked")
-    private void renderProjectileOverlay(EntityLivingBase entity, double x, double y, double z,
-        float partialTicks) {
-        if (!(entity instanceof EntityPlayer player)) return;
-
-        // Check if holding a bow in main hand
-        ItemStack mainHand = player.getHeldItem();
-        boolean hasBow = (mainHand != null && mainHand.getItem() instanceof ItemBow);
-        if (!hasBow && mainHand != null) {
-            String itemId = mainHand.getItem().getClass().getName().toLowerCase();
-            hasBow = itemId.contains("bow");
-        }
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ] check: hasBow={}, heldItem={}",
-            hasBow, mainHand != null ? mainHand.getItem().getClass().getSimpleName() : "null");
-        if (!hasBow) return;
-
-        // Get the player's model ID
-        ExtendedModelInfo eep = ExtendedModelInfo.get(player);
-        if (eep == null || eep.getModelId() == null) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ] no eep or modelId for player");
-            return;
-        }
-        ResourceLocation baseModelId = ModelIdUtil.getModelIdFromMainId(
-            ModelIdUtil.getMainId(eep.getModelId()));
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ] baseModelId={}", baseModelId);
-
-        // Find projectile types for this model
-        List<String> projTypes = ClientModelManager.PROJECTILE_MODEL_IDS.get(baseModelId);
-        if (projTypes == null || projTypes.isEmpty()) return;
-
-        // Pick the first projectile type (usually #arrow)
-        String projType = projTypes.get(0);
-        ResourceLocation projGeoId = ModelIdUtil.getSubModelId(baseModelId, "projectile_" + projType);
-        GeoModel projModel = GeckoLibCache.getInstance().getGeoModels().get(projGeoId);
-        if (projModel == null) return;
-
-        // Find the projectile texture
-        List<ResourceLocation> projTexList = ClientModelManager.PROJECTILE_TEXTURE_IDS.get(baseModelId);
-        ResourceLocation projTexId = null;
-        if (projTexList != null) {
-            String prefix = "projectile_" + projType + "_";
-            for (ResourceLocation tid : projTexList) {
-                if (tid.getResourcePath().contains(prefix)) {
-                    projTexId = tid;
-                    break;
-                }
-            }
-        }
-        if (projTexId == null) return;
-
-        // Render the projectile model at the player's position.
-        // The projectile model's bone hierarchy (crossbow, bow→Arrow→ysmGlowArrow)
-        // positions itself relative to the entity origin, matching the bow position.
-        GlStateManager.pushMatrix();
-        try {
-            // Position at entity (super.doRender already popped its matrix)
-            GlStateManager.translate(x, y, z);
-
-            // Scale to match model scale
-            float scale = 0.7f;
-            GlStateManager.scale(scale, scale, scale);
-
-            // Bind projectile texture
-            Minecraft.getMinecraft().renderEngine.bindTexture(projTexId);
-
-            // Render only the crossbow bone (bow mechanism) to avoid double-rendering
-            // the arrow shaft/fletching when an arrow entity is also present.
-            Tessellator tess = Tessellator.instance;
-            tess.startDrawing(GL11.GL_QUADS);
-            for (GeoBone bone : projModel.topLevelBones) {
-                ((IGeoRenderer<CustomPlayerEntity>) this)
-                    .renderRecursively(tess, this.animatable, bone, 1.0F, 1.0F, 1.0F, 1.0F);
-            }
-            tess.draw();
-        } catch (Exception e) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-PROJ] Projectile overlay render failed for {}",
-                baseModelId, e);
-        } finally {
-            GlStateManager.popMatrix();
-        }
-    }
 }
