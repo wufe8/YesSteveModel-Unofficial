@@ -83,6 +83,9 @@ public final class MolangPhysicsRuntime {
         }
         state.physics.update(renderTicks);
         currentFrameContext = new FrameContext(state, processor);
+        // Reset the timeline-instruction dirty flag so prepareFrameVariables
+        // can skip the MolangParser.VARIABLES sync when nothing changed.
+        com.fox.ysmu.client.animation.molang.MolangInstructionExecutor.resetDirtyFlag();
     }
 
     public static void end() {

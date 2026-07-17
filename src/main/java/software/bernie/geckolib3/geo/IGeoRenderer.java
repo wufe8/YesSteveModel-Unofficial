@@ -101,17 +101,8 @@ public interface IGeoRenderer<T> {
 
             for (GeoCube cube : bone.childCubes) {
                 MATRIX_STACK.push();
-                GlStateManager.pushMatrix();
-                try {
-                    renderCube(builder, cube, red, green, blue, alpha);
-                } catch (Exception e) {
-                    if (ConfigHandler.debugPrintStacktraces) {
-                        e.printStackTrace();
-                    }
-                } finally {
-                    GlStateManager.popMatrix();
-                    MATRIX_STACK.pop();
-                }
+                renderCube(builder, cube, red, green, blue, alpha);
+                MATRIX_STACK.pop();
             }
 
             // Restore the original texture binding after rendering this bone's cubes.
@@ -161,14 +152,16 @@ public interface IGeoRenderer<T> {
                 normal.z *= -1;
             }
 
+            // Reuse a single Vector4f to avoid per-vertex allocation (~31k/frame)
+            Vector4f tempVec = new Vector4f();
             for (GeoVertex vertex : quad.vertices) {
-                Vector4f vector4f = new Vector4f(vertex.position.x, vertex.position.y, vertex.position.z, 1.0F);
+                tempVec.set(vertex.position.x, vertex.position.y, vertex.position.z, 1.0F);
 
                 MATRIX_STACK.getModelMatrix()
-                    .transform(vector4f);
+                    .transform(tempVec);
                 builder.setColorRGBA_F(red, green, blue, alpha);
                 builder.setNormal(normal.x, normal.y, normal.z);
-                builder.addVertexWithUV(vector4f.x, vector4f.y, vector4f.z, vertex.textureU, vertex.textureV);
+                builder.addVertexWithUV(tempVec.x, tempVec.y, tempVec.z, vertex.textureU, vertex.textureV);
             }
         }
 

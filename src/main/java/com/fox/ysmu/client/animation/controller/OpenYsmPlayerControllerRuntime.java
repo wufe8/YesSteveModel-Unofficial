@@ -655,26 +655,29 @@ public final class OpenYsmPlayerControllerRuntime {
         // instructions DON'T reach MolangPhysicsRuntime.ScopeState and thus
         // wouldn't be picked up by syncToRuntimeState() below.
         // Uses cached snapshot to avoid re-iterating the global map per controller.
-        for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
-            getVariablesSnapshot()) {
-            String key = entry.getKey();
-            // key already starts with "v." per cached filter
-            String varKey = key.substring(2);
-            double newVal = entry.getValue().get();
-            // Only put if the value actually changed — avoids HashMap.put
-            // overhead for variables that remain the same across frames.
-            Double oldBoxed = state.variables.get(varKey);
-            if (oldBoxed == null || oldBoxed != newVal) {
-                state.variables.put(varKey, newVal);
-            }
+        // Only run when timeline instructions have actually executed since last
+        // frame — otherwise RuntimeState already has the current values.
+        if (com.fox.ysmu.client.animation.molang.MolangInstructionExecutor.hasPendingChanges()) {
+            for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
+                getVariablesSnapshot()) {
+                String key = entry.getKey();
+                // key already starts with "v." per cached filter
+                String varKey = key.substring(2);
+                double newVal = entry.getValue().get();
+                // Only put if the value actually changed — avoids HashMap.put
+                // overhead for variables that remain the same across frames.
+                Double oldBoxed = state.variables.get(varKey);
+                if (oldBoxed == null || oldBoxed != newVal) {
+                    state.variables.put(varKey, newVal);
+                }
                 // Log if MolangParser.VARIABLES overwrites attack or swing_end (rate-limited)
                 if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")
                     && ("v.attack".equals(key) || "v.swing_end".equals(key))
                     && allowDebugLog("PS-MP")) {
                     ysmu.LOG.info("[YSMU-PS-MP] MolangParser.VARIABLES {}: {} -> {}", key, oldBoxed, newVal);
                 }
+            }
         }
-        // Step 2: Sync ScopeState → RuntimeState (overwrites global values with
         // authoritative on_entry/on_exit values).
         com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
         // Log values from syncToRuntimeState for post_swing (rate-limited to 1s)
