@@ -182,15 +182,13 @@ public class EasingManager {
     }
 
     /**
-     * Performs a Catmull-Rom interpolation, used to get smooth interpolated motion between keyframes.<br>
-     * <a href="https://pub.dev/documentation/latlong2/latest/spline/CatmullRom-class.html">CatmullRom#position</a>
+     * Performs a Catmull-Rom easing, providing smooth acceleration and deceleration
+     * between keyframes. Uses a standard Catmull-Rom basis with virtual control points
+     * P0=-0.5, P1=0, P2=1, P3=1.5 to produce a smooth S-curve from 0 to 1:
+     * q(t) = 0.75*t + 0.75*t^2 - 0.5*t^3
      */
     static double catmullRom(double n) {
-        return n;
-        // return (0.5 * (2.0 * (n + 1) +
-        // ((n + 2) - n) * 1 +
-        // (2.0 * n - 5.0 * (n + 1) + 4.0 * (n + 2) - (n + 3)) * 1 +
-        // (3.0 * (n + 1) - n - 3.0 * (n + 2) + (n + 3)) * 1));
+        return 0.75 * n + 0.75 * n * n - 0.5 * n * n * n;
     }
 
     public float q(float t) {
