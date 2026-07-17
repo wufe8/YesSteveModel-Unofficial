@@ -17,7 +17,6 @@ import software.bernie.geckolib3.geo.render.built.GeoBone;
 import software.bernie.geckolib3.geo.render.built.GeoCube;
 import software.bernie.geckolib3.geo.render.built.GeoModel;
 import software.bernie.geckolib3.geo.render.built.GeoQuad;
-import software.bernie.geckolib3.geo.render.built.GeoVertex;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 
 /**
