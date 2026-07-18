@@ -17,8 +17,12 @@ public final class ThreadTools {
     @SuppressWarnings("all")
     public static final ExecutorService THREAD_POOL = new ThreadPoolExecutor(
         Math.max(1, com.fox.ysmu.Config.THREAD_COUNT),
-        10,
+        Math.max(Math.max(1, com.fox.ysmu.Config.THREAD_COUNT) * 2, 16),
         30,
         TimeUnit.SECONDS,
-        new LinkedBlockingQueue());
+        // Unbounded queue: never reject tasks.  maxPoolSize is effectively unused
+        // with an unbounded LinkedBlockingQueue, but this avoids the
+        // RejectedExecutionException that a bounded queue causes under heavy
+        // model sync load (pool + queue full → connection terminated).
+        new java.util.concurrent.LinkedBlockingQueue<>());
 }

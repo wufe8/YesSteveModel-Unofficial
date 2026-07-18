@@ -93,8 +93,23 @@ public class RequestLoadModel implements IMessage {
                         if (Config.DEBUG_MODEL_LOAD) {
                             ysmu.LOG.info("[YSMU-MODEL] Decrypted model {}, registering...", fileName);
                         }
+                        // Parse geometry/animation on background thread, only register on main thread.
+                        com.fox.ysmu.client.model.PreParsedModelBundle bundle;
+                        try {
+                            bundle = ClientModelManager.preParseModel(data);
+                        } catch (Exception e) {
+                            ysmu.LOG.warn("Failed to pre-parse model {}: {}", fileName, e.getMessage());
+                            return;
+                        }
+                        final com.fox.ysmu.client.model.PreParsedModelBundle finalBundle = bundle;
                         Minecraft.getMinecraft()
-                            .func_152344_a(() -> ClientModelManager.registerAll(data));
+                            .func_152344_a(() -> {
+                                try {
+                                    ClientModelManager.applyPreParsed(finalBundle);
+                                } catch (Exception e) {
+                                    ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", finalBundle.modelId, e.getMessage());
+                                }
+                            });
                     } else {
                         ysmu.LOG.warn("Failed to decrypt YSM model cache file {}", fileName);
                     }

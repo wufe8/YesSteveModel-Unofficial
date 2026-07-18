@@ -18,6 +18,8 @@ import javax.annotation.Nullable;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.*;
 
+import com.fox.ysmu.client.model.PreParsedModelBundle;
+
 import org.apache.commons.io.FileUtils;
 import org.apache.commons.io.filefilter.FileFileFilter;
 import org.apache.commons.lang3.StringUtils;
@@ -26,7 +28,6 @@ import com.fox.ysmu.Config;
 import com.fox.ysmu.client.animation.AnimationManager;
 import com.fox.ysmu.client.animation.condition.ConditionManager;
 import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
-import com.fox.ysmu.client.animation.molang.MolangFunctionParser;
 import com.fox.ysmu.client.animation.molang.MolangInstructionExecutor;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.sync.OpenYsmModelSyncClient;
@@ -48,8 +49,6 @@ import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-
-import it.unimi.dsi.fastutil.Pair;
 
 import it.unimi.dsi.fastutil.Pair;
 import software.bernie.geckolib3.core.builder.Animation;
@@ -153,20 +152,13 @@ public class ClientModelManager {
     public static volatile byte[] PASSWORD;
     public static volatile UUID PASSWORD_UUID;
 
-    public static void registerAll(ModelData data) {
+    /**
+     * Parses model geometries and animations on the calling thread (should be a background thread).
+     * Returns a bundle that {@link #applyPreParsed(PreParsedModelBundle)} applies on the main thread.
+     */
+    public static PreParsedModelBundle preParseModel(ModelData data) {
         ResourceLocation modelId = getModelId(data);
-        SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
-        // Clear expression cache when model changes
-        MolangInstructionExecutor.clearCache();
-        ysmu.LOG.info(
-            "YSM client registering model {}: geometry={}, textures={}, animations={}",
-            modelId,
-            data.getModel().keySet(),
-            data.getTexture().keySet(),
-            data.getAnimation().keySet());
-        if (Config.DEBUG_MODEL_LOAD) {
-            ysmu.LOG.info("[YSMU-MODEL] registerAll start: modelId={}", modelId);
-        }
+        PreParsedModelBundle bundle = new PreParsedModelBundle(modelId);
 
         // Separate projectile sub-entity data from main model data
         Map<String, byte[]> mainModelMap = new LinkedHashMap<>();
@@ -188,51 +180,152 @@ public class ClientModelManager {
             }
         }
 
-        // Register main model data normally
-        registerGeo(modelId, mainModelMap);
-        registerModelTextures(modelId, mainTexMap);
-        try {
-            registerModelAnimations(modelId, data);
-        } catch (Exception e) {
-            ysmu.LOG.warn("Failed to register animations for model {}", modelId, e);
+        // HEAVY: Parse geometries on background thread
+        for (Map.Entry<String, byte[]> entry : mainModelMap.entrySet()) {
+            parseGeoToBundle(bundle, ModelIdUtil.getSubModelId(modelId, entry.getKey()), entry.getValue());
+        }
+        // HEAVY: Parse projectile geometries on background thread
+        for (Map.Entry<String, byte[]> entry : projModelMap.entrySet()) {
+            ResourceLocation geoId = ModelIdUtil.getSubModelId(modelId, entry.getKey());
+            parseGeoToBundle(bundle, geoId, entry.getValue());
+            String entityType = projectileEntityType(entry.getKey());
+            bundle.projectileModelIds.computeIfAbsent(modelId, k -> new ArrayList<>()).add(entityType);
         }
 
-        // Register projectile sub-entity models/textures (no animation merging)
-        registerProjectileModels(modelId, projModelMap, projTexMap);
+        // HEAVY: Parse animation files on background thread
+        try {
+            parseAnimationsToBundle(bundle, modelId, data);
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to parse animations for model {}: {}", modelId, e.getMessage());
+        }
 
-        boolean inModels = MODELS.containsKey(modelId);
-        int texCount = MODELS.get(modelId) == null ? 0 : MODELS.get(modelId).size();
-        ysmu.LOG.info(
-            "YSM client registered model {}: totalModelEntries={}, textureCount={}, projectileModels={}",
-            modelId,
-            MODELS.size(),
-            texCount,
-            PROJECTILE_MODEL_IDS.containsKey(modelId) ? PROJECTILE_MODEL_IDS.get(modelId).size() : 0);
+        // Store texture data for main-thread upload
+        for (Map.Entry<String, byte[]> e : mainTexMap.entrySet()) {
+            ResourceLocation texId = ModelIdUtil.getSubModelId(modelId, e.getKey());
+            bundle.texturesToRegister.put(texId, e.getValue());
+            bundle.textureIdList.add(texId);
+        }
+        for (Map.Entry<String, byte[]> e : projTexMap.entrySet()) {
+            ResourceLocation texId = ModelIdUtil.getSubModelId(modelId, e.getKey());
+            bundle.projTexturesToRegister.put(texId, e.getValue());
+        }
 
-        // Compute model stats for tooltip display
-        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
-        int totalBones = 0;
-        int totalCubes = 0;
-        for (String geoName : data.getModel().keySet()) {
-            ResourceLocation geoId = ModelIdUtil.getSubModelId(modelId, geoName);
-            GeoModel geoModel = GeckoLibCache.getInstance().getGeoModels().get(geoId);
-            if (geoModel != null) {
-                totalBones += countTotalBones(geoModel);
-                totalCubes += countTotalCubes(geoModel);
+        // Count stats from parsed geometries
+        for (GeoModel geoModel : bundle.geoModels.values()) {
+            bundle.totalBones += countTotalBones(geoModel);
+            bundle.totalCubes += countTotalCubes(geoModel);
+        }
+        if (bundle.animationFile.animations != null) {
+            bundle.totalAnims = bundle.animationFile.animations.size();
+        }
+
+        return bundle;
+    }
+
+    /**
+     * Applies a pre-parsed model bundle on the main thread.
+     * Only does: GeckoLib cache writes, OpenGL texture upload, map registrations.
+     */
+    public static void applyPreParsed(PreParsedModelBundle bundle) {
+        ResourceLocation modelId = bundle.modelId;
+        SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
+        MolangInstructionExecutor.clearCache();
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] applyPreParsed start: modelId={}", modelId);
+        }
+
+        // Register parsed geometries to GeckoLib cache
+        Map<ResourceLocation, GeoModel> geoModels = GeckoLibCache.getInstance().getGeoModels();
+        for (Map.Entry<ResourceLocation, GeoModel> entry : bundle.geoModels.entrySet()) {
+            geoModels.put(entry.getKey(), entry.getValue());
+        }
+        // Apply scale/extra info
+        SCALE_INFO.putAll(bundle.scaleInfo);
+        for (Map.Entry<ResourceLocation, ExtraInfo> e : bundle.extraInfo.entrySet()) {
+            EXTRA_INFO.put(ModelIdUtil.getMainId(modelId), handleExtraInfo(ModelIdUtil.getMainId(modelId), e.getValue()));
+        }
+        if (!bundle.extraAnimationNames.isEmpty()) {
+            EXTRA_ANIMATION_NAME.putAll(bundle.extraAnimationNames);
+        }
+
+        // Register textures (OpenGL — must be main thread)
+        for (Map.Entry<ResourceLocation, byte[]> e : bundle.texturesToRegister.entrySet()) {
+            try {
+                registerTexture(e.getKey(), e.getValue());
+            } catch (Exception ex) {
+                ysmu.LOG.warn("Failed to register texture {} for model {}", e.getKey(), modelId, ex);
             }
         }
-        int totalAnims = 0;
-        AnimationFile animFile = GeckoLibCache.getInstance().getAnimations().get(mainId);
-        if (animFile != null && animFile.animations != null) {
-            totalAnims = animFile.animations.size();
+        MODELS.put(modelId, bundle.textureIdList);
+
+        // Register animations to GeckoLib cache
+        if (!bundle.animationFile.animations.isEmpty()) {
+            GeckoLibCache.getInstance().getAnimations().put(ModelIdUtil.getMainId(modelId), bundle.animationFile);
         }
-        MODEL_STATS.put(mainId, new int[]{totalBones, totalCubes * 6, totalAnims});
+        // Apply molang mappings
+        if (!bundle.molangMapping.isEmpty()) {
+            AnimationManager.MOLANG_STATE_MAP.put(ModelIdUtil.getMainId(modelId), bundle.molangMapping);
+        }
+        if (!bundle.molangConditional.isEmpty()) {
+            AnimationManager.MOLANG_CONDITIONAL_MAP.put(ModelIdUtil.getMainId(modelId), bundle.molangConditional);
+        }
+        // Register controller files
+        if (!bundle.controllerFiles.isEmpty()) {
+            OpenYsmAnimationControllerRegistry.register(ModelIdUtil.getMainId(modelId), bundle.controllerFiles.values());
+        }
+        // Register animation conditions (must be on main thread with GeckoLib state)
+        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+        if (bundle.animationFile.animations != null) {
+            for (Map.Entry<String, software.bernie.geckolib3.core.builder.Animation> animEntry : bundle.animationFile.animations.entrySet()) {
+                try {
+                    com.fox.ysmu.client.animation.condition.ConditionManager.addTest(mainId, animEntry.getKey());
+                } catch (Exception ex) {
+                    ysmu.LOG.warn("Failed to register animation condition {} for model {}", animEntry.getKey(), modelId, ex);
+                }
+            }
+        }
+
+        // Register projectile textures (OpenGL — must be main thread)
+        for (Map.Entry<ResourceLocation, byte[]> e : bundle.projTexturesToRegister.entrySet()) {
+            try {
+                registerTexture(e.getKey(), e.getValue());
+            } catch (Exception ex) {
+                ysmu.LOG.warn("Failed to register projectile texture {} for model {}", e.getKey(), modelId, ex);
+            }
+        }
+        if (!bundle.projectileModelIds.isEmpty()) {
+            PROJECTILE_MODEL_IDS.putAll(bundle.projectileModelIds);
+        }
+
+        // Log and update progress
+        int texCount = bundle.textureIdList.size();
+        ysmu.LOG.info(
+            "YSM client registered model {}: totalModelEntries={}, textureCount={}, projectileModels={}",
+            modelId, geoModels.size(), texCount,
+            PROJECTILE_MODEL_IDS.containsKey(modelId) ? PROJECTILE_MODEL_IDS.get(modelId).size() : 0);
+
+        MODEL_STATS.put(ModelIdUtil.getMainId(modelId),
+            new int[]{bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims});
         SYNC_LOADED++;
         if (Config.DEBUG_MODEL_LOAD) {
-            ysmu.LOG.info("[YSMU-MODEL] registerAll done: modelId={}, inMODELS={}, textures={}, totalModels={}, bones={}, faces={}, anims={}",
-                modelId, inModels, texCount, MODELS.size(), totalBones, totalCubes * 6, totalAnims);
+            ysmu.LOG.info("[YSMU-MODEL] applyPreParsed done: modelId={}, textures={}, bones={}, faces={}, anims={}",
+                modelId, texCount, bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims);
         }
         detectModelPacks();
+    }
+
+    /**
+     * Legacy entry point — parses model then applies on the calling thread.
+     * Callers that are already on a background thread should use
+     * {@link #preParseModel(ModelData)} + {@link #applyPreParsed(PreParsedModelBundle)} instead.
+     */
+    public static void registerAll(ModelData data) {
+        try {
+            PreParsedModelBundle bundle = preParseModel(data);
+            applyPreParsed(bundle);
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to register model: {}", e.getMessage());
+        }
     }
 
     /**
@@ -279,219 +372,127 @@ public class ClientModelManager {
         return new ResourceLocation(ysmu.MODID, data.getModelId());
     }
 
-    private static void registerGeometry(ResourceLocation modelId, ModelData data) {
-        registerGeo(modelId, data.getModel());
-    }
-
-    private static void registerModelAnimations(ResourceLocation modelId, ModelData data) {
-        registerAnimations(ModelIdUtil.getMainId(modelId), data.getAnimation());
-    }
-
-    private static void registerModelTextures(ResourceLocation modelId, Map<String, byte[]> texMap) {
-        registerTexture(modelId, texMap);
-    }
-
-    public static void registerGeo(ResourceLocation id, Map<String, byte[]> mapData) {
-        for (String name : mapData.keySet()) {
-            byte[] data = mapData.get(name);
-            registerGeo(ModelIdUtil.getSubModelId(id, name), data);
+    /**
+     * Public convenience: parses geometry bytes and immediately applies to GeckoLib cache.
+     * Used by {@link com.fox.ysmu.client.sync.OpenYsmModelSyncClient#registerProjectilesFromRaw}.
+     * Call from a background thread; the main-thread part (texture/GL) is handled separately.
+     */
+    public static void registerGeo(ResourceLocation geoId, byte[] data) {
+        PreParsedModelBundle bundle = new PreParsedModelBundle(ModelIdUtil.getMainId(geoId));
+        parseGeoToBundle(bundle, geoId, data);
+        GeoModel parsed = bundle.geoModels.get(geoId);
+        if (parsed != null) {
+            GeckoLibCache.getInstance().getGeoModels().put(geoId, parsed);
+        }
+        for (Map.Entry<ResourceLocation, it.unimi.dsi.fastutil.Pair<Double, Double>> e : bundle.scaleInfo.entrySet()) {
+            SCALE_INFO.put(e.getKey(), e.getValue());
+        }
+        for (Map.Entry<ResourceLocation, ExtraInfo> e : bundle.extraInfo.entrySet()) {
+            EXTRA_INFO.put(e.getKey(), handleExtraInfo(e.getKey(), e.getValue()));
+        }
+        if (!bundle.extraAnimationNames.isEmpty()) {
+            EXTRA_ANIMATION_NAME.putAll(bundle.extraAnimationNames);
         }
     }
 
-    public static void registerGeo(ResourceLocation id, byte[] data) {
-        Map<ResourceLocation, GeoModel> geoModels = GeckoLibCache.getInstance()
-            .getGeoModels();
+    /**
+     * Parses a single geometry from raw bytes into a GeoModel on the background thread.
+     * Stores results into the bundle (does NOT touch GeckoLib caches or OpenGL).
+     */
+    private static void parseGeoToBundle(PreParsedModelBundle bundle, ResourceLocation geoId, byte[] data) {
         try {
-            // 直接从字节数组解析JSON，而不是尝试反序列化对象
             String modelJson = new String(data, StandardCharsets.UTF_8);
             RawGeoModel rawModel = Converter.fromJsonString(modelJson);
 
             if (rawModel.getFormatVersion() == FormatVersion.VERSION_1_12_0
                 || rawModel.getFormatVersion() == FormatVersion.VERSION_1_14_0
                 || rawModel.getFormatVersion() == FormatVersion.VERSION_1_21_0) {
-                // NOTE: cube count diagnostic removed
                 RawGeometryTree rawGeometryTree = RawGeometryTree.parseHierarchy(rawModel);
-                GeoModel geoModel = GeoBuilder.getGeoBuilder(id.getResourceDomain())
+                GeoModel geoModel = GeoBuilder.getGeoBuilder(geoId.getResourceDomain())
                     .constructGeoModel(rawGeometryTree);
-                SCALE_INFO.put(
-                    id,
-                    Pair.of(rawGeometryTree.properties.getHeightScale(), rawGeometryTree.properties.getWidthScale()));
-                ExtraInfo extraInfo = rawGeometryTree.properties.getExtraInfo();
-                EXTRA_INFO.put(id, handleExtraInfo(id, extraInfo));
-                if (extraInfo != null && extraInfo.getExtraAnimationNames() != null
-                    && extraInfo.getExtraAnimationNames().length > 0) {
-                    EXTRA_ANIMATION_NAME.put(id, extraInfo.getExtraAnimationNames());
-                }
-                // Check if this geometry was already registered with cubes.
-                // Avoid overwriting a good model with an empty one (e.g. OpenYSM sync
-                // re-registering projectile geometry from binary data that lacks cubes).
-                GeoModel existing = geoModels.get(id);
+
+                // Check for empty overwrites against existing geoModels in the cache
+                GeoModel existing = GeckoLibCache.getInstance().getGeoModels().get(geoId);
                 int existingCubeCount = 0;
                 if (existing != null && existing.topLevelBones != null) {
                     existingCubeCount = existing.topLevelBones.stream()
-                        .mapToInt(b -> countChildCubesRecursive(b))
-                        .sum();
+                        .mapToInt(b -> countChildCubesRecursive(b)).sum();
                 }
                 int newCubeCount = geoModel.topLevelBones.stream()
-                    .mapToInt(b -> countChildCubesRecursive(b))
-                    .sum();
+                    .mapToInt(b -> countChildCubesRecursive(b)).sum();
                 if (existing != null && existingCubeCount > 0 && newCubeCount == 0) {
                     ysmu.LOG.warn("Skipping overwrite of {} (existing has {} cubes, new has 0)",
-                        id, existingCubeCount);
-                    // Do NOT overwrite; keep the existing geoModel
-                } else {
-                    geoModels.put(id, geoModel);
+                        geoId, existingCubeCount);
+                    return; // keep existing
                 }
 
+                bundle.geoModels.put(geoId, geoModel);
+                bundle.scaleInfo.put(geoId,
+                    it.unimi.dsi.fastutil.Pair.of(
+                        rawGeometryTree.properties.getHeightScale(),
+                        rawGeometryTree.properties.getWidthScale()));
+                ExtraInfo extra = rawGeometryTree.properties.getExtraInfo();
+                if (extra != null) {
+                    bundle.extraInfo.put(geoId, extra);
+                }
+                if (extra != null && extra.getExtraAnimationNames() != null
+                    && extra.getExtraAnimationNames().length > 0) {
+                    bundle.extraAnimationNames.put(geoId, extra.getExtraAnimationNames());
+                }
             } else {
-                ysmu.LOG.warn("YSM geometry {} has unsupported format version: {}", id, rawModel.getFormatVersion());
+                ysmu.LOG.warn("YSM geometry {} has unsupported format version: {}", geoId, rawModel.getFormatVersion());
             }
         } catch (Exception e) {
-            ysmu.LOG.warn("Failed to register geometry " + id, e);
-            e.printStackTrace();
+            ysmu.LOG.warn("Failed to parse geometry " + geoId, e);
         }
     }
 
-    public static void registerTexture(ResourceLocation id, Map<String, byte[]> mapData) {
-        List<ResourceLocation> textures = Lists.newArrayList();
-        for (String name : mapData.keySet()) {
-            ResourceLocation textureId = ModelIdUtil.getSubModelId(id, name);
-            textures.add(textureId);
-        }
-        MODELS.put(id, textures);
-        for (String name : mapData.keySet()) {
-            byte[] data = mapData.get(name);
-            ResourceLocation textureId = ModelIdUtil.getSubModelId(id, name);
-            if (Config.DEBUG_MODEL_LOAD) {
-                ysmu.LOG.info("[YSMU-MODEL]   registering texture {} ({} bytes)", textureId, data.length);
+    /**
+     * Parses animation files from ModelData on the background thread.
+     * Stores AnimationFile, molang mappings, and controller files into the bundle.
+     */
+    private static void parseAnimationsToBundle(PreParsedModelBundle bundle, ResourceLocation modelId, ModelData data) {
+        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+        Map<String, byte[]> mapData = data.getAnimation();
+        if (mapData == null || mapData.isEmpty()) return;
+
+        AnimationFile main = new AnimationFile();
+        for (Map.Entry<String, byte[]> entry : mapData.entrySet()) {
+            String key = entry.getKey();
+            byte[] animData = entry.getValue();
+
+            if (YsmControllerResources.isMolangResource(key)) {
+                Map<String, String> parsed = com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseStateToAnimationMap(animData);
+                if (!parsed.isEmpty()) {
+                    bundle.molangMapping.putAll(parsed);
+                }
+                Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> condParsed =
+                    com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseConditionalAnimations(animData);
+                for (Map.Entry<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> ce : condParsed.entrySet()) {
+                    bundle.molangConditional.merge(ce.getKey(), ce.getValue(), (a, b) -> { a.addAll(b); return a; });
+                }
+                continue;
+            }
+            if (isControllerResource(key, animData)) {
+                bundle.controllerFiles.put(key, animData);
+                continue;
             }
             try {
-                registerTexture(textureId, data);
+                AnimationFile other = getAnimationFile(new String(animData, StandardCharsets.UTF_8));
+                mergeAnimationFile(main, other);
             } catch (Exception e) {
-                ysmu.LOG.warn("Failed to register texture {} for model {}", textureId, id, e);
+                ysmu.LOG.warn("Failed to parse animation file {} for model {}: {}: {}",
+                    key, modelId, e.getClass().getSimpleName(),
+                    org.apache.commons.lang3.StringUtils.defaultString(e.getMessage()));
             }
         }
-        ysmu.LOG.info("YSM client registered textures for {}: {}", id, textures);
+        bundle.animationFile = main;
     }
 
     public static void registerTexture(ResourceLocation id, byte[] data) {
         Minecraft.getMinecraft()
             .getTextureManager()
             .loadTexture(id, new OuterFileTexture(data));
-    }
-
-    /**
-     * Register projectile sub-entity models and textures separately from main model data.
-     * Projectile animations/controllers are NOT registered here — they will be loaded on-demand
-     * when the projectile entity system renders the model.
-     */
-    private static void registerProjectileModels(ResourceLocation modelId,
-        Map<String, byte[]> projModels, Map<String, byte[]> projTextures) {
-        if (projModels.isEmpty() && projTextures.isEmpty()) return;
-
-        // Register projectile geometries
-        for (Map.Entry<String, byte[]> e : projModels.entrySet()) {
-            String key = e.getKey();
-            ResourceLocation geoId = ModelIdUtil.getSubModelId(modelId, key);
-            registerGeo(geoId, e.getValue());
-            String entityType = projectileEntityType(key);
-            PROJECTILE_MODEL_IDS.computeIfAbsent(modelId, k -> new ArrayList<>())
-                .add(entityType);
-        }
-
-        // Register projectile textures
-        List<ResourceLocation> projTexIds = new ArrayList<>();
-        for (Map.Entry<String, byte[]> e : projTextures.entrySet()) {
-            String key = e.getKey();
-            ResourceLocation texId = ModelIdUtil.getSubModelId(modelId, key);
-            projTexIds.add(texId);
-            try {
-                registerTexture(texId, e.getValue());
-            } catch (Exception ex) {
-                ysmu.LOG.warn("Failed to register projectile texture {} for model {}", texId, modelId, ex);
-            }
-        }
-        if (!projTexIds.isEmpty()) {
-            PROJECTILE_TEXTURE_IDS.put(modelId, projTexIds);
-        }
-
-        if (Config.DEBUG_MODEL_LOAD) {
-            ysmu.LOG.info("[YSMU-MODEL] Registered {} projectile models, {} textures for {}",
-                projModels.size(), projTextures.size(), modelId);
-        }
-    }
-
-    private static void registerAnimations(ResourceLocation id, Map<String, byte[]> mapData) {
-        Map<ResourceLocation, AnimationFile> animations = GeckoLibCache.getInstance()
-            .getAnimations();
-        AnimationFile main = new AnimationFile();
-        Map<String, byte[]> controllerFiles = new LinkedHashMap<>();
-        Map<String, String> molangMapping = new LinkedHashMap<>();
-        Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> molangConditional = new LinkedHashMap<>();
-        for (Map.Entry<String, byte[]> entry : mapData.entrySet()) {
-            String key = entry.getKey();
-            byte[] data = entry.getValue();
-            if (YsmControllerResources.isMolangResource(key)) {
-                // 解析 .molang 函数文件并提取 ctrl.<state> → 动画名 映射
-                Map<String, String> parsed = MolangFunctionParser.parseStateToAnimationMap(data);
-                if (!parsed.isEmpty()) {
-                    molangMapping.putAll(parsed);
-                    ysmu.LOG.info("YSM parsed molang function {} for {}: mapping={}",
-                        YsmControllerResources.molangName(key), id, parsed);
-                }
-                // 提取有条件分支的替代动画（如 v.show_car → 开车动画）
-                Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> condParsed =
-                    MolangFunctionParser.parseConditionalAnimations(data);
-                for (Map.Entry<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> ce : condParsed.entrySet()) {
-                    molangConditional.merge(ce.getKey(), ce.getValue(), (a, b) -> { a.addAll(b); return a; });
-                }
-                continue;
-            }
-            if (isControllerResource(key, data)) {
-                controllerFiles.put(key, data);
-                continue;
-            }
-            try {
-                AnimationFile other = getAnimationFile(new String(data, StandardCharsets.UTF_8));
-                mergeAnimationFile(main, other);
-            } catch (Exception e) {
-                ysmu.LOG.warn(
-                    "Failed to parse animation file {} for model {}: {}: {}",
-                    key,
-                    id,
-                    e.getClass().getSimpleName(),
-                    StringUtils.defaultString(e.getMessage()));
-            }
-        }
-        // 注册 molang 映射，供传统谓词系统在播放动画时重定向
-        if (!molangMapping.isEmpty()) {
-            AnimationManager.MOLANG_STATE_MAP.put(id, molangMapping);
-        }
-        if (!molangConditional.isEmpty()) {
-            AnimationManager.MOLANG_CONDITIONAL_MAP.put(id, molangConditional);
-        }
-        DEFAULT_ANIMATION_FILE.animations.forEach((name, action) -> {
-            Animation existing = main.animations.get(name);
-            if (existing == null) {
-                // 模型没有此动画 → 直接合并默认动画
-                main.putAnimation(name, action);
-            } else if (existing.boneAnimations == null || existing.boneAnimations.isEmpty()) {
-                // 模型有此动画但骨骼为空（如只有 "loop": true 的空壳）
-                // → 用默认动画替换，确保 idle 等关键动画有实际骨骼数据
-                main.putAnimation(name, action);
-            }
-        });
-        main.animations.forEach((name, animation) -> {
-            try {
-                ConditionManager.addTest(id, name);
-            } catch (Exception e) {
-                ysmu.LOG.warn("Failed to register animation condition {} for model {}", name, id, e);
-            }
-        });
-        animations.put(id, main);
-        OpenYsmAnimationControllerRegistry.register(id, controllerFiles.values());
-        ysmu.LOG.info("YSM client registered animations for {}: count={}, molangMappings={}",
-            id, main.animations.size(), molangMapping.size());
     }
 
     private static boolean isControllerResource(String name, byte[] data) {

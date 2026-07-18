@@ -322,8 +322,21 @@ public final class OpenYsmModelSyncClient {
                     context.modelId, data.getModel().keySet(), data.getTexture().keySet(), data.getAnimation().keySet());
             }
 
+            // Parse geometry/animation on background thread, only register on main thread.
+            com.fox.ysmu.client.model.PreParsedModelBundle bundle;
+            try {
+                bundle = ClientModelManager.preParseModel(data);
+            } catch (Exception e) {
+                ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
+                return false;
+            }
+            final com.fox.ysmu.client.model.PreParsedModelBundle finalBundle = bundle;
             Minecraft.getMinecraft().func_152344_a(() -> {
-                ClientModelManager.registerAll(data);
+                try {
+                    ClientModelManager.applyPreParsed(finalBundle);
+                } catch (Exception e) {
+                    ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", finalBundle.modelId, e.getMessage());
+                }
             });
             return true;
         } catch (Exception e) {
