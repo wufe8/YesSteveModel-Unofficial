@@ -372,11 +372,117 @@ public final class RawYsmModelAdapter {
             root = createGeometryJson(geometry);
         }
 
+        // Remove faces with zero uv_size — a common modelling technique to
+        // hide faces. GeckoLib's GeoQuad does not handle zero-area UVs; they
+        // render as a single-texel sample (usually black).
+        sanitizeGeometryJson(root);
+
         JsonObject description = getOrCreateDescription(root);
         if (includeModelInfo) {
             applyOpenYsmModelInfo(raw, description);
         }
         return ysmu.GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+    }
+
+    /**
+     * Sanitises geometry JSON in-place:
+     * 1. Removes per-face UV entries where uv_size has a zero dimension.
+     * 2. Normalises negative cube sizes (BlockBench allows negative sizes to
+     *    indicate the cube extends from origin in the opposite direction;
+     *    GeckoLib's vertex winding assumes positive size).
+     */
+    private static void sanitizeGeometryJson(JsonObject root) {
+        JsonElement geomElem = root.get("minecraft:geometry");
+        if (geomElem == null || !geomElem.isJsonArray()) return;
+        int totalRemovedFaces = 0;
+        int totalFaces = 0;
+        int totalNegSizeCubes = 0;
+        for (JsonElement entry : geomElem.getAsJsonArray()) {
+            if (!entry.isJsonObject()) continue;
+            JsonObject model = entry.getAsJsonObject();
+            JsonElement bonesElem = model.get("bones");
+            if (bonesElem == null || !bonesElem.isJsonArray()) continue;
+            for (JsonElement boneElem : bonesElem.getAsJsonArray()) {
+                if (!boneElem.isJsonObject()) continue;
+                JsonObject bone = boneElem.getAsJsonObject();
+                JsonElement cubesElem = bone.get("cubes");
+                if (cubesElem == null || !cubesElem.isJsonArray()) continue;
+                for (JsonElement cubeElem : cubesElem.getAsJsonArray()) {
+                    if (!cubeElem.isJsonObject()) continue;
+                    JsonObject cube = cubeElem.getAsJsonObject();
+
+                    // ── Normalise negative cube sizes ──────────────────────────
+                    JsonElement sizeElem = cube.get("size");
+                    boolean negSizeFixed = false;
+                    if (sizeElem != null && sizeElem.isJsonArray()
+                        && sizeElem.getAsJsonArray().size() >= 3) {
+                        JsonArray sizeArr = sizeElem.getAsJsonArray();
+                        double sx = sizeArr.get(0).getAsDouble();
+                        double sy = sizeArr.get(1).getAsDouble();
+                        double sz = sizeArr.get(2).getAsDouble();
+                        if (sx < 0 || sy < 0 || sz < 0) {
+                            JsonElement originElem = cube.get("origin");
+                            if (originElem != null && originElem.isJsonArray()
+                                && originElem.getAsJsonArray().size() >= 3) {
+                                JsonArray originArr = originElem.getAsJsonArray();
+                                double ox = originArr.get(0).getAsDouble();
+                                double oy = originArr.get(1).getAsDouble();
+                                double oz = originArr.get(2).getAsDouble();
+                                if (sx < 0) { ox += sx; sx = -sx; }
+                                if (sy < 0) { oy += sy; sy = -sy; }
+                                if (sz < 0) { oz += sz; sz = -sz; }
+                                JsonArray newSize = new JsonArray();
+                                newSize.add(new JsonPrimitive(sx));
+                                newSize.add(new JsonPrimitive(sy));
+                                newSize.add(new JsonPrimitive(sz));
+                                cube.add("size", newSize);
+                                JsonArray newOrigin = new JsonArray();
+                                newOrigin.add(new JsonPrimitive(ox));
+                                newOrigin.add(new JsonPrimitive(oy));
+                                newOrigin.add(new JsonPrimitive(oz));
+                                cube.add("origin", newOrigin);
+                                negSizeFixed = true;
+                            }
+                        }
+                    }
+                    if (negSizeFixed) totalNegSizeCubes++;
+
+                    // ── Remove zero-size UV faces ──────────────────────────────
+                    JsonElement uvElem = cube.get("uv");
+                    if (uvElem == null || !uvElem.isJsonObject()) continue;
+                    JsonObject uvObj = uvElem.getAsJsonObject();
+                    java.util.List<String> toRemove = new java.util.ArrayList<>();
+                    for (java.util.Map.Entry<String, JsonElement> faceEntry : uvObj.entrySet()) {
+                        if (!faceEntry.getValue().isJsonObject()) continue;
+                        totalFaces++;
+                        JsonObject face = faceEntry.getValue().getAsJsonObject();
+                        JsonElement faceSizeElem = face.get("uv_size");
+                        if (faceSizeElem == null || !faceSizeElem.isJsonArray()
+                            || faceSizeElem.getAsJsonArray().size() < 2) continue;
+                        JsonArray uvSize = faceSizeElem.getAsJsonArray();
+                        double w = uvSize.get(0).getAsDouble();
+                        double h = uvSize.get(1).getAsDouble();
+                        if (w == 0.0d || h == 0.0d) {
+                            toRemove.add(faceEntry.getKey());
+                        }
+                    }
+                    totalRemovedFaces += toRemove.size();
+                    for (String faceName : toRemove) {
+                        uvObj.remove(faceName);
+                    }
+                }
+            }
+        }
+        if (Config.DEBUG_MODEL_LOAD) {
+            if (totalRemovedFaces > 0) {
+                ysmu.LOG.info("[YSMU-MODEL] sanitizeGeometryJson: removed {}/{} zero-uv faces",
+                    totalRemovedFaces, totalFaces);
+            }
+            if (totalNegSizeCubes > 0) {
+                ysmu.LOG.info("[YSMU-MODEL] sanitizeGeometryJson: normalised {} negative-size cubes",
+                    totalNegSizeCubes);
+            }
+        }
     }
 
     private static JsonObject parseJsonObject(byte[] bytes, String sourceName) throws IOException {

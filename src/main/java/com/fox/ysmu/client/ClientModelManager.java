@@ -535,9 +535,41 @@ public class ClientModelManager {
         if (oldHash != null && oldHash == newHash) {
             return; // Texture unchanged — existing OpenGL texture ID is still valid
         }
-        Minecraft.getMinecraft()
-            .getTextureManager()
-            .loadTexture(id, new OuterFileTexture(data));
+        // Diagnostic: validate texture data before registration
+        if (data == null) {
+            ysmu.LOG.warn("[YSMU-TEX] registerTexture({}): data is NULL, skipping!", id);
+            return;
+        }
+        if (data.length == 0) {
+            ysmu.LOG.warn("[YSMU-TEX] registerTexture({}): data is EMPTY (0 bytes), skipping!", id);
+            return;
+        }
+        if (Config.DEBUG_MODEL_LOAD) {
+            String magic = data.length >= 4
+                ? String.format("%02X%02X%02X%02X", data[0], data[1], data[2], data[3])
+                : "too-short";
+            ysmu.LOG.info("[YSMU-TEX] registerTexture({}): {} bytes, magic={}", id, data.length, magic);
+        }
+        OuterFileTexture outerTex = new OuterFileTexture(data);
+        try {
+            Minecraft.getMinecraft()
+                .getTextureManager()
+                .loadTexture(id, outerTex);
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-TEX] registerTexture({}): TextureManager.loadTexture OK", id);
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("[YSMU-TEX] registerTexture({}): TextureManager.loadTexture threw:", id, e);
+        }
+        // Post-registration verification (only when DEBUG_MODEL_LOAD enabled)
+        if (Config.DEBUG_MODEL_LOAD) {
+            try {
+                Minecraft.getMinecraft().getTextureManager().bindTexture(id);
+                ysmu.LOG.info("[YSMU-TEX] registerTexture({}): post-bind verification SUCCEEDED", id);
+            } catch (Exception e) {
+                ysmu.LOG.warn("[YSMU-TEX] registerTexture({}): post-bind verification FAILED — texture NOT in TextureManager map!", id, e);
+            }
+        }
         TEXTURE_CONTENT_HASH.put(id, newHash);
     }
 

@@ -29,8 +29,9 @@ public class OuterFileTexture extends AbstractTexture {
         try {
             // 3. 使用 ImageIO 读取图像数据到 BufferedImage
             // 这是 1.7.10 中处理图像的标准方式，替代了 NativeImage
-            bufferedImage = ImageIO.read(inputStream);
-        } finally {
+            bufferedImage = ImageIO.read(inputStream);            if (bufferedImage == null) {
+                throw new IOException("ImageIO.read returned null for " + data.length + " bytes");
+            }        } finally {
             // 确保输入流被关闭
             inputStream.close();
         }
