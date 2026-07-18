@@ -734,7 +734,7 @@ public final class AnimationManager {
         }
         if (!player.isPlayerSleeping()) {
             boolean newSwing = markSwingStart(player);
-            if (newSwing) {
+            if (newSwing || event.getController().getAnimationState() == software.bernie.geckolib3.core.AnimationState.Stopped) {
                 event.getController().shouldResetTick = true;
                 event.getController().markNeedsReload();
                 event.getController()

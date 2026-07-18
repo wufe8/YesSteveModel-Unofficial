@@ -20,28 +20,13 @@ public final class MolangInstructionExecutor {
         .newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     /** Cache for parsed Molang expressions — avoids re-parsing same string every frame. */
     private static final ConcurrentHashMap<String, IValue> EXPRESSION_CACHE = new ConcurrentHashMap<>();
-    /** Tracks whether any instructions have executed since the last frame.
-     *  Used by OpenYsmPlayerControllerRuntime to skip prepareFrameVariables step 1
-     *  when no timeline changes occurred (the RuntimeState values are already current). */
-    private static boolean dirtySinceLastFrame = false;
 
     private MolangInstructionExecutor() {}
-
-    /** Returns true if instructions have executed since last reset. */
-    public static boolean hasPendingChanges() {
-        return dirtySinceLastFrame;
-    }
-
-    /** Resets the dirty flag — call at the start of each render frame. */
-    public static void resetDirtyFlag() {
-        dirtySinceLastFrame = false;
-    }
 
     public static void execute(String instructions) {
         if (StringUtils.isBlank(instructions)) {
             return;
         }
-        dirtySinceLastFrame = true;
         MolangParser parser = GeckoLibCache.getInstance().parser;
         Iterable<String> statements;
         try {

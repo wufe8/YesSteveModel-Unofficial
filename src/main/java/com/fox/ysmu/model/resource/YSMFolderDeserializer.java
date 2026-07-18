@@ -685,13 +685,18 @@ public class YSMFolderDeserializer implements AutoCloseable {
         }
         boolean hasPng = false;
         for (RawYsmModel.RawTexture texture : this.model.mainEntity.textures.values()) {
-            if (texture.imageFormat == 2 && texture.data != null) {
+            // Accept PNG (2) and WebP (4). WebP is commonly produced by
+            // third-party C++ .ysm→folder converters that re-encode textures
+            // to WebP for smaller file size. The downstream adapter
+            // (RawYsmModelAdapter.getLegacyTextureData) can decode WebP→PNG,
+            // so there's no reason to reject WebP here.
+            if (texture.data != null && (texture.imageFormat == 2 || texture.imageFormat == 4)) {
                 hasPng = true;
                 break;
             }
         }
         if (!hasPng) {
-            throw new IOException("OpenYSM model requires at least one PNG player texture");
+            throw new IOException("OpenYSM model requires at least one PNG or WebP player texture");
         }
     }
 
