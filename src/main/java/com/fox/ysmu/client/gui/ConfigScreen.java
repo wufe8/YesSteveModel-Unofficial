@@ -28,6 +28,8 @@ public class ConfigScreen extends GuiScreen {
         this.buttonList.add(new ConfigCheckBox(5, x + 5, y + 112, "disable_player_render", Config.DISABLE_PLAYER_RENDER));
         this.buttonList.add(new ConfigCheckBox(6, x + 5, y + 134, "swap_config_sides", Config.SWAP_CONFIG_SIDES));
         this.buttonList.add(new ConfigCheckBox(7, x + 5, y + 156, "gui_enhancements", Config.GUI_ENHANCEMENTS));
+        this.buttonList.add(new FlatColorButton(8, x + 5, y + 180, 400, 20,
+            I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH)));
     }
 
     @Override
@@ -63,6 +65,10 @@ public class ConfigScreen extends GuiScreen {
             case 7:
                 Config.GUI_ENHANCEMENTS = !Config.GUI_ENHANCEMENTS;
                 ((ConfigCheckBox) button).doPress();
+                break;
+            case 8:
+                Config.GUI_MODEL_PREVIEW_REFRESH = (Config.GUI_MODEL_PREVIEW_REFRESH + 1) % 5;
+                button.displayString = I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH);
                 break;
         }
     }

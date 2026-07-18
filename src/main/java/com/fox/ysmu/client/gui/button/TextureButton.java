@@ -1,5 +1,6 @@
 package com.fox.ysmu.client.gui.button;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.OpenModelGuiMessage;
@@ -26,10 +27,10 @@ public class TextureButton extends GuiButton {
     private final EntityPlayer player;
 
     // Off-screen framebuffer cache for texture preview.
-    private static final int MODEL_CACHE_REFRESH_INTERVAL = 4; // ~15 fps preview animation
     private Framebuffer modelCacheFbo;
     private boolean modelCacheDirty = true;
     private int modelCacheFramesUntilRefresh = 0;
+    private int modelCacheLastRefreshInterval = -1;
 
     public TextureButton(int id, int pX, int pY, ResourceLocation modelId, ResourceLocation textureId, EntityPlayer player) {
         super(id, pX, pY, 54, 102, "");
@@ -58,11 +59,16 @@ public class TextureButton extends GuiButton {
         this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + this.height, 0xFF_434242, 0xFF_434242);
 
         // Off-screen framebuffer caching for the texture preview.
-        // Periodic refresh (~15 fps) keeps animation playing smoothly.
-        boolean timeToRefresh = --modelCacheFramesUntilRefresh <= 0;
+        // Use configured refresh interval.
+        int refreshInterval = Config.GUI_MODEL_PREVIEW_REFRESH;
+        if (refreshInterval != modelCacheLastRefreshInterval) {
+            modelCacheFramesUntilRefresh = 0;
+            modelCacheLastRefreshInterval = refreshInterval;
+        }
+        boolean timeToRefresh = refreshInterval > 0 && --modelCacheFramesUntilRefresh <= 0;
         if (modelCacheDirty || timeToRefresh) {
             modelCacheDirty = false;
-            modelCacheFramesUntilRefresh = MODEL_CACHE_REFRESH_INTERVAL;
+            modelCacheFramesUntilRefresh = refreshInterval;
 
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;

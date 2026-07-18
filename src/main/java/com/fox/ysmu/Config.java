@@ -28,6 +28,8 @@ public class Config {
     // GUI Config
     public static boolean GUI_ENHANCEMENTS = true;
     public static boolean SHOW_LOADING_PROGRESS = true;
+    /** Preview FBO refresh interval in frames. 0 = no periodic refresh (only on interaction). 1-4 = refresh every N frames. default: 2*/
+    public static int GUI_MODEL_PREVIEW_REFRESH = 2;
 
     // Debug Config
     public static boolean DEBUG_CONTROLLER = false;
@@ -91,6 +93,7 @@ public class Config {
         // GUI config values
         GUI_ENHANCEMENTS = syncBoolean("GuiEnhancements", "gui", GUI_ENHANCEMENTS, "Enable model selection GUI enhancements (foreground/background textures and GUI animations)", load);
         SHOW_LOADING_PROGRESS = syncBoolean("ShowLoadingProgress", "gui", SHOW_LOADING_PROGRESS, "Show model sync progress bar overlay", load);
+        GUI_MODEL_PREVIEW_REFRESH = syncInt("GuiModelPreviewRefresh", "gui", GUI_MODEL_PREVIEW_REFRESH, "Preview refresh interval in frames. 0 = static (no periodic refresh, only on interaction). 1-4 = refresh every N frames. Higher = smoother animation but more GPU load.", 0, 4, load);
 
         // Debug config values
         DEBUG_CONTROLLER = syncBoolean("DebugController", "debug", DEBUG_CONTROLLER, "Enable controller transition/roaming debug logging ([YSMU-CTRL])", load);

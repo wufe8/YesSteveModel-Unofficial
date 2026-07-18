@@ -47,12 +47,12 @@ public class ModelButton extends GuiButton {
     private ResourceLocation bgTextureLocation;
 
     // Off-screen framebuffer cache for model preview — renders once, reuses texture.
-    private static final int MODEL_CACHE_REFRESH_INTERVAL = 4; // ~15 fps preview animation
     private Framebuffer modelCacheFbo;
     private boolean modelCacheDirty = true;
     private String modelCacheGuiAnim = "";
     private boolean modelCacheWasHovered = false;
     private int modelCacheFramesUntilRefresh = 0;
+    private int modelCacheLastRefreshInterval = -1;
 
     // GUI animation state
     private long lastHoverTime = -1;
@@ -178,16 +178,22 @@ public class ModelButton extends GuiButton {
         }
 
         // Off-screen framebuffer caching for the model preview.
-        // Periodic refresh (~15 fps) keeps base animation playing smoothly
-        // while still saving ~75% of per-frame rendering cost.
+        // Use configured refresh interval; fall back to 0 when GUI_ENHANCEMENTS
+        // is disabled (fully static, no periodic refresh).
+        int refreshInterval = guiEnhancements ? Config.GUI_MODEL_PREVIEW_REFRESH : 0;
+        // Re-sync counter when user changes the config value.
+        if (refreshInterval != modelCacheLastRefreshInterval) {
+            modelCacheFramesUntilRefresh = 0; // force refresh on next frame
+            modelCacheLastRefreshInterval = refreshInterval;
+        }
         boolean hoverChanged = this.field_146123_n != modelCacheWasHovered;
         boolean animChanged = !guiAnimName.equals(modelCacheGuiAnim);
-        boolean timeToRefresh = --modelCacheFramesUntilRefresh <= 0;
+        boolean timeToRefresh = refreshInterval > 0 && --modelCacheFramesUntilRefresh <= 0;
         if (hoverChanged || animChanged || modelCacheDirty || timeToRefresh) {
             modelCacheWasHovered = this.field_146123_n;
             modelCacheGuiAnim = guiAnimName;
             modelCacheDirty = false;
-            modelCacheFramesUntilRefresh = MODEL_CACHE_REFRESH_INTERVAL;
+            modelCacheFramesUntilRefresh = refreshInterval;
 
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
