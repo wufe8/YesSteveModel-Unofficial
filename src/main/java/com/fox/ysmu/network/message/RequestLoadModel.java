@@ -101,15 +101,7 @@ public class RequestLoadModel implements IMessage {
                             ysmu.LOG.warn("Failed to pre-parse model {}: {}", fileName, e.getMessage());
                             return;
                         }
-                        final com.fox.ysmu.client.model.PreParsedModelBundle finalBundle = bundle;
-                        Minecraft.getMinecraft()
-                            .func_152344_a(() -> {
-                                try {
-                                    ClientModelManager.applyPreParsed(finalBundle);
-                                } catch (Exception e) {
-                                    ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", finalBundle.modelId, e.getMessage());
-                                }
-                            });
+                        ClientModelManager.scheduleApply(bundle);
                     } else {
                         ysmu.LOG.warn("Failed to decrypt YSM model cache file {}", fileName);
                     }

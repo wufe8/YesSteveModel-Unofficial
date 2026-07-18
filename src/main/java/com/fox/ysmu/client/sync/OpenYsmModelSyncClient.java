@@ -330,14 +330,7 @@ public final class OpenYsmModelSyncClient {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
                 return false;
             }
-            final com.fox.ysmu.client.model.PreParsedModelBundle finalBundle = bundle;
-            Minecraft.getMinecraft().func_152344_a(() -> {
-                try {
-                    ClientModelManager.applyPreParsed(finalBundle);
-                } catch (Exception e) {
-                    ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", finalBundle.modelId, e.getMessage());
-                }
-            });
+            ClientModelManager.scheduleApply(bundle);
             return true;
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to parse OpenYSM synced model " + context.modelId, e);

@@ -9,20 +9,22 @@ public final class ThreadTools {
 
     /**
      * Thread pool for background model processing.
-     * corePoolSize = 0 was a bug — with an unbounded LinkedBlockingQueue,
-     * the pool never creates more than 1 thread, making all callers
-     * effectively sequential.  Use Config.THREAD_COUNT as core so up to
-     * that many models are processed in parallel during reload.
+     *
+     * Uses an unbounded {@link LinkedBlockingQueue} so that tasks are never
+     * rejected and submitting threads (typically Netty I/O threads) are
+     * never blocked doing model work.  maxPoolSize is effectively unused
+     * with an unbounded queue — the real parallelism is {@code corePoolSize}.
+     *
+     * To control parallelism, adjust the {@code ThreadCount} config option
+     * ({@code ysm_sync/ThreadCount} in {@code ysmu.cfg}).
      */
     @SuppressWarnings("all")
     public static final ExecutorService THREAD_POOL = new ThreadPoolExecutor(
         Math.max(1, com.fox.ysmu.Config.THREAD_COUNT),
+        // maxPoolSize is decorative with an unbounded LinkedBlockingQueue,
+        // but kept at a reasonable upper bound as a safety net.
         Math.max(Math.max(1, com.fox.ysmu.Config.THREAD_COUNT) * 2, 16),
         30,
         TimeUnit.SECONDS,
-        // Unbounded queue: never reject tasks.  maxPoolSize is effectively unused
-        // with an unbounded LinkedBlockingQueue, but this avoids the
-        // RejectedExecutionException that a bounded queue causes under heavy
-        // model sync load (pool + queue full → connection terminated).
-        new java.util.concurrent.LinkedBlockingQueue<>());
+        new LinkedBlockingQueue<>());
 }

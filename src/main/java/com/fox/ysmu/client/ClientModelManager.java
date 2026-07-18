@@ -152,6 +152,46 @@ public class ClientModelManager {
     public static volatile byte[] PASSWORD;
     public static volatile UUID PASSWORD_UUID;
 
+    // ── Tick‑based applyPreParsed queue ────────────────────────────────
+    // Process at most ONE model per render tick so the main thread stays
+    // responsive (handles window messages, rendering, etc.) even when 40+
+    // models arrive from background parsing simultaneously.
+
+    private static final java.util.Queue<PreParsedModelBundle> PENDING_APPLY =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /**
+     * Schedules {@link #applyPreParsed(PreParsedModelBundle)} to run on the
+     * Minecraft main thread, at most one bundle per render tick.
+     */
+    public static void scheduleApply(PreParsedModelBundle bundle) {
+        PENDING_APPLY.add(bundle);
+        // Ensure at least one processor is queued on the main thread.
+        Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
+    }
+
+    private static void processNextApply() {
+        PreParsedModelBundle bundle = PENDING_APPLY.poll();
+        if (bundle == null) return;
+        try {
+            applyPreParsed(bundle);
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", bundle.modelId, e.getMessage());
+        }
+        // Schedule the next one if more are pending.
+        if (!PENDING_APPLY.isEmpty()) {
+            Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
+        }
+    }
+
+    /**
+     * Caches content hashes of registered textures across reloads.
+     * Survives {@link #clearRuntimeModelCaches()} so that unchanged textures
+     * (same ResourceLocation, same byte content) are not re-decoded and
+     * re-uploaded to the GPU on every {@code /ysm reload}.
+     */
+    private static final Map<ResourceLocation, Integer> TEXTURE_CONTENT_HASH = new java.util.HashMap<>();
+
     /**
      * Parses model geometries and animations on the calling thread (should be a background thread).
      * Returns a bundle that {@link #applyPreParsed(PreParsedModelBundle)} applies on the main thread.
@@ -490,9 +530,15 @@ public class ClientModelManager {
     }
 
     public static void registerTexture(ResourceLocation id, byte[] data) {
+        int newHash = java.util.Arrays.hashCode(data);
+        Integer oldHash = TEXTURE_CONTENT_HASH.get(id);
+        if (oldHash != null && oldHash == newHash) {
+            return; // Texture unchanged — existing OpenGL texture ID is still valid
+        }
         Minecraft.getMinecraft()
             .getTextureManager()
             .loadTexture(id, new OuterFileTexture(data));
+        TEXTURE_CONTENT_HASH.put(id, newHash);
     }
 
     private static boolean isControllerResource(String name, byte[] data) {
