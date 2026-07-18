@@ -1,6 +1,5 @@
 package com.fox.ysmu.client;
 
-import java.util.List;
 import com.fox.ysmu.client.gui.ExtraPlayerConfigScreen;
 import com.fox.ysmu.client.compat.AngelicaCompat;
 import com.fox.ysmu.client.renderer.FirstPersonHandRenderer;
@@ -25,7 +24,6 @@ import com.fox.ysmu.data.NPCData;
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.event.api.SpecialPlayerRenderEvent;
 import com.fox.ysmu.network.NetworkHandler;
-import com.fox.ysmu.network.message.RequestLoadModel;
 import com.fox.ysmu.network.message.SetPlayAnimation;
 import com.fox.ysmu.util.ModelIdUtil;
 import com.gtnewhorizon.gtnhlib.eventbus.EventBusSubscriber;
@@ -59,11 +57,12 @@ public class ClientEventHandler {
         // TextureStitchEvent.Post fires while TextureManager is still reloading
         // its texture map. Registering model textures there mutates the same
         // map and can make GTNH disable all user resource packs after a CME.
+        //
+        // Only load the default model here (needed for menu GUI previews).
+        // Loading all cached models is redundant — the sync protocol (legacy or
+        // OpenYSM) handles that when the player joins a world, and would
+        // overwrite everything anyway.
         ClientModelManager.loadDefaultModel();
-        List<String> cachedModels = ClientModelManager.getCachedModelSnapshot();
-        for (String md5 : cachedModels) {
-            RequestLoadModel.loadModel(md5);
-        }
     }
 
     @SubscribeEvent
