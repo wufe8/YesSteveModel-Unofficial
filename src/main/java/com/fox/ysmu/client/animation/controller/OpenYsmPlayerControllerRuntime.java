@@ -608,21 +608,24 @@ public final class OpenYsmPlayerControllerRuntime {
         if (sameAnim) {
             return;
         }
-        // Force reload: GeckoLib's setAnimation skips restart when the same
-        // animation name is passed while the controller is still Running with
-        // a non-null currentAnimation.  Without this, re-entering a state
-        // (e.g. 挥剑_default on each new swing) would NOT restart the
-        // animation from tick 0 — the old playback position would persist,
-        // causing bones to jump to the mid/end pose instead of the start.
-        event.getController().markNeedsReload();
+        // When the state hasn't changed but only the animation variant changed
+        // (e.g. attack1's animation switches from sword_attack_01 to
+        // sword_attack_run1 because the player started running), preserve the
+        // current tick position so the animation doesn't restart from tick 0.
+        // Full restarts (state transitions, e.g. default→attack1) use
+        // setAnimation to reset tick to 0 as expected.
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
-        // Use setAnimation (sets shouldResetTick=true) instead of
-        // setAnimationPreservingTick.  setAnimationPreservingTick calculates
-        // tickOffset=absoluteTick at state entry, which causes the adjusted
-        // tick to far exceed animation length, making the animation start
-        // from the last keyframe (arm rotation artifacts).
-        // setAnimation resets nextTick to 0 via shouldResetTick.
-        event.getController().setAnimation(builder);
+        if (sameState) {
+            // Preserve playback position: the animation continues from where it
+            // left off, just with updated bone keyframes for the new variant.
+            event.getController().setAnimationPreservingTick(builder,
+                event.getAnimationTick(),
+                Math.max(0.0d, event.getAnimationTick() - runtimeState.enteredTick));
+        } else {
+            // State transition: restart animation from tick 0.
+            event.getController().markNeedsReload();
+            event.getController().setAnimation(builder);
+        }
     }
 
     private static void mergeBones(List<software.bernie.geckolib3.core.keyframe.BoneAnimation> target,

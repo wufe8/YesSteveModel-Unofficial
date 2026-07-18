@@ -18,6 +18,7 @@ import org.jetbrains.annotations.Nullable;
 import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.animation.condition.*;
+import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
@@ -699,10 +700,18 @@ public final class AnimationManager {
             return controllerState;
         }
 
-        // 有 player.post_swing 的模型仍然走标准挥剑路径（播放 swing:sword 等）。
-        // swing:sword 通常只有 Molang 时间轴没有骨骼关键帧，不会与 post_swing
-        // 控制器的攻击动画产生骨骼冲突。同时让 swing_controller 保持 CONTINUE
-        // 状态，避免 GeckoLib 因 STOP 而可能产生的状态异常。
+        // 如果模型有 swing 相关的 OpenYSM 控制器（player.post_swing 等），
+        // 则在非新挥动的情况下跳过 legacy 回退路径。否则当 OpenYSM 控制器
+        // 完成攻击状态机后（transition 回 default），swing_controller
+        // 可能因 isSwingInProgress 仍在 true 而误播 legacy swing:sword
+        // 或 swing_hand，造成"收刀二次播放"的问题。
+        ResourceLocation animId = getAnimationId(event);
+        boolean modelHasOwnSwingCtrl = OpenYsmPlayerControllerRuntime.hasAnyController(animId)
+            && (OpenYsmAnimationControllerRegistry.hasController(animId, "player.post_swing")
+                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.pre_swing")
+                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.swing")
+                || OpenYsmAnimationControllerRegistry.hasController(animId, "swing"));
+
         UUID pid = player.getUniqueID();
         boolean nowSwinging = player.isSwingInProgress;
 
@@ -725,14 +734,21 @@ public final class AnimationManager {
         }
         if (!player.isPlayerSleeping()) {
             boolean newSwing = markSwingStart(player);
-            if (newSwing || event.getController().getAnimationState() == software.bernie.geckolib3.core.AnimationState.Stopped) {
+            if (newSwing) {
                 event.getController().shouldResetTick = true;
                 event.getController().markNeedsReload();
                 event.getController()
                     .adjustTick(0);
             }
+            // 模型有自己的 swing 控制器 → 跳过整个 legacy 回退路径。
+            // 否则 swing:sword（默认 fallback，1.54s）会全程与模型自身的
+            // 攻击动画并行叠加，模型动画结束后剩余部分露出，造成"收刀二次播放"。
+            // prepareFrameVariables 已通过 ctrl.swing() 设置 v.swing_sword，
+            // 所以不需要 swing:sword 的时间轴来驱动 OpenYSM 控制器状态机。
+            if (modelHasOwnSwingCtrl) {
+                return PlayState.CONTINUE;
+            }
             String conditionalAnimation = findSwingAnimation(event, player);
-            ResourceLocation animId = getAnimationId(event);
 
             /*
             // 模型自定义 combo：检查是否有 Attackdown3/4/5 系列动画
