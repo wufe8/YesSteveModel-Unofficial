@@ -36,21 +36,19 @@ public final class MolangPhysicsRuntime {
         EntityPlayer player = animatable.getPlayer();
         ScopeKey key = ScopeKey.from(player, animatable.getMainModel());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
-        if (!OpenYsmPlayerControllerRuntime.PENDING_ROAMING.isEmpty()) {
-            // 先注入所有 PENDING_ROAMING 变量
-            for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+        ResourceLocation modelId = animatable.getMainModel();
+        // Only inject roaming variables that belong to the current model.
+        // Using getRoamingVarsForModel() instead of directly iterating
+        // PENDING_ROAMING prevents cross-model variable contamination.
+        Map<String, Double> modelRoaming = OpenYsmPlayerControllerRuntime.getRoamingVarsForModel(modelId);
+        if (!modelRoaming.isEmpty()) {
+            for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
                 String prefixedKey = "v." + entry.getKey();
                 state.variables.put(prefixedKey, entry.getValue());
                 String lcKey = "v." + entry.getKey().toLowerCase(java.util.Locale.ROOT);
                 if (!lcKey.equals(prefixedKey)) {
                     state.variables.put(lcKey, entry.getValue());
                 }
-            }
-            // 应用 .molang 函数文件中定义的变量派生规则。
-            // @player_ctrl_pre_main.molang 开头: v.anim_ctrl=1;
-            // 但我们不执行 .molang 文件，所以在这里设置默认值。
-            if (!state.variables.containsKey("v.anim_ctrl")) {
-                state.variables.put("v.anim_ctrl", 1.0);
             }
             // car_stuff@player_ctrl_parallel_6.molang:
             //   v.show_car=v.roaming.car && !(ctrl.tac_hold_gun||...)
@@ -62,24 +60,21 @@ public final class MolangPhysicsRuntime {
                 state.variables.put("v.show_car", showCar);
                 OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("show_car", showCar);
             }
-            // ALSO inject PENDING_ROAMING values into MolangParser.VARIABLES so
-            // that timeline custom instructions (executed by tickAnimation() AFTER
-            // MolangPhysicsRuntime.end() has been called) can still read them.
-            // Without this, ScopedMolangVariable.get("v.roaming.bq_eye") would
-            // find no MolangPhysicsRuntime context and fall back to the LazyVariable
-            // value in MolangParser.VARIABLES, which was never set from the GUI.
-            for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
-                String prefixedKey = "v." + entry.getKey();
-                software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
-                    .computeIfAbsent(prefixedKey, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
-                    .set(entry.getValue());
-                String lcKey = "v." + entry.getKey().toLowerCase(java.util.Locale.ROOT);
-                if (!lcKey.equals(prefixedKey)) {
-                    software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
-                        .computeIfAbsent(lcKey, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
-                        .set(entry.getValue());
-                }
-            }
+            // NOTE: previously this block also injected PENDING_ROAMING into the
+            // global MolangParser.VARIABLES map as a fallback for timeline
+            // instructions.  That injection was removed because:
+            //   1. Timeline instructions execute WITHIN the begin()/end() frame
+            //      (tickAnimation() runs before end()), so ScopedMolangVariable.set()
+            //      succeeds writing to ScopeState directly.
+            //   2. Injecting into the global map caused cross-model variable
+            //      contamination — model A's roaming values leaked into model B's
+            //      bone keyframe Molang evaluation via the LazyVariable fallback.
+        }
+        // 应用 .molang 函数文件中定义的变量派生规则。
+        // @player_ctrl_pre_main.molang 开头: v.anim_ctrl=1;
+        // 但我们不执行 .molang 文件，所以在这里设置默认值。
+        if (!state.variables.containsKey("v.anim_ctrl")) {
+            state.variables.put("v.anim_ctrl", 1.0);
         }
         state.physics.update(renderTicks);
         currentFrameContext = new FrameContext(state, processor);

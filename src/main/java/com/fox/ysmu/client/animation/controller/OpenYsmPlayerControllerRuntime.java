@@ -41,32 +41,6 @@ public final class OpenYsmPlayerControllerRuntime {
     /** Simple per-tag rate limiter for debug logs: tag → last log time (ms). */
     private static final java.util.Map<String, Long> DEBUG_LOG_LAST_TIME = new ConcurrentHashMap<>();
 
-    /**
-     * Cached filtered snapshot of MolangParser.VARIABLES "v.*" entries.
-     * Avoids re-iterating the global static map for every controller in every frame.
-     * Invalidated when the global map's size changes (new variables added lazily).
-     */
-    private static int cachedVariablesSize = -1;
-    private static final java.util.List<java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable>> cachedVariables = new java.util.ArrayList<>();
-    private static void refreshCachedVariables() {
-        cachedVariables.clear();
-        for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
-            software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.entrySet()) {
-            if (entry.getKey().startsWith("v.")) {
-                cachedVariables.add(entry);
-            }
-        }
-        cachedVariablesSize = software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.size();
-    }
-    /** Returns the cached filtered snapshot, refreshing it if the global map grew. */
-    private static java.util.List<java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable>> getVariablesSnapshot() {
-        int currentSize = software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.size();
-        if (currentSize != cachedVariablesSize) {
-            refreshCachedVariables();
-        }
-        return cachedVariables;
-    }
-
     /** Returns true if the given debug tag should log now (at most once per 1000ms). */
     private static boolean allowDebugLog(String tag) {
         long now = System.currentTimeMillis();
@@ -79,12 +53,70 @@ public final class OpenYsmPlayerControllerRuntime {
     }
 
     /** Roaming variables set from outside the render loop (e.g. GUI config panel).
-     *  Key is the variable name WITHOUT the "v." prefix (e.g. "roaming.ef"). */
+     *  Key is the variable name WITHOUT the "v." prefix (e.g. "roaming.ef").
+     *  NOTE: This is a global flat map shared across all models.  To prevent
+     *  cross-model contamination, use {@link #getRoamingVarsForModel(ResourceLocation)}
+     *  instead of iterating this map directly. */
     public static final Map<String, Double> PENDING_ROAMING = new ConcurrentHashMap<>();
     /** Tracks which PENDING_ROAMING keys were explicitly set by user interaction
      *  (not just default-initialized). Used by the ?? operator to distinguish
      *  "user set to 0" from "never set (defaults to 0)". */
     public static final java.util.Set<String> EXPLICIT_ROAMING = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * Tracks which roaming variable names each model has registered via its
+     * extraAnimationButtons config forms.  Used to filter PENDING_ROAMING
+     * entries so that model A's roaming variables don't leak into model B's
+     * ScopeState or controller RuntimeState.
+     * Key = model ResourceLocation (mainId), value = set of variable names
+     * WITHOUT the "v." prefix (e.g. "qh", "roaming.ef").
+     */
+    private static final Map<ResourceLocation, java.util.Set<String>> MODEL_ROAMING_VARS = new ConcurrentHashMap<>();
+
+    /**
+     * Registers a roaming variable name as belonging to the given model.
+     * Called during model registration (registerExtraWheel).
+     */
+    public static void registerModelRoamingVar(ResourceLocation modelId, String varName) {
+        MODEL_ROAMING_VARS.computeIfAbsent(modelId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()))
+            .add(varName);
+    }
+
+    /**
+     * Returns the subset of PENDING_ROAMING entries that belong to the given model.
+     * Also includes global entries (lock_wheel, wheel_anim) that are not model-specific.
+     */
+    public static Map<String, Double> getRoamingVarsForModel(ResourceLocation modelId) {
+        if (modelId == null || PENDING_ROAMING.isEmpty()) {
+            return java.util.Collections.emptyMap();
+        }
+        java.util.Set<String> knownVars = MODEL_ROAMING_VARS.get(modelId);
+        if (knownVars == null || knownVars.isEmpty()) {
+            // Model has no registered roaming vars — only include global vars.
+            Map<String, Double> result = new java.util.HashMap<>();
+            // Global variables that are not model-specific
+            String[] globalVars = {"lock_wheel", "wheel_anim"};
+            for (String gv : globalVars) {
+                Double val = PENDING_ROAMING.get(gv);
+                if (val != null) result.put(gv, val);
+            }
+            return result;
+        }
+        Map<String, Double> result = new java.util.HashMap<>();
+        for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
+            String key = entry.getKey();
+            // Include vars known to this model, plus global vars
+            if (knownVars.contains(key) || "lock_wheel".equals(key) || "wheel_anim".equals(key)) {
+                result.put(key, entry.getValue());
+            }
+        }
+        return result;
+    }
+
+    /** Clears the per-model roaming variable tracking (called during cache reset). */
+    public static void clearModelRoamingVars() {
+        MODEL_ROAMING_VARS.clear();
+    }
 
     private OpenYsmPlayerControllerRuntime() {}
 
@@ -145,10 +177,13 @@ public final class OpenYsmPlayerControllerRuntime {
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
-        // Inject any roaming variables set from outside the render loop (e.g. GUI config panel)
+        // Inject roaming variables scoped to the current model only.
+        // Using getRoamingVarsForModel() instead of directly iterating
+        // PENDING_ROAMING prevents cross-model variable contamination.
         // Inject both original case and lowercase for compatibility.
-        if (!PENDING_ROAMING.isEmpty()) {
-            for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
+        Map<String, Double> modelRoaming = getRoamingVarsForModel(animationId);
+        if (!modelRoaming.isEmpty()) {
+            for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
                 runtimeState.variables.put(entry.getKey(), entry.getValue());
                 String lcKey = entry.getKey().toLowerCase(java.util.Locale.ROOT);
                 if (!lcKey.equals(entry.getKey())) {
@@ -630,6 +665,17 @@ public final class OpenYsmPlayerControllerRuntime {
         // state machine to bounce between sub-states.  Use a simple boolean flag
         // to detect the first frame of each new swing instead.
         //
+        // syncToRuntimeState copies v.* variables from the per-(player, model)
+        // ScopeState into the controller's RuntimeState.  This is the authoritative
+        // source: values set by timeline custom instructions reach ScopeState via
+        // ScopedMolangVariable.set() (which succeeds because tickAnimation() runs
+        // WITHIN the MolangPhysicsRuntime.begin()/end() frame).
+        //
+        // We deliberately do NOT sync from the global MolangParser.VARIABLES map
+        // here, because it accumulates stale v.* values from ALL models — reading
+        // from it would cause cross-model variable contamination (e.g. model A's
+        // timeline sets v.jump=1, leaking into model B's controller state).
+        //
         // IMPORTANT: syncToRuntimeState MUST run BEFORE the swing detection below.
         // The on_entry statements of swing states (e.g. v.swing=0, v.swing_end=1)
         // write into MolangPhysicsRuntime via setVariable(). These values PERSIST
@@ -638,47 +684,6 @@ public final class OpenYsmPlayerControllerRuntime {
         // with the stale values (v.swing=0, v.swing_end=1) from the previous
         // swing's on_entry, permanently trapping the controller in the default
         // state.
-        //
-        // However, the MOLANGPARSER.VARIABLES sync (step 1 below) must run BEFORE
-        // syncToRuntimeState (step 2).  MolangParser.VARIABLES is a GLOBAL static
-        // map that may contain stale values for controller-managed variables like
-        // v.attack, v.swing_end, etc.  If it ran AFTER syncToRuntimeState, it would
-        // overwrite the correct ScopeState values (set by on_entry) with stale
-        // global values.  By running it first, the global values are loaded into
-        // RuntimeState as a baseline, and then syncToRuntimeState overwrites them
-        // with the authoritative ScopeState values from on_entry/on_exit.
-        //
-        // Step 1: Sync v.* variables written by timeline custom instructions
-        // (via MolangInstructionExecutor → MolangParser.VARIABLES set()).
-        // This is necessary because MolangPhysicsRuntime.end() is called before
-        // tickAnimation() processes the timeline, so the values set by timeline
-        // instructions DON'T reach MolangPhysicsRuntime.ScopeState and thus
-        // wouldn't be picked up by syncToRuntimeState() below.
-        // Uses cached snapshot to avoid re-iterating the global map per controller.
-        // Only run when timeline instructions have actually executed since last
-        // frame — otherwise RuntimeState already has the current values.
-        if (com.fox.ysmu.client.animation.molang.MolangInstructionExecutor.hasPendingChanges()) {
-            for (java.util.Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry :
-                getVariablesSnapshot()) {
-                String key = entry.getKey();
-                // key already starts with "v." per cached filter
-                String varKey = key.substring(2);
-                double newVal = entry.getValue().get();
-                // Only put if the value actually changed — avoids HashMap.put
-                // overhead for variables that remain the same across frames.
-                Double oldBoxed = state.variables.get(varKey);
-                if (oldBoxed == null || oldBoxed != newVal) {
-                    state.variables.put(varKey, newVal);
-                }
-                // Log if MolangParser.VARIABLES overwrites attack or swing_end (rate-limited)
-                if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")
-                    && ("v.attack".equals(key) || "v.swing_end".equals(key))
-                    && allowDebugLog("PS-MP")) {
-                    ysmu.LOG.info("[YSMU-PS-MP] MolangParser.VARIABLES {}: {} -> {}", key, oldBoxed, newVal);
-                }
-            }
-        }
-        // authoritative on_entry/on_exit values).
         com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.syncToRuntimeState(state.variables);
         // Log values from syncToRuntimeState for post_swing (rate-limited to 1s)
         if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing")) {

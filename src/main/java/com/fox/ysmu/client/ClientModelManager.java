@@ -717,6 +717,7 @@ public class ClientModelManager {
         com.fox.ysmu.client.audio.YSMSoundManager.clear();
         ConditionManager.clear();
         OpenYsmAnimationControllerRegistry.clear();
+        com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.clearModelRoamingVars();
         MolangPhysicsRuntime.clear();
         MolangInstructionExecutor.clearWarnings();
         SYNC_TOTAL = -1;
@@ -739,6 +740,7 @@ public class ClientModelManager {
                     form.max = 1.0f;
                     form.min = 0.0f;
                 }
+                com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.registerModelRoamingVar(modelId, varName);
                 if (!com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(varName)) {
                     double initVal;
                     if (form.min <= 0.0f && 0.0f <= form.max) {
