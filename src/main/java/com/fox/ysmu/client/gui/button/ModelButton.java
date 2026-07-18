@@ -47,10 +47,12 @@ public class ModelButton extends GuiButton {
     private ResourceLocation bgTextureLocation;
 
     // Off-screen framebuffer cache for model preview — renders once, reuses texture.
+    private static final int MODEL_CACHE_REFRESH_INTERVAL = 4; // ~15 fps preview animation
     private Framebuffer modelCacheFbo;
     private boolean modelCacheDirty = true;
     private String modelCacheGuiAnim = "";
     private boolean modelCacheWasHovered = false;
+    private int modelCacheFramesUntilRefresh = 0;
 
     // GUI animation state
     private long lastHoverTime = -1;
@@ -176,13 +178,16 @@ public class ModelButton extends GuiButton {
         }
 
         // Off-screen framebuffer caching for the model preview.
-        // Invalidate cache when hover/guiAnim state changes.
+        // Periodic refresh (~15 fps) keeps base animation playing smoothly
+        // while still saving ~75% of per-frame rendering cost.
         boolean hoverChanged = this.field_146123_n != modelCacheWasHovered;
         boolean animChanged = !guiAnimName.equals(modelCacheGuiAnim);
-        if (hoverChanged || animChanged || modelCacheDirty) {
+        boolean timeToRefresh = --modelCacheFramesUntilRefresh <= 0;
+        if (hoverChanged || animChanged || modelCacheDirty || timeToRefresh) {
             modelCacheWasHovered = this.field_146123_n;
             modelCacheGuiAnim = guiAnimName;
             modelCacheDirty = false;
+            modelCacheFramesUntilRefresh = MODEL_CACHE_REFRESH_INTERVAL;
 
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
@@ -201,10 +206,11 @@ public class ModelButton extends GuiButton {
             // Bind FBO and set up viewport + projection to match the button area.
             modelCacheFbo.bindFramebuffer(false);
             GL11.glViewport(0, 0, fbW, fbH);
+            // Set clear color to transparent black BEFORE clearing.
+            GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
 
-            // Set up GUI ortho projection matching the button area so that
-            // RenderUtil's screen-coordinate model positioning works correctly.
+            // Set up GUI ortho projection matching the button area.
             GL11.glMatrixMode(GL11.GL_PROJECTION);
             GL11.glPushMatrix();
             GL11.glLoadIdentity();
@@ -213,36 +219,36 @@ public class ModelButton extends GuiButton {
                 1000.0, 3000.0);
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
 
-            // Render entity with preview animation into the FBO.
-            final String finalGuiAnimName = guiAnimName;
-            final String baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
-            RenderUtil.renderEntityInInventory(
-                this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
-                mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0),
-                entity -> {
-                    if (guiEnhancements) {
-                        entity.setGuiAnimationsEnabled(true);
-                        if (baseAnim != null && !baseAnim.isEmpty()) {
-                            entity.setGuiBaseAnimation(baseAnim);
+            // CRITICAL: wrap the render in try-finally. If renderEntityInInventory
+            // throws (e.g. model load failure), we MUST restore FBO/projection
+            // or the entire screen goes white from the corrupted GL state.
+            try {
+                final String finalGuiAnimName = guiAnimName;
+                final String baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
+                RenderUtil.renderEntityInInventory(
+                    this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
+                    mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0),
+                    entity -> {
+                        if (guiEnhancements) {
+                            entity.setGuiAnimationsEnabled(true);
+                            if (baseAnim != null && !baseAnim.isEmpty()) {
+                                entity.setGuiBaseAnimation(baseAnim);
+                            }
+                            entity.setPreviewAnimation(finalGuiAnimName);
+                        } else {
+                            entity.setGuiAnimationsEnabled(false);
+                            entity.setGuiBaseAnimation("");
+                            entity.setPreviewAnimation("");
                         }
-                        entity.setPreviewAnimation(finalGuiAnimName);
-                    } else {
-                        entity.setGuiAnimationsEnabled(false);
-                        entity.setGuiBaseAnimation("");
-                        entity.setPreviewAnimation("");
-                    }
-                },
-                disablePreviewRotation);
-
-            // Restore projection and unbind FBO.
-            GL11.glMatrixMode(GL11.GL_PROJECTION);
-            GL11.glPopMatrix();
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
-            mc.getFramebuffer().bindFramebuffer(false);
-            GL11.glMatrixMode(GL11.GL_PROJECTION);
-            GL11.glLoadIdentity();
-            GL11.glOrtho(0.0, mc.displayWidth, mc.displayHeight, 0.0, 1000.0, 3000.0);
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+                    },
+                    disablePreviewRotation);
+            } finally {
+                // Restore projection and unbind FBO (true = restore viewport).
+                GL11.glMatrixMode(GL11.GL_PROJECTION);
+                GL11.glPopMatrix();
+                GL11.glMatrixMode(GL11.GL_MODELVIEW);
+                mc.getFramebuffer().bindFramebuffer(true);
+            }
         }
 
         // Draw the cached FBO texture stretched to the model area of the button.
@@ -253,6 +259,11 @@ public class ModelButton extends GuiButton {
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+            // Reset texture matrix — GeckoLib may leave a transform that would
+            // distort the UV mapping and cause flickering/invisible textures.
+            GL11.glMatrixMode(GL11.GL_TEXTURE);
+            GL11.glLoadIdentity();
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, modelCacheFbo.framebufferTexture);
             Tessellator tess = Tessellator.instance;
             tess.startDrawingQuads();
@@ -265,7 +276,9 @@ public class ModelButton extends GuiButton {
             tess.addVertexWithUV(x1, y0, 0.0, 1.0, 1.0);
             tess.addVertexWithUV(x0, y0, 0.0, 0.0, 1.0);
             tess.draw();
-            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            // Keep depth test disabled — the original code path (model rendered
+            // in-place via scissor) also left it disabled; re-enabling here would
+            // cause subsequent GUI elements (text, tooltips) to fail depth test.
         }
 
         // Draw GUI foreground texture (over model, full button area)

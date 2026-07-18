@@ -26,8 +26,10 @@ public class TextureButton extends GuiButton {
     private final EntityPlayer player;
 
     // Off-screen framebuffer cache for texture preview.
+    private static final int MODEL_CACHE_REFRESH_INTERVAL = 4; // ~15 fps preview animation
     private Framebuffer modelCacheFbo;
     private boolean modelCacheDirty = true;
+    private int modelCacheFramesUntilRefresh = 0;
 
     public TextureButton(int id, int pX, int pY, ResourceLocation modelId, ResourceLocation textureId, EntityPlayer player) {
         super(id, pX, pY, 54, 102, "");
@@ -56,8 +58,11 @@ public class TextureButton extends GuiButton {
         this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + this.height, 0xFF_434242, 0xFF_434242);
 
         // Off-screen framebuffer caching for the texture preview.
-        if (modelCacheDirty) {
+        // Periodic refresh (~15 fps) keeps animation playing smoothly.
+        boolean timeToRefresh = --modelCacheFramesUntilRefresh <= 0;
+        if (modelCacheDirty || timeToRefresh) {
             modelCacheDirty = false;
+            modelCacheFramesUntilRefresh = MODEL_CACHE_REFRESH_INTERVAL;
 
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
@@ -74,6 +79,7 @@ public class TextureButton extends GuiButton {
 
             modelCacheFbo.bindFramebuffer(false);
             GL11.glViewport(0, 0, fbW, fbH);
+            GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
             GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
 
             GL11.glMatrixMode(GL11.GL_PROJECTION);
@@ -84,17 +90,15 @@ public class TextureButton extends GuiButton {
                 1000.0, 3000.0);
             GL11.glMatrixMode(GL11.GL_MODELVIEW);
 
-            RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 24,
-                35, mc.thePlayer, modelId, textureId);
-
-            GL11.glMatrixMode(GL11.GL_PROJECTION);
-            GL11.glPopMatrix();
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
-            mc.getFramebuffer().bindFramebuffer(false);
-            GL11.glMatrixMode(GL11.GL_PROJECTION);
-            GL11.glLoadIdentity();
-            GL11.glOrtho(0.0, mc.displayWidth, mc.displayHeight, 0.0, 1000.0, 3000.0);
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+            try {
+                RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 24,
+                    35, mc.thePlayer, modelId, textureId);
+            } finally {
+                GL11.glMatrixMode(GL11.GL_PROJECTION);
+                GL11.glPopMatrix();
+                GL11.glMatrixMode(GL11.GL_MODELVIEW);
+                mc.getFramebuffer().bindFramebuffer(true);
+            }
         }
 
         // Draw the cached FBO texture.
@@ -105,6 +109,10 @@ public class TextureButton extends GuiButton {
             GL11.glEnable(GL11.GL_BLEND);
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+            // Reset texture matrix — GeckoLib may leave a transform.
+            GL11.glMatrixMode(GL11.GL_TEXTURE);
+            GL11.glLoadIdentity();
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, modelCacheFbo.framebufferTexture);
             Tessellator tess = Tessellator.instance;
             tess.startDrawingQuads();
@@ -117,7 +125,7 @@ public class TextureButton extends GuiButton {
             tess.addVertexWithUV(x1, y0, 0.0, 1.0, 1.0);
             tess.addVertexWithUV(x0, y0, 0.0, 0.0, 1.0);
             tess.draw();
-            GL11.glEnable(GL11.GL_DEPTH_TEST);
+            // Keep depth test disabled — the original code path left it disabled.
         }
 
         List<String> split = font.listFormattedStringToWidth(name, 50);
