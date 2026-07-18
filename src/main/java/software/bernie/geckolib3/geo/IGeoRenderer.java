@@ -130,11 +130,16 @@ public interface IGeoRenderer<T> {
             GlStateManager.doPolygonOffset(-1.0F, -10.0F);
         }
 
+        // Reusable per-quad normal vector — avoids allocating one per quad.
+        Vector3f tempNormal = new Vector3f();
         for (GeoQuad quad : cube.quads) {
             if (quad == null) continue;
-            Vector3f normal = quad.normalVector == null
-                ? new Vector3f(quad.normal.getX(), quad.normal.getY(), quad.normal.getZ())
-                : new Vector3f(quad.normalVector);
+            if (quad.normalVector == null) {
+                tempNormal.set(quad.normal.getX(), quad.normal.getY(), quad.normal.getZ());
+            } else {
+                tempNormal.set(quad.normalVector);
+            }
+            Vector3f normal = tempNormal;
 
             MATRIX_STACK.getNormalMatrix()
                 .transform(normal);

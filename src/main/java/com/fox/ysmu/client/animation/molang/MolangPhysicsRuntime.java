@@ -82,11 +82,15 @@ public final class MolangPhysicsRuntime {
 
     public static void end() {
         currentFrameContext = null;
+        // Clear the per-frame roaming variable cache so the next frame
+        // picks up any PENDING_ROAMING changes from the GUI thread.
+        OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
     }
 
     public static void clear() {
         STATES.clear();
         currentFrameContext = null;
+        OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
     }
 
     public static double firstOrder(int nameId, double input, double response) {

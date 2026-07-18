@@ -73,6 +73,10 @@ public final class OpenYsmPlayerControllerRuntime {
      */
     private static final Map<ResourceLocation, java.util.Set<String>> MODEL_ROAMING_VARS = new ConcurrentHashMap<>();
 
+    /** Frame-scoped cache for getRoamingVarsForModel — valid only within begin()/end(). */
+    private static boolean frameRoamingCacheValid = false;
+    private static Map<String, Double> frameRoamingCache = null;
+
     /**
      * Registers a roaming variable name as belonging to the given model.
      * Called during model registration (registerExtraWheel).
@@ -85,8 +89,27 @@ public final class OpenYsmPlayerControllerRuntime {
     /**
      * Returns the subset of PENDING_ROAMING entries that belong to the given model.
      * Also includes global entries (lock_wheel, wheel_anim) that are not model-specific.
+     * Results are cached for the duration of the current render frame (begin()/end()).
      */
     public static Map<String, Double> getRoamingVarsForModel(ResourceLocation modelId) {
+        // Frame-scoped cache: all ~33 callers per frame share the same result.
+        if (frameRoamingCacheValid) {
+            return frameRoamingCache;
+        }
+        Map<String, Double> result = computeRoamingVarsForModel(modelId);
+        frameRoamingCache = result;
+        frameRoamingCacheValid = true;
+        return result;
+    }
+
+    /** Invalidates the frame-scoped roaming variable cache (called at frame end). */
+    public static void invalidateFrameRoamingCache() {
+        frameRoamingCacheValid = false;
+        frameRoamingCache = null;
+    }
+
+    /** Computes the roaming variable map for the given model — no caching. */
+    private static Map<String, Double> computeRoamingVarsForModel(ResourceLocation modelId) {
         if (modelId == null || PENDING_ROAMING.isEmpty()) {
             return java.util.Collections.emptyMap();
         }
