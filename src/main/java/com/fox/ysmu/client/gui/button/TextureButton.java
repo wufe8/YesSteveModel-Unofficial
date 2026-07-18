@@ -11,6 +11,8 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.ScaledResolution;
+import net.minecraft.client.renderer.Tessellator;
+import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.entity.player.EntityPlayer;
 import org.lwjgl.opengl.GL11;
@@ -22,6 +24,10 @@ public class TextureButton extends GuiButton {
     private final ResourceLocation textureId;
     private final String name;
     private final EntityPlayer player;
+
+    // Off-screen framebuffer cache for texture preview.
+    private Framebuffer modelCacheFbo;
+    private boolean modelCacheDirty = true;
 
     public TextureButton(int id, int pX, int pY, ResourceLocation modelId, ResourceLocation textureId, EntityPlayer player) {
         super(id, pX, pY, 54, 102, "");
@@ -48,16 +54,71 @@ public class TextureButton extends GuiButton {
         FontRenderer font = mc.fontRenderer;
         this.field_146123_n = mouseX >= this.xPosition && mouseY >= this.yPosition && mouseX < this.xPosition + this.width && mouseY < this.yPosition + this.height;
         this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + this.height, 0xFF_434242, 0xFF_434242);
-        int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
-        int scissorX = this.xPosition * scale;
-        int scissorY = mc.displayHeight - ((this.yPosition + this.height - 20) * scale);
-        int scissorW = this.width * scale;
-        int scissorH = (this.height - 20) * scale;
-        GL11.glEnable(GL11.GL_SCISSOR_TEST);
-        GL11.glScissor(scissorX, scissorY, scissorW, scissorH);
-        RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 24,
-            35, mc.thePlayer, modelId, textureId);
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
+
+        // Off-screen framebuffer caching for the texture preview.
+        if (modelCacheDirty) {
+            modelCacheDirty = false;
+
+            int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
+            int fbW = this.width * scale;
+            int fbH = (this.height - 20) * scale;
+            if (fbW < 1) fbW = 1;
+            if (fbH < 1) fbH = 1;
+
+            if (modelCacheFbo == null || modelCacheFbo.framebufferTextureWidth != fbW
+                || modelCacheFbo.framebufferTextureHeight != fbH) {
+                if (modelCacheFbo != null) modelCacheFbo.deleteFramebuffer();
+                modelCacheFbo = new Framebuffer(fbW, fbH, true);
+                modelCacheFbo.setFramebufferColor(0.0F, 0.0F, 0.0F, 0.0F);
+            }
+
+            modelCacheFbo.bindFramebuffer(false);
+            GL11.glViewport(0, 0, fbW, fbH);
+            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+
+            GL11.glMatrixMode(GL11.GL_PROJECTION);
+            GL11.glPushMatrix();
+            GL11.glLoadIdentity();
+            GL11.glOrtho(this.xPosition, this.xPosition + this.width,
+                this.yPosition + this.height - 20, this.yPosition,
+                1000.0, 3000.0);
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+
+            RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 24,
+                35, mc.thePlayer, modelId, textureId);
+
+            GL11.glMatrixMode(GL11.GL_PROJECTION);
+            GL11.glPopMatrix();
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+            mc.getFramebuffer().bindFramebuffer(false);
+            GL11.glMatrixMode(GL11.GL_PROJECTION);
+            GL11.glLoadIdentity();
+            GL11.glOrtho(0.0, mc.displayWidth, mc.displayHeight, 0.0, 1000.0, 3000.0);
+            GL11.glMatrixMode(GL11.GL_MODELVIEW);
+        }
+
+        // Draw the cached FBO texture.
+        if (modelCacheFbo != null) {
+            GL11.glDisable(GL11.GL_DEPTH_TEST);
+            GL11.glDisable(GL11.GL_LIGHTING);
+            GL11.glDisable(GL11.GL_COLOR_MATERIAL);
+            GL11.glEnable(GL11.GL_BLEND);
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+            GL11.glBindTexture(GL11.GL_TEXTURE_2D, modelCacheFbo.framebufferTexture);
+            Tessellator tess = Tessellator.instance;
+            tess.startDrawingQuads();
+            int x0 = this.xPosition;
+            int y0 = this.yPosition;
+            int x1 = this.xPosition + this.width;
+            int y1 = this.yPosition + this.height - 20;
+            tess.addVertexWithUV(x0, y1, 0.0, 0.0, 0.0);
+            tess.addVertexWithUV(x1, y1, 0.0, 1.0, 0.0);
+            tess.addVertexWithUV(x1, y0, 0.0, 1.0, 1.0);
+            tess.addVertexWithUV(x0, y0, 0.0, 0.0, 1.0);
+            tess.draw();
+            GL11.glEnable(GL11.GL_DEPTH_TEST);
+        }
 
         List<String> split = font.listFormattedStringToWidth(name, 50);
         if (split.size() > 1) {
