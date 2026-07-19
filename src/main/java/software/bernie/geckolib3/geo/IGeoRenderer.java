@@ -99,25 +99,65 @@ public interface IGeoRenderer<T> {
                 }
             }
 
-            // Glow bones (name starts with "ysmGlow") render with additive
-            // blending and fullbright (no lighting) for glow/effect overlays.
+            // Glow bones (name starts with "ysmGlow"): the negative-size cube
+            // encloses the positive-size cube, but its front faces are CLOSER
+            // to the camera (origin adjustment pushes them outward). Normal
+            // depth testing would let the negative cube occlude the positive.
+            //
+            // Strategy — render negatives FIRST using CULL_FRONT (only back
+            // faces, i.e. faces facing away from the camera), which are at the
+            // FARTHEST depth. Then render positives SECOND with default depth
+            // testing (LEQUAL) — the positive cube's front faces (closer to
+            // camera) pass against the negative's far-depth and render on top.
+            // At the silhouette edges no positive geometry exists, so the
+            // negative's back-face ring remains visible.
+            //
+            // NOTE: CULL_FRONT on a standard CCW-wound cube culls front faces
+            // (facing camera) and renders back faces (facing away). This gives
+            // us the far-side depth without vertex reversal trickery.
             boolean isGlow = bone.name != null && bone.name.startsWith("ysmGlow");
-            boolean lightingWasEnabled = false;
             if (isGlow) {
-                lightingWasEnabled = GL11.glGetBoolean(GL11.GL_LIGHTING);
-                if (lightingWasEnabled) GlStateManager.disableLighting();
-                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE);
-            }
+                Tessellator.instance.draw();
 
-            for (GeoCube cube : bone.childCubes) {
-                MATRIX_STACK.push();
-                renderCube(builder, cube, red, green, blue, alpha);
-                MATRIX_STACK.pop();
-            }
+                // ── Batch 1: negative-size cubes (CULL_FRONT → far faces only) ──
+                boolean anyNeg = false;
+                for (GeoCube c : bone.childCubes) { if (c.hasNegSize) { anyNeg = true; break; } }
+                if (anyNeg) {
+                    Tessellator.instance.startDrawing(GL11.GL_QUADS);
+                    GL11.glEnable(GL11.GL_CULL_FACE);
+                    GL11.glCullFace(GL11.GL_FRONT);
+                    for (GeoCube cube : bone.childCubes) {
+                        if (!cube.hasNegSize) continue;
+                        MATRIX_STACK.push();
+                        renderCube(builder, cube, red, green, blue, alpha);
+                        MATRIX_STACK.pop();
+                    }
+                    Tessellator.instance.draw();
+                    GL11.glCullFace(GL11.GL_BACK);
+                    GL11.glDisable(GL11.GL_CULL_FACE);
+                }
 
-            if (isGlow) {
-                if (lightingWasEnabled) GlStateManager.enableLighting();
-                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+                // ── Batch 2: positive-size cubes (normal depth testing) ──
+                boolean anyPos = false;
+                for (GeoCube c : bone.childCubes) { if (!c.hasNegSize) { anyPos = true; break; } }
+                if (anyPos) {
+                    Tessellator.instance.startDrawing(GL11.GL_QUADS);
+                    for (GeoCube cube : bone.childCubes) {
+                        if (cube.hasNegSize) continue;
+                        MATRIX_STACK.push();
+                        renderCube(builder, cube, red, green, blue, alpha);
+                        MATRIX_STACK.pop();
+                    }
+                    Tessellator.instance.draw();
+                }
+
+                Tessellator.instance.startDrawing(GL11.GL_QUADS);
+            } else {
+                for (GeoCube cube : bone.childCubes) {
+                    MATRIX_STACK.push();
+                    renderCube(builder, cube, red, green, blue, alpha);
+                    MATRIX_STACK.pop();
+                }
             }
 
             // Restore the original texture binding after rendering this bone's cubes.

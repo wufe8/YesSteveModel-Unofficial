@@ -26,6 +26,7 @@ public class GeoCube implements Serializable {
     public double inflate;
     public Boolean mirror;
     public boolean mesh;
+    public boolean hasNegSize;
 
     private GeoCube(double[] size) {
         if (size.length >= 3) {
@@ -494,18 +495,12 @@ public class GeoCube implements Serializable {
         cube.quads[4] = quadUp;
         cube.quads[5] = quadDown;
 
-        // Negative-size cubes in BlockBench represent inside-out shells used to
-        // create hollow/void areas. They work by having inward-facing normals so
-        // that with back-face culling ON, the faces are culled from the outside.
-        // However, GeckoLib disables back-face culling (GlStateManager.disableCull()),
-        // so rendering negative-size cubes as geometry would make them solid opaque
-        // blocks that occlude everything behind them. Skip them entirely.
-        if (hasNegSize) {
-            for (int i = 0; i < cube.quads.length; i++) {
-                cube.quads[i] = null;
-            }
-        }
+        storeCubeHasNegSize(cube, hasNegSize);
 
         return cube;
+    }
+
+    private static void storeCubeHasNegSize(GeoCube cube, boolean hasNegSize) {
+        cube.hasNegSize = hasNegSize;
     }
 }
