@@ -99,10 +99,25 @@ public interface IGeoRenderer<T> {
                 }
             }
 
+            // Glow bones (name starts with "ysmGlow") render with additive
+            // blending and fullbright (no lighting) for glow/effect overlays.
+            boolean isGlow = bone.name != null && bone.name.startsWith("ysmGlow");
+            boolean lightingWasEnabled = false;
+            if (isGlow) {
+                lightingWasEnabled = GL11.glGetBoolean(GL11.GL_LIGHTING);
+                if (lightingWasEnabled) GlStateManager.disableLighting();
+                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE);
+            }
+
             for (GeoCube cube : bone.childCubes) {
                 MATRIX_STACK.push();
                 renderCube(builder, cube, red, green, blue, alpha);
                 MATRIX_STACK.pop();
+            }
+
+            if (isGlow) {
+                if (lightingWasEnabled) GlStateManager.enableLighting();
+                GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             }
 
             // Restore the original texture binding after rendering this bone's cubes.

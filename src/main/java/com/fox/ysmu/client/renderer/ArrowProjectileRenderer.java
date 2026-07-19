@@ -188,9 +188,13 @@ public class ArrowProjectileRenderer {
         double deltaLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
         setMolangVar("ysm.delta_movement_length", deltaLength);
         // In 1.7.10, arrows are always shot by bows (no crossbow).
-        // The animation checks ysm.shoot_item_id!='minecraft:crossbow' to show the
-        // bow bone. Setting to a non-zero double != string works correctly.
-        setMolangVar("ysm.shoot_item_id", 1.0);
+        // The animation's parallel0 uses:
+        //   "bow": { "scale": "ysm.shoot_item_id!='minecraft:crossbow'" }
+        //   "crossbow": { "scale": "ysm.shoot_item_id=='minecraft:crossbow'" }
+        // Molang compares doubles, so we must NOT equal the intern ID of
+        // 'minecraft:crossbow' (which is typically 1). Setting to 0 ensures
+        // the != comparison is true → bow bone visible.
+        setMolangVar("ysm.shoot_item_id", 0.0);
         setMolangVar("ysm.on_ground_time", isInGround ? ageInTicks * 0.05 : 0.0);
 
         // Inject roaming variables from PENDING_ROAMING (client-side GUI-set values).

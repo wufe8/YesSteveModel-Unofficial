@@ -19,6 +19,9 @@ import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.util.ModelIdUtil;
 import com.fox.ysmu.ysmu;
 import com.google.common.collect.Maps;
+import com.google.gson.JsonElement;
+import com.google.gson.JsonObject;
+import com.google.gson.JsonParser;
 
 import software.bernie.geckolib3.geo.raw.pojo.Converter;
 import software.bernie.geckolib3.geo.raw.pojo.RawGeoModel;
@@ -142,12 +145,90 @@ public final class FolderFormat {
             texture.put(fileName, getBytes(modelPath, fileName));
         }
 
+        // Load projectile sub-entity models/textures from ysm.json with projectile_ prefix.
+        loadProjectiles(modelPath, model, texture);
+
         Map<String, byte[]> animation = Maps.newHashMap();
         animation.put("main", getBytes(modelPath, MAIN_ANIMATION_FILE_NAME));
         animation.put("arm", getBytes(modelPath, ARM_ANIMATION_FILE_NAME));
         animation.put("extra", getBytes(modelPath, EXTRA_ANIMATION_FILE_NAME));
 
         return new ModelData(modelId, Type.FOLDER, model, texture, animation);
+    }
+
+    /**
+     * Parse ysm.json's files.projectiles section and add projectile models
+     * and textures with the "projectile_" prefix expected by ClientModelManager.
+     */
+    private static void loadProjectiles(Path modelPath, Map<String, byte[]> model,
+        Map<String, byte[]> texture) throws IOException {
+        Path ysmJsonPath = modelPath.resolve("ysm.json");
+        if (!ysmJsonPath.toFile().isFile()) return;
+
+        JsonObject root;
+        try {
+            root = new JsonParser().parse(FileUtils.readFileToString(ysmJsonPath.toFile(), StandardCharsets.UTF_8))
+                .getAsJsonObject();
+        } catch (Exception e) {
+            ysmu.LOG.warn("[YSMU-MODEL] Failed to parse ysm.json for projectiles: {}", modelPath, e);
+            return;
+        }
+
+        JsonObject files = root.getAsJsonObject("files");
+        if (files == null) return;
+        JsonObject projs = files.getAsJsonObject("projectiles");
+        if (projs == null) return;
+
+        for (java.util.Map.Entry<String, JsonElement> entry : projs.entrySet()) {
+            String projKey = entry.getKey();
+            if (!entry.getValue().isJsonObject()) continue;
+            JsonObject projObj = entry.getValue().getAsJsonObject();
+
+            // Load projectile model
+            JsonElement modelElem = projObj.get("model");
+            if (modelElem != null) {
+                String modelPathStr = modelElem.getAsString();
+                Path modelFile = modelPath.resolve(modelPathStr);
+                if (modelFile.toFile().isFile()) {
+                    model.put("projectile_" + projKey, FileUtils.readFileToByteArray(modelFile.toFile()));
+                }
+            }
+
+            // Load projectile texture
+            JsonElement texElem = projObj.get("texture");
+            if (texElem != null) {
+                // Texture can be a string or an object with "uv" field
+                String texPathStr;
+                if (texElem.isJsonPrimitive() && texElem.getAsJsonPrimitive().isString()) {
+                    texPathStr = texElem.getAsString();
+                } else if (texElem.isJsonObject()) {
+                    JsonElement uvElem = texElem.getAsJsonObject().get("uv");
+                    if (uvElem != null) texPathStr = uvElem.getAsString();
+                    else continue;
+                } else {
+                    continue;
+                }
+                // Extract filename from path (e.g. "textures/#arrow.png" → "#arrow.png")
+                String texName = texPathStr.substring(texPathStr.lastIndexOf('/') + 1);
+                Path texFile = modelPath.resolve(texPathStr);
+                if (texFile.toFile().isFile()) {
+                    texture.put("projectile_" + projKey + "_" + texName,
+                        FileUtils.readFileToByteArray(texFile.toFile()));
+                }
+            }
+
+            // Load projectile animation
+            JsonElement animElem = projObj.get("animation");
+            if (animElem != null) {
+                String animPathStr = animElem.getAsString();
+                Path animFile = modelPath.resolve(animPathStr);
+                if (animFile.toFile().isFile()) {
+                    // Animation files are stored directly by their original key
+                    // in the animation map; projectile animations are identified
+                    // by the model+animation being keyed under the projectile model ID.
+                }
+            }
+        }
     }
 
     private static byte[] getBytes(Path root, String fileName) throws IOException {

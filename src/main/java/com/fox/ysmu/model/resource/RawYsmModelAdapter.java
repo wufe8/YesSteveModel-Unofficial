@@ -412,6 +412,15 @@ public final class RawYsmModelAdapter {
                     JsonObject cube = cubeElem.getAsJsonObject();
 
                     // ── Normalise negative cube sizes ──────────────────────────
+                    // Note: We intentionally do NOT normalise negative sizes here.
+                    // Negative-size cubes in BlockBench represent inside-out shells
+                    // (hollow/void areas). GeckoLib's GeoCube.createFromPojoCube()
+                    // handles them by abs-ing the size, adjusting the origin, then
+                    // skipping rendering entirely (since GlStateManager.disableCull()
+                    // prevents the usual culling-based hollow effect).
+                    // If we normalised to positive here, the cube would render as a
+                    // solid block and occlude geometry behind it.
+                    // ── Count for debug logging ────────────────────────────────
                     JsonElement sizeElem = cube.get("size");
                     boolean negSizeFixed = false;
                     if (sizeElem != null && sizeElem.isJsonArray()
@@ -421,28 +430,7 @@ public final class RawYsmModelAdapter {
                         double sy = sizeArr.get(1).getAsDouble();
                         double sz = sizeArr.get(2).getAsDouble();
                         if (sx < 0 || sy < 0 || sz < 0) {
-                            JsonElement originElem = cube.get("origin");
-                            if (originElem != null && originElem.isJsonArray()
-                                && originElem.getAsJsonArray().size() >= 3) {
-                                JsonArray originArr = originElem.getAsJsonArray();
-                                double ox = originArr.get(0).getAsDouble();
-                                double oy = originArr.get(1).getAsDouble();
-                                double oz = originArr.get(2).getAsDouble();
-                                if (sx < 0) { ox += sx; sx = -sx; }
-                                if (sy < 0) { oy += sy; sy = -sy; }
-                                if (sz < 0) { oz += sz; sz = -sz; }
-                                JsonArray newSize = new JsonArray();
-                                newSize.add(new JsonPrimitive(sx));
-                                newSize.add(new JsonPrimitive(sy));
-                                newSize.add(new JsonPrimitive(sz));
-                                cube.add("size", newSize);
-                                JsonArray newOrigin = new JsonArray();
-                                newOrigin.add(new JsonPrimitive(ox));
-                                newOrigin.add(new JsonPrimitive(oy));
-                                newOrigin.add(new JsonPrimitive(oz));
-                                cube.add("origin", newOrigin);
-                                negSizeFixed = true;
-                            }
+                            negSizeFixed = true;
                         }
                     }
                     if (negSizeFixed) totalNegSizeCubes++;
