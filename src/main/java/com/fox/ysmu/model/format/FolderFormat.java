@@ -28,6 +28,36 @@ import software.bernie.geckolib3.geo.raw.pojo.RawGeoModel;
 
 public final class FolderFormat {
 
+    /** Cache entry: file bytes + last-modified timestamp for staleness check. */
+    private static final class CacheEntry {
+        final byte[] data;
+        final long lastModified;
+        CacheEntry(byte[] data, long lastModified) {
+            this.data = data;
+            this.lastModified = lastModified;
+        }
+    }
+
+    /** Cache of file content keyed by path.  Only used during initial game
+     *  startup (non-reload path).  {@code /ysm reload} sets {@link #SKIP_CACHE}
+     *  to bypass reads entirely so model developers always pick up file changes. */
+    private static final java.util.Map<java.nio.file.Path, CacheEntry> FILE_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** When true, {@link #getBytes} and {@link #getBytesIfExists} bypass the
+     *  cache and always read from disk.  Set by {@code /ysm reload}. */
+    private static volatile boolean SKIP_CACHE = false;
+
+    /** Enable or disable cache bypass.  Call with {@code true} at the start
+     *  of {@link com.fox.ysmu.model.ServerModelManager#reloadPacks()}
+     *  and {@code false} when reload completes. */
+    public static void setSkipCache(boolean skip) {
+        SKIP_CACHE = skip;
+    }
+
+    public static void clearFileCache() {
+        FILE_CACHE.clear();
+    }
+
     public static void cacheAllModels(Path rootPath) {
         File root = rootPath.toFile();
         File[] dirs = root.listFiles(file -> file.isDirectory());
@@ -158,6 +188,9 @@ public final class FolderFormat {
         return new ModelData(modelId, Type.FOLDER, model, texture, animation);
     }
 
+    /** Cache of parsed ysm.json JsonObjects, keyed by modelPath. */
+    private static final java.util.Map<Path, JsonObject> YSM_JSON_CACHE = new java.util.concurrent.ConcurrentHashMap<>();
+
     /**
      * Parse ysm.json's files.projectiles section and add projectile models,
      * textures, animation files, and controller files with the "projectile_"
@@ -168,13 +201,18 @@ public final class FolderFormat {
         Path ysmJsonPath = modelPath.resolve("ysm.json");
         if (!ysmJsonPath.toFile().isFile()) return;
 
-        JsonObject root;
-        try {
-            root = new JsonParser().parse(FileUtils.readFileToString(ysmJsonPath.toFile(), StandardCharsets.UTF_8))
-                .getAsJsonObject();
-        } catch (Exception e) {
-            ysmu.LOG.warn("[YSMU-MODEL] Failed to parse ysm.json for projectiles: {}", modelPath, e);
-            return;
+        // Cache parsed ysm.json to avoid re-parsing on every reload.
+        JsonObject root = YSM_JSON_CACHE.get(modelPath);
+        if (root == null) {
+            try {
+                byte[] jsonBytes = getBytes(modelPath, "ysm.json");
+                root = new JsonParser().parse(new String(jsonBytes, StandardCharsets.UTF_8))
+                    .getAsJsonObject();
+                YSM_JSON_CACHE.put(modelPath, root);
+            } catch (Exception e) {
+                ysmu.LOG.warn("[YSMU-MODEL] Failed to parse ysm.json for projectiles: {}", modelPath, e);
+                return;
+            }
         }
 
         JsonObject files = root.getAsJsonObject("files");
@@ -187,60 +225,74 @@ public final class FolderFormat {
             if (!entry.getValue().isJsonObject()) continue;
             JsonObject projObj = entry.getValue().getAsJsonObject();
 
-            // Load projectile model
+            // Load projectile model via getBytes (uses FILE_CACHE)
             JsonElement modelElem = projObj.get("model");
             if (modelElem != null) {
-                String modelPathStr = modelElem.getAsString();
-                Path modelFile = modelPath.resolve(modelPathStr);
-                if (modelFile.toFile().isFile()) {
-                    model.put("projectile_" + projKey, FileUtils.readFileToByteArray(modelFile.toFile()));
+                String modelRelPath = modelElem.getAsString();
+                byte[] modelData = getBytesIfExists(modelPath, modelRelPath);
+                if (modelData != null) {
+                    model.put("projectile_" + projKey, modelData);
                 }
             }
 
-            // Load projectile texture
+            // Load projectile texture via getBytes (uses FILE_CACHE)
             JsonElement texElem = projObj.get("texture");
             if (texElem != null) {
-                // Texture can be a string or an object with "uv" field
-                String texPathStr;
+                String texRelPath;
                 if (texElem.isJsonPrimitive() && texElem.getAsJsonPrimitive().isString()) {
-                    texPathStr = texElem.getAsString();
+                    texRelPath = texElem.getAsString();
                 } else if (texElem.isJsonObject()) {
                     JsonElement uvElem = texElem.getAsJsonObject().get("uv");
-                    if (uvElem != null) texPathStr = uvElem.getAsString();
+                    if (uvElem != null) texRelPath = uvElem.getAsString();
                     else continue;
                 } else {
                     continue;
                 }
-                // Extract filename from path (e.g. "textures/#arrow.png" → "#arrow.png")
-                String texName = texPathStr.substring(texPathStr.lastIndexOf('/') + 1);
-                Path texFile = modelPath.resolve(texPathStr);
-                if (texFile.toFile().isFile()) {
-                    texture.put("projectile_" + projKey + "_" + texName,
-                        FileUtils.readFileToByteArray(texFile.toFile()));
+                String texName = texRelPath.substring(texRelPath.lastIndexOf('/') + 1);
+                byte[] texData = getBytesIfExists(modelPath, texRelPath);
+                if (texData != null) {
+                    texture.put("projectile_" + projKey + "_" + texName, texData);
                 }
             }
 
-            // Load projectile animation file and store with projectile_ prefix key
-            // so parseAnimationsToBundle registers it under the projectile GeoModel ID.
+            // Load projectile animation file
             JsonElement animElem = projObj.get("animation");
             if (animElem != null) {
-                String animPathStr = animElem.getAsString();
-                Path animFile = modelPath.resolve(animPathStr);
-                if (animFile.toFile().isFile()) {
-                    animation.put("projectile_" + projKey, FileUtils.readFileToByteArray(animFile.toFile()));
+                byte[] animData = getBytesIfExists(modelPath, animElem.getAsString());
+                if (animData != null) {
+                    animation.put("projectile_" + projKey, animData);
                 }
             }
 
-            // Load projectile controller file and store with projectile_ctrl_ prefix key
-            // so parseAnimationsToBundle can register it under the projectile's animation ID.
+            // Load projectile controller file
             JsonElement ctrlElem = projObj.get("controller");
             if (ctrlElem != null) {
-                String ctrlPathStr = ctrlElem.getAsString();
-                Path ctrlFile = modelPath.resolve(ctrlPathStr);
-                if (ctrlFile.toFile().isFile()) {
-                    animation.put("projectile_ctrl_" + projKey, FileUtils.readFileToByteArray(ctrlFile.toFile()));
+                byte[] ctrlData = getBytesIfExists(modelPath, ctrlElem.getAsString());
+                if (ctrlData != null) {
+                    animation.put("projectile_ctrl_" + projKey, ctrlData);
                 }
             }
+        }
+    }
+
+    /** Read a file relative to modelPath, returning null if it doesn't exist. */
+    private static byte[] getBytesIfExists(Path modelPath, String relPath) {
+        try {
+            Path filePath = modelPath.resolve(relPath);
+            if (!filePath.toFile().isFile()) return null;
+            // Check cache — skip during /ysm reload.
+            long currentLastMod = filePath.toFile().lastModified();
+            if (!SKIP_CACHE) {
+                CacheEntry entry = FILE_CACHE.get(filePath);
+                if (entry != null && entry.lastModified == currentLastMod) {
+                    return entry.data;
+                }
+            }
+            byte[] result = FileUtils.readFileToByteArray(filePath.toFile());
+            FILE_CACHE.put(filePath, new CacheEntry(result, currentLastMod));
+            return result;
+        } catch (IOException e) {
+            return null;
         }
     }
 
@@ -259,14 +311,26 @@ public final class FolderFormat {
             filePath = CUSTOM.resolve("default/extra.animation.json");
         }
 
+        // Check cache — skip during /ysm reload, validate lastModified otherwise.
+        long currentLastMod = filePath.toFile().lastModified();
+        if (!SKIP_CACHE) {
+            CacheEntry entry = FILE_CACHE.get(filePath);
+            if (entry != null && entry.lastModified == currentLastMod) {
+                return entry.data;
+            }
+        }
+
+        byte[] result;
         if (MAIN_MODEL_FILE_NAME.equals(fileName) || ARM_MODEL_FILE_NAME.equals(fileName)) {
             String modelJson = FileUtils.readFileToString(filePath.toFile(), StandardCharsets.UTF_8);
             RawGeoModel rawModel = Converter.fromJsonString(modelJson);
-            // 直接返回JSON字符串的字节数组，而不是尝试序列化RawGeoModel对象
-            return modelJson.getBytes(StandardCharsets.UTF_8);
+            result = modelJson.getBytes(StandardCharsets.UTF_8);
+        } else {
+            result = FileUtils.readFileToByteArray(filePath.toFile());
         }
 
-        return FileUtils.readFileToByteArray(filePath.toFile());
+        FILE_CACHE.put(filePath, new CacheEntry(result, currentLastMod));
+        return result;
     }
 
     private static boolean isNotBlankFile(File file) {

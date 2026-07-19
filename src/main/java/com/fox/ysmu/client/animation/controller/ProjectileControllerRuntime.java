@@ -90,13 +90,17 @@ public final class ProjectileControllerRuntime {
     public static List<String> getActiveAnimations(int entityId, ResourceLocation animId, double ageInTicks) {
         ControllerSet set = OpenYsmAnimationControllerRegistry.get(animId);
         if (set == null || set.controllers.isEmpty()) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] getActiveAnimations: no controllers for {}, entityId={}",
-                animId, entityId);
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] getActiveAnimations: no controllers for {}, entityId={}",
+                    animId, entityId);
+            }
             return Collections.emptyList();
         }
 
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] getActiveAnimations: entityId={}, animId={}, controllerCount={}, names={}",
-            entityId, animId, set.controllers.size(), set.controllers.keySet());
+        if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] getActiveAnimations: entityId={}, animId={}, controllerCount={}, names={}",
+                entityId, animId, set.controllers.size(), set.controllers.keySet());
+        }
 
         // Collect all animation names referenced by any controller state
         java.util.Set<String> managedAnims = new java.util.HashSet<>();
@@ -112,10 +116,12 @@ public final class ProjectileControllerRuntime {
         List<String> result = new ArrayList<>();
         for (Controller controller : set.controllers.values()) {
             List<String> controllerAnims = evaluateController(entityId, animId, controller, ageInTicks);
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL]   controller '{}': state='{}', anims={}",
-                controller.name,
-                getCurrentStateName(entityId, animId, controller.name),
-                controllerAnims);
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL]   controller '{}': state='{}', anims={}",
+                    controller.name,
+                    getCurrentStateName(entityId, animId, controller.name),
+                    controllerAnims);
+            }
             result.addAll(controllerAnims);
         }
 
@@ -227,8 +233,10 @@ public final class ProjectileControllerRuntime {
         }
         double result = eval(expression);
         boolean boolResult = Math.abs(result) > 0.000001d;
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] evaluateExpression: '{}' = {} ({})",
-            expression, result, boolResult);
+        if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] evaluateExpression: '{}' = {} ({})",
+                expression, result, boolResult);
+        }
         return boolResult;
     }
 
@@ -650,5 +658,22 @@ public final class ProjectileControllerRuntime {
     /** Called when model caches are cleared (e.g. /ysm reload). */
     public static void clear() {
         STATES.clear();
+    }
+
+    /**
+     * Removes all controller state entries for the given entity ID.
+     * Call when the projectile entity is removed from the world to
+     * prevent stale entries accumulating in {@link #STATES}.
+     */
+    public static void cleanupEntity(int entityId) {
+        STATES.entrySet().removeIf(e -> e.getKey().entityId == entityId);
+    }
+
+    /**
+     * Removes all controller state entries for the given animation ID.
+     * Call when model caches are cleared for a specific model.
+     */
+    public static void cleanupAnimation(ResourceLocation animId) {
+        STATES.entrySet().removeIf(e -> e.getKey().animId.equals(animId));
     }
 }

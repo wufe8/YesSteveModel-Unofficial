@@ -63,7 +63,9 @@ public class ArrowProjectileRenderer {
 
         if (modelId == null || entity == null) return false;
 
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] render start: modelId={}, entity={}", modelId, entity.getEntityId());
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] render start: modelId={}, entity={}", modelId, entity.getEntityId());
+        }
 
         // Find projectile entity type "minecraft:arrow" for this model
         List<String> projTypes = ClientModelManager.PROJECTILE_MODEL_IDS.get(modelId);
@@ -71,7 +73,9 @@ public class ArrowProjectileRenderer {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] no PROJECTILE_MODEL_IDS for {}", modelId);
             return false;
         }
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] projTypes={}", projTypes);
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] projTypes={}", projTypes);
+        }
 
         String arrowType = null;
         for (String t : projTypes) {
@@ -87,21 +91,25 @@ public class ArrowProjectileRenderer {
 
         // Get the projectile GeoModel
         ResourceLocation projGeoId = ModelIdUtil.getSubModelId(modelId, "projectile_" + arrowType);
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] looking for geo: {}", projGeoId);
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] looking for geo: {}", projGeoId);
+        }
         GeoModel projModel = GeckoLibCache.getInstance().getGeoModels().get(projGeoId);
         if (projModel == null) {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] GeoModel not found: {}", projGeoId);
             return false;
         }
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] GeoModel found: topLevelBones={}", 
-            projModel.topLevelBones != null ? projModel.topLevelBones.size() : 0);
-        if (projModel.topLevelBones != null) {
-            for (GeoBone b : projModel.topLevelBones) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW]   bone '{}': cubes={}, childBones={}, hidden={}",
-                    b.name,
-                    b.childCubes != null ? b.childCubes.size() : 0,
-                    b.childBones != null ? b.childBones.size() : 0,
-                    b.isHidden());
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] GeoModel found: topLevelBones={}",
+                projModel.topLevelBones != null ? projModel.topLevelBones.size() : 0);
+            if (projModel.topLevelBones != null) {
+                for (GeoBone b : projModel.topLevelBones) {
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW]   bone '{}': cubes={}, childBones={}, hidden={}",
+                        b.name,
+                        b.childCubes != null ? b.childCubes.size() : 0,
+                        b.childBones != null ? b.childBones.size() : 0,
+                        b.isHidden());
+                }
             }
         }
 
@@ -121,7 +129,9 @@ public class ArrowProjectileRenderer {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] no texture found for {}", modelId);
             return false;
         }
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] texture: {}", projTexId);
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] texture: {}", projTexId);
+        }
 
         // === Do a quick sanity check: dump bone tree once per model in debug mode ===
         if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && DUMPED_TREES.add(projGeoId)) {
@@ -199,8 +209,10 @@ public class ArrowProjectileRenderer {
         double deltaLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
         boolean isInGround = !arrow.isDead
             && (deltaLength < 0.0001 || arrow.onGround);
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] inGround detection: isDead={}, deltaLen={}, onGround={}, isInGround={}",
-            arrow.isDead, deltaLength, arrow.onGround, isInGround);
+        if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] inGround detection: isDead={}, deltaLen={}, onGround={}, isInGround={}",
+                arrow.isDead, deltaLength, arrow.onGround, isInGround);
+        }
         setMolangVar("ysm.in_ground", isInGround ? 1.0 : 0.0);
         setMolangVar("ysm.delta_movement_length", deltaLength);
         // In 1.7.10, arrows are always shot by bows (no crossbow).
@@ -229,23 +241,31 @@ public class ArrowProjectileRenderer {
         // behavior of playing ALL animations (parallel0-7, post_main, etc.).
         List<String> activeAnims;
         boolean hasControllers = com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry.get(projGeoId) != null;
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyProjectileAnimations: entityId={}, animFile={}, animCount={}, hasControllers={}",
-            arrow.getEntityId(), projGeoId,
-            animFile != null && animFile.animations != null ? animFile.animations.size() : 0,
-            hasControllers);
+        if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyProjectileAnimations: entityId={}, animFile={}, animCount={}, hasControllers={}",
+                arrow.getEntityId(), projGeoId,
+                animFile != null && animFile.animations != null ? animFile.animations.size() : 0,
+                hasControllers);
+        }
         if (hasControllers) {
             activeAnims = com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
                 .getActiveAnimations(arrow.getEntityId(), projGeoId, ageInTicks);
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] controller returned {} active anims: {}",
-                activeAnims.size(), activeAnims);
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] controller returned {} active anims: {}",
+                    activeAnims.size(), activeAnims);
+            }
         } else {
             // Legacy: all animations
             activeAnims = new java.util.ArrayList<>(animFile.animations.keySet());
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] no controllers, legacy mode: {} anims", activeAnims.size());
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] no controllers, legacy mode: {} anims", activeAnims.size());
+            }
         }
 
         if (activeAnims.isEmpty()) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] activeAnims empty, rendering bind pose");
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] activeAnims empty, rendering bind pose");
+            }
             return; // No active animations — render in bind pose
         }
 
@@ -253,7 +273,7 @@ public class ArrowProjectileRenderer {
         for (String animName : activeAnims) {
             Animation anim = animFile.animations.get(animName);
             if (anim == null || anim.boneAnimations == null) {
-                if ("parallel0".equals(animName) || "post_main".equals(animName)) {
+                if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("parallel0".equals(animName) || "post_main".equals(animName))) {
                     com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] SKIP anim='{}': anim={} boneAnims={}",
                         animName, anim != null ? "OK" : "NULL",
                         anim != null ? (anim.boneAnimations != null ? anim.boneAnimations.size() : "NULL") : "N/A");
@@ -261,7 +281,7 @@ public class ArrowProjectileRenderer {
                 continue;
             }
 
-            if ("parallel0".equals(animName) || "post_main".equals(animName)) {
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("parallel0".equals(animName) || "post_main".equals(animName))) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] ENTER anim='{}': boneAnimations={}",
                     animName, anim.boneAnimations.size());
                 for (BoneAnimation ba : anim.boneAnimations) {

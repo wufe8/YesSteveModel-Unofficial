@@ -77,6 +77,7 @@ public class CommonEventHandler {
     public static void onWorldUnload(net.minecraftforge.event.world.WorldEvent.Unload event) {
         if (event.world.isRemote) {
             com.fox.ysmu.client.audio.YSMSoundManager.clear();
+            com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.clear();
         }
     }
 

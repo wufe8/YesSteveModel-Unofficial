@@ -116,6 +116,9 @@ public final class ServerModelManager {
             ysmu.LOG.info("[YSMU-MODEL] BUILT dir: {} (exists={})", BUILT, Files.isDirectory(BUILT));
         }
 
+        // /ysm reload: bypass FolderFormat file cache so model developers
+        // always pick up their on-disk changes regardless of timestamps.
+        com.fox.ysmu.model.format.FolderFormat.setSkipCache(true);
         clearModelCaches();
         createConfigDirectories();
         extractBuiltinModels();
@@ -126,6 +129,7 @@ public final class ServerModelManager {
         scanDirectoryPacks(CUSTOM);
         scanDirectoryPacks(BUILT);
         rebuildModelCaches();
+        com.fox.ysmu.model.format.FolderFormat.setSkipCache(false);
 
         if (Config.DEBUG_MODEL_LOAD) {
             ysmu.LOG.info("[YSMU-MODEL] ===== Model reload complete =====");
@@ -147,6 +151,7 @@ public final class ServerModelManager {
         RAW_MODEL_INFO.clear();
         OPEN_YSM_SYNC_INFO.clear();
         PACKS.clear();
+        com.fox.ysmu.model.format.FolderFormat.clearFileCache();
     }
 
     private static void createConfigDirectories() {
