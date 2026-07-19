@@ -24,6 +24,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.google.gson.JsonPrimitive;
 
 import software.bernie.geckolib3.geo.raw.pojo.Converter;
 
@@ -499,10 +500,19 @@ public class YSMFolderDeserializer implements AutoCloseable {
                 JsonObject animObj = entry.getValue().getAsJsonObject();
                 animation.length = (float) getDouble(animObj, "animation_length", 0d);
                 animation.loopMode = parseLoopMode(animObj.get("loop"));
+                if (hasObject(animObj, "blend_weight")) {
+                    animation.blendWeight = animObj.get("blend_weight");
+                }
                 if (hasObject(animObj, "bones")) {
                     for (Map.Entry<String, JsonElement> boneEntry : animObj.getAsJsonObject("bones").entrySet()) {
                         RawYsmModel.RawBoneAnimation bone = new RawYsmModel.RawBoneAnimation();
                         bone.boneName = boneEntry.getKey();
+                        if (boneEntry.getValue().isJsonObject()) {
+                            JsonObject boneObj = boneEntry.getValue().getAsJsonObject();
+                            parseChannelFromJson(bone.rotation, boneObj.get("rotation"));
+                            parseChannelFromJson(bone.position, boneObj.get("position"));
+                            parseChannelFromJson(bone.scale, boneObj.get("scale"));
+                        }
                         animation.boneAnimations.add(bone);
                     }
                 }
@@ -510,6 +520,124 @@ public class YSMFolderDeserializer implements AutoCloseable {
             file.animations.put(animation.name, animation);
         }
         return file;
+    }
+
+    /**
+     * Parse a single bone channel (rotation/position/scale) from JSON into RawKeyframe list.
+     * Handles: string expression, number constant, or object with time-keyframe pairs.
+     */
+    private void parseChannelFromJson(java.util.List<RawYsmModel.RawKeyframe> channel, JsonElement element) {
+        if (element == null || element.isJsonNull()) return;
+        if (element.isJsonPrimitive()) {
+            // Single keyframe at time 0: "scale": "expression" or "scale": 0.0
+            RawYsmModel.RawKeyframe kf = new RawYsmModel.RawKeyframe();
+            kf.timestamp = 0f;
+            kf.interpolationMode = 0;
+            kf.hasPreData = false;
+            String strVal = element.getAsJsonPrimitive().isNumber()
+                ? Float.toString(element.getAsFloat())
+                : element.getAsString();
+            kf.postData = new Object[]{strVal, strVal, strVal};
+            channel.add(kf);
+            return;
+        }
+        if (!element.isJsonObject()) return;
+        JsonObject obj = element.getAsJsonObject();
+        // Check if this is a Molang array (has "vector") — currently not used in animations
+        // Iterate time-keyed entries: "0.0": ..., "0.0833": ...
+        for (java.util.Map.Entry<String, JsonElement> kfEntry : obj.entrySet()) {
+            String timeStr = kfEntry.getKey();
+            JsonElement val = kfEntry.getValue();
+            float time;
+            try { time = Float.parseFloat(timeStr); } catch (NumberFormatException e) { continue; }
+            RawYsmModel.RawKeyframe kf = parseSingleKeyframe(val);
+            if (kf != null) {
+                kf.timestamp = time;
+                channel.add(kf);
+            }
+        }
+    }
+
+    /**
+     * Parse a single keyframe value into RawKeyframe (without timestamp).
+     * Handles: [x,y,z] array, {"pre":...,"post":...} object, or primitive.
+     */
+    private RawYsmModel.RawKeyframe parseSingleKeyframe(JsonElement element) {
+        if (element == null || element.isJsonNull()) return null;
+        RawYsmModel.RawKeyframe kf = new RawYsmModel.RawKeyframe();
+        kf.interpolationMode = 0;
+        if (element.isJsonArray()) {
+            // [x, y, z] — simple array
+            kf.hasPreData = false;
+            kf.postData = readMolangArray(element.getAsJsonArray());
+            return kf;
+        }
+        if (!element.isJsonObject()) {
+            // Primitive: number or string, expand to [val, val, val]
+            kf.hasPreData = false;
+            String str = element.getAsJsonPrimitive().isNumber()
+                ? Float.toString(element.getAsFloat())
+                : element.getAsString();
+            kf.postData = new Object[]{str, str, str};
+            return kf;
+        }
+        JsonObject obj = element.getAsJsonObject();
+        // {"pre":..., "post":..., "lerp_mode":...}
+        if (obj.has("pre") || obj.has("post")) {
+            boolean hasPre = obj.has("pre");
+            kf.hasPreData = hasPre;
+            JsonElement preElem = hasPre ? obj.get("pre") : null;
+            if (hasPre) {
+                if (preElem.isJsonArray()) {
+                    kf.preData = readMolangArray(preElem.getAsJsonArray());
+                } else {
+                    String s = preElem.getAsJsonPrimitive().isNumber()
+                        ? Float.toString(preElem.getAsFloat())
+                        : preElem.getAsString();
+                    kf.preData = new Object[]{s, s, s};
+                }
+            }
+            JsonElement postElem = obj.get("post");
+            if (postElem.isJsonArray()) {
+                kf.postData = readMolangArray(postElem.getAsJsonArray());
+            } else {
+                String s = postElem.getAsJsonPrimitive().isNumber()
+                    ? Float.toString(postElem.getAsFloat())
+                    : postElem.getAsString();
+                kf.postData = new Object[]{s, s, s};
+            }
+            if (obj.has("lerp_mode")) {
+                String lm = obj.get("lerp_mode").getAsString();
+                if ("step".equals(lm)) kf.interpolationMode = 1;
+                else if ("catmullrom".equals(lm)) kf.interpolationMode = 2;
+            }
+            return kf;
+        }
+        // Unknown object format — treat as [val, val, val] from "vector" or just skip
+        if (obj.has("vector")) {
+            kf.hasPreData = false;
+            kf.postData = readMolangArray(obj.getAsJsonArray("vector"));
+            return kf;
+        }
+        return null;
+    }
+
+    private Object[] readMolangArray(JsonArray arr) {
+        Object[] result = new Object[3];
+        for (int i = 0; i < 3 && i < arr.size(); i++) {
+            JsonElement e = arr.get(i);
+            if (e.isJsonPrimitive()) {
+                JsonPrimitive p = e.getAsJsonPrimitive();
+                if (p.isNumber()) {
+                    result[i] = p.getAsFloat();
+                } else {
+                    result[i] = p.getAsString();
+                }
+            } else {
+                result[i] = 0f;
+            }
+        }
+        return result;
     }
 
     private static int parseLoopMode(JsonElement loop) {

@@ -236,7 +236,30 @@ public class ArrowProjectileRenderer {
         // Only apply keyframes from the active animations
         for (String animName : activeAnims) {
             Animation anim = animFile.animations.get(animName);
-            if (anim == null || anim.boneAnimations == null) continue;
+            if (anim == null || anim.boneAnimations == null) {
+                if ("parallel0".equals(animName) || "post_main".equals(animName)) {
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] SKIP anim='{}': anim={} boneAnims={}",
+                        animName, anim != null ? "OK" : "NULL",
+                        anim != null ? (anim.boneAnimations != null ? anim.boneAnimations.size() : "NULL") : "N/A");
+                }
+                continue;
+            }
+
+            if ("parallel0".equals(animName) || "post_main".equals(animName)) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] ENTER anim='{}': boneAnimations={}",
+                    animName, anim.boneAnimations.size());
+                for (BoneAnimation ba : anim.boneAnimations) {
+                    boolean hasScale = ba.scaleKeyFrames != null
+                        && ba.scaleKeyFrames.xKeyFrames != null
+                        && !ba.scaleKeyFrames.xKeyFrames.isEmpty();
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW]   bone='{}' scaleKF={} rotKF={} posKF={}",
+                        ba.boneName, hasScale,
+                        ba.rotationKeyFrames != null && ba.rotationKeyFrames.xKeyFrames != null
+                            ? ba.rotationKeyFrames.xKeyFrames.size() : 0,
+                        ba.positionKeyFrames != null && ba.positionKeyFrames.xKeyFrames != null
+                            ? ba.positionKeyFrames.xKeyFrames.size() : 0);
+                }
+            }
 
             double animLength = anim.animationLength != null ? anim.animationLength : 0;
             double animTick;
@@ -253,6 +276,17 @@ public class ArrowProjectileRenderer {
                 if (bone == null) continue;
 
                 BoneSnapshot snap = bone.getInitialSnapshot();
+
+                // Debug: log keyframe info for parallel0's critical bones
+                if (com.fox.ysmu.Config.DEBUG_ANIMATION && "parallel0".equals(animName)
+                    && ("bow".equals(boneAnim.boneName) || "crossbow".equals(boneAnim.boneName))) {
+                    String skf = (boneAnim.scaleKeyFrames != null
+                        && boneAnim.scaleKeyFrames.xKeyFrames != null
+                        && !boneAnim.scaleKeyFrames.xKeyFrames.isEmpty())
+                        ? "hasScaleKF" : "NO_SCALE_KF";
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW]   anim='{}' bone='{}': {}",
+                        animName, boneAnim.boneName, skf);
+                }
 
                 // Apply rotation keyframes
                 applyKeyFrameList(bone, boneAnim.rotationKeyFrames, animTick,
@@ -375,9 +409,24 @@ public class ArrowProjectileRenderer {
 
     private static void applyKeyFrameListScale(GeoBone bone, VectorKeyFrameList<KeyFrame<IValue>> frames,
         double tick, double snapX, double snapY, double snapZ) {
-        if (frames == null) return;
+        if (frames == null) {
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("bow".equals(bone.name) || "crossbow".equals(bone.name))) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyKeyFrameListScale('{}'): frames=null, snap=({},{},{})",
+                    bone.name, snapX, snapY, snapZ);
+            }
+            return;
+        }
         float[] result = evaluateKeyFrameList(frames, tick);
         if (result != null) {
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("bow".equals(bone.name) || "crossbow".equals(bone.name))) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyKeyFrameListScale('{}'): kfResult=({},{},{}), snap=({},{},{}), xLen={}, yLen={}, zLen={}",
+                    bone.name,
+                    result[0], result[1], result[2],
+                    snapX, snapY, snapZ,
+                    frames.xKeyFrames != null ? frames.xKeyFrames.size() : 0,
+                    frames.yKeyFrames != null ? frames.yKeyFrames.size() : 0,
+                    frames.zKeyFrames != null ? frames.zKeyFrames.size() : 0);
+            }
             bone.setScaleX((float) (result[0] * snapX));  // Scale is multiplicative, not additive
             bone.setScaleY((float) (result[1] * snapY));
             bone.setScaleZ((float) (result[2] * snapZ));
