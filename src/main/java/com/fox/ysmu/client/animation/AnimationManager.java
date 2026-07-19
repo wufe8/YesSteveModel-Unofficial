@@ -812,12 +812,6 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        // 剑右键格挡时抑制 use 动画（hold_mainhand:sword 已提供静态持剑姿势）
-        net.minecraft.item.ItemStack heldItemStack = player.getHeldItem();
-        if (heldItemStack != null && heldItemStack.getItemUseAction() == net.minecraft.item.EnumAction.block
-            && player.isUsingItem()) {
-            return PlayState.STOP;
-        }
         if (player.isUsingItem() && !player.isPlayerSleeping()) {
             if (markUseStart(player)) {
                 event.getController().shouldResetTick = true;
@@ -830,7 +824,25 @@ public final class AnimationManager {
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 return playAnimation(event, conditionalAnimation);
             }
-            return playAnimation(event, isMainHand ? "use_mainhand" : "use_offhand", ILoopType.EDefaultLoopTypes.LOOP);
+            // 剑右键格挡：将 use_mainhand 动画长度设为 2.0s，
+            // 配合 HOLD_ON_LAST_FRAME 让动画自然停在格挡姿态。
+            boolean isBlocking = player.getHeldItem() != null
+                && player.getHeldItem().getItemUseAction() == net.minecraft.item.EnumAction.block;
+            String fallbackAnim = isMainHand ? "use_mainhand" : "use_offhand";
+            if (isBlocking) {
+                ResourceLocation animId = getAnimationId(event);
+                if (animId != null) {
+                    software.bernie.geckolib3.file.AnimationFile f = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
+                    if (f != null) {
+                        software.bernie.geckolib3.core.builder.Animation a = f.getAnimation(fallbackAnim);
+                        if (a != null) {
+                            a.animationLength = 2.0;
+                        }
+                    }
+                }
+                return playAnimation(event, fallbackAnim, ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME);
+            }
+            return playAnimation(event, fallbackAnim, ILoopType.EDefaultLoopTypes.LOOP);
         }
         useDurationByPlayer.remove(player.getUniqueID());
         com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
