@@ -212,15 +212,24 @@ public class ArrowProjectileRenderer {
         // If the model has no controllers registered, fall back to the legacy
         // behavior of playing ALL animations (parallel0-7, post_main, etc.).
         List<String> activeAnims;
-        if (com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry.get(projGeoId) != null) {
+        boolean hasControllers = com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry.get(projGeoId) != null;
+        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyProjectileAnimations: entityId={}, animFile={}, animCount={}, hasControllers={}",
+            arrow.getEntityId(), projGeoId,
+            animFile != null && animFile.animations != null ? animFile.animations.size() : 0,
+            hasControllers);
+        if (hasControllers) {
             activeAnims = com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
                 .getActiveAnimations(arrow.getEntityId(), projGeoId, ageInTicks);
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] controller returned {} active anims: {}",
+                activeAnims.size(), activeAnims);
         } else {
             // Legacy: all animations
             activeAnims = new java.util.ArrayList<>(animFile.animations.keySet());
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] no controllers, legacy mode: {} anims", activeAnims.size());
         }
 
         if (activeAnims.isEmpty()) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] activeAnims empty, rendering bind pose");
             return; // No active animations — render in bind pose
         }
 
@@ -259,6 +268,49 @@ public class ArrowProjectileRenderer {
                     snap.scaleValueX, snap.scaleValueY, snap.scaleValueZ);
             }
         }
+
+        // Debug: dump bone scales after all animations applied
+        if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+            for (GeoBone bone : model.topLevelBones) {
+                if (bone == null) continue;
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] bone '{}' final: scale=({},{},{}) pos=({},{},{}) rot=({},{},{})",
+                    bone.name,
+                    bone.getScaleX(), bone.getScaleY(), bone.getScaleZ(),
+                    bone.getPositionX(), bone.getPositionY(), bone.getPositionZ(),
+                    bone.getRotationX(), bone.getRotationY(), bone.getRotationZ());
+                dumpBoneScales(bone.childBones, 1);
+            }
+            // Also dump Molang variable values that drive the animations
+            dumpMolangVars();
+        }
+    }
+
+    private static void dumpBoneScales(java.util.List<GeoBone> bones, int depth) {
+        if (bones == null) return;
+        for (GeoBone bone : bones) {
+            if (bone == null) continue;
+            StringBuilder indent = new StringBuilder();
+            for (int i = 0; i < depth; i++) indent.append("  ");
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] {}bone '{}' final: scale=({},{},{})",
+                indent.toString(), bone.name,
+                bone.getScaleX(), bone.getScaleY(), bone.getScaleZ());
+            dumpBoneScales(bone.childBones, depth + 1);
+        }
+    }
+
+    private static void dumpMolangVars() {
+        double shootId = 0.0, inGround = 0.0, deltaLength = 0.0, onGroundTime = 0.0;
+        software.bernie.geckolib3.core.molang.LazyVariable v;
+        v = MolangParser.VARIABLES.get("ysm.shoot_item_id");
+        if (v != null) shootId = v.get();
+        v = MolangParser.VARIABLES.get("ysm.in_ground");
+        if (v != null) inGround = v.get();
+        v = MolangParser.VARIABLES.get("ysm.delta_movement_length");
+        if (v != null) deltaLength = v.get();
+        v = MolangParser.VARIABLES.get("ysm.on_ground_time");
+        if (v != null) onGroundTime = v.get();
+        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] Molang vars: ysm.shoot_item_id={}, ysm.in_ground={}, ysm.delta_movement_length={}, ysm.on_ground_time={}",
+            shootId, inGround, deltaLength, onGroundTime);
     }
 
     private static void saveInitialSnapshots(List<GeoBone> bones) {

@@ -308,12 +308,28 @@ public class ClientModelManager {
             GeckoLibCache.getInstance().getAnimations().put(ModelIdUtil.getMainId(modelId), bundle.animationFile);
         }
         // Register projectile animations under their own GeoModel IDs
+        if (!bundle.projAnimationFiles.isEmpty() && com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] applyPreParsed: registering {} projectile animations for {}",
+                bundle.projAnimationFiles.size(), modelId);
+            for (Map.Entry<ResourceLocation, AnimationFile> e : bundle.projAnimationFiles.entrySet()) {
+                ysmu.LOG.info("[YSMU-MODEL]   proj anim: id={}, animCount={}",
+                    e.getKey(), e.getValue().animations != null ? e.getValue().animations.size() : 0);
+            }
+        }
         for (Map.Entry<ResourceLocation, AnimationFile> e : bundle.projAnimationFiles.entrySet()) {
             if (!e.getValue().animations.isEmpty()) {
                 GeckoLibCache.getInstance().getAnimations().put(e.getKey(), e.getValue());
             }
         }
         // Register projectile controllers under their own animation IDs
+        if (!bundle.projControllerFiles.isEmpty() && com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] applyPreParsed: registering {} projectile controllers for {}",
+                bundle.projControllerFiles.size(), modelId);
+            for (Map.Entry<ResourceLocation, byte[]> e : bundle.projControllerFiles.entrySet()) {
+                ysmu.LOG.info("[YSMU-MODEL]   proj controller: id={}, bytes={}",
+                    e.getKey(), e.getValue() != null ? e.getValue().length : 0);
+            }
+        }
         for (Map.Entry<ResourceLocation, byte[]> e : bundle.projControllerFiles.entrySet()) {
             OpenYsmAnimationControllerRegistry.register(e.getKey(), java.util.Collections.singleton(e.getValue()));
         }

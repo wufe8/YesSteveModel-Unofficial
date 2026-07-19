@@ -15,6 +15,7 @@ import org.apache.commons.io.FileUtils;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientModelManager;
+import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.model.ServerModelManager;
 import com.fox.ysmu.model.resource.RawYsmModelAdapter;
@@ -372,6 +373,81 @@ public final class OpenYsmModelSyncClient {
                         ClientModelManager.PROJECTILE_TEXTURE_IDS
                             .computeIfAbsent(baseModelId, k -> new ArrayList<>())
                             .add(texId);
+                    }
+
+                    // Register animation files under the projectile's GeoModel ID
+                    ResourceLocation projAnimId = ModelIdUtil.getSubModelId(baseModelId, "projectile_" + matchId);
+                    for (RawYsmModel.RawAnimationFile animFile : sub.animationFiles.values()) {
+                        if (animFile.animations == null || animFile.animations.isEmpty()) continue;
+                        try {
+                            // Binary-format models don't have sourceJson; re-serialize from structured data.
+                            byte[] jsonBytes = animFile.sourceJson != null
+                                ? animFile.sourceJson
+                                : com.fox.ysmu.model.resource.RawYsmModelAdapter.createAnimationJson(animFile);
+                            String json = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
+                            com.google.gson.JsonObject jsonObject = com.fox.ysmu.util.GsonHelper.fromJson(
+                                com.fox.ysmu.ysmu.GSON, json, com.google.gson.JsonObject.class);
+                            if (jsonObject == null) continue;
+                            software.bernie.geckolib3.file.AnimationFile parsedAnim =
+                                new software.bernie.geckolib3.file.AnimationFile();
+                            software.bernie.geckolib3.core.molang.MolangParser parser =
+                                software.bernie.geckolib3.resource.GeckoLibCache.getInstance().parser;
+                            for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae
+                                : software.bernie.geckolib3.util.json.JsonAnimationUtils.getAnimations(jsonObject)) {
+                                try {
+                                    software.bernie.geckolib3.core.builder.Animation anim =
+                                        software.bernie.geckolib3.util.json.JsonAnimationUtils
+                                            .deserializeJsonToAnimation(ae, parser);
+                                    parsedAnim.putAnimation(ae.getKey(), anim);
+                                } catch (Exception ex) {
+                                    ysmu.LOG.warn("Failed to deserialize projectile animation '{}': {}",
+                                        ae.getKey(), ex.getMessage());
+                                }
+                            }
+                            if (!parsedAnim.animations.isEmpty()) {
+                                // Merge into a single AnimationFile per projectile
+                                software.bernie.geckolib3.file.AnimationFile existing =
+                                    software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations()
+                                        .get(projAnimId);
+                                if (existing == null) {
+                                    existing = new software.bernie.geckolib3.file.AnimationFile();
+                                    software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations()
+                                        .put(projAnimId, existing);
+                                }
+                                for (java.util.Map.Entry<String, software.bernie.geckolib3.core.builder.Animation> ae
+                                    : parsedAnim.animations.entrySet()) {
+                                    existing.putAnimation(ae.getKey(), ae.getValue());
+                                }
+                                if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+                                    ysmu.LOG.info("[YSMU-MODEL] Registered projectile animation for {}: {} anims from {}",
+                                        projAnimId, parsedAnim.animations.size(), animFile.fileHash);
+                                }
+                            }
+                        } catch (Exception e) {
+                            ysmu.LOG.warn("Failed to parse projectile animation for {}: {}",
+                                projAnimId, e.getMessage());
+                        }
+                    }
+
+                    // Register controller files under the projectile's animation ID
+                    for (RawYsmModel.RawAnimationControllerFile ctrlFile : sub.animationControllerFiles) {
+                        if (ctrlFile.controllers == null || ctrlFile.controllers.isEmpty()) continue;
+                        try {
+                            // Binary-format models don't have sourceJson; re-serialize from structured data.
+                            byte[] ctrlBytes = ctrlFile.sourceJson != null
+                                ? ctrlFile.sourceJson
+                                : com.fox.ysmu.model.resource.RawYsmModelAdapter.createControllerJson(ctrlFile);
+                            OpenYsmAnimationControllerRegistry.register(projAnimId,
+                                java.util.Collections.singleton(ctrlBytes));
+                            if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+                                ysmu.LOG.info("[YSMU-MODEL] Registered projectile controller for {}: '{}' ({} states)",
+                                    projAnimId, ctrlFile.name,
+                                    ctrlFile.controllers.size());
+                            }
+                        } catch (Exception e) {
+                            ysmu.LOG.warn("Failed to register projectile controller for {}: {}",
+                                projAnimId, e.getMessage());
+                        }
                     }
                 } catch (Exception e) {
                     ysmu.LOG.warn("Failed to register projectile {} for model {}",

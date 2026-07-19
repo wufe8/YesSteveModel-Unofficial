@@ -428,6 +428,22 @@ public class YSMFolderDeserializer implements AutoCloseable {
                     }
                 }
             }
+            if (item.has("controller")) {
+                for (JsonElement ctrlElem : asIterable(item.get("controller"))) {
+                    if (!ctrlElem.isJsonPrimitive()) {
+                        continue;
+                    }
+                    byte[] ctrlData = readResource(ctrlElem.getAsString());
+                    if (ctrlData != null) {
+                        RawYsmModel.RawAnimationControllerFile ctrlFile = new RawYsmModel.RawAnimationControllerFile();
+                        ctrlFile.name = extractFileName(ctrlElem.getAsString());
+                        ctrlFile.hash = sha256Hex(ctrlData);
+                        ctrlFile.sourceJson = ctrlData;
+                        parseAnimationControllers(ctrlData, ctrlFile.controllers);
+                        sub.animationControllerFiles.add(ctrlFile);
+                    }
+                }
+            }
             targetMap.put(sub.identifier, sub);
             index++;
         }

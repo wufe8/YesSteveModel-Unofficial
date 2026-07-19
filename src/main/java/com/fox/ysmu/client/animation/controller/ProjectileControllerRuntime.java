@@ -90,15 +90,55 @@ public final class ProjectileControllerRuntime {
     public static List<String> getActiveAnimations(int entityId, ResourceLocation animId, double ageInTicks) {
         ControllerSet set = OpenYsmAnimationControllerRegistry.get(animId);
         if (set == null || set.controllers.isEmpty()) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] getActiveAnimations: no controllers for {}, entityId={}",
+                animId, entityId);
             return Collections.emptyList();
         }
 
+        com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] getActiveAnimations: entityId={}, animId={}, controllerCount={}, names={}",
+            entityId, animId, set.controllers.size(), set.controllers.keySet());
+
+        // Collect all animation names referenced by any controller state
+        java.util.Set<String> managedAnims = new java.util.HashSet<>();
+        for (Controller c : set.controllers.values()) {
+            for (State s : c.states.values()) {
+                for (AnimationEntry ae : s.animations) {
+                    managedAnims.add(ae.animationName);
+                }
+            }
+        }
+
+        // Evaluate controller state machines for active animations
         List<String> result = new ArrayList<>();
         for (Controller controller : set.controllers.values()) {
             List<String> controllerAnims = evaluateController(entityId, animId, controller, ageInTicks);
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL]   controller '{}': state='{}', anims={}",
+                controller.name,
+                getCurrentStateName(entityId, animId, controller.name),
+                controllerAnims);
             result.addAll(controllerAnims);
         }
+
+        // Include unmanaged animations (e.g. parallel0-7) that are not referenced
+        // by any controller state. These are pass-through animations that handle
+        // bone visibility and should always play alongside controller-managed ones.
+        software.bernie.geckolib3.file.AnimationFile animFile =
+            software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
+        if (animFile != null && animFile.animations != null) {
+            for (String animName : animFile.animations.keySet()) {
+                if (!managedAnims.contains(animName) && !result.contains(animName)) {
+                    result.add(animName);
+                }
+            }
+        }
+
         return result;
+    }
+
+    private static String getCurrentStateName(int entityId, ResourceLocation animId, String controllerName) {
+        StateKey key = new StateKey(entityId, animId, controllerName);
+        RuntimeState rs = STATES.get(key);
+        return rs != null ? rs.currentState : "(no state)";
     }
 
     /**
@@ -184,7 +224,10 @@ public final class ProjectileControllerRuntime {
             return true;
         }
         double result = eval(expression);
-        return Math.abs(result) > 0.000001d;
+        boolean boolResult = Math.abs(result) > 0.000001d;
+        com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] evaluateExpression: '{}' = {} ({})",
+            expression, result, boolResult);
+        return boolResult;
     }
 
     /**

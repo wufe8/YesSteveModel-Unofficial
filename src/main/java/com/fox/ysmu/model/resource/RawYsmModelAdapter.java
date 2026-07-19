@@ -775,7 +775,7 @@ public final class RawYsmModelAdapter {
         return false;
     }
 
-    private static byte[] createAnimationJson(RawYsmModel.RawAnimationFile animationFile) {
+    public static byte[] createAnimationJson(RawYsmModel.RawAnimationFile animationFile) {
         JsonObject root = new JsonObject();
         root.addProperty("format_version", ANIMATION_FORMAT_VERSION);
         JsonObject animations = new JsonObject();
@@ -984,7 +984,7 @@ public final class RawYsmModelAdapter {
         }
     }
 
-    private static byte[] createControllerJson(RawYsmModel.RawAnimationControllerFile file) {
+    public static byte[] createControllerJson(RawYsmModel.RawAnimationControllerFile file) {
         JsonObject root = new JsonObject();
         root.addProperty("format_version", "1.19.0");
         JsonObject controllers = new JsonObject();
