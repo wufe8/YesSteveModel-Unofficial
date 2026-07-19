@@ -31,6 +31,7 @@ import software.bernie.geckolib3.geo.render.built.GeoModel;
 import software.bernie.geckolib3.geo.render.built.GeoQuad;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 import software.bernie.geckolib3.core.builder.Animation;
+import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.snapshot.BoneSnapshot;
 
 import com.eliotlash.mclib.math.IValue;
@@ -40,6 +41,16 @@ import com.eliotlash.mclib.math.IValue;
  * Called from the RenderArrow mixin when the arrow has a custom model ID.
  */
 public class ArrowProjectileRenderer {
+
+    // Track which projectile GeoModels have had their bone tree dumped to
+    // avoid re-printing the massive tree every frame when DEBUG_MODEL_LOAD is on.
+    private static final java.util.Set<ResourceLocation> DUMPED_TREES =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
+    /** Reset the dedup tracker so bone trees dump again on next render (after reload). */
+    public static void clearDumpedTrees() {
+        DUMPED_TREES.clear();
+    }
 
     /**
      * Try to render a custom projectile model for the given entity and model ID.
@@ -112,8 +123,8 @@ public class ArrowProjectileRenderer {
         }
         com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] texture: {}", projTexId);
 
-        // === Do a quick sanity check: dump bone tree in debug mode ===
-        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        // === Do a quick sanity check: dump bone tree once per model in debug mode ===
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && DUMPED_TREES.add(projGeoId)) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] === Full bone tree dump for {} ===", projGeoId);
             dumpBoneTree(projModel.topLevelBones, 0);
         }
@@ -178,14 +189,19 @@ public class ArrowProjectileRenderer {
 
         // Set projectile-specific Molang variables into the shared parser context.
         // MolangParser.VARIABLES is a static map shared across all evaluation.
-        // Detect in-ground state from motion (inGround is private in 1.7.10 EntityArrow).
-        boolean isInGround = !arrow.isDead
-            && arrow.motionX * arrow.motionX + arrow.motionY * arrow.motionY + arrow.motionZ * arrow.motionZ < 0.0001;
-        setMolangVar("ysm.in_ground", isInGround ? 1.0 : 0.0);
+        // Detect in-ground state: check position delta instead of motion.
+        // In 1.7.10 EntityArrow, motionX/Y/Z may retain non-zero values even
+        // when the arrow is stuck (onCollide doesn't always clear them).
+        // Position delta (prevPos vs pos) is more reliable.
         double dx = arrow.posX - arrow.prevPosX;
         double dy = arrow.posY - arrow.prevPosY;
         double dz = arrow.posZ - arrow.prevPosZ;
         double deltaLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        boolean isInGround = !arrow.isDead
+            && (deltaLength < 0.0001 || arrow.onGround);
+        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] inGround detection: isDead={}, deltaLen={}, onGround={}, isInGround={}",
+            arrow.isDead, deltaLength, arrow.onGround, isInGround);
+        setMolangVar("ysm.in_ground", isInGround ? 1.0 : 0.0);
         setMolangVar("ysm.delta_movement_length", deltaLength);
         // In 1.7.10, arrows are always shot by bows (no crossbow).
         // The animation's parallel0 uses:
@@ -264,8 +280,17 @@ public class ArrowProjectileRenderer {
             double animLength = anim.animationLength != null ? anim.animationLength : 0;
             double animTick;
             if (animLength > 0) {
-                // Wrap animation time for looping
-                animTick = ageInTicks % animLength;
+                // For non-looping animations (PLAY_ONCE, HOLD_ON_LAST_FRAME),
+                // clamp the time to animation length — do NOT wrap with %.
+                // Wrapping causes the animation to restart repeatedly, which
+                // makes bone scales like Arrow_E oscillate between 0 and 1.
+                boolean isLooping = anim.loop != null && anim.loop.isRepeatingAfterEnd()
+                    && anim.loop != ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
+                if (isLooping) {
+                    animTick = ageInTicks % animLength;
+                } else {
+                    animTick = Math.min(ageInTicks, animLength);
+                }
             } else {
                 animTick = ageInTicks;
             }
@@ -358,6 +383,11 @@ public class ArrowProjectileRenderer {
     private static void resetBonesToSnapshot(List<GeoBone> bones) {
         if (bones == null) return;
         for (GeoBone bone : bones) {
+            // Clear any persistent hidden state so renderRecursively's
+            // scale=(0,0,0) check is the sole visibility gatekeeper.
+            if (bone.isHidden()) {
+                bone.setHidden(false);
+            }
             BoneSnapshot snap = bone.getInitialSnapshot();
             if (snap != null) {
                 bone.setRotationX(snap.rotationValueX);

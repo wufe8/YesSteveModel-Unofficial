@@ -74,6 +74,7 @@ public final class OpenYsmAnimationControllerRegistry {
         WARNED.clear();
         OpenYsmPlayerControllerRuntime.clear();
         ProjectileControllerRuntime.clear();
+        com.fox.ysmu.client.renderer.ArrowProjectileRenderer.clearDumpedTrees();
     }
 
     static void warnOnce(String key, String message) {

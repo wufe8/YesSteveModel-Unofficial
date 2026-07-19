@@ -122,6 +122,8 @@ public final class ProjectileControllerRuntime {
         // Include unmanaged animations (e.g. parallel0-7) that are not referenced
         // by any controller state. These are pass-through animations that handle
         // bone visibility and should always play alongside controller-managed ones.
+        // The animations themselves already use ysm.in_ground expressions to control
+        // bone visibility (e.g. Arrow_ scale = !ysm.in_ground hides glow children on ground).
         software.bernie.geckolib3.file.AnimationFile animFile =
             software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
         if (animFile != null && animFile.animations != null) {
