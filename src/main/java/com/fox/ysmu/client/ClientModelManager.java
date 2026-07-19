@@ -307,6 +307,16 @@ public class ClientModelManager {
         if (!bundle.animationFile.animations.isEmpty()) {
             GeckoLibCache.getInstance().getAnimations().put(ModelIdUtil.getMainId(modelId), bundle.animationFile);
         }
+        // Register projectile animations under their own GeoModel IDs
+        for (Map.Entry<ResourceLocation, AnimationFile> e : bundle.projAnimationFiles.entrySet()) {
+            if (!e.getValue().animations.isEmpty()) {
+                GeckoLibCache.getInstance().getAnimations().put(e.getKey(), e.getValue());
+            }
+        }
+        // Register projectile controllers under their own animation IDs
+        for (Map.Entry<ResourceLocation, byte[]> e : bundle.projControllerFiles.entrySet()) {
+            OpenYsmAnimationControllerRegistry.register(e.getKey(), java.util.Collections.singleton(e.getValue()));
+        }
         // Apply molang mappings
         if (!bundle.molangMapping.isEmpty()) {
             AnimationManager.MOLANG_STATE_MAP.put(ModelIdUtil.getMainId(modelId), bundle.molangMapping);
@@ -518,6 +528,25 @@ public class ClientModelManager {
                     com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseConditionalAnimations(animData);
                 for (Map.Entry<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> ce : condParsed.entrySet()) {
                     bundle.molangConditional.merge(ce.getKey(), ce.getValue(), (a, b) -> { a.addAll(b); return a; });
+                }
+                continue;
+            }
+            // Projectile controller keys: registered under the projectile's own animation ID
+            if (key.startsWith("projectile_ctrl_")) {
+                String projKey = key.substring("projectile_ctrl_".length());
+                ResourceLocation projAnimId = ModelIdUtil.getSubModelId(modelId, "projectile_" + projKey);
+                bundle.projControllerFiles.put(projAnimId, animData);
+                continue;
+            }
+            // Projectile animation keys: parsed as AnimationFile and registered under projectile GeoModel ID
+            if (key.startsWith(PROJECTILE_KEY_PREFIX)) {
+                try {
+                    AnimationFile projAnim = getAnimationFile(new String(animData, StandardCharsets.UTF_8));
+                    ResourceLocation projAnimId = ModelIdUtil.getSubModelId(modelId, key);
+                    bundle.projAnimationFiles.put(projAnimId, projAnim);
+                } catch (Exception e) {
+                    ysmu.LOG.warn("Failed to parse projectile animation {} for model {}: {}",
+                        key, modelId, e.getMessage());
                 }
                 continue;
             }

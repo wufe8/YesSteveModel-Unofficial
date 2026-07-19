@@ -145,10 +145,12 @@ public final class FolderFormat {
             texture.put(fileName, getBytes(modelPath, fileName));
         }
 
-        // Load projectile sub-entity models/textures from ysm.json with projectile_ prefix.
-        loadProjectiles(modelPath, model, texture);
+        // Load projectile sub-entity models/textures/animations/controllers from ysm.json
+        Map<String, byte[]> projAnimations = Maps.newHashMap();
+        loadProjectiles(modelPath, model, texture, projAnimations);
 
         Map<String, byte[]> animation = Maps.newHashMap();
+        animation.putAll(projAnimations);
         animation.put("main", getBytes(modelPath, MAIN_ANIMATION_FILE_NAME));
         animation.put("arm", getBytes(modelPath, ARM_ANIMATION_FILE_NAME));
         animation.put("extra", getBytes(modelPath, EXTRA_ANIMATION_FILE_NAME));
@@ -157,11 +159,12 @@ public final class FolderFormat {
     }
 
     /**
-     * Parse ysm.json's files.projectiles section and add projectile models
-     * and textures with the "projectile_" prefix expected by ClientModelManager.
+     * Parse ysm.json's files.projectiles section and add projectile models,
+     * textures, animation files, and controller files with the "projectile_"
+     * prefix expected by ClientModelManager.
      */
     private static void loadProjectiles(Path modelPath, Map<String, byte[]> model,
-        Map<String, byte[]> texture) throws IOException {
+        Map<String, byte[]> texture, Map<String, byte[]> animation) throws IOException {
         Path ysmJsonPath = modelPath.resolve("ysm.json");
         if (!ysmJsonPath.toFile().isFile()) return;
 
@@ -217,8 +220,27 @@ public final class FolderFormat {
                 }
             }
 
-            // Projectile animation is loaded separately by the animation
-            // pipeline under the projectile model ID; no-op here.
+            // Load projectile animation file and store with projectile_ prefix key
+            // so parseAnimationsToBundle registers it under the projectile GeoModel ID.
+            JsonElement animElem = projObj.get("animation");
+            if (animElem != null) {
+                String animPathStr = animElem.getAsString();
+                Path animFile = modelPath.resolve(animPathStr);
+                if (animFile.toFile().isFile()) {
+                    animation.put("projectile_" + projKey, FileUtils.readFileToByteArray(animFile.toFile()));
+                }
+            }
+
+            // Load projectile controller file and store with projectile_ctrl_ prefix key
+            // so parseAnimationsToBundle can register it under the projectile's animation ID.
+            JsonElement ctrlElem = projObj.get("controller");
+            if (ctrlElem != null) {
+                String ctrlPathStr = ctrlElem.getAsString();
+                Path ctrlFile = modelPath.resolve(ctrlPathStr);
+                if (ctrlFile.toFile().isFile()) {
+                    animation.put("projectile_ctrl_" + projKey, FileUtils.readFileToByteArray(ctrlFile.toFile()));
+                }
+            }
         }
     }
 

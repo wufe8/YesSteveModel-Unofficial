@@ -208,9 +208,25 @@ public class ArrowProjectileRenderer {
         // Reset all bones to their initial snapshot before applying animations
         resetBonesToSnapshot(model.topLevelBones);
 
-        // Process all animations in the animation file
-        for (java.util.Map.Entry<String, Animation> entry : animFile.animations.entrySet()) {
-            Animation anim = entry.getValue();
+        // Determine which animations should play via the controller system.
+        // If the model has no controllers registered, fall back to the legacy
+        // behavior of playing ALL animations (parallel0-7, post_main, etc.).
+        List<String> activeAnims;
+        if (com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry.get(projGeoId) != null) {
+            activeAnims = com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
+                .getActiveAnimations(arrow.getEntityId(), projGeoId, ageInTicks);
+        } else {
+            // Legacy: all animations
+            activeAnims = new java.util.ArrayList<>(animFile.animations.keySet());
+        }
+
+        if (activeAnims.isEmpty()) {
+            return; // No active animations — render in bind pose
+        }
+
+        // Only apply keyframes from the active animations
+        for (String animName : activeAnims) {
+            Animation anim = animFile.animations.get(animName);
             if (anim == null || anim.boneAnimations == null) continue;
 
             double animLength = anim.animationLength != null ? anim.animationLength : 0;

@@ -43,6 +43,10 @@ public class PreParsedModelBundle {
     // Projectile registration tracking
     public final Map<ResourceLocation, List<String>> projectileModelIds = new LinkedHashMap<>();
     public final Map<ResourceLocation, List<ResourceLocation>> projectileTextureIds = new LinkedHashMap<>();
+    /** Projectile animation files keyed by projectile animation ID (e.g. ysmu:mingf/projectile_#arrow). */
+    public final Map<ResourceLocation, AnimationFile> projAnimationFiles = new LinkedHashMap<>();
+    /** Projectile controller file bytes keyed by projectile animation ID. */
+    public final Map<ResourceLocation, byte[]> projControllerFiles = new LinkedHashMap<>();
 
     public PreParsedModelBundle(ResourceLocation modelId) {
         this.modelId = modelId;

@@ -59,7 +59,7 @@ public final class OpenYsmAnimationControllerRegistry {
             set.controllers.keySet());
     }
 
-    static ControllerSet get(ResourceLocation animationId) {
+    public static ControllerSet get(ResourceLocation animationId) {
         return CONTROLLERS.get(animationId);
     }
 
@@ -73,6 +73,7 @@ public final class OpenYsmAnimationControllerRegistry {
         CONTROLLERS.clear();
         WARNED.clear();
         OpenYsmPlayerControllerRuntime.clear();
+        ProjectileControllerRuntime.clear();
     }
 
     static void warnOnce(String key, String message) {
