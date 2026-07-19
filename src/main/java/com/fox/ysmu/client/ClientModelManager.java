@@ -245,9 +245,14 @@ public class ClientModelManager {
             bundle.texturesToRegister.put(texId, e.getValue());
             bundle.textureIdList.add(texId);
         }
+        List<ResourceLocation> projTexIdList = new ArrayList<>();
         for (Map.Entry<String, byte[]> e : projTexMap.entrySet()) {
             ResourceLocation texId = ModelIdUtil.getSubModelId(modelId, e.getKey());
             bundle.projTexturesToRegister.put(texId, e.getValue());
+            projTexIdList.add(texId);
+        }
+        if (!projTexIdList.isEmpty()) {
+            bundle.projectileTextureIds.put(modelId, projTexIdList);
         }
 
         // Count stats from parsed geometries
@@ -335,6 +340,9 @@ public class ClientModelManager {
         }
         if (!bundle.projectileModelIds.isEmpty()) {
             PROJECTILE_MODEL_IDS.putAll(bundle.projectileModelIds);
+        }
+        if (!bundle.projectileTextureIds.isEmpty()) {
+            PROJECTILE_TEXTURE_IDS.putAll(bundle.projectileTextureIds);
         }
 
         // Log and update progress
@@ -812,25 +820,36 @@ public class ClientModelManager {
         // Initialize roaming variables for range sliders with sensible defaults.
         for (RawYsmModel.ExtraAnimationButton btn : raw.properties.extraAnimationButtons) {
             for (RawYsmModel.ConfigForm form : btn.forms) {
-                if (!"range".equals(form.type)) continue;
-                String varName = form.defaultValue.startsWith("v.") ? form.defaultValue.substring(2) : form.defaultValue;
-                // Sanitize min/max: if unset (both 0) or invalid, fall back to [0.0, 1.0]
-                if (form.min >= form.max) {
-                    form.max = 1.0f;
-                    form.min = 0.0f;
-                }
-                com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.registerModelRoamingVar(modelId, varName);
-                if (!com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.PENDING_ROAMING.containsKey(varName)) {
+                // Extract variable name from defaultValue: "v.roaming.X" or "v.X=0"
+                // → strip "v." prefix and "=value" suffix to get the bare key.
+                String rawDefault = form.defaultValue;
+                if (StringUtils.isBlank(rawDefault)) continue;
+                String varName = rawDefault;
+                if (varName.startsWith("v.")) varName = varName.substring(2);
+                int eqIdx = varName.indexOf('=');
+                if (eqIdx >= 0) varName = varName.substring(0, eqIdx);
+                if (StringUtils.isBlank(varName)) continue;
+                com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                    .registerModelRoamingVar(modelId, varName);
+                if (!com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                    .PENDING_ROAMING.containsKey(varName)) {
                     double initVal;
-                    if (form.min <= 0.0f && 0.0f <= form.max) {
-                        initVal = 0.0;
-                    } else if (form.min <= 1.0f && 1.0f <= form.max) {
-                        initVal = 1.0;
+                    if ("range".equals(form.type) && form.min < form.max) {
+                        // For range sliders, pick a sensible default.
+                        if (form.min <= 0.0f && 0.0f <= form.max) {
+                            initVal = 0.0;
+                        } else if (form.min <= 1.0f && 1.0f <= form.max) {
+                            initVal = 1.0;
+                        } else {
+                            initVal = form.min;
+                        }
+                        if (form.step > 0) initVal = Math.round(initVal / form.step) * form.step;
                     } else {
-                        initVal = form.min;
+                        // Checkbox/radio: default to 0 (off).
+                        initVal = 0.0;
                     }
-                    if (form.step > 0) initVal = Math.round(initVal / form.step) * form.step;
-                    com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(varName, initVal);
+                    com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                        .PENDING_ROAMING.put(varName, initVal);
                 }
             }
         }
