@@ -411,15 +411,17 @@ public final class RawYsmModelAdapter {
                     if (!cubeElem.isJsonObject()) continue;
                     JsonObject cube = cubeElem.getAsJsonObject();
 
-                    // ── Normalise negative cube sizes ──────────────────────────
-                    // Note: We intentionally do NOT normalise negative sizes here.
+                    // ── Keep negative cube sizes ──────────────────────────────
+                    // We intentionally do NOT normalise negative sizes here.
                     // Negative-size cubes in BlockBench represent inside-out shells
-                    // (hollow/void areas). GeckoLib's GeoCube.createFromPojoCube()
-                    // handles them by abs-ing the size, adjusting the origin, then
-                    // skipping rendering entirely (since GlStateManager.disableCull()
-                    // prevents the usual culling-based hollow effect).
-                    // If we normalised to positive here, the cube would render as a
-                    // solid block and occlude geometry behind it.
+                    // (hollow/void areas). GeoCube.createFromPojoCube() handles
+                    // them by abs-ing the size, adjusting the origin, and setting
+                    // hasNegSize. The renderer then uses CULL_FRONT to render only
+                    // back faces (facing away from camera), writing far-side depth,
+                    // so the paired positive cube renders on top at the centre while
+                    // the negative cube's edge forms a glow ring.
+                    // If we normalised to positive here, the cube would be solid
+                    // and occlude the inner positive cube entirely.
                     // ── Count for debug logging ────────────────────────────────
                     JsonElement sizeElem = cube.get("size");
                     boolean negSizeFixed = false;

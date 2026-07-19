@@ -62,6 +62,12 @@ public class GeoBone implements IBone, Serializable {
     @Nullable
     public ResourceLocation textureOverride;
 
+    /**
+     * Cached flag: true if this bone's name starts with "ysmGlow".
+     * Set during model construction to avoid string.startsWith per frame.
+     */
+    public boolean isGlow;
+
     @Override
     public void setModelRendererName(String modelRendererName) {
         this.name = modelRendererName;

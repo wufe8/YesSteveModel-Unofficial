@@ -217,17 +217,8 @@ public final class FolderFormat {
                 }
             }
 
-            // Load projectile animation
-            JsonElement animElem = projObj.get("animation");
-            if (animElem != null) {
-                String animPathStr = animElem.getAsString();
-                Path animFile = modelPath.resolve(animPathStr);
-                if (animFile.toFile().isFile()) {
-                    // Animation files are stored directly by their original key
-                    // in the animation map; projectile animations are identified
-                    // by the model+animation being keyed under the projectile model ID.
-                }
-            }
+            // Projectile animation is loaded separately by the animation
+            // pipeline under the projectile model ID; no-op here.
         }
     }
 

@@ -115,13 +115,18 @@ public interface IGeoRenderer<T> {
             // NOTE: CULL_FRONT on a standard CCW-wound cube culls front faces
             // (facing camera) and renders back faces (facing away). This gives
             // us the far-side depth without vertex reversal trickery.
-            boolean isGlow = bone.name != null && bone.name.startsWith("ysmGlow");
-            if (isGlow) {
+            if (bone.isGlow) {
                 Tessellator.instance.draw();
 
+                // Single scan: detect whether we have neg/pos cubes at all.
+                boolean anyNeg = false, anyPos = false;
+                for (GeoCube c : bone.childCubes) {
+                    if (c.hasNegSize) anyNeg = true;
+                    else anyPos = true;
+                    if (anyNeg && anyPos) break;
+                }
+
                 // ── Batch 1: negative-size cubes (CULL_FRONT → far faces only) ──
-                boolean anyNeg = false;
-                for (GeoCube c : bone.childCubes) { if (c.hasNegSize) { anyNeg = true; break; } }
                 if (anyNeg) {
                     Tessellator.instance.startDrawing(GL11.GL_QUADS);
                     GL11.glEnable(GL11.GL_CULL_FACE);
@@ -138,8 +143,6 @@ public interface IGeoRenderer<T> {
                 }
 
                 // ── Batch 2: positive-size cubes (normal depth testing) ──
-                boolean anyPos = false;
-                for (GeoCube c : bone.childCubes) { if (!c.hasNegSize) { anyPos = true; break; } }
                 if (anyPos) {
                     Tessellator.instance.startDrawing(GL11.GL_QUADS);
                     for (GeoCube cube : bone.childCubes) {
