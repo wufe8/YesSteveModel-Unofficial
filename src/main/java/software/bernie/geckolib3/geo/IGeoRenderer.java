@@ -72,11 +72,8 @@ public interface IGeoRenderer<T> {
         float alpha) {
         MATRIX_STACK.push();
 
-        MATRIX_STACK.translate(bone);
-        MATRIX_STACK.moveToPivot(bone);
-        MATRIX_STACK.rotate(bone);
-        MATRIX_STACK.scale(bone);
-        MATRIX_STACK.moveBackFromPivot(bone);
+        // Single combined bone transform — replaces 5 separate mul() calls
+        MATRIX_STACK.transformBone(bone);
 
         if (isBoneRenderOverriden(animatable, bone)) {
             drawOverridenBone(animatable, bone);
