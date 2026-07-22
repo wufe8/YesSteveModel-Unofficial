@@ -503,8 +503,28 @@ public final class AnimationManager {
                     // 使用映射的动画名（如 walk → 正常_行走）替代标准名
                     String mappedName = getMolangMappedAnimation(animId, animationName);
                     String targetName = mappedName != null ? mappedName : animationName;
-                    if (animFile != null && animFile.animations.containsKey(targetName)) {
-                        Animation anim = animFile.animations.get(targetName);
+                    Animation anim = null;
+                    if (animFile != null) {
+                        anim = animFile.animations.get(targetName);
+                    }
+                    // Fallback to default model's animation file (e.g. "fly" not
+                    // present in the current model but exists in the default model).
+                    // Inject a shallow copy into the current model's file so GeckoLib's
+                    // setAnimation finds it locally and never triggers the global
+                    // GeckoLibCache-wide scan (which would pick up animations from
+                    // unrelated models and cause cross-model bone name mismatch).
+                    if (anim == null) {
+                        Animation defaultAnim = com.fox.ysmu.client.ClientModelManager.DEFAULT_ANIMATION_FILE.animations.get(targetName);
+                        if (defaultAnim != null && animFile != null) {
+                            software.bernie.geckolib3.core.builder.Animation copy = new software.bernie.geckolib3.core.builder.Animation();
+                            copy.animationLength = defaultAnim.animationLength;
+                            copy.loop = defaultAnim.loop;
+                            copy.boneAnimations = defaultAnim.boneAnimations;
+                            animFile.animations.put(targetName, copy);
+                            anim = copy;
+                        }
+                    }
+                    if (anim != null) {
                         // 跳过空桩动画（loop:true 无 bones）
                         if (!isAnimationNonEmpty(anim)) {
                             continue;
