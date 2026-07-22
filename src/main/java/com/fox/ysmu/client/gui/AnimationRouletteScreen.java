@@ -35,6 +35,13 @@ public class AnimationRouletteScreen extends GuiScreen {
     private final Deque<Map<String, String>> navigationStack = new ArrayDeque<>();
     private Map<String, String> currentEntries;
 
+    // Hold-to-open mode: hold Z for 500ms to activate; release Z to
+    // auto-select hovered slot and close.  Quick tap (release <500ms)
+    // keeps the wheel open for normal interaction.
+    private boolean holdModeConfirmed = false;
+    private long pressTimeMs;
+    private static final long HOLD_THRESHOLD_MS = 500;
+
     // Config panel state
     private ExtraAnimationButton currentConfigGroup;
     private int configScrollOffset;
@@ -49,6 +56,7 @@ public class AnimationRouletteScreen extends GuiScreen {
     public void initGui() {
         this.x = width / 2;
         this.y = height / 2 - 8;
+        this.pressTimeMs = System.currentTimeMillis();
         if (mc != null && mc.thePlayer != null) {
             ExtendedModelInfo eep = ExtendedModelInfo.get(mc.thePlayer);
             if (eep != null) {
@@ -122,6 +130,23 @@ public class AnimationRouletteScreen extends GuiScreen {
 
     @Override
     public void drawScreen(int pMouseX, int pMouseY, float pPartialTick) {
+        // Hold-to-open mode: hold Z for 500ms to confirm hold mode.
+        // Quick tap (release before threshold) keeps wheel open normally.
+        boolean zDown = org.lwjgl.input.Keyboard.isKeyDown(org.lwjgl.input.Keyboard.KEY_Z);
+        if (zDown) {
+            long elapsed = System.currentTimeMillis() - pressTimeMs;
+            if (elapsed >= HOLD_THRESHOLD_MS) {
+                holdModeConfirmed = true;
+            }
+        } else if (holdModeConfirmed) {
+            // Z released after hold threshold → auto-select and close.
+            // If we never crossed the threshold, normal mode keeps the
+            // wheel open (user can click/esc as usual).
+            autoSelectSlot();
+            mc.displayGuiScreen(null);
+            return;
+        }
+
         // 始终绘制轮盘（配置面板模式下作为背景可见）
         List<Map.Entry<String, String>> pageEntries = getPageEntries();
         drawRoulette(pMouseX, pMouseY, pageEntries);
@@ -388,6 +413,30 @@ public class AnimationRouletteScreen extends GuiScreen {
         ExtendedModelInfo eep = ExtendedModelInfo.get(mc.thePlayer);
         if (eep == null) return null;
         return ClientModelManager.EXTRA_WHEEL.get(ModelIdUtil.getMainId(eep.getModelId()));
+    }
+
+    /**
+     * Auto-select the hovered roulette slot — called when Z is released in
+     * hold-to-open mode.  Reuses the same angle/distance detection as
+     * {@link #mouseClicked} but always uses the current mouse position.
+     */
+    private void autoSelectSlot() {
+        if (currentConfigGroup != null) return; // Config panel: don't auto-select
+        int mouseX = org.lwjgl.input.Mouse.getX() * this.width / this.mc.displayWidth;
+        int mouseY = this.height - org.lwjgl.input.Mouse.getY() * this.height / this.mc.displayHeight - 1;
+        float distance = MathHelper.sqrt_float((mouseY - y) * (mouseY - y) + (mouseX - x) * (mouseX - x));
+        // Only outer ring (normal animations)
+        if (distance <= INNER_RING_MAX || distance >= 100) return;
+        float theta = (float) Math.atan2(mouseY - y, mouseX - x);
+        if (theta < 0) theta = (float) (Math.PI * 2 + theta);
+        List<Map.Entry<String, String>> pageEntries = getPageEntries();
+        int idx = getHoveredIndex(theta, ITEMS_PER_PAGE);
+        if (idx < 0 || idx >= pageEntries.size()) return;
+        Map.Entry<String, String> entry = pageEntries.get(idx);
+        String key = entry.getKey();
+        // Skip navigation/config items
+        if (key.startsWith(SUBMENU_PREFIX) || RETURN_KEY.equals(key)) return;
+        triggerExtra(key);
     }
 
     private void triggerExtra(String key) {
