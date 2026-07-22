@@ -177,7 +177,7 @@ public class AnimationController<T extends IAnimatable> {
     }
 
     private final HashMap<String, BoneAnimationQueue> boneAnimationQueues = new HashMap<>();
-    private final List<BoneAnimationQueue> activeBoneAnimationQueues = new ArrayList<>();
+    private final java.util.HashSet<BoneAnimationQueue> activeBoneAnimationQueues = new java.util.HashSet<>();
     public double tickOffset;
     public Queue<Animation> animationQueue = new LinkedList<>();
     public Animation currentAnimation;
@@ -434,7 +434,7 @@ public class AnimationController<T extends IAnimatable> {
         return boneAnimationQueues;
     }
 
-    public List<BoneAnimationQueue> getActiveBoneAnimationQueues() {
+    public java.util.Collection<BoneAnimationQueue> getActiveBoneAnimationQueues() {
         return activeBoneAnimationQueues;
     }
 
@@ -864,15 +864,17 @@ public class AnimationController<T extends IAnimatable> {
 
     // Helper method to populate all the initial animation point queues
     private void createInitialQueues(List<IBone> modelRendererList) {
-        boneAnimationQueues.clear();
         activeBoneAnimationQueues.clear();
         for (IBone modelRenderer : modelRendererList) {
-            boneAnimationQueues.put(modelRenderer.getName(), new BoneAnimationQueue(modelRenderer));
+            String name = modelRenderer.getName();
+            if (!boneAnimationQueues.containsKey(name)) {
+                boneAnimationQueues.put(name, new BoneAnimationQueue(modelRenderer));
+            }
         }
     }
 
     private void markActiveBoneAnimationQueue(BoneAnimationQueue boneAnimationQueue) {
-        if (boneAnimationQueue != null && !activeBoneAnimationQueues.contains(boneAnimationQueue)) {
+        if (boneAnimationQueue != null) {
             activeBoneAnimationQueues.add(boneAnimationQueue);
         }
     }

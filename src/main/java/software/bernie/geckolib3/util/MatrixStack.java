@@ -1,7 +1,5 @@
 package software.bernie.geckolib3.util;
 
-import java.util.Stack;
-
 import javax.vecmath.Matrix3f;
 import javax.vecmath.Matrix4f;
 import javax.vecmath.Vector3f;
@@ -12,12 +10,15 @@ import software.bernie.geckolib3.geo.render.built.GeoBone;
 import software.bernie.geckolib3.geo.render.built.GeoCube;
 
 /**
- * Simple implementation of a matrix stack
+ * Array-backed matrix stack — avoids allocation on push/pop by
+ * pre-allocating a fixed-capacity pool of Matrix4f/Matrix3f slots.
  */
 public class MatrixStack {
 
-    private Stack<Matrix4f> model = new Stack<Matrix4f>();
-    private Stack<Matrix3f> normal = new Stack<Matrix3f>();
+    private static final int MAX_DEPTH = 1024;
+    private final Matrix4f[] modelStack = new Matrix4f[MAX_DEPTH];
+    private final Matrix3f[] normalStack = new Matrix3f[MAX_DEPTH];
+    private int depth = 0;
 
     private Matrix4f tempModelMatrix = new Matrix4f();
     private Matrix3f tempNormalMatrix = new Matrix3f();
@@ -25,36 +26,40 @@ public class MatrixStack {
     private float[] tempArray = new float[16];
 
     public MatrixStack() {
-        Matrix4f model = new Matrix4f();
-        Matrix3f normal = new Matrix3f();
-
-        model.setIdentity();
-        normal.setIdentity();
-
-        this.model.add(model);
-        this.normal.add(normal);
+        modelStack[0] = new Matrix4f();
+        normalStack[0] = new Matrix3f();
+        modelStack[0].setIdentity();
+        normalStack[0].setIdentity();
+        depth = 1;
     }
 
     public Matrix4f getModelMatrix() {
-        return this.model.peek();
+        return modelStack[depth - 1];
     }
 
     public Matrix3f getNormalMatrix() {
-        return this.normal.peek();
+        return normalStack[depth - 1];
     }
 
     public void push() {
-        this.model.add(new Matrix4f(this.model.peek()));
-        this.normal.add(new Matrix3f(this.normal.peek()));
+        if (depth >= MAX_DEPTH) {
+            throw new IllegalStateException("MatrixStack overflow (max depth=" + MAX_DEPTH + ")");
+        }
+        if (modelStack[depth] == null) {
+            modelStack[depth] = new Matrix4f(modelStack[depth - 1]);
+            normalStack[depth] = new Matrix3f(normalStack[depth - 1]);
+        } else {
+            modelStack[depth].set(modelStack[depth - 1]);
+            normalStack[depth].set(normalStack[depth - 1]);
+        }
+        depth++;
     }
 
     public void pop() {
-        if (this.model.size() == 1) {
+        if (depth <= 1) {
             throw new IllegalStateException("A one level stack can't be popped!");
         }
-
-        this.model.pop();
-        this.normal.pop();
+        depth--;
     }
 
     /* Translate */
@@ -67,8 +72,7 @@ public class MatrixStack {
         this.tempModelMatrix.setIdentity();
         this.tempModelMatrix.setTranslation(vec);
 
-        this.model.peek()
-            .mul(this.tempModelMatrix);
+        modelStack[depth - 1].mul(this.tempModelMatrix);
     }
 
     public void moveToPivot(GeoCube cube) {
@@ -101,8 +105,7 @@ public class MatrixStack {
         this.tempModelMatrix.m11 = y;
         this.tempModelMatrix.m22 = z;
 
-        this.model.peek()
-            .mul(this.tempModelMatrix);
+        modelStack[depth - 1].mul(this.tempModelMatrix);
 
         if (x < 0 || y < 0 || z < 0) {
             this.tempNormalMatrix.setIdentity();
@@ -110,8 +113,7 @@ public class MatrixStack {
             this.tempNormalMatrix.m11 = y < 0 ? -1 : 1;
             this.tempNormalMatrix.m22 = z < 0 ? -1 : 1;
 
-            this.normal.peek()
-                .mul(this.tempNormalMatrix);
+            normalStack[depth - 1].mul(this.tempNormalMatrix);
         }
     }
 
@@ -128,10 +130,8 @@ public class MatrixStack {
         this.tempNormalMatrix.setIdentity();
         this.tempNormalMatrix.rotX(radian);
 
-        this.model.peek()
-            .mul(this.tempModelMatrix);
-        this.normal.peek()
-            .mul(this.tempNormalMatrix);
+        modelStack[depth - 1].mul(this.tempModelMatrix);
+        normalStack[depth - 1].mul(this.tempNormalMatrix);
     }
 
     public void rotateY(float radian) {
@@ -141,10 +141,8 @@ public class MatrixStack {
         this.tempNormalMatrix.setIdentity();
         this.tempNormalMatrix.rotY(radian);
 
-        this.model.peek()
-            .mul(this.tempModelMatrix);
-        this.normal.peek()
-            .mul(this.tempNormalMatrix);
+        modelStack[depth - 1].mul(this.tempModelMatrix);
+        normalStack[depth - 1].mul(this.tempNormalMatrix);
     }
 
     public void rotateZ(float radian) {
@@ -154,10 +152,8 @@ public class MatrixStack {
         this.tempNormalMatrix.setIdentity();
         this.tempNormalMatrix.rotZ(radian);
 
-        this.model.peek()
-            .mul(this.tempModelMatrix);
-        this.normal.peek()
-            .mul(this.tempNormalMatrix);
+        modelStack[depth - 1].mul(this.tempModelMatrix);
+        normalStack[depth - 1].mul(this.tempNormalMatrix);
     }
 
     public void rotate(GeoBone bone) {
@@ -199,10 +195,8 @@ public class MatrixStack {
         matrix3f.rotX(rotation.x);
         this.tempNormalMatrix.mul(matrix3f);
 
-        this.model.peek()
-            .mul(this.tempModelMatrix);
-        this.normal.peek()
-            .mul(this.tempNormalMatrix);
+        modelStack[depth - 1].mul(this.tempModelMatrix);
+        normalStack[depth - 1].mul(this.tempNormalMatrix);
     }
 
     @SuppressWarnings("unused")

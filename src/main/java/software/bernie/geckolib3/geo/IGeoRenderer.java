@@ -27,6 +27,10 @@ import software.bernie.geckolib3.util.MatrixStack;
 public interface IGeoRenderer<T> {
 
     public static MatrixStack MATRIX_STACK = new MatrixStack();
+    /** Reusable per-quad normal vector — avoids allocating one per cube/quad. */
+    Vector3f RENDER_TEMP_NORMAL = new Vector3f();
+    /** Reusable per-vertex position vector — avoids allocating one per vertex. */
+    Vector4f RENDER_TEMP_VEC = new Vector4f();
 
     default void render(GeoModel model, T animatable, float partialTicks, float red, float green, float blue,
         float alpha) {
@@ -188,43 +192,40 @@ public interface IGeoRenderer<T> {
             GlStateManager.doPolygonOffset(-1.0F, -10.0F);
         }
 
-        // Reusable per-quad normal vector — avoids allocating one per quad.
-        Vector3f tempNormal = new Vector3f();
         for (GeoQuad quad : cube.quads) {
             if (quad == null) continue;
+            // Fresh copy for normal transforms + flat shading workaround
             if (quad.normalVector == null) {
-                tempNormal.set(quad.normal.getX(), quad.normal.getY(), quad.normal.getZ());
+                RENDER_TEMP_NORMAL.set(quad.normal.getX(), quad.normal.getY(), quad.normal.getZ());
             } else {
-                tempNormal.set(quad.normalVector);
+                RENDER_TEMP_NORMAL.set(quad.normalVector);
             }
-            Vector3f normal = tempNormal;
 
             MATRIX_STACK.getNormalMatrix()
-                .transform(normal);
+                .transform(RENDER_TEMP_NORMAL);
 
             /*
              * Fix shading dark shading for flat cubes + compatibility wish Optifine shaders
              */
-            if (!cube.mesh && (cube.size.y == 0 || cube.size.z == 0) && normal.x < 0) {
-                normal.x *= -1;
+            if (!cube.mesh && (cube.size.y == 0 || cube.size.z == 0) && RENDER_TEMP_NORMAL.x < 0) {
+                RENDER_TEMP_NORMAL.x *= -1;
             }
-            if (!cube.mesh && (cube.size.x == 0 || cube.size.z == 0) && normal.y < 0) {
-                normal.y *= -1;
+            if (!cube.mesh && (cube.size.x == 0 || cube.size.z == 0) && RENDER_TEMP_NORMAL.y < 0) {
+                RENDER_TEMP_NORMAL.y *= -1;
             }
-            if (!cube.mesh && (cube.size.x == 0 || cube.size.y == 0) && normal.z < 0) {
-                normal.z *= -1;
+            if (!cube.mesh && (cube.size.x == 0 || cube.size.y == 0) && RENDER_TEMP_NORMAL.z < 0) {
+                RENDER_TEMP_NORMAL.z *= -1;
             }
 
-            // Reuse a single Vector4f to avoid per-vertex allocation (~31k/frame)
-            Vector4f tempVec = new Vector4f();
             for (GeoVertex vertex : quad.vertices) {
-                tempVec.set(vertex.position.x, vertex.position.y, vertex.position.z, 1.0F);
+                RENDER_TEMP_VEC.set(vertex.position.x, vertex.position.y, vertex.position.z, 1.0F);
 
                 MATRIX_STACK.getModelMatrix()
-                    .transform(tempVec);
+                    .transform(RENDER_TEMP_VEC);
                 builder.setColorRGBA_F(red, green, blue, alpha);
-                builder.setNormal(normal.x, normal.y, normal.z);
-                builder.addVertexWithUV(tempVec.x, tempVec.y, tempVec.z, vertex.textureU, vertex.textureV);
+                builder.setNormal(RENDER_TEMP_NORMAL.x, RENDER_TEMP_NORMAL.y, RENDER_TEMP_NORMAL.z);
+                builder.addVertexWithUV(RENDER_TEMP_VEC.x, RENDER_TEMP_VEC.y, RENDER_TEMP_VEC.z,
+                    vertex.textureU, vertex.textureV);
             }
         }
 
