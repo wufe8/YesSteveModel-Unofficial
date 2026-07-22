@@ -186,15 +186,26 @@ public class AnimationRouletteScreen extends GuiScreen {
     @Override
     public void handleMouseInput() {
         int dWheel = org.lwjgl.input.Mouse.getDWheel();
-        if (dWheel != 0 && currentConfigGroup != null) {
-            configScrollOffset += dWheel > 0 ? -20 : 20;
-            int totalHeight = 0;
-            for (int i = 0; i < currentConfigGroup.forms.size(); i++) {
-                totalHeight += getFormHeight(currentConfigGroup.forms.get(i)) + 4;
+        if (dWheel != 0) {
+            if (currentConfigGroup != null) {
+                configScrollOffset += dWheel > 0 ? -20 : 20;
+                int totalHeight = 0;
+                for (int i = 0; i < currentConfigGroup.forms.size(); i++) {
+                    totalHeight += getFormHeight(currentConfigGroup.forms.get(i)) + 4;
+                }
+                int maxScroll = Math.max(0, totalHeight - (height - 100));
+                configScrollOffset = MathHelper.clamp_int(configScrollOffset, 0, maxScroll);
+                return;
             }
-            int maxScroll = Math.max(0, totalHeight - (height - 100));
-            configScrollOffset = MathHelper.clamp_int(configScrollOffset, 0, maxScroll);
-            return;
+            // Wheel flips pages when not in config panel.
+            int totalPages = Math.max(1, (currentEntries.size() + ITEMS_PER_PAGE - 1) / ITEMS_PER_PAGE);
+            if (totalPages > 1) {
+                if (dWheel < 0 && currentPage < totalPages - 1) {
+                    currentPage++;
+                } else if (dWheel > 0 && currentPage > 0) {
+                    currentPage--;
+                }
+            }
         }
         super.handleMouseInput();
     }

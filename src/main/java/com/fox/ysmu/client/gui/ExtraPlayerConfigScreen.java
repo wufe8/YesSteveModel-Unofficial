@@ -9,7 +9,6 @@ import org.lwjgl.input.Keyboard;
 import java.util.List;
 
 public class ExtraPlayerConfigScreen extends GuiScreen {
-    private static final char RESET_KEY = 'r';
     private int posX;
     private int posY;
     private float scale;
@@ -121,12 +120,14 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
 
     @Override
     protected void keyTyped(char typedChar, int keyCode) {
-        boolean isAltDown = Keyboard.isKeyDown(Keyboard.KEY_LMENU) || Keyboard.isKeyDown(Keyboard.KEY_RMENU);
-        if (Character.toLowerCase(typedChar) == RESET_KEY && isAltDown) {
+        // Alt+R key events don't fire when Alt is held (consumed by LWJGL/GLFW).
+        // Since this screen has no text input, just use plain R key to reset.
+        if (keyCode == org.lwjgl.input.Keyboard.KEY_R) {
             this.posX = 10;
             this.posY = 10;
             this.scale = 40;
             this.yawOffset = 5;
+            return; // Don't pass R to super (no text field anyway)
         }
         super.keyTyped(typedChar, keyCode);
     }

@@ -367,6 +367,21 @@ public class PlayerModelScreen extends GuiScreen {
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int button) {
+        // Right-click anywhere goes back (same as pressing the back button).
+        if (button == 1) {
+            if (selectedPack != null) {
+                selectedPack = null;
+                page = 0;
+                initGui();
+            } else if (showingPacks) {
+                showingPacks = false;
+                category = Category.ALL;
+                selectedPack = null;
+                page = 0;
+                initGui();
+            }
+            return;
+        }
         super.mouseClicked(mouseX, mouseY, button);
         this.textField.mouseClicked(mouseX, mouseY, button);
     }
