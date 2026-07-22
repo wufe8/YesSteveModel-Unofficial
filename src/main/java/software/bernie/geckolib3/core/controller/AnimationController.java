@@ -232,15 +232,12 @@ public class AnimationController<T extends IAnimatable> {
                         .stream()
                         .map((rawAnimation) -> {
                             Animation animation = model.getAnimation(rawAnimation.animationName, animatable);
-                            // Fallback: 如果 model 找不到（例如冒号命名的动画），
-                            // 遍历 GeckoLibCache 中所有动画文件查找
-                            if (animation == null) {
-                                for (AnimationFile file : GeckoLibCache.getInstance()
-                                    .getAnimations().values()) {
-                                    animation = file.getAnimation(rawAnimation.animationName);
-                                    if (animation != null) break;
-                                }
-                            }
+                            // Fallback removed: scanning ALL files in GeckoLibCache
+                            // leaks per-model custom animations (e.g. rok's attack_1)
+                            // into unrelated models, causing bone name mismatches.
+                            // Each model must provide its own animations; the default
+                            // model's animations are injected by YSMU's AnimationManager
+                            // before calling setAnimation.
                             if (animation == null) {
                                 System.out
                                     .printf("Could not load animation: %s. Is it missing?", rawAnimation.animationName);
@@ -292,13 +289,7 @@ public class AnimationController<T extends IAnimatable> {
             .stream()
             .map((rawAnimation) -> {
                 Animation animation = model.getAnimation(rawAnimation.animationName, animatable);
-                if (animation == null) {
-                    for (AnimationFile file : GeckoLibCache.getInstance()
-                        .getAnimations().values()) {
-                        animation = file.getAnimation(rawAnimation.animationName);
-                        if (animation != null) break;
-                    }
-                }
+                // Cross-model fallback removed — see setAnimation() for rationale.
                 if (animation == null) {
                     System.out.printf("Could not load animation: %s. Is it missing?", rawAnimation.animationName);
                     encounteredError.set(true);
@@ -485,13 +476,7 @@ public class AnimationController<T extends IAnimatable> {
             IAnimatableModel<T> model = getModel(this.animatable);
             if (model != null) {
                 Animation animation = model.getAnimation(currentAnimation.animationName, this.animatable);
-                if (animation == null) {
-                    for (AnimationFile file : GeckoLibCache.getInstance()
-                        .getAnimations().values()) {
-                        animation = file.getAnimation(currentAnimation.animationName);
-                        if (animation != null) break;
-                    }
-                }
+                // Cross-model fallback removed — see setAnimation() for rationale.
                 if (animation != null) {
                     ILoopType loop = currentAnimation.loop;
                     currentAnimation = animation;
