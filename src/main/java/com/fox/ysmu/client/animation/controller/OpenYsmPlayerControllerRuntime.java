@@ -675,6 +675,22 @@ public final class OpenYsmPlayerControllerRuntime {
         runtimeState.lastAnimation = primaryName;
         runtimeState.lastSelectedAnimationState = state.name;
         runtimeState.lastSelectedAnimation = primaryName;
+        // Detect model re-entry: if this RuntimeState was parked for more
+        // than a few frames (model switched away and back), treat sameAnim
+        // as false so setAnimation reloads the merged bone keyframes.
+        boolean isReEntry = runtimeState.lastActiveFrame > 0
+            && FRAME_COUNTER - runtimeState.lastActiveFrame > 10;
+        runtimeState.lastActiveFrame = FRAME_COUNTER;
+        if (sameAnim && isReEntry) {
+            // Force setAnimation on re-entry: clear stale tracking so
+            // sameAnim falls through to the setAnimation path below.
+            runtimeState.lastAnimationId = null;
+            runtimeState.lastAnimation = "";
+            runtimeState.lastSelectedAnimationState = "";
+            runtimeState.lastSelectedAnimation = "";
+            runtimeState.lastActiveAnimations.clear();
+            runtimeState.enteredTick = event.getAnimationTick();
+        }
         if (sameAnim) {
             // Same state + same animation → skip setAnimation to preserve
             // keyframe tracking (sound/particle keyframes already executed
@@ -960,6 +976,17 @@ public final class OpenYsmPlayerControllerRuntime {
         }
     }
 
+    /** Monotonically increasing frame counter used to detect RuntimeState
+     *  re-entry after a controller was inactive (e.g. model switched away
+     *  and back).  Incremented at the start of each render frame in
+     *  MolangPhysicsRuntime.begin(). */
+    private static int FRAME_COUNTER = 0;
+
+    /** Called by MolangPhysicsRuntime.begin() to advance the frame counter. */
+    public static void advanceFrameCounter() {
+        FRAME_COUNTER++;
+    }
+
     static final class RuntimeState {
         String currentState = "";
         /** Whether the controller has ever transitioned away from its initial state. */
@@ -978,6 +1005,14 @@ public final class OpenYsmPlayerControllerRuntime {
          *  When this list changes, setAnimation must run to apply the new
          *  merged bone keyframes even though the primary animation name is the same. */
         java.util.List<String> lastActiveAnimations = new java.util.ArrayList<>();
+        /** The frame counter value when this RuntimeState was last actively
+         *  processing a CONTINUE predicate (i.e. tryApplyController reached
+         *  the setAnimation decision).  Used to detect model-switch re-entry:
+         *  if sameAnim is true but lastActiveFrame is far behind FRAME_COUNTER,
+         *  the controller was parked and the player model has just been
+         *  re-selected, so we must force setAnimation even though the
+         *  animation name hasn't changed. */
+        int lastActiveFrame = 0;
         double enteredTick;
         boolean lastSwingActive;
         /** Regular HashMap is safe: all RuntimeState access is on the client render thread. */
