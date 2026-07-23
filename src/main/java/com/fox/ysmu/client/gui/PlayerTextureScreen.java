@@ -60,6 +60,8 @@ public class PlayerTextureScreen extends GuiScreen {
     private float yaw;
     private float pitch;
     private boolean showGround;
+    /** 是否暂停动画播放 */
+    private boolean paused;
 
     private final PlayerModelScreen parent;
     private final ResourceLocation modelId;
@@ -97,6 +99,7 @@ public class PlayerTextureScreen extends GuiScreen {
         this.yaw = 165.0f;
         this.pitch = -5.0f;
         this.showGround = true;
+        this.paused = false;
 
         // 从 GeckoLibCache 读取模型动画名列表
         this.animationNames = new ArrayList<>();
@@ -222,14 +225,8 @@ public class PlayerTextureScreen extends GuiScreen {
                     this.initGui();
                 }
                 break;
-            case 10: // 停止动画
-                if (animationNames.contains("idle")) {
-                    this.currentAnimation = "idle";
-                } else if (!animationNames.isEmpty()) {
-                    this.currentAnimation = animationNames.get(0);
-                } else {
-                    this.currentAnimation = "";
-                }
+            case 10: // 暂停/继续动画
+                this.paused = !this.paused;
                 break;
             case 11: // 复位视角
                 this.offsetX = 0.0f;
@@ -307,6 +304,20 @@ public class PlayerTextureScreen extends GuiScreen {
         int animPageX = guiLeft + LEFT_PANEL_X + (LEFT_PANEL_W - fontRendererObj.getStringWidth(animPageInfo)) / 2;
         this.drawString(fontRendererObj, animPageInfo, animPageX, guiTop + 218, 0xF3EFE0);
 
+        // 暂停提示
+        if (this.paused) {
+            String pauseLabel = "[\u23F8 PAUSED]";
+            int pauseX = guiLeft + CENTER_PANEL_X + (CENTER_PANEL_W - fontRendererObj.getStringWidth(pauseLabel)) / 2;
+            this.drawString(fontRendererObj, pauseLabel, pauseX, guiTop + GUI_H - 24, 0xFF5555);
+        }
+
+        // 暂停提示
+        if (this.paused) {
+            String pauseLabel = I18n.format("gui.yes_steve_model.model.paused");
+            int pauseX = guiLeft + CENTER_PANEL_X + (CENTER_PANEL_W - fontRendererObj.getStringWidth(pauseLabel)) / 2;
+            this.drawString(fontRendererObj, pauseLabel, pauseX, guiTop + GUI_H - 24, 0xFF5555);
+        }
+
         // 当前动画名提示（底部居中）
         if (this.currentAnimation != null && !this.currentAnimation.isEmpty()) {
             // I18n.format returns the key itself if no translation exists
@@ -319,6 +330,31 @@ public class PlayerTextureScreen extends GuiScreen {
             }
             int labelX = guiLeft + CENTER_PANEL_X + (CENTER_PANEL_W - fontRendererObj.getStringWidth(animLabel)) / 2;
             this.drawString(fontRendererObj, animLabel, labelX, guiTop + GUI_H - 12, 0xFFAA00);
+        }
+
+        // Tooltips for S/R/G buttons
+        for (Object obj : this.buttonList) {
+            if (obj instanceof GuiButton) {
+                GuiButton btn = (GuiButton) obj;
+                if (btn.func_146115_a() && btn.id >= 10 && btn.id <= 12) {
+                    String tip = null;
+                    switch (btn.id) {
+                        case 10:
+                            tip = paused ? "Resume" : I18n.format("gui.yes_steve_model.model.stop");
+                            break;
+                        case 11:
+                            tip = I18n.format("gui.yes_steve_model.model.reset");
+                            break;
+                        case 12:
+                            tip = I18n.format("gui.yes_steve_model.model.ground");
+                            break;
+                    }
+                    if (tip != null) {
+                        java.util.List<String> lines = java.util.Collections.singletonList(tip);
+                        this.drawHoveringText(lines, mouseX, mouseY + 12, fontRendererObj);
+                    }
+                }
+            }
         }
     }
 
@@ -340,19 +376,31 @@ public class PlayerTextureScreen extends GuiScreen {
             : (textures.isEmpty() ? null : textures.get(0));
 
         if (previewTex != null) {
-            float centerX = guiLeft + CENTER_PANEL_X + CENTER_PANEL_W / 2.0f + 40.0f + offsetX;
-            float centerY = guiTop + GUI_H / 2.0f + 80.0f + offsetY;
+            // Match OpenYSM position: slightly left-of-center so the model faces into the frame
+            float centerX = guiLeft + 189.5f + offsetX;
+            float centerY = guiTop + 197.5f + offsetY;
 
             RenderUtil.renderTextureScreenEntity(
                 centerX, centerY, zoom, pitch, yaw,
-                player, modelId, previewTex, showGround,
+                player, modelId, previewTex,
                 entity -> {
                     entity.setGuiAnimationsEnabled(true);
                     if (currentAnimation != null && !currentAnimation.isEmpty()) {
                         entity.setGuiBaseAnimation(currentAnimation);
                     }
+                    // Freeze/resume via GeckoLib controller speed
+                    double speed = paused ? 0.0 : 1.0;
+                    entity.getFactory()
+                        .getOrCreateAnimationData(entity.hashCode())
+                        .getAnimationControllers()
+                        .values()
+                        .forEach(c -> c.setAnimationSpeed(speed));
                 }
             );
+            // Render ground separately with its own complete transform
+            if (showGround) {
+                RenderUtil.renderGroundFull(centerX, centerY, zoom, pitch, yaw);
+            }
         }
 
         GL11.glDisable(GL11.GL_SCISSOR_TEST);
@@ -454,7 +502,7 @@ public class PlayerTextureScreen extends GuiScreen {
     }
 
     private void adjustZoom(float wheelDelta) {
-        this.zoom = Math.max(18.0f, Math.min(360.0f, this.zoom + wheelDelta * this.zoom * 0.007f));
+        this.zoom = Math.max(18.0f, Math.min(360.0f, this.zoom + wheelDelta * this.zoom * 0.028f));
     }
 
     @Override

@@ -10,6 +10,7 @@ import com.fox.ysmu.client.ClientProxy;
 import net.geckominecraft.client.renderer.GlStateManager;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.renderer.OpenGlHelper;
+import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.client.renderer.RenderBlocks;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderManager;
@@ -19,9 +20,10 @@ import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
 import net.minecraft.util.ResourceLocation;
 import org.joml.Quaternionf;
+import org.lwjgl.util.vector.Quaternion;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
-import org.lwjgl.util.vector.Quaternion;
+
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.renderer.CustomPlayerRenderer;
 import com.fox.ysmu.compat.Axis;
@@ -118,7 +120,7 @@ public final class RenderUtil {
     }
 
     public static void renderTextureScreenEntity(float pPosX, float pPosY, float pScale, float pitch, float yaw,
-        EntityPlayer player, ResourceLocation modelId, ResourceLocation textureId, boolean showGround,
+        EntityPlayer player, ResourceLocation modelId, ResourceLocation textureId,
         Consumer<CustomPlayerEntity> consumer) {
         if (player == null) {
             return;
@@ -141,10 +143,15 @@ public final class RenderUtil {
                 GlStateManager.translate(0.0D, 0.0D, 1000.0D);
                 GlStateManager.scale(pScale, pScale, pScale);
                 GlStateManager.translate(0, 0.8, 0);
+                // Rotation order: Z(180°) → Y(yaw) → X(-10+pitch)
+                // Yaw is applied in the matrix because CustomPlayerEntity (non-LivingEntity)
+                // does not have its body rotation read by GeckoLib.
                 Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
-                Quaternionf xp = Axis.XP.rotationDegrees(-10 + pitch);
+                Quaternionf yp = Axis.YP.rotationDegrees(180 + yaw);
+                Quaternionf xp = Axis.XP.rotationDegrees(pitch);
+                zp.mul(yp);
                 zp.mul(xp);
-                GlStateManager.rotate(j2l(zp)); // poseStack.mulPose
+                GlStateManager.rotate(j2l(zp));
 
                 // 保存玩家原始状态
                 float yBodyRot = player.renderYawOffset;
@@ -196,7 +203,24 @@ public final class RenderUtil {
                             if (entity.hasPreviewAnimation("boat")) {
                                 GlStateManager.translate(0, -0.45, 0);
                             }
-                            // renderer.doRender();
+                            // Enable depth test and color material (renderModel does this too)
+                            GL11.glEnable(GL11.GL_DEPTH_TEST);
+                            GL11.glEnable(GL11.GL_COLOR_MATERIAL);
+                            // Render the GeckoLib model
+                            CustomPlayerRenderer renderer = ClientProxy.getInstance();
+                            AnimatedGeoModel provider = renderer.getGeoModelProvider();
+                            ResourceLocation modelLocation = provider.getModelLocation(entity);
+                            GeoModel model = provider.getModel(modelLocation);
+                            AnimationEvent<CustomPlayerEntity> predicate = new AnimationEvent<>(
+                                entity, 0, 0, 0, false, Collections.emptyList());
+                            if (renderer.getGeoModelProvider() instanceof IAnimatableModel) {
+                                ((IAnimatableModel<CustomPlayerEntity>) renderer.getGeoModelProvider())
+                                    .setLivingAnimations(entity, entity.hashCode(), predicate);
+                            }
+                            Minecraft.getMinecraft().getTextureManager()
+                                .bindTexture(provider.getTextureLocation(entity));
+                            renderer.render(model, entity, 0, 1.0f, 1.0f, 1.0f, 1.0f);
+                            // Render ride/boat vehicle entities on top
                             try {
                                 renderExtraEntity(yaw, player, entity, dispatcher);
                             } catch (ExecutionException e) {
@@ -205,12 +229,8 @@ public final class RenderUtil {
                         } finally {
                             GlStateManager.popMatrix(); // 弹出动画位移矩阵
                         }
-                        if (showGround) {
-                            if (entity.hasPreviewAnimation("sleep")) {
-                                renderBed(pScale, pitch, yaw);
-                            }
-                            renderGround(pScale, pitch, yaw);
-                        }
+                        // Ground is rendered separately from PlayerTextureScreen
+                        // via renderGroundFull to avoid matrix stack conflicts.
                     });
                 } finally {
                     // 恢复玩家状态
@@ -234,57 +254,65 @@ public final class RenderUtil {
     // 创建一个全局的RenderBlocks实例以提高效率
     private static final RenderBlocks renderBlocks = new RenderBlocks();
 
-    private static void renderBed(float scale, float pitch, float yaw) {
+    /** Render bed with FULL transform (from scratch, not inheriting parent).
+     *  Public so PlayerTextureScreen can call it after renderTextureScreenEntity.
+     *  Rotation order matches renderTextureScreenEntity: Z(180) × Y(yaw+180) × X(-10+pitch). */
+    public static void renderBedFull(float pPosX, float pPosY, float pScale, float pitch, float yaw) {
         GlStateManager.pushMatrix();
+        GlStateManager.translate(pPosX, pPosY, 1050.0D);
+        GlStateManager.scale(1.0F, 1.0F, -1.0F);
         GlStateManager.translate(0.0D, 0.0D, 1000.0D);
-        GlStateManager.scale(scale, scale, scale);
+        GlStateManager.scale(pScale, pScale, pScale);
         GlStateManager.translate(0, 0.8, 0);
         Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
+        Quaternionf yp = Axis.YP.rotationDegrees(yaw + 180);
         Quaternionf xp = Axis.XP.rotationDegrees(-10 + pitch);
+        zp.mul(yp);
         zp.mul(xp);
         GlStateManager.rotate(j2l(zp));
-
-        GlStateManager.rotate(j2l(Axis.YP.rotationDegrees(yaw + 180)));
         GlStateManager.translate(-0.5, 0, 0.5);
-        // Minecraft.getInstance().getBlockRenderer().renderSingleBlock(Blocks.RED_BED.defaultBlockState(), poseStack,
-        // bufferSource, 0xf000f0, OverlayTexture.NO_OVERLAY);
         RenderManager.instance.renderEngine.bindTexture(new ResourceLocation("textures/entity/bed/red.png"));
         renderBlocks.renderBlockAsItem(Blocks.bed, 0, 1.0F);
         GlStateManager.popMatrix();
     }
 
-    private static void renderGround(float scale, float pitch, float yaw) {
+    /** Render ground with FULL transform (from scratch, not inheriting parent).
+     *  Rotation order matches renderTextureScreenEntity: Z(180) × Y(yaw+180) × X(-10+pitch).
+     *  Matches OpenYSM's renderGroundPreview layout.
+     *  Public so PlayerTextureScreen can call it after renderTextureScreenEntity. */
+    public static void renderGroundFull(float pPosX, float pPosY, float pScale, float pitch, float yaw) {
         GlStateManager.pushMatrix();
+        GlStateManager.translate(pPosX, pPosY, 1050.0D);
+        GlStateManager.scale(1.0F, 1.0F, -1.0F);
         GlStateManager.translate(0.0D, 0.0D, 1000.0D);
-        GlStateManager.scale(scale, scale, scale);
+        GlStateManager.scale(pScale, pScale, pScale);
         GlStateManager.translate(0, 0.8, 0);
+        // Rotation order: Z(180) × Y(yaw+180) × X(-10+pitch) — same as model
         Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
+        Quaternionf yp = Axis.YP.rotationDegrees(yaw + 180);
         Quaternionf xp = Axis.XP.rotationDegrees(-10 + pitch);
+        zp.mul(yp);
         zp.mul(xp);
         GlStateManager.rotate(j2l(zp));
-
-        GlStateManager.rotate(j2l(Axis.YP.rotationDegrees(yaw)));
+        // Position ground relative to model feet
         GlStateManager.translate(-1.5, -1, -2.5);
-        RenderManager.instance.renderEngine.bindTexture(new ResourceLocation("textures/atlas/blocks.png"));
+        Minecraft.getMinecraft().getTextureManager().bindTexture(TextureMap.locationBlocksTexture);
+        // 3×3 grass blocks — NO push/pop around individual blocks;
+        // translate must accumulate to space them out (matching OpenYSM).
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
-                GlStateManager.pushMatrix();
                 GlStateManager.translate(0, 0, 1);
                 renderBlocks.renderBlockAsItem(Blocks.grass, 0, 1.0F);
-                GlStateManager.popMatrix();
             }
             GlStateManager.translate(1, 0, -3);
         }
+        // Tall grass and flower decorations (push/pop OK here, single render each)
         GlStateManager.pushMatrix();
         GlStateManager.translate(-1, 1, 1);
-        renderBlocks.renderBlockAsItem(Blocks.tallgrass, 1, 1.0F); // metadata 1 for grass
+        renderBlocks.renderBlockAsItem(Blocks.tallgrass, 1, 1.0F);
         GlStateManager.popMatrix();
-
-        GlStateManager.pushMatrix();
         GlStateManager.translate(0, 0, 1);
-        renderBlocks.renderBlockAsItem(Blocks.red_flower, 0, 1.0F); // metadata 0 for poppy (red tulip)
-        GlStateManager.popMatrix();
-
+        renderBlocks.renderBlockAsItem(Blocks.red_flower, 0, 1.0F);
         GlStateManager.popMatrix();
     }
 
