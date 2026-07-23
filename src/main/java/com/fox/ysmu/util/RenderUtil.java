@@ -14,7 +14,6 @@ import net.minecraft.client.renderer.texture.TextureMap;
 import net.minecraft.client.renderer.RenderBlocks;
 import net.minecraft.client.renderer.RenderHelper;
 import net.minecraft.client.renderer.entity.RenderManager;
-import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
@@ -40,6 +39,9 @@ import software.bernie.geckolib3.model.AnimatedGeoModel;
 
 @SuppressWarnings("all")
 public final class RenderUtil {
+
+    /** Set by PlayerTextureScreen before renderTextureScreenEntity to control ground visibility. */
+    public static boolean SHOW_GROUND = true;
 
     private static final float GUI_LIGHTMAP_BRIGHTNESS = 240.0F;
     /** Direct buffer for boosted GL light model ambient (1.275x = 0.51). */
@@ -221,16 +223,16 @@ public final class RenderUtil {
                                 .bindTexture(provider.getTextureLocation(entity));
                             renderer.render(model, entity, 0, 1.0f, 1.0f, 1.0f, 1.0f);
                             // Render ride/boat vehicle entities on top
-                            try {
-                                renderExtraEntity(yaw, player, entity, dispatcher);
-                            } catch (ExecutionException e) {
-                                throw new RuntimeException(e);
+                            renderExtraEntity(yaw, player, entity, dispatcher);
+                            // Render ground INSIDE the animation-adjustment matrix so it inherits
+                            // animation-specific offsets (sit -0.5, ride +0.85, etc.) and stays
+                            // at the model's feet level regardless of animation type.
+                            if (SHOW_GROUND) {
+                                renderSceneGround(pScale);
                             }
                         } finally {
                             GlStateManager.popMatrix(); // 弹出动画位移矩阵
                         }
-                        // Ground is rendered separately from PlayerTextureScreen
-                        // via renderGroundFull to avoid matrix stack conflicts.
                     });
                 } finally {
                     // 恢复玩家状态
@@ -276,29 +278,13 @@ public final class RenderUtil {
         GlStateManager.popMatrix();
     }
 
-    /** Render ground with FULL transform (from scratch, not inheriting parent).
-     *  Rotation order matches renderTextureScreenEntity: Z(180) × Y(yaw+180) × X(-10+pitch).
-     *  Matches OpenYSM's renderGroundPreview layout.
-     *  Public so PlayerTextureScreen can call it after renderTextureScreenEntity. */
-    public static void renderGroundFull(float pPosX, float pPosY, float pScale, float pitch, float yaw) {
-        GlStateManager.pushMatrix();
-        GlStateManager.translate(pPosX, pPosY, 1050.0D);
-        GlStateManager.scale(1.0F, 1.0F, -1.0F);
-        GlStateManager.translate(0.0D, 0.0D, 1000.0D);
-        GlStateManager.scale(pScale, pScale, pScale);
-        GlStateManager.translate(0, 0.8, 0);
-        // Rotation order: Z(180) × Y(yaw+180) × X(-10+pitch) — same as model
-        Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
-        Quaternionf yp = Axis.YP.rotationDegrees(yaw + 180);
-        Quaternionf xp = Axis.XP.rotationDegrees(-10 + pitch);
-        zp.mul(yp);
-        zp.mul(xp);
-        GlStateManager.rotate(j2l(zp));
-        // Position ground relative to model feet
-        GlStateManager.translate(-1.5, -1, -2.5);
+    /** Render ground blocks inside the current matrix (inherits animation adjustments).
+     *  Called from renderTextureScreenEntity's animation-adjustment block. */
+    private static void renderSceneGround(float pScale) {
+        // Position ground relative to model feet (in the inherited model/animation space)
+        GlStateManager.translate(-1, -0.5, -2.5);
         Minecraft.getMinecraft().getTextureManager().bindTexture(TextureMap.locationBlocksTexture);
-        // 3×3 grass blocks — NO push/pop around individual blocks;
-        // translate must accumulate to space them out (matching OpenYSM).
+        // 3×3 grass blocks — translate accumulates to space them out
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
                 GlStateManager.translate(0, 0, 1);
@@ -306,45 +292,19 @@ public final class RenderUtil {
             }
             GlStateManager.translate(1, 0, -3);
         }
-        // Tall grass and flower decorations (push/pop OK here, single render each)
+        // Tall grass and flower decorations
         GlStateManager.pushMatrix();
         GlStateManager.translate(-1, 1, 1);
         renderBlocks.renderBlockAsItem(Blocks.tallgrass, 1, 1.0F);
         GlStateManager.popMatrix();
-        GlStateManager.translate(0, 0, 1);
+        // Rose at the opposite corner from tall grass (back-left of 3×3 grid)
+        GlStateManager.translate(-3, 1, 2);
         renderBlocks.renderBlockAsItem(Blocks.red_flower, 0, 1.0F);
-        GlStateManager.popMatrix();
     }
 
+    // Placeholder for ride/boat vehicle entity rendering (not yet implemented).
     private static void renderExtraEntity(float yaw, EntityPlayer player, CustomPlayerEntity playerEntity,
-        RenderManager dispatcher) throws ExecutionException {
-        if (playerEntity.hasPreviewAnimation("ride")) {
-            // Entity entity = AnimatableCacheUtil.ENTITIES_CACHE.get(EntityType.getKey(EntityType.HORSE), () ->
-            // EntityType.HORSE.create(player.level()));
-            // renderExtraEntity(yaw, player, dispatcher, entity);
-            return;
-        }
-        if (playerEntity.hasPreviewAnimation("ride_pig")) {
-            // Entity entity = AnimatableCacheUtil.ENTITIES_CACHE.get(EntityType.getKey(EntityType.PIG), () ->
-            // EntityType.PIG.create(player.level()));
-            // renderExtraEntity(yaw, player, dispatcher, entity);
-            return;
-        }
-        if (playerEntity.hasPreviewAnimation("boat")) {
-            // Entity entity = AnimatableCacheUtil.ENTITIES_CACHE.get(EntityType.getKey(EntityType.BOAT), () ->
-            // EntityType.BOAT.create(player.level()));
-            // renderExtraEntity(yaw, player, dispatcher, entity);
-            return;
-        }
-    }
-
-    private static void renderExtraEntity(float yaw, EntityPlayer player, RenderManager dispatcher, Entity entity) {
-        GlStateManager.pushMatrix();
-        GlStateManager.rotate(j2l(Axis.YP.rotationDegrees(yaw)));
-        double yOffset = -entity.getMountedYOffset();
-        dispatcher.renderEntityWithPosYaw(entity, 0, yOffset, 0, 0, 1.0f);
-        GlStateManager.popMatrix();
-    }
+        RenderManager dispatcher) {}
 
     public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, Consumer<CustomPlayerEntity> consumer) {

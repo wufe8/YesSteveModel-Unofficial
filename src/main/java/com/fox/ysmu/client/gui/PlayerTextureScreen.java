@@ -114,15 +114,17 @@ public class PlayerTextureScreen extends GuiScreen {
         }
         animationNames.sort(String::compareTo);
 
-        // 默认动画：优先模型配置的 previewAnimation，其次 idle，最后第一个
+        // 默认动画：优先 idle（刚进入页面时从静态姿势开始），其次 previewAnimation
         this.currentAnimation = "";
-        String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(ModelIdUtil.getMainId(modelId));
-        if (previewAnim != null && !previewAnim.isEmpty() && animationNames.contains(previewAnim)) {
-            this.currentAnimation = previewAnim;
-        } else if (animationNames.contains("idle")) {
+        if (animationNames.contains("idle")) {
             this.currentAnimation = "idle";
-        } else if (!animationNames.isEmpty()) {
-            this.currentAnimation = animationNames.get(0);
+        } else {
+            String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(ModelIdUtil.getMainId(modelId));
+            if (previewAnim != null && !previewAnim.isEmpty() && animationNames.contains(previewAnim)) {
+                this.currentAnimation = previewAnim;
+            } else if (!animationNames.isEmpty()) {
+                this.currentAnimation = animationNames.get(0);
+            }
         }
     }
 
@@ -380,6 +382,7 @@ public class PlayerTextureScreen extends GuiScreen {
             float centerX = guiLeft + 189.5f + offsetX;
             float centerY = guiTop + 197.5f + offsetY;
 
+            RenderUtil.SHOW_GROUND = showGround;
             RenderUtil.renderTextureScreenEntity(
                 centerX, centerY, zoom, pitch, yaw,
                 player, modelId, previewTex,
@@ -397,10 +400,6 @@ public class PlayerTextureScreen extends GuiScreen {
                         .forEach(c -> c.setAnimationSpeed(speed));
                 }
             );
-            // Render ground separately with its own complete transform
-            if (showGround) {
-                RenderUtil.renderGroundFull(centerX, centerY, zoom, pitch, yaw);
-            }
         }
 
         GL11.glDisable(GL11.GL_SCISSOR_TEST);

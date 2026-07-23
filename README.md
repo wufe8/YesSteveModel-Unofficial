@@ -154,6 +154,7 @@ git checkout feat-ExtraUI
 - [SKIP] v.roaming长期变量目前不会永久保存 可能 wont fix
 - 粒子系统未实现
 - ysm格式的cube路径与文件夹json的cube路径不同 其poly_mash会丢失size<0的状态 导致本应是负缩放大小的模型无法通过正确翻转法线 来做到内外面翻转/描边的效果
+- [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
 
 ---
 
