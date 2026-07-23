@@ -303,10 +303,18 @@ public final class AnimationManager {
                 }
                 return controllerState;
             }
-            // No matching OpenYSM controller — fall back to legacy animation
+            // No matching OpenYSM controller — fall back to legacy animation.
+            // Skip if the animation doesn't exist in the model's file to avoid
+            // GeckoLib's System.out.printf spam ("Could not load animation: ...").
+            if (animationExistsInFile(animId, animationName)) {
+                return playLoopAnimation(event, animationName);
+            }
+            return PlayState.STOP;
+        }
+        if (animationExistsInFile(animId, animationName)) {
             return playLoopAnimation(event, animationName);
         }
-        return playLoopAnimation(event, animationName);
+        return PlayState.STOP;
     }
 
     public PlayState predicateOpenYsmSlot(AnimationEvent<CustomPlayerEntity> event) {
@@ -797,6 +805,28 @@ public final class AnimationManager {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
                 if (exists) {
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.PLAY_ONCE);
+                }
+            }
+            // Ensure swing_hand exists: check the current model's file first,
+            // then fall back to the DEFAULT_ANIMATION_FILE (which contains
+            // swing_hand from the built-in default model).  Without this,
+            // models without their own swing_hand (e.g. 2_steve, 3_default_boy)
+            // would silently fail to play any swing animation, leaving the
+            // arm frozen in the bind/rest pose when the player clicks.
+            if (!animationExistsInFile(animId, "swing_hand")) {
+                software.bernie.geckolib3.core.builder.Animation defaultSwing =
+                    com.fox.ysmu.client.ClientModelManager.DEFAULT_ANIMATION_FILE.animations.get("swing_hand");
+                if (defaultSwing != null) {
+                    software.bernie.geckolib3.file.AnimationFile animFile =
+                        software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
+                    if (animFile != null) {
+                        software.bernie.geckolib3.core.builder.Animation copy =
+                            new software.bernie.geckolib3.core.builder.Animation();
+                        copy.animationLength = defaultSwing.animationLength;
+                        copy.loop = defaultSwing.loop;
+                        copy.boneAnimations = defaultSwing.boneAnimations;
+                        animFile.animations.put("swing_hand", copy);
+                    }
                 }
             }
             return playAnimation(event, "swing_hand", ILoopType.EDefaultLoopTypes.PLAY_ONCE);
