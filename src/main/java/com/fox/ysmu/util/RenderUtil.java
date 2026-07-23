@@ -145,15 +145,12 @@ public final class RenderUtil {
                 GlStateManager.translate(0.0D, 0.0D, 1000.0D);
                 GlStateManager.scale(pScale, pScale, pScale);
                 GlStateManager.translate(0, 0.8, 0);
-                // Rotation order: Z(180°) → Y(yaw) → X(-10+pitch)
+                // Rotation order matching renderModel: Z(180°) → X(-10+pitch) → Y(175+yaw)
                 // Yaw is applied in the matrix because CustomPlayerEntity (non-LivingEntity)
                 // does not have its body rotation read by GeckoLib.
-                Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
-                Quaternionf yp = Axis.YP.rotationDegrees(180 + yaw);
-                Quaternionf xp = Axis.XP.rotationDegrees(pitch);
-                zp.mul(yp);
-                zp.mul(xp);
-                GlStateManager.rotate(j2l(zp));
+                GlStateManager.rotate(j2l(Axis.ZP.rotationDegrees(180.0F)));
+                GlStateManager.rotate(j2l(Axis.XP.rotationDegrees(-10 + pitch)));
+                GlStateManager.rotate(j2l(Axis.YP.rotationDegrees(175 + yaw)));
 
                 // 保存玩家原始状态
                 float yBodyRot = player.renderYawOffset;
@@ -174,7 +171,6 @@ public final class RenderUtil {
                     RenderHelper.enableGUIStandardItemLighting();
                     RenderManager dispatcher = RenderManager.instance;
 
-                    xp.conjugate();
                     //dispatcher.overrideCameraOrientation(xp);
                     //dispatcher.setRenderShadow(false);
 
