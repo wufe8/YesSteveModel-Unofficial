@@ -23,6 +23,13 @@ public final class MolangPhysicsRuntime {
     private static FrameContext currentFrameContext;
     private static final Map<ScopeKey, ScopeState> STATES = new ConcurrentHashMap<>();
 
+    /** Time delta (in seconds) since the last render frame, used by ysm.time_delta. */
+    private static float timeDelta = 0f;
+    private static double prevRenderTicks = -1;
+
+    /** Returns the frame time delta in seconds (ysm.time_delta). */
+    public static float getTimeDelta() { return timeDelta; }
+
     private MolangPhysicsRuntime() {}
 
     /**
@@ -118,6 +125,11 @@ public final class MolangPhysicsRuntime {
             state.variables.put("v.anim_ctrl", 1.0);
         }
         state.physics.update(renderTicks);
+        // Compute time delta for ysm.time_delta
+        if (prevRenderTicks >= 0 && renderTicks > prevRenderTicks) {
+            timeDelta = (float) ((renderTicks - prevRenderTicks) / 20.0);
+        }
+        prevRenderTicks = renderTicks;
         currentFrameContext = new FrameContext(state, processor);
     }
 

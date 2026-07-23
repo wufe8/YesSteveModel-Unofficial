@@ -99,6 +99,7 @@ public class MolangParser extends MathBuilder {
         this.functions.put("ysm.play_sound", CtrlHoldFunction.class);
         this.functions.put("ysm.relative_block_name", CtrlHoldFunction.class);
         this.functions.put("ysm.particle", CtrlHoldFunction.class);
+        this.functions.put("ysm.keyboard", CtrlHoldFunction.class);
 
         remap("abs", "math.abs");
         remap("acos", "math.acos");

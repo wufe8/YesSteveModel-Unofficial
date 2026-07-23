@@ -131,33 +131,17 @@ public final class OpenYsmPlayerControllerRuntime {
             return result;
         }
         Map<String, Double> result = new java.util.HashMap<>();
-        boolean hasBqEyeInPending = false;
-        boolean hasBqEyeInExplicit = false;
         for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
             String key = entry.getKey();
-            if ("roaming.bq_eye".equals(key)) {
-                hasBqEyeInPending = true;
-            }
             // Include vars known to this model, plus global vars, plus vars
             // explicitly set via the wheel (radio/checkbox forms that use
             // "value" instead of "defaultValue" and thus aren't pre-registered).
             boolean inKnown = knownVars.contains(key);
             boolean inExplicit = EXPLICIT_ROAMING.contains(key);
-            if ("roaming.bq_eye".equals(key) && inExplicit) {
-                hasBqEyeInExplicit = true;
-            }
             if (inKnown || "lock_wheel".equals(key) || "wheel_anim".equals(key)
                 || inExplicit) {
                 result.put(key, entry.getValue());
             }
-        }
-        if (allowDebugLog("YSMU-DBG-BQEYE")) {
-            Double bqEyeVal = result.get("roaming.bq_eye");
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG-BQEYE] computeRoaming: hasBqEyeInPending={} hasBqEyeInExplicit={} knownVarsSize={} includedVal={} resultSize={} modelId={}",
-                hasBqEyeInPending, hasBqEyeInExplicit,
-                knownVars != null ? knownVars.size() : -1,
-                bqEyeVal != null ? bqEyeVal : -999,
-                result.size(), modelId);
         }
         return result;
     }
@@ -715,13 +699,6 @@ public final class OpenYsmPlayerControllerRuntime {
                 // Conditional animation entries changed → must call
                 // setAnimation to apply new merged bone keyframes.
                 // Fall through to the setAnimation logic below.
-                if (allowDebugLog("YSMU-DBG-TL")) {
-                    com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG-TL] ctrl={} state={} anim={} animsChanged={} timelineSize={} bq_eye={} bq_mouth={}",
-                        ctrlName, state.name, primaryName,
-                        animationNames.size(), mergedTimeline.size(),
-                        runtimeState.variables.getOrDefault("bq_eye", -999.0),
-                        runtimeState.variables.getOrDefault("bq_mouth", -999.0));
-                }
             } else if (ctrlName != null
                 && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))) {
                 boolean hasRoamingRef = false;
@@ -733,13 +710,6 @@ public final class OpenYsmPlayerControllerRuntime {
                             MolangInstructionExecutor.execute(data);
                         }
                     }
-                }
-                if (allowDebugLog("YSMU-DBG-TL")) {
-                    com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG-TL] ctrl={} state={} anim={} timelineSize={} hasRoaming={} bq_eye={} bq_mouth={}",
-                        ctrlName, state.name, primaryName,
-                        mergedTimeline.size(), hasRoamingRef,
-                        runtimeState.variables.getOrDefault("bq_eye", -999.0),
-                        runtimeState.variables.getOrDefault("bq_mouth", -999.0));
                 }
                 return;
             } else {

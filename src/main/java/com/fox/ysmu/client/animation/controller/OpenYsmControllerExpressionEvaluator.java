@@ -593,6 +593,15 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("query.position".equals(name) && arguments.size() >= 1) {
                 return queryPositionValue((int) arguments.get(0).asNumber());
             }
+            // --- ysm.* 函数 ---
+            if ("ysm.keyboard".equals(name) && arguments.size() >= 1) {
+                int keycode = (int) arguments.get(0).asNumber();
+                try {
+                    return org.lwjgl.input.Keyboard.isKeyDown(keycode) ? TRUE : FALSE;
+                } catch (Exception e) {
+                    return FALSE;
+                }
+            }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "func:" + name,
                 "Unsupported OpenYSM controller function: " + name);
@@ -792,6 +801,9 @@ final class OpenYsmControllerExpressionEvaluator {
             }
             if ("arrow_count".equals(name)) {
                 return player.getArrowCountInEntity();
+            }
+            if ("time_delta".equals(name)) {
+                return com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.getTimeDelta();
             }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "ysm:" + name,

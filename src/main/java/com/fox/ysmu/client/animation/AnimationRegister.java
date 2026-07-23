@@ -168,6 +168,7 @@ public class AnimationRegister {
         parser.register(new LazyVariable("ysm.armor_value", 0));
         parser.register(new LazyVariable("ysm.hurt_time", 0));
         parser.register(new LazyVariable("ysm.food_level", 20));
+        parser.register(new LazyVariable("ysm.time_delta", 0));
 
         // parser.register(new LazyVariable("ysm.first_person_mod_hide", MolangUtils.FALSE));
     }
@@ -280,6 +281,7 @@ public class AnimationRegister {
         parser.setValue("ysm.armor_value", player::getTotalArmorValue);
         parser.setValue("ysm.hurt_time", () -> player.hurtTime);
         parser.setValue("ysm.food_level", () -> player.getFoodStats().getFoodLevel());
+        parser.setValue("ysm.time_delta", com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime::getTimeDelta);
     }
 
     private static boolean hasCape(EntityPlayer player) {
