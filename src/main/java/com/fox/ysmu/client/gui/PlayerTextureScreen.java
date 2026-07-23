@@ -181,9 +181,10 @@ public class PlayerTextureScreen extends GuiScreen {
             int index = slot + this.animPage * ANIM_PER_PAGE;
             if (index >= animationNames.size()) break;
             String animName = animationNames.get(index);
+            String localizedName = localizeAnimationName(animName);
             int btnX = guiLeft + LEFT_PANEL_X;
             int btnY = guiTop + 27 + ANIM_BTN_H * slot;
-            this.buttonList.add(new FlatColorButton(btnId++, btnX, btnY, LEFT_PANEL_W, 16, animName));
+            this.buttonList.add(new FlatColorButton(btnId++, btnX, btnY, LEFT_PANEL_W, 16, localizedName));
         }
 
         // --- 右侧：材质按钮 ---
@@ -290,10 +291,10 @@ public class PlayerTextureScreen extends GuiScreen {
             }
         }
 
-        super.drawScreen(mouseX, mouseY, partialTick);
-
-        // === 中间：3D 模型预览 ===
+        // === 中间：3D 模型预览（在按钮和文字之前渲染，让 GUI 元素覆盖在模型上方） ===
         renderCenterPreview(mouseX, mouseY, partialTick);
+
+        super.drawScreen(mouseX, mouseY, partialTick);
 
         // === 分页信息文字 ===
         // 材质分页
@@ -313,13 +314,6 @@ public class PlayerTextureScreen extends GuiScreen {
             this.drawString(fontRendererObj, pauseLabel, pauseX, guiTop + GUI_H - 24, 0xFF5555);
         }
 
-        // 暂停提示
-        if (this.paused) {
-            String pauseLabel = I18n.format("gui.yes_steve_model.model.paused");
-            int pauseX = guiLeft + CENTER_PANEL_X + (CENTER_PANEL_W - fontRendererObj.getStringWidth(pauseLabel)) / 2;
-            this.drawString(fontRendererObj, pauseLabel, pauseX, guiTop + GUI_H - 24, 0xFF5555);
-        }
-
         // 当前动画名提示（底部居中）
         if (this.currentAnimation != null && !this.currentAnimation.isEmpty()) {
             // I18n.format returns the key itself if no translation exists
@@ -334,22 +328,33 @@ public class PlayerTextureScreen extends GuiScreen {
             this.drawString(fontRendererObj, animLabel, labelX, guiTop + GUI_H - 12, 0xFFAA00);
         }
 
-        // Tooltips for S/R/G buttons
+        // Tooltips for S/R/G buttons and animation buttons
         for (Object obj : this.buttonList) {
             if (obj instanceof GuiButton) {
                 GuiButton btn = (GuiButton) obj;
-                if (btn.func_146115_a() && btn.id >= 10 && btn.id <= 12) {
+                if (btn.func_146115_a()) {
                     String tip = null;
-                    switch (btn.id) {
-                        case 10:
-                            tip = paused ? "Resume" : I18n.format("gui.yes_steve_model.model.stop");
-                            break;
-                        case 11:
-                            tip = I18n.format("gui.yes_steve_model.model.reset");
-                            break;
-                        case 12:
-                            tip = I18n.format("gui.yes_steve_model.model.ground");
-                            break;
+                    if (btn.id >= 10 && btn.id <= 12) {
+                        switch (btn.id) {
+                            case 10:
+                                tip = paused ? "Resume" : I18n.format("gui.yes_steve_model.model.stop");
+                                break;
+                            case 11:
+                                tip = I18n.format("gui.yes_steve_model.model.reset");
+                                break;
+                            case 12:
+                                tip = I18n.format("gui.yes_steve_model.model.ground");
+                                break;
+                        }
+                    } else if (btn.id >= 20 && btn.id < 20 + ANIM_PER_PAGE) {
+                        int idx = (btn.id - 20) + this.animPage * ANIM_PER_PAGE;
+                        if (idx >= 0 && idx < animationNames.size()) {
+                            String rawId = animationNames.get(idx);
+                            String localized = localizeAnimationName(rawId);
+                            if (!localized.equals(rawId)) {
+                                tip = rawId;
+                            }
+                        }
                     }
                     if (tip != null) {
                         java.util.List<String> lines = java.util.Collections.singletonList(tip);
@@ -403,6 +408,7 @@ public class PlayerTextureScreen extends GuiScreen {
         }
 
         GL11.glDisable(GL11.GL_SCISSOR_TEST);
+        GL11.glDisable(GL11.GL_DEPTH_TEST);
     }
 
     // ---- 鼠标交互 ----
@@ -494,6 +500,16 @@ public class PlayerTextureScreen extends GuiScreen {
     private boolean isInTextureArea(double mouseX, double mouseY) {
         return mouseX >= guiLeft + RIGHT_PANEL_X && mouseX < guiLeft + RIGHT_PANEL_X + RIGHT_PANEL_W
             && mouseY >= guiTop && mouseY < guiTop + GUI_H;
+    }
+
+    /** Translate animation name via lang keys (e.g. extra1 → 轮盘动画1), fallback to raw name. */
+    private static String localizeAnimationName(String animName) {
+        String key = "gui.yes_steve_model.texture.button." + animName.replaceAll(":", ".");
+        String formatted = I18n.format(key, animName);
+        if (formatted.equals(key)) {
+            return animName; // no translation found
+        }
+        return formatted;
     }
 
     private void adjustPitch(float deltaY) {

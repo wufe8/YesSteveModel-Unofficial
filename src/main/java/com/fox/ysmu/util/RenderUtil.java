@@ -256,28 +256,6 @@ public final class RenderUtil {
     // 创建一个全局的RenderBlocks实例以提高效率
     private static final RenderBlocks renderBlocks = new RenderBlocks();
 
-    /** Render bed with FULL transform (from scratch, not inheriting parent).
-     *  Public so PlayerTextureScreen can call it after renderTextureScreenEntity.
-     *  Rotation order matches renderTextureScreenEntity: Z(180) × Y(yaw+180) × X(-10+pitch). */
-    public static void renderBedFull(float pPosX, float pPosY, float pScale, float pitch, float yaw) {
-        GlStateManager.pushMatrix();
-        GlStateManager.translate(pPosX, pPosY, 1050.0D);
-        GlStateManager.scale(1.0F, 1.0F, -1.0F);
-        GlStateManager.translate(0.0D, 0.0D, 1000.0D);
-        GlStateManager.scale(pScale, pScale, pScale);
-        GlStateManager.translate(0, 0.8, 0);
-        Quaternionf zp = Axis.ZP.rotationDegrees(180.0F);
-        Quaternionf yp = Axis.YP.rotationDegrees(yaw + 180);
-        Quaternionf xp = Axis.XP.rotationDegrees(-10 + pitch);
-        zp.mul(yp);
-        zp.mul(xp);
-        GlStateManager.rotate(j2l(zp));
-        GlStateManager.translate(-0.5, 0, 0.5);
-        RenderManager.instance.renderEngine.bindTexture(new ResourceLocation("textures/entity/bed/red.png"));
-        renderBlocks.renderBlockAsItem(Blocks.bed, 0, 1.0F);
-        GlStateManager.popMatrix();
-    }
-
     /** Render ground blocks inside the current matrix (inherits animation adjustments).
      *  Called from renderTextureScreenEntity's animation-adjustment block. */
     private static void renderSceneGround(float pScale) {
