@@ -25,6 +25,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.ControllerSet;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
+import com.fox.ysmu.client.animation.molang.MolangInstructionExecutor;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 
 import software.bernie.geckolib3.core.PlayState;
@@ -73,9 +74,14 @@ public final class OpenYsmPlayerControllerRuntime {
      */
     private static final Map<ResourceLocation, java.util.Set<String>> MODEL_ROAMING_VARS = new ConcurrentHashMap<>();
 
-    /** Frame-scoped cache for getRoamingVarsForModel — valid only within begin()/end(). */
-    private static boolean frameRoamingCacheValid = false;
-    private static Map<String, Double> frameRoamingCache = null;
+    /**
+     * Frame-scoped cache for getRoamingVarsForModel — valid only within begin()/end().
+     * Keyed by modelId to prevent cross-model contamination when multiple models
+     * render in the same frame (e.g. GUI preview + player entity have different
+     * MODEL_ROAMING_VARS sizes and the cache would return the wrong model's data).
+     */
+    private static final java.util.Map<ResourceLocation, Map<String, Double>> frameRoamingCache =
+        new java.util.HashMap<>();
 
     /**
      * Registers a roaming variable name as belonging to the given model.
@@ -93,19 +99,18 @@ public final class OpenYsmPlayerControllerRuntime {
      */
     public static Map<String, Double> getRoamingVarsForModel(ResourceLocation modelId) {
         // Frame-scoped cache: all ~33 callers per frame share the same result.
-        if (frameRoamingCacheValid) {
-            return frameRoamingCache;
+        Map<String, Double> cached = frameRoamingCache.get(modelId);
+        if (cached != null) {
+            return cached;
         }
         Map<String, Double> result = computeRoamingVarsForModel(modelId);
-        frameRoamingCache = result;
-        frameRoamingCacheValid = true;
+        frameRoamingCache.put(modelId, result);
         return result;
     }
 
     /** Invalidates the frame-scoped roaming variable cache (called at frame end). */
     public static void invalidateFrameRoamingCache() {
-        frameRoamingCacheValid = false;
-        frameRoamingCache = null;
+        frameRoamingCache.clear();
     }
 
     /** Computes the roaming variable map for the given model — no caching. */
@@ -126,12 +131,33 @@ public final class OpenYsmPlayerControllerRuntime {
             return result;
         }
         Map<String, Double> result = new java.util.HashMap<>();
+        boolean hasBqEyeInPending = false;
+        boolean hasBqEyeInExplicit = false;
         for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
             String key = entry.getKey();
-            // Include vars known to this model, plus global vars
-            if (knownVars.contains(key) || "lock_wheel".equals(key) || "wheel_anim".equals(key)) {
+            if ("roaming.bq_eye".equals(key)) {
+                hasBqEyeInPending = true;
+            }
+            // Include vars known to this model, plus global vars, plus vars
+            // explicitly set via the wheel (radio/checkbox forms that use
+            // "value" instead of "defaultValue" and thus aren't pre-registered).
+            boolean inKnown = knownVars.contains(key);
+            boolean inExplicit = EXPLICIT_ROAMING.contains(key);
+            if ("roaming.bq_eye".equals(key) && inExplicit) {
+                hasBqEyeInExplicit = true;
+            }
+            if (inKnown || "lock_wheel".equals(key) || "wheel_anim".equals(key)
+                || inExplicit) {
                 result.put(key, entry.getValue());
             }
+        }
+        if (allowDebugLog("YSMU-DBG-BQEYE")) {
+            Double bqEyeVal = result.get("roaming.bq_eye");
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG-BQEYE] computeRoaming: hasBqEyeInPending={} hasBqEyeInExplicit={} knownVarsSize={} includedVal={} resultSize={} modelId={}",
+                hasBqEyeInPending, hasBqEyeInExplicit,
+                knownVars != null ? knownVars.size() : -1,
+                bqEyeVal != null ? bqEyeVal : -999,
+                result.size(), modelId);
         }
         return result;
     }
@@ -211,6 +237,22 @@ public final class OpenYsmPlayerControllerRuntime {
                 String lcKey = entry.getKey().toLowerCase(java.util.Locale.ROOT);
                 if (!lcKey.equals(entry.getKey())) {
                     runtimeState.variables.put(lcKey, entry.getValue());
+                }
+                // Also inject with the "roaming." prefix stripped so that
+                // controller conditions like "v.bq_eye<=0" can find the value
+                // via localVariableValue("bq_eye"), which looks up the bare
+                // name (without "roaming.") in runtimeState.variables.
+                // Otherwise the condition always reads 0 (default) because
+                // the value is stored as "roaming.bq_eye" instead of "bq_eye",
+                // and the timeline instruction that computes v.bq_eye from
+                // v.roaming.bq_eye runs AFTER the condition evaluation.
+                if (entry.getKey().startsWith("roaming.")) {
+                    String plainKey = entry.getKey().substring("roaming.".length());
+                    runtimeState.variables.put(plainKey, entry.getValue());
+                    String lcPlainKey = plainKey.toLowerCase(java.util.Locale.ROOT);
+                    if (!lcPlainKey.equals(plainKey)) {
+                        runtimeState.variables.put(lcPlainKey, entry.getValue());
+                    }
                 }
             }
         }
@@ -621,15 +663,72 @@ public final class OpenYsmPlayerControllerRuntime {
         // Only call setAnimation ONCE with the final name, so GeckoLib does NOT
         // reset shouldResetTick every frame (which would freeze the animation at tick 0).
         finalName = finalName != null ? finalName : primaryName;
-        boolean sameState = state.name.equals(runtimeState.lastSelectedAnimationState);
+        // Same-animation detection: skip setAnimation when the same state and
+        // animation are already playing.  BUT if the model changed (animationId
+        // differs), force setAnimation because RuntimeState persists across
+        // model switches and would incorrectly match the old animation name.
+        boolean sameModel = animationId.equals(runtimeState.lastAnimationId);
+        boolean sameState = sameModel && state.name.equals(runtimeState.lastSelectedAnimationState);
         boolean sameAnim = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
             && runtimeState.lastSelectedAnimation.equals(primaryName);
+        runtimeState.lastAnimationId = animationId;
         runtimeState.lastAnimation = primaryName;
         runtimeState.lastSelectedAnimationState = state.name;
         runtimeState.lastSelectedAnimation = primaryName;
-        // Same state + same animation → nothing to change, skip setAnimation entirely.
         if (sameAnim) {
-            return;
+            // Same state + same animation → skip setAnimation to preserve
+            // keyframe tracking (sound/particle keyframes already executed
+            // won't re-fire).  However, timeline custom instructions must
+            // still re-execute every frame for pre_parallel/parallel controllers
+            // so that roaming variable changes from the expression wheel take
+            // effect immediately.  GeckoLib's native keyframe event tracking
+            // only fires each instruction once.
+            // We ONLY re-execute for pre_parallel/parallel controllers because
+            // other controllers' timeline instructions set swing-related
+            // variables (v.qh, v.random, etc.) that must NOT be re-triggered
+            // every frame.
+            // Additionally, check if conditional animation entries have changed
+            // since last frame. These depend on roaming variable values evaluated
+            // in collectActiveAnimations(),
+            // and when they change, setAnimation must run to apply the new
+            // merged bone keyframes even though the primary animation name
+            // (e.g. pre_parallel0) hasn't changed.
+            boolean animsChanged = !animationNames.equals(runtimeState.lastActiveAnimations);
+            runtimeState.lastActiveAnimations = new java.util.ArrayList<>(animationNames);
+            if (animsChanged) {
+                // Conditional animation entries changed → must call
+                // setAnimation to apply new merged bone keyframes.
+                // Fall through to the setAnimation logic below.
+                if (allowDebugLog("YSMU-DBG-TL")) {
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG-TL] ctrl={} state={} anim={} animsChanged={} timelineSize={} bq_eye={} bq_mouth={}",
+                        ctrlName, state.name, primaryName,
+                        animationNames.size(), mergedTimeline.size(),
+                        runtimeState.variables.getOrDefault("bq_eye", -999.0),
+                        runtimeState.variables.getOrDefault("bq_mouth", -999.0));
+                }
+            } else if (ctrlName != null
+                && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))) {
+                boolean hasRoamingRef = false;
+                if (!mergedTimeline.isEmpty()) {
+                    for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : mergedTimeline) {
+                        String data = kf.getEventData();
+                        if (data != null) {
+                            if (data.contains("roaming.")) hasRoamingRef = true;
+                            MolangInstructionExecutor.execute(data);
+                        }
+                    }
+                }
+                if (allowDebugLog("YSMU-DBG-TL")) {
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-DBG-TL] ctrl={} state={} anim={} timelineSize={} hasRoaming={} bq_eye={} bq_mouth={}",
+                        ctrlName, state.name, primaryName,
+                        mergedTimeline.size(), hasRoamingRef,
+                        runtimeState.variables.getOrDefault("bq_eye", -999.0),
+                        runtimeState.variables.getOrDefault("bq_mouth", -999.0));
+                }
+                return;
+            } else {
+                return;
+            }
         }
         // When the state hasn't changed but only the animation variant changed
         // (e.g. attack1's animation switches from sword_attack_01 to
@@ -868,6 +967,17 @@ public final class OpenYsmPlayerControllerRuntime {
         String lastAnimation = "";
         String lastSelectedAnimationState = "";
         String lastSelectedAnimation = "";
+        /** The animationId (model) that lastSelectedAnimation belongs to.  Used to
+         * detect model switches where the same state+animation name would otherwise
+         * match via sameAnim but the underlying GeckoLib controller is playing a
+         * different model's animation (RuntimeState persists across model switches). */
+        ResourceLocation lastAnimationId = null;
+        /** Tracks the full list of animation names played in the last frame.
+         *  Used by sameAnim detection to detect changes in conditional animation
+         *  entries that depend on roaming variables.
+         *  When this list changes, setAnimation must run to apply the new
+         *  merged bone keyframes even though the primary animation name is the same. */
+        java.util.List<String> lastActiveAnimations = new java.util.ArrayList<>();
         double enteredTick;
         boolean lastSwingActive;
         /** Regular HashMap is safe: all RuntimeState access is on the client render thread. */

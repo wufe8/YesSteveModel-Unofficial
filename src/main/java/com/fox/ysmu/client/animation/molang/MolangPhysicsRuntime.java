@@ -10,6 +10,8 @@ import net.minecraft.util.ResourceLocation;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 
+import software.bernie.geckolib3.core.molang.MolangParser;
+import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangStringPool;
 import software.bernie.geckolib3.core.processor.AnimationProcessor;
 import software.bernie.geckolib3.core.processor.IBone;
@@ -49,6 +51,25 @@ public final class MolangPhysicsRuntime {
                 if (!lcKey.equals(prefixedKey)) {
                     state.variables.put(lcKey, entry.getValue());
                 }
+                // Also inject with the "roaming." prefix stripped so that
+                // bone keyframes referencing the plain variable (e.g. v.bq_eye)
+                // can find the value through ScopedMolangVariable →
+                // MolangPhysicsRuntime.getVariable().  ScopedMolangVariable.get()
+                // ONLY checks state.variables (via MolangPhysicsRuntime), NOT
+                // MolangParser.VARIABLES, so without this injection the value
+                // always falls back to 0.0 and expression wheel has no effect.
+                // The raw roaming value (preset index) is injected as a fallback;
+                // if a timeline instruction computes a derived blend factor,
+                // it overrides this value when it fires (sameAnim re-execution).
+                String rawKey = entry.getKey();
+                if (rawKey.startsWith("roaming.")) {
+                    String plainKey = "v." + rawKey.substring("roaming.".length());
+                    state.variables.put(plainKey, entry.getValue());
+                    String lcPlainKey = plainKey.toLowerCase(java.util.Locale.ROOT);
+                    if (!lcPlainKey.equals(plainKey)) {
+                        state.variables.put(lcPlainKey, entry.getValue());
+                    }
+                }
             }
             // car_stuff@player_ctrl_parallel_6.molang:
             //   v.show_car=v.roaming.car && !(ctrl.tac_hold_gun||...)
@@ -60,15 +81,32 @@ public final class MolangPhysicsRuntime {
                 state.variables.put("v.show_car", showCar);
                 OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("show_car", showCar);
             }
-            // NOTE: previously this block also injected PENDING_ROAMING into the
-            // global MolangParser.VARIABLES map as a fallback for timeline
-            // instructions.  That injection was removed because:
-            //   1. Timeline instructions execute WITHIN the begin()/end() frame
-            //      (tickAnimation() runs before end()), so ScopedMolangVariable.set()
-            //      succeeds writing to ScopeState directly.
-            //   2. Injecting into the global map caused cross-model variable
-            //      contamination — model A's roaming values leaked into model B's
-            //      bone keyframe Molang evaluation via the LazyVariable fallback.
+            // Also inject roaming values into MolangParser.VARIABLES so that
+            // timeline instructions (executed via MolangInstructionExecutor)
+            // can read current roaming values through the parser's normal
+            // variable resolution path even after end() clears the frame context.
+            // Keys in modelRoaming already include the "roaming." prefix
+            // (e.g. "roaming.bq_eye"), so we prepend "v." to match the
+            // variable name format used by MolangParser ("v.roaming.bq_eye").
+            // Additionally, for keys with "roaming." prefix, also inject
+            // under the plain key (e.g. "v.bq_eye") so that bone keyframes
+            // referencing v.bq_eye directly see the current roaming value
+            // every frame, without depending on a transient animation's
+            // timeline instruction (like "v.bq_eye = v.roaming.bq_eye != 0
+            // ? v.roaming.bq_eye : ...") which only fires when that specific
+            // animation plays and is then cached in executedKeyFrames.
+            for (Map.Entry<String, Double> roamingEntry : modelRoaming.entrySet()) {
+                String varKey = "v." + roamingEntry.getKey();
+                MolangParser.VARIABLES.computeIfAbsent(varKey,
+                    k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
+                // Strip "roaming." prefix so v.roaming.bq_eye also sets v.bq_eye
+                String roamingKey = roamingEntry.getKey();
+                if (roamingKey.startsWith("roaming.")) {
+                    String plainKey = "v." + roamingKey.substring("roaming.".length());
+                    MolangParser.VARIABLES.computeIfAbsent(plainKey,
+                        k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
+                }
+            }
         }
         // 应用 .molang 函数文件中定义的变量派生规则。
         // @player_ctrl_pre_main.molang 开头: v.anim_ctrl=1;
