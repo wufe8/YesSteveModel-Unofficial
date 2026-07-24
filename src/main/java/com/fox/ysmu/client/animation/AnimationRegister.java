@@ -13,6 +13,7 @@ import net.minecraft.util.MathHelper;
 
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.compat.EtFuturumCompat;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
 
 import software.bernie.geckolib3.core.builder.ILoopType;
@@ -56,6 +57,7 @@ public class AnimationRegister {
         register("ride", Priority.HIGH, (player, event) -> player.isRiding() && !(player.ridingEntity instanceof EntityBoat));
         register("boat", Priority.HIGH, (player, event) -> player.ridingEntity instanceof EntityBoat);
         register("sit", Priority.HIGH, (player, event) -> player.isRiding());
+        register("elytra_fly", Priority.HIGH, (player, event) -> EtFuturumCompat.isElytraFlying(player));
         register("fly", Priority.HIGH, (player, event) -> isPlayerFlying(player));
         register("swim_stand", Priority.NORMAL, (player, event) -> player.isInWater());
     }
@@ -282,6 +284,11 @@ public class AnimationRegister {
         parser.setValue("ysm.hurt_time", () -> player.hurtTime);
         parser.setValue("ysm.food_level", () -> player.getFoodStats().getFoodLevel());
         parser.setValue("ysm.time_delta", com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime::getTimeDelta);
+        parser.setValue("ysm.has_elytra", () -> MolangUtils.booleanToFloat(
+            com.fox.ysmu.compat.EtFuturumCompat.hasElytraEquipped(player)));
+        parser.setValue("ysm.elytra_rot_x", () -> player.rotationPitch);
+        parser.setValue("ysm.elytra_rot_y", () -> player.rotationYaw);
+        parser.setValue("ysm.elytra_rot_z", 0);
     }
 
     private static boolean hasCape(EntityPlayer player) {
@@ -355,6 +362,10 @@ public class AnimationRegister {
     }
 
     private static boolean isPlayerFlying(EntityPlayer player) {
+        // 检查鞘翅飞行
+        if (EtFuturumCompat.isElytraFlying(player)) {
+            return true;
+        }
         // 本地玩家
         if (player == Minecraft.getMinecraft().thePlayer) {
             return player.capabilities.isFlying;

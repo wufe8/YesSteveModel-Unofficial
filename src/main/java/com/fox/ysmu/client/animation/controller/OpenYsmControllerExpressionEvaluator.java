@@ -19,6 +19,7 @@ import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
 import com.fox.ysmu.client.animation.condition.InnerClassify;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.compat.EtFuturumCompat;
 
 import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
@@ -862,6 +863,7 @@ final class OpenYsmControllerExpressionEvaluator {
                 || isControllerStateDirect("ladder_stillness")
                 || isControllerStateDirect("ladder_down")
                 || isControllerStateDirect("fly")
+                || isControllerStateDirect("elytra_fly")
                 || isControllerStateDirect("swim_stand")
                 || isControllerStateDirect("attacked")
                 || isControllerStateDirect("jump")
@@ -902,6 +904,9 @@ final class OpenYsmControllerExpressionEvaluator {
             }
             if ("ride".equals(name) || "sit".equals(name)) {
                 return player.isRiding();
+            }
+            if ("elytra_fly".equals(name)) {
+                return EtFuturumCompat.isElytraFlying(player);
             }
             if ("fly".equals(name)) {
                 return isFlying();
@@ -1026,6 +1031,10 @@ final class OpenYsmControllerExpressionEvaluator {
 
         private boolean isFlying() {
             if (player == null) return false;
+            // 检查鞘翅飞行（Et-Futurum 或其他鞘翅mod）
+            if (EtFuturumCompat.isElytraFlying(player)) {
+                return true;
+            }
             if (player == Minecraft.getMinecraft().thePlayer) {
                 return player.capabilities.isFlying;
             }
