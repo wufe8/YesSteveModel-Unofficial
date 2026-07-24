@@ -176,6 +176,40 @@ public final class OpenYsmPlayerControllerRuntime {
     }
 
     /**
+     * Checks if the model's pre-swing or post-swing overlay controller (which
+     * runs on a separate GeckoLib controller from swing_controller) is
+     * currently producing a meaningful animation, rather than just the
+     * attack_empty stub. Used by predicateSwing to decide whether the
+     * swing_controller can safely skip its legacy fallback — if the overlay
+     * is only playing attack_empty (no bones), the legacy swing_hand should
+     * still play to provide visual feedback for empty-hand swings and prevent
+     * stale GeckoLib animation data from bleeding across swings.
+     */
+    public static boolean isSwingOverlayActive(ResourceLocation animationId, UUID playerId) {
+        // Fast-fail: if the model has no pre-swing/post-swing controllers, skip entirely
+        if (!OpenYsmAnimationControllerRegistry.hasController(
+                animationId, com.fox.ysmu.util.ControllerUtils.OPENYSM_PRE_SWING_CONTROLLER)
+            && !OpenYsmAnimationControllerRegistry.hasController(
+                animationId, com.fox.ysmu.util.ControllerUtils.OPENYSM_POST_SWING_CONTROLLER)) {
+            return false;
+        }
+        String[] ctrlNames = {
+            com.fox.ysmu.util.ControllerUtils.OPENYSM_PRE_SWING_CONTROLLER,
+            com.fox.ysmu.util.ControllerUtils.OPENYSM_POST_SWING_CONTROLLER
+        };
+        for (String name : ctrlNames) {
+            StateKey key = new StateKey(playerId, animationId, name, name);
+            RuntimeState state = STATES.get(key);
+            if (state != null && state.lastSelectedAnimation != null
+                && !state.lastSelectedAnimation.isEmpty()
+                && !"attack_empty".equals(state.lastSelectedAnimation)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /**
      * Checks if the given GeckoLib controller name would match any OpenYSM controller
      * in the model's controller set. Returns true only if a match exists, meaning
      * the model has a dedicated controller for this slot (even if its state machine

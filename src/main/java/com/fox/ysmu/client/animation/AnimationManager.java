@@ -801,8 +801,18 @@ public final class AnimationManager {
             // 攻击动画并行叠加，模型动画结束后剩余部分露出，造成"收刀二次播放"。
             // prepareFrameVariables 已通过 ctrl.swing() 设置 v.swing_sword，
             // 所以不需要 swing:sword 的时间轴来驱动 OpenYSM 控制器状态机。
+            //
+            // 注意：tryApply 在上方已返回 null，说明没有 OpenYSM 控制器直接
+            // 匹配 swing_controller。如果模型只有 overlay 控制器（post_swing/
+            // pre_swing，运行在独立的 GeckoLib 控制器上），需要检查它们是否
+            // 真的产生了有意义的动画。如果它们只在播 attack_empty（无骨骼的
+            // 占位动画），则不跳过 legacy 路径，让 swing_controller 播放下
+            // 默认的 swing_hand，为空手挥动提供视觉反馈，并防止 GeckoLib 的
+            // 旧动画数据残留导致"串动"。
             if (modelHasOwnSwingCtrl) {
-                return PlayState.CONTINUE;
+                if (OpenYsmPlayerControllerRuntime.isSwingOverlayActive(animId, pid)) {
+                    return PlayState.CONTINUE;
+                }
             }
             String conditionalAnimation = findSwingAnimation(event, player);
 

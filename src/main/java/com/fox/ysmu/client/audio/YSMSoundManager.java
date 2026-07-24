@@ -63,7 +63,7 @@ public final class YSMSoundManager {
             try {
                 if (!Files.exists(path)) Files.write(path, sf.data);
                 SOUND_FILES.put(name, path);
-                if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSM Sound] cached '{}' → {} ({} bytes)", name, file, sf.data.length);
+                if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] cached '{}' → {} ({} bytes)", name, file, sf.data.length);
             } catch (IOException ex) {
                 ysmu.LOG.warn("Failed to cache sound {}: {}", name, ex.getMessage());
             }
@@ -78,14 +78,14 @@ public final class YSMSoundManager {
         if (soundName == null || soundName.isEmpty()) return;
 
         if (Config.DEBUG_SOUND) {
-            ysmu.LOG.info("[YSM Sound] playSound: '{}' vol={} pitch={}", soundName, volume, pitch);
+            ysmu.LOG.info("[YSMU-SOUND] playSound: '{}' vol={} pitch={}", soundName, volume, pitch);
         }
 
         // Cooldown disabled — the real issue is sounds playing when they shouldn't.
         // long now = System.currentTimeMillis();
         // Long lastPlay = LAST_PLAY_TIME.get(soundName);
         // if (lastPlay != null && (now - lastPlay) < SOUND_COOLDOWN_MS) {
-        //     ysmu.LOG.warn("[YSM Sound] COOLDOWN: '{}' blocked ({}ms since last play, min={}ms)",
+        //     ysmu.LOG.warn("[YSMU-Sound] COOLDOWN: '{}' blocked ({}ms since last play, min={}ms)",
         //         soundName, (now - lastPlay), SOUND_COOLDOWN_MS);
         //     String throttleKey = "stack_" + soundName;
         //     Long lastStack = LAST_PLAY_TIME.get(throttleKey);
@@ -98,7 +98,7 @@ public final class YSMSoundManager {
         //         for (int i = 0; i < Math.min(lines.length, 20); i++) {
         //             sb.append(lines[i]).append("\n");
         //         }
-        //         ysmu.LOG.warn("[YSM Sound] COOLDOWN caller stack for '{}':\n{}", soundName, sb);
+        //         ysmu.LOG.warn("[YSMU-Sound] COOLDOWN caller stack for '{}':\n{}", soundName, sb);
         //     }
         //     return;
         // }
@@ -134,12 +134,12 @@ public final class YSMSoundManager {
             ResourceLocation translated = SoundNamespaceCompat.resolve(soundName);
             if (translated != null) {
                 if (Config.DEBUG_SOUND) {
-                    ysmu.LOG.info("[YSM Sound] namespace translation: '{}' → '{}'", soundName, translated);
+                    ysmu.LOG.info("[YSMU-SOUND] namespace translation: '{}' → '{}'", soundName, translated);
                 }
                 handler.playSound(PositionedSoundRecord.func_147674_a(translated, volume));
             } else if (Config.DEBUG_SOUND && soundName.startsWith("minecraft:")) {
                 // Log high-version sounds that no provider could translate
-                ysmu.LOG.info("[YSM Sound] no namespace provider for '{}' (not available in 1.7.10)", soundName);
+                ysmu.LOG.info("[YSMU-SOUND] no namespace provider for '{}' (not available in 1.7.10)", soundName);
             }
         }
     }
@@ -156,7 +156,7 @@ public final class YSMSoundManager {
     public static void onSoundKeyframe(String controllerName, String soundName) {
         if (controllerName == null || soundName == null) return;
         if (Config.DEBUG_SOUND) {
-            ysmu.LOG.info("[YSM Sound] onSoundKeyframe: ctrl='{}' sound='{}'", controllerName, soundName);
+            ysmu.LOG.info("[YSMU-SOUND] onSoundKeyframe: ctrl='{}' sound='{}'", controllerName, soundName);
         }
         // If this controller was playing a different sound, stop the old one
         String oldSound = CONTROLLER_SOUNDS.get(controllerName);
@@ -219,7 +219,7 @@ public final class YSMSoundManager {
                 ss.getClass().getMethod("removeSource", String.class).invoke(ss, srcName);
             } catch (NoSuchMethodException ignored) {}
         } catch (Exception e) {
-            ysmu.LOG.warn("[YSM Sound] Failed to stop source '{}': {}", srcName, e.getMessage());
+            ysmu.LOG.warn("[YSMU-SOUND] Failed to stop source '{}': {}", srcName, e.getMessage());
         }
     }
 
@@ -259,7 +259,7 @@ public final class YSMSoundManager {
                 }
             }
         } catch (Exception e) {
-            ysmu.LOG.warn("[YSM Sound] Failed to resolve SoundSystem: {}", e.getMessage());
+            ysmu.LOG.warn("[YSMU-SOUND] Failed to resolve SoundSystem: {}", e.getMessage());
         }
         return null;
     }
@@ -301,7 +301,7 @@ public final class YSMSoundManager {
         // Skip invalid OGG files – passing them to CodecJOrbis can freeze the
         // SoundSystem background thread.
         if (!java.nio.file.Files.exists(oggPath) || !isValidOgg(oggPath)) {
-            ysmu.LOG.warn("[YSM Sound] skipping invalid OGG: {}", oggPath);
+            ysmu.LOG.warn("[YSMU-SOUND] skipping invalid OGG: {}", oggPath);
             return;
         }
         Minecraft mc = Minecraft.getMinecraft();
@@ -326,7 +326,7 @@ public final class YSMSoundManager {
                     .invoke(ss, false, srcName, absUrl, absUrl.toString(),
                         false, px, py, pz, 0, 16f);
             } catch (NoSuchMethodException e) {
-                ysmu.LOG.warn("[YSM Sound] newSource(URL) not available");
+                ysmu.LOG.warn("[YSMU-SOUND] newSource(URL) not available");
                 return;
             }
             // Set pitch/volume before play (Minecraft's order)
@@ -339,9 +339,9 @@ public final class YSMSoundManager {
             if (soundName != null) {
                 ACTIVE_SOURCES.put(soundName, srcName);
             }
-            if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSM Sound] playing '{}' as {}", oggPath.getFileName(), srcName);
+            if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] playing '{}' as {}", oggPath.getFileName(), srcName);
         } catch (Exception e) {
-            ysmu.LOG.warn("[YSM Sound] Failed to play: {}", e.getMessage());
+            ysmu.LOG.warn("[YSMU-SOUND] Failed to play: {}", e.getMessage());
         }
     }
 
