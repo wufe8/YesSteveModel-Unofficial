@@ -619,6 +619,13 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             mergedAnim.boneAnimations = mergedBones;
             mergedAnim.customInstructionKeyframes = mergedTimeline;
+            // Preserve sound keyframes from the primary animation
+            if (primaryAnim != null && primaryAnim.soundKeyFrames != null
+                && !primaryAnim.soundKeyFrames.isEmpty()) {
+                mergedAnim.soundKeyFrames = new java.util.ArrayList<>(primaryAnim.soundKeyFrames);
+            } else {
+                mergedAnim.soundKeyFrames = new java.util.ArrayList<>();
+            }
             if (primaryAnim != null) {
                 mergedAnim.animationLength = primaryAnim.animationLength;
                 // When the animation file has no explicit loop field (null),

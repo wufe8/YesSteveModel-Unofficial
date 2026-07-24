@@ -516,6 +516,33 @@ public class YSMFolderDeserializer implements AutoCloseable {
                         animation.boneAnimations.add(bone);
                     }
                 }
+                // Parse timeline (Molang expressions at timestamps)
+                if (hasObject(animObj, "timeline")) {
+                    JsonObject tlObj = animObj.getAsJsonObject("timeline");
+                    for (Map.Entry<String, JsonElement> tlEntry : tlObj.entrySet()) {
+                        RawYsmModel.RawTimelineEvent tle = new RawYsmModel.RawTimelineEvent();
+                        tle.timestamp = Float.parseFloat(tlEntry.getKey());
+                        JsonElement val = tlEntry.getValue();
+                        if (val.isJsonArray()) {
+                            for (JsonElement e : val.getAsJsonArray()) {
+                                tle.events.add(e.getAsString());
+                            }
+                        } else {
+                            tle.events.add(val.getAsString());
+                        }
+                        animation.timelineEvents.add(tle);
+                    }
+                }
+                // Parse sound effects (e.g. {"0.0": {"effect": "minecraft:item.trident.throw"}})
+                if (hasObject(animObj, "sound_effects")) {
+                    JsonObject sfxObj = animObj.getAsJsonObject("sound_effects");
+                    for (Map.Entry<String, JsonElement> sfxEntry : sfxObj.entrySet()) {
+                        RawYsmModel.RawSoundEffect sfx = new RawYsmModel.RawSoundEffect();
+                        sfx.timestamp = Float.parseFloat(sfxEntry.getKey());
+                        sfx.effectName = getStr(sfxEntry.getValue().getAsJsonObject(), "effect", "");
+                        animation.soundEffects.add(sfx);
+                    }
+                }
             }
             file.animations.put(animation.name, animation);
         }
