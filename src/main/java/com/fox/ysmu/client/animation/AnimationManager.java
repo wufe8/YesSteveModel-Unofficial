@@ -73,6 +73,14 @@ public final class AnimationManager {
     private final Map<UUID, Boolean> wasRiding = new ConcurrentHashMap<>();
     /** Non-null entry means player is in dismount; value is the animation being played. */
     private final Map<UUID, String> dismountAnim = new ConcurrentHashMap<>();
+    /**
+     * Battlegear2 格挡尾迹 tick 计数器。
+     * Battlegear2 的 shield flag (battlegear2$isShielding) 只持续 1-2 tick，
+     * 导致 use_controller 动画在播到格挡姿态前就被中断。
+     * 此计数器在格挡结束后让 use_controller 多保持一段时间（默认 10 tick），
+     * 让动画有时间播过初始帧进入盾牌格挡姿态。
+     */
+    private final Map<UUID, Integer> blockingTailTicks = new ConcurrentHashMap<>();
     /** Remaining ticks to suppress other controllers during dismount. */
     private final Map<UUID, Integer> dismountTimer = new ConcurrentHashMap<>();
     /** Tracks last logged animation name per animId, to avoid spamming [YSMU-ANIM] log every frame. */
@@ -247,6 +255,26 @@ public final class AnimationManager {
         event.getController()
             .setAnimation(new AnimationBuilder().addAnimation(animationName));
         return PlayState.CONTINUE;
+    }
+
+    /**
+     * 播放盾牌/剑格挡动画：将 use_mainhand/use_offhand 动画长度设为 2.0s，
+     * 配合 HOLD_ON_LAST_FRAME 让动画自然停在格挡姿态。
+     */
+    private static PlayState playBlockingAnimation(AnimationEvent<CustomPlayerEntity> event,
+        String fallbackAnim) {
+        ResourceLocation animId = getAnimationId(event);
+        if (animId != null) {
+            software.bernie.geckolib3.file.AnimationFile f = software.bernie.geckolib3.resource.GeckoLibCache.getInstance()
+                .getAnimations().get(animId);
+            if (f != null) {
+                software.bernie.geckolib3.core.builder.Animation a = f.getAnimation(fallbackAnim);
+                if (a != null) {
+                    a.animationLength = 2.0;
+                }
+            }
+        }
+        return playAnimation(event, fallbackAnim, ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME);
     }
 
     private static boolean animationExistsInFile(ResourceLocation animId, String animationName) {
@@ -862,39 +890,55 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        if (player.isUsingItem() && !player.isPlayerSleeping()) {
-            if (markUseStart(player)) {
+        boolean isUsingItem = player.isUsingItem() && !player.isPlayerSleeping();
+        boolean isBlocking = com.fox.ysmu.compat.BlockingCompat.isBlocking(player);
+        UUID playerId = player.getUniqueID();
+
+        if (isUsingItem || isBlocking) {
+            // 使用物品或格挡中：播动画
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] predicateUse: isUsingItem={} isBlocking={}",
+                    isUsingItem, isBlocking);
+            }
+            // 设尾迹计数器：结束后让动画保持一小段时间再停
+            blockingTailTicks.put(playerId, 5);
+
+            boolean needReset = false;
+            if (isUsingItem) {
+                needReset = markUseStart(player);
+            }
+            if (needReset || event.getController().getAnimationState()
+                == software.bernie.geckolib3.core.AnimationState.Stopped) {
                 event.getController().shouldResetTick = true;
                 event.getController().markNeedsReload();
-                event.getController()
-                    .adjustTick(0);
+                event.getController().adjustTick(0);
             }
-            boolean isMainHand = BackhandCompat.getUsedItemHand(player);
+
+            // Battlegear2 盾牌永远在副手
+            boolean isMainHand = isBlocking && !isUsingItem ? false : BackhandCompat.getUsedItemHand(player);
             String conditionalAnimation = findUseAnimation(event, player, isMainHand);
-            if (StringUtils.isNoneBlank(conditionalAnimation)) {
-                return playAnimation(event, conditionalAnimation);
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ANIM] predicateUse: isMainHand={} conditionalAnim={} blocking={}",
+                    isMainHand, conditionalAnimation, isBlocking);
             }
-            // 剑右键格挡：将 use_mainhand 动画长度设为 2.0s，
-            // 配合 HOLD_ON_LAST_FRAME 让动画自然停在格挡姿态。
-            boolean isBlocking = player.getHeldItem() != null
-                && player.getHeldItem().getItemUseAction() == net.minecraft.item.EnumAction.block;
+            if (StringUtils.isNoneBlank(conditionalAnimation)) {
+                return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME);
+            }
             String fallbackAnim = isMainHand ? "use_mainhand" : "use_offhand";
             if (isBlocking) {
-                ResourceLocation animId = getAnimationId(event);
-                if (animId != null) {
-                    software.bernie.geckolib3.file.AnimationFile f = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
-                    if (f != null) {
-                        software.bernie.geckolib3.core.builder.Animation a = f.getAnimation(fallbackAnim);
-                        if (a != null) {
-                            a.animationLength = 2.0;
-                        }
-                    }
-                }
-                return playAnimation(event, fallbackAnim, ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME);
+                return playBlockingAnimation(event, fallbackAnim);
             }
             return playAnimation(event, fallbackAnim, ILoopType.EDefaultLoopTypes.LOOP);
         }
-        useDurationByPlayer.remove(player.getUniqueID());
+
+        // 不使用物品也不格挡：由尾迹计数器决定何时停
+        int tail = blockingTailTicks.getOrDefault(playerId, 0);
+        if (tail > 0) {
+            blockingTailTicks.put(playerId, tail - 1);
+            return PlayState.CONTINUE;
+        }
+        blockingTailTicks.remove(playerId);
+        useDurationByPlayer.remove(playerId);
         com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
         return PlayState.STOP;
     }

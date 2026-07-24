@@ -19,6 +19,7 @@ import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
 import com.fox.ysmu.client.animation.condition.InnerClassify;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
 
 import software.bernie.geckolib3.core.builder.Animation;
@@ -679,9 +680,7 @@ final class OpenYsmControllerExpressionEvaluator {
                     : FALSE;
             }
             if ("is_blocking".equals(name)) {
-                return player.getItemInUse() != null && player.getItemInUse().getItemUseAction() == EnumAction.block
-                    ? TRUE
-                    : FALSE;
+                return BlockingCompat.isBlocking(player) ? TRUE : FALSE;
             }
             if ("health".equals(name)) {
                 return player.getHealth();

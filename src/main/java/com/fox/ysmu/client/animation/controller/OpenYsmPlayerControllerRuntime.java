@@ -816,10 +816,8 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         if (player != null) {
-            // 1.7.10: 剑右键格挡时抑制 swing 变量（不让 OpenYSM 控制器播放挥动动画）
-            boolean isBlocking = player.isUsingItem()
-                && player.getHeldItem() != null
-                && player.getHeldItem().getItemUseAction() == net.minecraft.item.EnumAction.block;
+            // 1.7.10: 剑/盾右键格挡时抑制 swing 变量（不让 OpenYSM 控制器播放挥动动画）
+            boolean isBlocking = com.fox.ysmu.compat.BlockingCompat.isBlocking(player);
 
             if (isBlocking) {
                 state.lastSwingActive = player.isSwingInProgress;

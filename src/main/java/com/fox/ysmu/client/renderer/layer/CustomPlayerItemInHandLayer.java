@@ -52,7 +52,20 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
         GeoModel geoModel = entityRenderer.getGeoModel();
         if (geoModel == null) return;
 
-        if (entity instanceof EntityPlayer player) {
+        EntityPlayer player = null;
+        if (entity instanceof EntityPlayer) {
+            player = (EntityPlayer) entity;
+        } else {
+            // T extends EntityLivingBase & IAnimatable，但运行时传入的是
+            // CustomPlayerEntity（不继承 EntityLivingBase），
+            // 用 Object 中继绕过泛型边界检查。
+            Object rawEntity = entity;
+            if (rawEntity instanceof com.fox.ysmu.client.entity.CustomPlayerEntity cpe) {
+                player = cpe.getPlayer();
+            }
+        }
+        if (player == null) return;
+        {
             String name = geoModel.properties.getExtraInfo().getName();
             boolean isVanilla = Objects.equals(name, "Steve") || Objects.equals(name, "Alex");
             // TODO render_layers_first: 当模型属性 render_layers_first=true 时，

@@ -145,7 +145,8 @@ git checkout feat-ExtraUI
 
 ## 已知问题
 
-- [SKIP] 动画不兼容battlegear2的盾牌和et futurum的鞘翅
+- [FIXED] 动画不兼容battlegear2的盾牌和et futurum的鞘翅
+- [SKIP] battlegear2的盾牌位置不正确 目前会以物品的位置来握持(实际上就是物品而非工具)
 - [FIXED] 目前剑格挡重载为一个静止的使用动画 看起来会像格挡 此外格挡状态 模型可使用query.is_blocking Molang查询
 - 无法播放高于1.7.10的原版音效 可能将来会选择内置这些音效并重载 或者 wont fix
 - 部分新版模型可能需要 `.molang` 函数文件桥接才能正常工作
