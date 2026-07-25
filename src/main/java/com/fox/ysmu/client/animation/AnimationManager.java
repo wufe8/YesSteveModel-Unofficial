@@ -419,6 +419,19 @@ public final class AnimationManager {
         }
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
+            String anim = eep.getAnimation();
+            // When a PLAY_ONCE animation finishes naturally (controller
+            // transitions to Stopped), clean up to prevent infinite restart.
+            // EEP animations are expected to play once and only once — the
+            // timeline events (e.g. toggling model states) should fire only
+            // on that single playthrough.
+            if (capWasPlaying && event.getController().getAnimationState()
+                == software.bernie.geckolib3.core.AnimationState.Stopped) {
+                eep.stopAnimation();
+                capWasPlaying = false;
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                return PlayState.STOP;
+            }
             // Without the wheel lock, walking/running overrides the wheel
             // animation on the main controller.  Stop the cap controller's
             // EEP animation when the player moves.
@@ -429,7 +442,6 @@ public final class AnimationManager {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
                 return PlayState.STOP;
             }
-            String anim = eep.getAnimation();
             if ("extra1".equals(anim)) anim = "extra1";
             else if ("extra2".equals(anim)) anim = "extra2";
             else if ("extra3".equals(anim)) anim = "extra3";
@@ -574,7 +586,8 @@ public final class AnimationManager {
         }
         // 所有优先级轮询完毕仍未找到有效动画 — 回退：
         // 1) 优先 idle（检查 molang 映射和直接名）
-        // 2) 最后兜底取任意非空动画
+        // 2) idle 为空且模型显式定义了 idle（存在键），作为身份变换播放
+        // 3) 最后兜底取其他非空动画
         if (animFile != null && !animFile.animations.isEmpty()) {
             // 优先尝试 idle
             String idleName = getMolangMappedAnimation(animId, "idle");
@@ -584,9 +597,17 @@ public final class AnimationManager {
                 logAnimChange(animId, "main_controller fallback idle '" + idleName + "' for " + animId);
                 return playLoopAnimation(event, idleName);
             }
+            // idle 存在但为空（loop:true 无 bones）— 模型设计者有意为之，
+            // 期望主控制器保持身份变换，由 OpenYSM 并行动画负责显示。
+            // 此时播放空 idle 比 fallback 到 swim/sleep 等状态依赖动画更正确。
+            if (idleAnim != null) {
+                logAnimChange(animId, "main_controller fallback idle (empty identity) '" + idleName + "' for " + animId);
+                return playLoopAnimation(event, idleName);
+            }
             // 遍历所有注册状态名，尝试从 molang 映射或直接名找非空动画
             // 注意：此循环不检查 predicate，仅看动画是否存在。
-            // 因此需要跳过 death 等终端状态，避免 idle 为空时误播。
+            // 因此需要跳过 death 状态依赖动画，避免 idle 为空时误播。
+            // 如果遇到了模型一直在播放 sleep 睡觉动画 大概率就是这里触发的
             for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
                 LinkedList<AnimationState> states = data.get(i);
                 if (states == null) continue;
@@ -602,16 +623,13 @@ public final class AnimationManager {
                     }
                 }
             }
-            // 最后兜底：取文件中任意第一个非空动画（跳过 death 等终端状态动画，
-            // 防止 idle 为空时误播死亡动画）
-            for (Map.Entry<String, Animation> entry : animFile.animations.entrySet()) {
-                String animName = entry.getKey();
-                if ("death".equals(animName)) continue;
-                if (isAnimationNonEmpty(entry.getValue())) {
-                    logAnimChange(animId, "main_controller last-resort '" + animName + "' for " + animId);
-                    return playLoopAnimation(event, animName);
-                }
-            }
+            // 最后兜底：所有可用的回退状态（idle/run/walk）均为空动画。
+            // 此时不应从动画文件中随机选取一个状态依赖动画（如 sleep/swim），
+            // 那样会导致模型站立时播放错误姿态。返回 STOP 让主控制器停止，
+            // 模型将保持绑定姿势，由 OpenYSM 并行动画控制器负责显示状态。
+            logAnimChange(animId, "main_controller STOP for " + animId
+                + " (openYsm=" + (animId != null ? OpenYsmPlayerControllerRuntime.hasAnyController(animId) : "?") + ")");
+            return PlayState.STOP;
         }
         logAnimChange(animId, "main_controller STOP for " + animId
             + " (openYsm=" + (animId != null ? OpenYsmPlayerControllerRuntime.hasAnyController(animId) : "?") + ")");
