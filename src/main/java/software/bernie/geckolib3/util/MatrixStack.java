@@ -22,6 +22,10 @@ public class MatrixStack {
 
     private Matrix4f tempModelMatrix = new Matrix4f();
     private Matrix3f tempNormalMatrix = new Matrix3f();
+    /** Reusable temp matrix for per-bone/perpivot transforms — avoids allocation in transformBone/rotate. */
+    private final Matrix4f tempTransform = new Matrix4f();
+    /** Reusable temp normal matrix for per-bone normal transforms. */
+    private final Matrix3f tempNormalTransform = new Matrix3f();
     @SuppressWarnings("unused")
     private float[] tempArray = new float[16];
 
@@ -203,50 +207,47 @@ public class MatrixStack {
         this.tempModelMatrix.m13 = ty;
         this.tempModelMatrix.m23 = tz;
 
+        // 2-7: Build T(pos) × T(pivot) × Rz × Ry × Rx × S × T(-pivot) using
+        // a single pre-allocated tempTransform instead of 6 separate Matrix4f allocations.
+
         // 2. T(pivot)
-        Matrix4f pivotMat = new Matrix4f();
-        pivotMat.setIdentity();
-        pivotMat.m03 = px;
-        pivotMat.m13 = py;
-        pivotMat.m23 = pz;
-        this.tempModelMatrix.mul(pivotMat);
+        this.tempTransform.setIdentity();
+        this.tempTransform.m03 = px;
+        this.tempTransform.m13 = py;
+        this.tempTransform.m23 = pz;
+        this.tempModelMatrix.mul(this.tempTransform);
 
         // 3. Rz
         if (rz != 0f) {
-            Matrix4f rotZ = new Matrix4f();
-            rotZ.rotZ(rz);
-            this.tempModelMatrix.mul(rotZ);
+            this.tempTransform.rotZ(rz);
+            this.tempModelMatrix.mul(this.tempTransform);
         }
 
         // 4. Ry
         if (ry != 0f) {
-            Matrix4f rotY = new Matrix4f();
-            rotY.rotY(ry);
-            this.tempModelMatrix.mul(rotY);
+            this.tempTransform.rotY(ry);
+            this.tempModelMatrix.mul(this.tempTransform);
         }
 
         // 5. Rx
         if (rx != 0f) {
-            Matrix4f rotX = new Matrix4f();
-            rotX.rotX(rx);
-            this.tempModelMatrix.mul(rotX);
+            this.tempTransform.rotX(rx);
+            this.tempModelMatrix.mul(this.tempTransform);
         }
 
         // 6. Scale
-        Matrix4f scaleMat = new Matrix4f();
-        scaleMat.setIdentity();
-        scaleMat.m00 = sx;
-        scaleMat.m11 = sy;
-        scaleMat.m22 = sz;
-        this.tempModelMatrix.mul(scaleMat);
+        this.tempTransform.setIdentity();
+        this.tempTransform.m00 = sx;
+        this.tempTransform.m11 = sy;
+        this.tempTransform.m22 = sz;
+        this.tempModelMatrix.mul(this.tempTransform);
 
         // 7. T(-pivot) — rightmost
-        Matrix4f negPivotMat = new Matrix4f();
-        negPivotMat.setIdentity();
-        negPivotMat.m03 = -px;
-        negPivotMat.m13 = -py;
-        negPivotMat.m23 = -pz;
-        this.tempModelMatrix.mul(negPivotMat);
+        this.tempTransform.setIdentity();
+        this.tempTransform.m03 = -px;
+        this.tempTransform.m13 = -py;
+        this.tempTransform.m23 = -pz;
+        this.tempModelMatrix.mul(this.tempTransform);
 
         // Apply combined matrix to stack top
         modelStack[depth - 1].mul(this.tempModelMatrix);
@@ -254,55 +255,49 @@ public class MatrixStack {
         // Normal matrix: rotation + sign-flip for negative scales
         this.tempNormalMatrix.setIdentity();
         if (rz != 0f) {
-            Matrix3f nrz = new Matrix3f();
-            nrz.rotZ(rz);
-            this.tempNormalMatrix.mul(nrz);
+            this.tempNormalTransform.rotZ(rz);
+            this.tempNormalMatrix.mul(this.tempNormalTransform);
         }
         if (ry != 0f) {
-            Matrix3f nry = new Matrix3f();
-            nry.rotY(ry);
-            this.tempNormalMatrix.mul(nry);
+            this.tempNormalTransform.rotY(ry);
+            this.tempNormalMatrix.mul(this.tempNormalTransform);
         }
         if (rx != 0f) {
-            Matrix3f nrx = new Matrix3f();
-            nrx.rotX(rx);
-            this.tempNormalMatrix.mul(nrx);
+            this.tempNormalTransform.rotX(rx);
+            this.tempNormalMatrix.mul(this.tempNormalTransform);
         }
         if (sx < 0 || sy < 0 || sz < 0) {
-            Matrix3f scaleNorm = new Matrix3f();
-            scaleNorm.setIdentity();
-            scaleNorm.m00 = sx < 0 ? -1 : 1;
-            scaleNorm.m11 = sy < 0 ? -1 : 1;
-            scaleNorm.m22 = sz < 0 ? -1 : 1;
-            this.tempNormalMatrix.mul(scaleNorm);
+            this.tempNormalTransform.setIdentity();
+            this.tempNormalTransform.m00 = sx < 0 ? -1 : 1;
+            this.tempNormalTransform.m11 = sy < 0 ? -1 : 1;
+            this.tempNormalTransform.m22 = sz < 0 ? -1 : 1;
+            this.tempNormalMatrix.mul(this.tempNormalTransform);
         }
         normalStack[depth - 1].mul(this.tempNormalMatrix);
     }
 
     public void rotate(GeoCube bone) {
         Vector3f rotation = bone.rotation;
-        Matrix4f matrix4f = new Matrix4f();
-        Matrix3f matrix3f = new Matrix3f();
 
         this.tempModelMatrix.setIdentity();
-        matrix4f.rotZ(rotation.z);
-        this.tempModelMatrix.mul(matrix4f);
+        this.tempTransform.rotZ(rotation.z);
+        this.tempModelMatrix.mul(this.tempTransform);
 
-        matrix4f.rotY(rotation.y);
-        this.tempModelMatrix.mul(matrix4f);
+        this.tempTransform.rotY(rotation.y);
+        this.tempModelMatrix.mul(this.tempTransform);
 
-        matrix4f.rotX(rotation.x);
-        this.tempModelMatrix.mul(matrix4f);
+        this.tempTransform.rotX(rotation.x);
+        this.tempModelMatrix.mul(this.tempTransform);
 
         this.tempNormalMatrix.setIdentity();
-        matrix3f.rotZ(rotation.z);
-        this.tempNormalMatrix.mul(matrix3f);
+        this.tempNormalTransform.rotZ(rotation.z);
+        this.tempNormalMatrix.mul(this.tempNormalTransform);
 
-        matrix3f.rotY(rotation.y);
-        this.tempNormalMatrix.mul(matrix3f);
+        this.tempNormalTransform.rotY(rotation.y);
+        this.tempNormalMatrix.mul(this.tempNormalTransform);
 
-        matrix3f.rotX(rotation.x);
-        this.tempNormalMatrix.mul(matrix3f);
+        this.tempNormalTransform.rotX(rotation.x);
+        this.tempNormalMatrix.mul(this.tempNormalTransform);
 
         modelStack[depth - 1].mul(this.tempModelMatrix);
         normalStack[depth - 1].mul(this.tempNormalMatrix);
