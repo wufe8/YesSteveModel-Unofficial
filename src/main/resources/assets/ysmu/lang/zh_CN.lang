@@ -1,4 +1,4 @@
-﻿﻿﻿key.category.yes_steve_model=Yes Steve Model
+﻿key.category.yes_steve_model=Yes Steve Model
 gui.yes_steve_model.close=关闭
 gui.yes_steve_model.pre_page=前一页
 gui.yes_steve_model.next_page=后一页
@@ -23,6 +23,8 @@ gui.yes_steve_model.config.disable_self_hands=阻止渲染玩家自身手臂
 gui.yes_steve_model.config.disable_player_render=禁用额外玩家渲染
 gui.yes_steve_model.config.swap_config_sides=交换配置面版和预览框位置
 gui.yes_steve_model.config.gui_enhancements=启用选择界面增强（前景/背景纹理、选择界面动画）
+gui.yes_steve_model.config.render_wearable=渲染其他模组背部模型（背包/直升机/喷气背包）
+gui.yes_steve_model.config.wearable_render_scale=可穿戴模型缩放：%.2f
 gui.yes_steve_model.config.gui_model_preview_refresh=预览刷新间隔（0=静态 1-4=每N帧）
 gui.yes_steve_model.config.gui_model_preview_refresh.0=预览刷新：静态（无定时更新）
 gui.yes_steve_model.config.gui_model_preview_refresh.1=预览刷新：每帧（流畅优先，高GPU负载）

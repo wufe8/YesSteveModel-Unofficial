@@ -85,6 +85,12 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         if (geoModel != null) {
             this.geoModel = geoModel;
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
+            // 渲染 AdventureBackpack2 背部可穿戴物品（直升机背包等）
+            if (entityObj instanceof EntityPlayer player
+                && com.fox.ysmu.Config.RENDER_WEARABLE) {
+                com.fox.ysmu.compat.AdventureBackpackCompat.renderWearable(
+                    player, x, y, z, partialTicks);
+            }
         } else {
             // Throttled logging: only log once per missing model per game session
             if (missingGeoModelLogged.add(location.toString())) {

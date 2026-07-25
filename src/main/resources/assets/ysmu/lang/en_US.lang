@@ -1,4 +1,4 @@
-﻿﻿﻿key.category.yes_steve_model=Yes Steve Model
+key.category.yes_steve_model=Yes Steve Model
 gui.yes_steve_model.close=Close
 gui.yes_steve_model.pre_page=Pre Page
 gui.yes_steve_model.next_page=Next Page
@@ -23,6 +23,8 @@ gui.yes_steve_model.config.disable_self_hands=Prevents rendering of self player'
 gui.yes_steve_model.config.disable_player_render=Disable extra player render
 gui.yes_steve_model.config.swap_config_sides=Swap config panel and preview sides
 gui.yes_steve_model.config.gui_enhancements=Enable GUI enhancements (foreground/background textures, GUI animations)
+gui.yes_steve_model.config.render_wearable=Render external wearable models (backpack/copter/jetpack)
+gui.yes_steve_model.config.wearable_render_scale=Wearable scale: %.2f
 gui.yes_steve_model.config.gui_model_preview_refresh=Preview refresh (0=static 1-4=every N frames)
 gui.yes_steve_model.config.gui_model_preview_refresh.0=Preview refresh: Static (no periodic update)
 gui.yes_steve_model.config.gui_model_preview_refresh.1=Preview refresh: Every frame (Smooth Priority, high GPU load)

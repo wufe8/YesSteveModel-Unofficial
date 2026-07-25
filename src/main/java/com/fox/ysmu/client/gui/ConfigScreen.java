@@ -27,9 +27,12 @@ public class ConfigScreen extends GuiScreen {
         this.buttonList.add(new ConfigCheckBox(4 ,x + 5, y + 91, "disable_self_hands", Config.DISABLE_SELF_HANDS));
         this.buttonList.add(new ConfigCheckBox(5, x + 5, y + 112, "disable_player_render", Config.DISABLE_PLAYER_RENDER));
         this.buttonList.add(new ConfigCheckBox(6, x + 5, y + 134, "swap_config_sides", Config.SWAP_CONFIG_SIDES));
-        this.buttonList.add(new ConfigCheckBox(7, x + 5, y + 156, "gui_enhancements", Config.GUI_ENHANCEMENTS));
-        this.buttonList.add(new FlatColorButton(8, x + 5, y + 180, 400, 20,
+        this.buttonList.add(new ConfigCheckBox(7, x + 5, y + 156, "render_wearable", Config.RENDER_WEARABLE));
+        this.buttonList.add(new ConfigCheckBox(8, x + 5, y + 178, "gui_enhancements", Config.GUI_ENHANCEMENTS));
+        this.buttonList.add(new FlatColorButton(9, x + 5, y + 200, 400, 20,
             I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH)));
+        this.buttonList.add(new FlatColorButton(10, x + 5, y + 222, 400, 20,
+            I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE)));
     }
 
     @Override
@@ -63,12 +66,21 @@ public class ConfigScreen extends GuiScreen {
                 ((ConfigCheckBox) button).doPress();
                 break;
             case 7:
-                Config.GUI_ENHANCEMENTS = !Config.GUI_ENHANCEMENTS;
+                Config.RENDER_WEARABLE = !Config.RENDER_WEARABLE;
                 ((ConfigCheckBox) button).doPress();
                 break;
             case 8:
+                Config.GUI_ENHANCEMENTS = !Config.GUI_ENHANCEMENTS;
+                ((ConfigCheckBox) button).doPress();
+                break;
+            case 9:
                 Config.GUI_MODEL_PREVIEW_REFRESH = (Config.GUI_MODEL_PREVIEW_REFRESH + 1) % 5;
                 button.displayString = I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH);
+                break;
+            case 10:
+                Config.WEARABLE_RENDER_SCALE = Math.round((Config.WEARABLE_RENDER_SCALE + 0.1) * 10) / 10.0;
+                if (Config.WEARABLE_RENDER_SCALE > 1.5) Config.WEARABLE_RENDER_SCALE = 0.5;
+                button.displayString = I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE);
                 break;
         }
     }

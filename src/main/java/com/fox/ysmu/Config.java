@@ -46,6 +46,10 @@ public class Config {
     public static boolean DEBUG_MERGED_ANIMATIONS = false;
     public static boolean SHOW_WELCOME_MESSAGE = true;
 
+    // External wearable rendering (AdventureBackpack2 backpacks/copter/jetpack etc.)
+    public static boolean RENDER_WEARABLE = true;
+    public static double WEARABLE_RENDER_SCALE = 0.8;
+
     // Model sync config
     public static boolean ENABLE_SYNC_PROTOCOL = true;
     public static int THREAD_COUNT = 4;
@@ -117,6 +121,8 @@ public class Config {
         SHOW_WELCOME_MESSAGE = syncBoolean("ShowWelcomeMessage", "debug", SHOW_WELCOME_MESSAGE, "Show the welcome/info message when joining a world", load);
 
         // Model sync config values
+        RENDER_WEARABLE = syncBoolean("RenderWearable", "compatibility", RENDER_WEARABLE, "Whether to render external wearable models (e.g. AdventureBackpack2 backpack/copter/jetpack) on YSM model's back", load);
+        WEARABLE_RENDER_SCALE = syncDouble("WearableRenderScale", "compatibility", WEARABLE_RENDER_SCALE, "Scale factor for wearable model rendering (1.0 = default)", 0.1, 5.0, load);
         ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Whether to use the appended hash/cache/chunk sync path before legacy fallback", load);
         THREAD_COUNT = syncInt("ThreadCount", "ysm_sync", THREAD_COUNT, "Target worker count for YSM model sync tasks", 1, 32, load);
         BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
