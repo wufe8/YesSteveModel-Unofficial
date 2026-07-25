@@ -178,6 +178,10 @@ public class AnimationController<T extends IAnimatable> {
 
     private final HashMap<String, BoneAnimationQueue> boneAnimationQueues = new HashMap<>();
     private final List<BoneAnimationQueue> activeBoneAnimationQueues = new ArrayList<>();
+    /** Pre-built bone name → IBone map — populated once per process() call,
+     *  reused by both the transition and running branches to avoid a second
+     *  HashMap build and to enable lazy BoneAnimationQueue creation. */
+    private HashMap<String, IBone> boneNameToBone = new HashMap<>();
     public double tickOffset;
     public Queue<Animation> animationQueue = new LinkedList<>();
     public Animation currentAnimation;
@@ -564,15 +568,12 @@ public class AnimationController<T extends IAnimatable> {
             }
             if (currentAnimation != null) {
                 setAnimTime(parser, 0);
-                // Pre-build bone name → IBone map for O(1) lookup instead of stream().filter().findFirst()
-                java.util.Map<String, IBone> boneByName = new java.util.HashMap<>();
-                for (IBone b : modelRendererList) {
-                    boneByName.put(b.getName(), b);
-                }
+                // Reuse boneNameToBone map built by createInitialQueues instead
+                // of building a second HashMap from modelRendererList.
                 for (BoneAnimation boneAnimation : currentAnimation.boneAnimations) {
-                    BoneAnimationQueue boneAnimationQueue = boneAnimationQueues.get(boneAnimation.boneName);
+                    BoneAnimationQueue boneAnimationQueue = getOrCreateQueue(boneAnimation.boneName);
                     BoneSnapshot boneSnapshot = this.boneSnapshots.get(boneAnimation.boneName);
-                    IBone first = boneByName.get(boneAnimation.boneName);
+                    IBone first = this.boneNameToBone.get(boneAnimation.boneName);
                     if (first == null) {
                         if (crashWhenCantFindBone) {
                             throw new RuntimeException("Could not find bone: " + boneAnimation.boneName);
@@ -757,7 +758,7 @@ public class AnimationController<T extends IAnimatable> {
         // values
         List<BoneAnimation> boneAnimations = currentAnimation.boneAnimations;
         for (BoneAnimation boneAnimation : boneAnimations) {
-            BoneAnimationQueue boneAnimationQueue = boneAnimationQueues.get(boneAnimation.boneName);
+            BoneAnimationQueue boneAnimationQueue = getOrCreateQueue(boneAnimation.boneName);
             if (boneAnimationQueue == null) {
                 if (crashWhenCantFindBone) {
                     throw new RuntimeException("Could not find bone: " + boneAnimation.boneName);
@@ -873,9 +874,28 @@ public class AnimationController<T extends IAnimatable> {
     private void createInitialQueues(List<IBone> modelRendererList) {
         boneAnimationQueues.clear();
         activeBoneAnimationQueues.clear();
+        // Build name→IBone map once; BoneAnimationQueue objects are created
+        // lazily in the transition/running branches only for bones that are
+        // actually animated, avoiding ~900 allocations for unanimated bones.
+        boneNameToBone.clear();
         for (IBone modelRenderer : modelRendererList) {
-            boneAnimationQueues.put(modelRenderer.getName(), new BoneAnimationQueue(modelRenderer));
+            boneNameToBone.put(modelRenderer.getName(), modelRenderer);
         }
+    }
+
+    /** Ensures a BoneAnimationQueue exists for the given bone name, creating
+     *  one lazily if needed.  Returns the queue, or null if the bone name is
+     *  not in the current model renderer list. */
+    private BoneAnimationQueue getOrCreateQueue(String boneName) {
+        BoneAnimationQueue q = boneAnimationQueues.get(boneName);
+        if (q == null) {
+            IBone bone = boneNameToBone.get(boneName);
+            if (bone != null) {
+                q = new BoneAnimationQueue(bone);
+                boneAnimationQueues.put(boneName, q);
+            }
+        }
+        return q;
     }
 
     private void markActiveBoneAnimationQueue(BoneAnimationQueue boneAnimationQueue) {
@@ -929,21 +949,85 @@ public class AnimationController<T extends IAnimatable> {
         return new AnimationPoint(currentFrame, location.currentTick, currentFrame.getLength(), startValue, endValue);
     }
 
+    /** Cache entry for {@link #getCurrentKeyFrameLocation} — remembers the last
+     *  returned keyframe index and its cumulative end time so that subsequent
+     *  calls (with monotonically increasing tick) can skip the linear scan from
+     *  index 0 and start from the cached position instead. */
+    private static final class KfCacheEntry {
+        final int index;
+        final double cumulativeTime;
+        final double ageInTicks;
+        KfCacheEntry(int index, double cumulativeTime, double ageInTicks) {
+            this.index = index;
+            this.cumulativeTime = cumulativeTime;
+            this.ageInTicks = ageInTicks;
+        }
+    }
+    private java.util.IdentityHashMap<List<KeyFrame<IValue>>, KfCacheEntry> kfCache;
+
     /**
      * Returns the current keyframe object, plus how long the previous keyframes
-     * have taken (aka elapsed animation time)
+     * have taken (aka elapsed animation time).
+     * Uses a per-list index cache to avoid re-scanning from index 0 every call
+     * — tick increases monotonically within a running animation, so we can
+     * start from the last known position and only scan forward.
      **/
     private KeyFrameLocation<KeyFrame<IValue>> getCurrentKeyFrameLocation(List<KeyFrame<IValue>> frames,
         double ageInTicks) {
+        if (kfCache != null) {
+            KfCacheEntry cached = kfCache.get(frames);
+            if (cached != null) {
+                if (ageInTicks < cached.ageInTicks) {
+                    // tick went backwards (animation looped) — clear this entry
+                    kfCache.remove(frames);
+                } else if (ageInTicks < cached.cumulativeTime) {
+                    // Same keyframe as last call — return immediately
+                    KeyFrame<IValue> frame = frames.get(cached.index);
+                    double prevTotal = cached.cumulativeTime - frame.getLength();
+                    double tick = ageInTicks - prevTotal;
+                    kfCache.put(frames, new KfCacheEntry(cached.index, cached.cumulativeTime, ageInTicks));
+                    return new KeyFrameLocation<>(frame, tick);
+                } else {
+                    // Moved to a later keyframe — scan from cached index + 1
+                    double totalTimeTracker = cached.cumulativeTime;
+                    for (int i = cached.index + 1; i < frames.size(); i++) {
+                        KeyFrame<IValue> frame = frames.get(i);
+                        double newTotal = totalTimeTracker + frame.getLength();
+                        if (newTotal > ageInTicks) {
+                            double tick = ageInTicks - totalTimeTracker;
+                            kfCache.put(frames, new KfCacheEntry(i, newTotal, ageInTicks));
+                            return new KeyFrameLocation<>(frame, tick);
+                        }
+                        totalTimeTracker = newTotal;
+                    }
+                    // Past all frames — return last
+                    int last = frames.size() - 1;
+                    kfCache.put(frames, new KfCacheEntry(last, totalTimeTracker, ageInTicks));
+                    return new KeyFrameLocation<>(frames.get(last), ageInTicks);
+                }
+            }
+        }
+
+        // Full scan from beginning (first call, or after loop)
         double totalTimeTracker = 0;
-        for (KeyFrame<IValue> frame : frames) {
+        for (int i = 0; i < frames.size(); i++) {
+            KeyFrame<IValue> frame = frames.get(i);
             totalTimeTracker += frame.getLength();
             if (totalTimeTracker > ageInTicks) {
-                double tick = (ageInTicks - (totalTimeTracker - frame.getLength()));
+                double tick = ageInTicks - (totalTimeTracker - frame.getLength());
+                if (kfCache == null) {
+                    kfCache = new java.util.IdentityHashMap<>();
+                }
+                kfCache.put(frames, new KfCacheEntry(i, totalTimeTracker, ageInTicks));
                 return new KeyFrameLocation<>(frame, tick);
             }
         }
-        return new KeyFrameLocation<>(frames.get(frames.size() - 1), ageInTicks);
+        int last = frames.size() - 1;
+        if (kfCache == null) {
+            kfCache = new java.util.IdentityHashMap<>();
+        }
+        kfCache.put(frames, new KfCacheEntry(last, totalTimeTracker, ageInTicks));
+        return new KeyFrameLocation<>(frames.get(last), ageInTicks);
     }
 
     private void resetEventKeyFrames() {
