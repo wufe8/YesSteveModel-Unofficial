@@ -75,6 +75,34 @@ public final class YSMSoundManager {
      * 播放模型音效。如果同名音效已在播放，先停止旧的再播新的。
      * 会先停止所有活跃的 YSM 音源（防止音源泛滥）。
      */
+    /** 检查 soundId 是否已在 1.7.10 的 SoundHandler 中注册。 */
+    private static boolean soundExistsInHandler(String soundId) {
+        if (soundId == null) return false;
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null) return false;
+            SoundHandler handler = mc.getSoundHandler();
+            java.lang.reflect.Field sndMgrFd = SoundHandler.class.getDeclaredField("sndManager");
+            sndMgrFd.setAccessible(true);
+            Object sndMgr = sndMgrFd.get(handler);
+            java.lang.reflect.Field regFd = sndMgr.getClass().getDeclaredField("soundRegistry");
+            regFd.setAccessible(true);
+            @SuppressWarnings("unchecked")
+            java.util.Map<String, ?> reg = (java.util.Map<String, ?>) regFd.get(sndMgr);
+            return reg.containsKey(soundId);
+        } catch (Exception e) {
+            return true; // 出错时保守处理，让 SoundHandler 自行判断
+        }
+    }
+
+    /**
+     * 播放音效。查找顺序：
+     * 1. 模型自定义音效（SOUND_FILES）
+     * 2. 1.7.10 SoundHandler（仅在音效已注册时调用，避免内部 WARN）
+     * 3. 命名空间翻译后的 SoundHandler
+     * 4. LocalAssetProvider（高版本游戏本地资产）
+     * 5. 全部失败 → 输出一条最终 WARN
+     */
     public static void playSound(EntityPlayer player, String soundName, float volume, float pitch) {
         if (soundName == null || soundName.isEmpty()) return;
 
@@ -82,33 +110,9 @@ public final class YSMSoundManager {
             ysmu.LOG.info("[YSMU-SOUND] playSound: '{}' vol={} pitch={}", soundName, volume, pitch);
         }
 
-        // Cooldown disabled — the real issue is sounds playing when they shouldn't.
-        // long now = System.currentTimeMillis();
-        // Long lastPlay = LAST_PLAY_TIME.get(soundName);
-        // if (lastPlay != null && (now - lastPlay) < SOUND_COOLDOWN_MS) {
-        //     ysmu.LOG.warn("[YSMU-Sound] COOLDOWN: '{}' blocked ({}ms since last play, min={}ms)",
-        //         soundName, (now - lastPlay), SOUND_COOLDOWN_MS);
-        //     String throttleKey = "stack_" + soundName;
-        //     Long lastStack = LAST_PLAY_TIME.get(throttleKey);
-        //     if (lastStack == null || (now - lastStack) > 10000L) {
-        //         LAST_PLAY_TIME.put(throttleKey, now);
-        //         java.io.StringWriter sw = new java.io.StringWriter();
-        //         new Throwable("playSound rapid retrigger caller").printStackTrace(new java.io.PrintWriter(sw));
-        //         String[] lines = sw.toString().split("\n");
-        //         StringBuilder sb = new StringBuilder();
-        //         for (int i = 0; i < Math.min(lines.length, 20); i++) {
-        //             sb.append(lines[i]).append("\n");
-        //         }
-        //         ysmu.LOG.warn("[YSMU-Sound] COOLDOWN caller stack for '{}':\n{}", soundName, sb);
-        //     }
-        //     return;
-        // }
-        // LAST_PLAY_TIME.put(soundName, now);
-
-        // Model sound: try exact name lookup first, then filename-based lookup
+        // Step 1 — 模型自定义音效
         Path file = SOUND_FILES.get(soundName);
         if (file == null) {
-            // Fallback: search by the cached filename (e.g. ___93154897.ogg → '使用')
             for (Map.Entry<String, Path> e : SOUND_FILES.entrySet()) {
                 if (e.getValue().getFileName().toString().equals(soundName)
                     || e.getValue().getFileName().toString().equalsIgnoreCase(soundName)) {
@@ -118,49 +122,47 @@ public final class YSMSoundManager {
             }
         }
         if (file != null) {
-            // Stop previous sound with same name
             stopSound(soundName);
             playOggDirect(file, volume, pitch);
             return;
         }
-        // Vanilla fallback — try original sound name first
-        if (soundName.contains(":")) {
-            Minecraft mc = Minecraft.getMinecraft();
-            SoundHandler handler = mc.getSoundHandler();
-            // Play the original (e.g. "minecraft:entity.arrow.shoot" — valid in 1.7.10)
-            handler.playSound(
-                PositionedSoundRecord.func_147674_a(new ResourceLocation(soundName), volume));
-            // Also try registered namespace providers for high-version sounds
-            // (e.g. "minecraft:entity.player.attack.crit" → "minecraft_1.21.10:...")
-            // Note: we do NOT return after a successful translation because
-            // SoundHandler.playSound() is fire-and-forget — it silently ignores
-            // unknown soundEvents.  If Et-Futurum hasn't downloaded this sound,
-            // the handler call produces no audio.  We always fall through to
-            // LocalAssetProvider as the definitive fallback.
-            ResourceLocation translated = SoundNamespaceCompat.resolve(soundName);
-            if (translated != null) {
-                if (Config.DEBUG_SOUND) {
-                    ysmu.LOG.info("[YSMU-SOUND] namespace translation: '{}' → '{}'", soundName, translated);
-                }
-                handler.playSound(PositionedSoundRecord.func_147674_a(translated, volume));
-                // Deliberately fall through — SoundHandler may have failed silently.
+
+        // Step 2~4 — 命名空间音效（SoundHandler + LocalAssetProvider）
+        if (!soundName.contains(":")) return;
+
+        Minecraft mc = Minecraft.getMinecraft();
+        SoundHandler handler = mc.getSoundHandler();
+        boolean foundAny = false;
+
+        // Step 2 — 原始音效名（如 minecraft:entity.arrow.shoot，1.7.10 原生）
+        if (soundExistsInHandler(soundName)) {
+            handler.playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation(soundName), volume));
+            foundAny = true;
+        }
+
+        // Step 3 — 命名空间翻译（如 minecraft_1.21:item.trident.throw）
+        ResourceLocation translated = SoundNamespaceCompat.resolve(soundName);
+        if (translated != null && soundExistsInHandler(translated.toString())) {
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND] namespace translation: '{}' → '{}'", soundName, translated);
             }
-            // Last resort: try the local high-version game asset provider.
-            // This reads OGG files directly from the user's modern Minecraft
-            // installation and plays them via paulscode SoundSystem, bypassing
-            // the 1.7.10 SoundHandler entirely. No download required.
-            Path localOgg = LocalAssetProvider.resolveSound(soundName);
-            if (localOgg != null) {
-                if (Config.DEBUG_SOUND) {
-                    ysmu.LOG.info("[YSMU-SOUND] local asset: '{}' → {}", soundName, localOgg);
-                }
-                playOggDirect(localOgg, volume, pitch);
-                return;
+            handler.playSound(PositionedSoundRecord.func_147674_a(translated, volume));
+            foundAny = true;
+        }
+
+        // Step 4 — 本地高版本游戏资产（绕过 SoundHandler）
+        Path localOgg = LocalAssetProvider.resolveSound(soundName);
+        if (localOgg != null) {
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND] local asset: '{}' → {}", soundName, localOgg);
             }
-            if (Config.DEBUG_SOUND && soundName.startsWith("minecraft:")) {
-                // Log high-version sounds that no provider could resolve
-                ysmu.LOG.info("[YSMU-SOUND] no provider for '{}' (not available in 1.7.10)", soundName);
-            }
+            playOggDirect(localOgg, volume, pitch);
+            return;
+        }
+
+        // Step 5 — 所有 fallback 均失败，输出最终警告
+        if (!foundAny) {
+            ysmu.LOG.warn("[YSMU-SOUND] Unable to play unknown soundEvent: {} (not found in any provider)", soundName);
         }
     }
 
@@ -333,11 +335,41 @@ public final class YSMSoundManager {
             float pz = (float) mc.thePlayer.posZ;
             java.net.URL url = oggPath.toUri().toURL();
 
+            // paulscode SoundSystem selects the codec based on file extension.
+            // Assets from a game directory have no extension (SHA-1 hash names),
+            // so we need a .ogg filename for CodecJOrbis to detect the Vorbis
+            // codec.  Create a zero-copy hard link in the cache dir instead of
+            // duplicating the bytes – same disk blocks, just an extra name.
+            Path playPath = oggPath;
+            String fileName = oggPath.getFileName().toString();
+            if (!fileName.endsWith(".ogg") && !fileName.endsWith(".OGG")) {
+                Path cached = SOUND_CACHE.resolve(fileName + ".ogg");
+                if (!java.nio.file.Files.exists(cached)) {
+                    try {
+                        java.nio.file.Files.createDirectories(SOUND_CACHE);
+                        // Try hard link first (zero-copy, same inode/blocks)
+                        try {
+                            java.nio.file.Files.createLink(cached, oggPath);
+                        } catch (java.io.IOException | UnsupportedOperationException e) {
+                            // Hard link not available (e.g. different volume, FAT32) –
+                            // fall back to copy.
+                            java.nio.file.Files.copy(oggPath, cached,
+                                java.nio.file.StandardCopyOption.COPY_ATTRIBUTES);
+                        }
+                    } catch (java.io.IOException e) {
+                        ysmu.LOG.warn("[YSMU-SOUND] failed to prepare {}: {}", cached, e.getMessage());
+                    }
+                }
+                if (java.nio.file.Files.exists(cached)) {
+                    playPath = cached;
+                }
+            }
+
             // Use the URL overload with streaming=true to bypass
             // LibraryLWJGLOpenAL.loadSound() (which uses Java AudioSystem and
             // doesn't support OGG).  Streaming sources go through CodecJOrbis
             // directly, which understands Vorbis.
-            java.net.URL absUrl = oggPath.toAbsolutePath().toUri().toURL();
+            java.net.URL absUrl = playPath.toAbsolutePath().toUri().toURL();
             try {
                 // boolean参数: priority=false, toLoop=false → 不循环播放
                 ss.getClass().getMethod("newSource", boolean.class, String.class,
