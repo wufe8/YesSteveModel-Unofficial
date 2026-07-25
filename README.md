@@ -84,6 +84,10 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 ### 兼容性
 - **Backhand 双持**：通过 `BackhandCompat` 隔离, 副手物品正确检测
 - **Angelica 光影**：第一人称手臂渲染通过 `AngelicaCompat` + Mixin 分流
+- **Et Futurum 鞘翅**：通过 `EtFuturumCompat` 检测鞘翅装备/飞行/滑翔进度
+- **Battlegear2 盾牌格挡**：通过 `BlockingCompat` 反射调用格挡检测，支持剑格挡、双持盾牌
+- **TiConstruct 十字弩 (GTNH)**：通过 `TinkersCrossbowCompat` 识别弩的装填/加载状态，使 `use_mainhand:crossbow` 拉弦动画和 `hold_mainhand:charged_crossbow` 蓄能待机动画正常工作
+- **高版本音效**：通过 `SoundNamespaceCompat` + `LocalAssetProvider` 加载本地高版本 Minecraft 资源包音效（`/ysm setgamepath`）
 - **UniMixins** 和 **GTNHLib** 为运行时必需
 
 ---

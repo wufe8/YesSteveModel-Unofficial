@@ -754,8 +754,12 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("has_offhand".equals(name)) {
                 return BackhandCompat.getOffhandItem(player) != null ? TRUE : FALSE;
             }
-            if ("mainhand_charged_crossbow".equals(name) || "offhand_charged_crossbow".equals(name)) {
-                return FALSE;
+            if ("mainhand_charged_crossbow".equals(name)) {
+                return com.fox.ysmu.compat.TinkersCrossbowCompat.isCrossbowLoaded(player.getHeldItem()) ? TRUE : FALSE;
+            }
+            if ("offhand_charged_crossbow".equals(name)) {
+                return com.fox.ysmu.compat.TinkersCrossbowCompat.isCrossbowLoaded(
+                    com.fox.ysmu.compat.BackhandCompat.getOffhandItem(player)) ? TRUE : FALSE;
             }
             if ("armor_value".equals(name)) {
                 return player.getTotalArmorValue();

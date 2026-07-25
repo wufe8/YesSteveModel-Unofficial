@@ -278,8 +278,10 @@ public class AnimationRegister {
         parser.setValue("ysm.swinging", () -> MolangUtils.booleanToFloat(player.isSwingInProgress));
         parser.setValue("ysm.swing_time", () -> player.swingProgressInt);
         parser.setValue("ysm.swinging_arm", () -> BackhandCompat.swingingArm(player) ? 0.0d : 1.0d);
-        parser.setValue("ysm.mainhand_charged_crossbow", MolangUtils.FALSE);
-        parser.setValue("ysm.offhand_charged_crossbow", MolangUtils.FALSE);
+        parser.setValue("ysm.mainhand_charged_crossbow", () -> MolangUtils.booleanToFloat(
+            com.fox.ysmu.compat.TinkersCrossbowCompat.isCrossbowLoaded(player.getHeldItem())));
+        parser.setValue("ysm.offhand_charged_crossbow", () -> MolangUtils.booleanToFloat(
+            com.fox.ysmu.compat.TinkersCrossbowCompat.isCrossbowLoaded(BackhandCompat.getOffhandItem(player))));
         parser.setValue("ysm.armor_value", player::getTotalArmorValue);
         parser.setValue("ysm.hurt_time", () -> player.hurtTime);
         parser.setValue("ysm.food_level", () -> player.getFoodStats().getFoodLevel());

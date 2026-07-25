@@ -640,6 +640,13 @@ public final class AnimationManager {
             if (!checkSwingAndUse(player, false)) {
                 return PlayState.CONTINUE;
             }
+            // TiCon 十字弩已装填 → 显示蓄能待机动画
+            if (com.fox.ysmu.compat.TinkersCrossbowCompat.isCrossbowLoaded(offhandItem)) {
+                ResourceLocation animId = getAnimationId(event);
+                if (animationExistsInFile(animId, "hold_offhand:charged_crossbow")) {
+                    return playAnimation(event, "hold_offhand:charged_crossbow", ILoopType.EDefaultLoopTypes.LOOP);
+                }
+            }
             int hash = itemHash(offhandItem);
             Integer last = lastOffhandItemHash.put(player.getUniqueID(), hash);
             // Reload when item changes, coming from empty (-1), or coming from empty anim (0)
@@ -686,6 +693,13 @@ public final class AnimationManager {
             // setAnimation 因 Stopped 状态而重新从头播放掏出动画。
             if (!checkSwingAndUse(player, true)) {
                 return PlayState.CONTINUE;
+            }
+            // TiCon 十字弩已装填 → 显示蓄能待机动画
+            if (com.fox.ysmu.compat.TinkersCrossbowCompat.isCrossbowLoaded(player.getHeldItem())) {
+                ResourceLocation animId = getAnimationId(event);
+                if (animationExistsInFile(animId, "hold_mainhand:charged_crossbow")) {
+                    return playAnimation(event, "hold_mainhand:charged_crossbow", ILoopType.EDefaultLoopTypes.LOOP);
+                }
             }
             int hash = itemHash(player.getHeldItem());
             Integer last = lastMainhandItemHash.put(player.getUniqueID(), hash);
@@ -900,7 +914,9 @@ public final class AnimationManager {
         if (controllerState != null) {
             return controllerState;
         }
-        boolean isUsingItem = player.isUsingItem() && !player.isPlayerSleeping();
+        boolean isUsingItem = (player.isUsingItem()
+            || com.fox.ysmu.compat.TinkersCrossbowCompat.isCrossbowReloading(player.getHeldItem()))
+            && !player.isPlayerSleeping();
         boolean isBlocking = com.fox.ysmu.compat.BlockingCompat.isBlocking(player);
         UUID playerId = player.getUniqueID();
 
