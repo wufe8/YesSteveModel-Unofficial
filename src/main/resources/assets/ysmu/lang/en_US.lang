@@ -1,4 +1,4 @@
-key.category.yes_steve_model=Yes Steve Model
+﻿﻿﻿key.category.yes_steve_model=Yes Steve Model
 gui.yes_steve_model.close=Close
 gui.yes_steve_model.pre_page=Pre Page
 gui.yes_steve_model.next_page=Next Page
@@ -273,6 +273,22 @@ key.yes_steve_model.extra_animation.6.desc=Play Extra Animation 6
 key.yes_steve_model.extra_animation.7.desc=Play Extra Animation 7
 key.yes_steve_model.debug_animation.desc=Open Animation Debug
 key.yes_steve_model.open_extra_player_render.desc=Extra Player Render Config
+
+# ---- Commands ----
+commands.yes_steve_model.usage=/ysm <reload|play|playsound|setgamepath> [args]
+commands.yes_steve_model.setgamepath.usage=/ysm setgamepath <path> [version]
+commands.yes_steve_model.setgamepath.example=Example: /ysm setgamepath C:/Users/x/.minecraft 1.21
+commands.yes_steve_model.setgamepath.none=§6§l[§aYSM§6§l] §rNo game path configured.
+commands.yes_steve_model.setgamepath.current=§6§l[§aYSM§6§l] §rCurrent game path: §e%s
+commands.yes_steve_model.setgamepath.version=§6§l[§aYSM§6§l] §rAsset version: §e%s
+commands.yes_steve_model.setgamepath.set=§6§l[§aYSM§6§l] §rGame path set to: §e%s
+commands.yes_steve_model.setgamepath.cleared=§6§l[§aYSM§6§l] §rGame path cleared.
+commands.yes_steve_model.setgamepath.local_notice=§7Changes are local only. Reconnect or reload models if needed.
+commands.yes_steve_model.welcome=§6§l[§aYSMU§6§l] §rWelcome! You are running §eysmu %s, To change YSM model, press Alt+Y
+commands.yes_steve_model.welcome.sound_hint=§6§l[§aYSMU§6§l] §7To enable missing sound effects (e.g. trident, goat horn), use §e/ysm setgamepath <path> [version]§7 to point to your modern Minecraft directory.
+commands.yes_steve_model.welcome.on=§6§l[§aYSMU§6§l] §rWelcome message enabled.
+commands.yes_steve_model.welcome.off=§6§l[§aYSMU§6§l] §rWelcome message disabled.
+
 molang.yes_steve_model.bg_width=900
 molang.yes_steve_model.pi.desc=π, constant.
 molang.yes_steve_model.e.desc=Natural logarithm, constant.

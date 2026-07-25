@@ -39,6 +39,8 @@ public class ClientEventHandler {
 
     private static boolean EXTRA_PLAYER = false;
     private static boolean pendingModelLoad;
+    /** Whether the welcome message has been shown this session. */
+    private static boolean welcomeShown = false;
 
     @SubscribeEvent
     public static void onTextureStitchEventPost(TextureStitchEvent.Post event) {
@@ -73,6 +75,30 @@ public class ClientEventHandler {
         RemotePlayerAnimationQueries.clear();
         if (!Config.ENABLE_SYNC_PROTOCOL) {
             ClientModelManager.sendSyncModelMessage();
+        }
+        // Show welcome/info message once per session
+        if (Config.SHOW_WELCOME_MESSAGE && !welcomeShown) {
+            welcomeShown = true;
+            Minecraft mc = Minecraft.getMinecraft();
+            boolean isChinese = mc.getLanguageManager().getCurrentLanguage().getLanguageCode().startsWith("zh");
+            mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentTranslation(
+                "commands.yes_steve_model.welcome", com.fox.ysmu.Tags.VERSION));
+            if (com.fox.ysmu.Config.HIGH_VERSION_GAME_PATH.isEmpty()) {
+                mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentTranslation(
+                    "commands.yes_steve_model.welcome.sound_hint"));
+            }
+            // Disable hint with clickable [Click Here] — runs /ysm welcome off
+            net.minecraft.util.ChatComponentText disableMsg = new net.minecraft.util.ChatComponentText(
+                net.minecraft.util.EnumChatFormatting.GRAY + (isChinese ? "您可以点击 " : "Click ") +
+                net.minecraft.util.EnumChatFormatting.GREEN + "" + net.minecraft.util.EnumChatFormatting.UNDERLINE +
+                (isChinese ? "[关闭此消息]" : "[Disable]") +
+                net.minecraft.util.EnumChatFormatting.RESET + "" + net.minecraft.util.EnumChatFormatting.GRAY +
+                (isChinese ? " 关闭欢迎消息，或输入 " : " to disable the welcome message, or type ") +
+                net.minecraft.util.EnumChatFormatting.YELLOW + "/ysm welcome off" +
+                net.minecraft.util.EnumChatFormatting.GRAY + (isChinese ? "。" : "."));
+            disableMsg.getChatStyle().setChatClickEvent(new net.minecraft.event.ClickEvent(
+                net.minecraft.event.ClickEvent.Action.RUN_COMMAND, "/ysm welcome off"));
+            mc.thePlayer.addChatMessage(disableMsg);
         }
     }
 

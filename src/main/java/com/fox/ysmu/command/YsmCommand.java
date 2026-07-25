@@ -38,6 +38,24 @@ public class YsmCommand extends CommandBase {
     }
 
     @Override
+    public List addTabCompletionOptions(ICommandSender sender, String[] args) {
+        if (args.length == 1) {
+            return getListOfStringsMatchingLastWord(args,
+                "reload", "play", "playsound", "setgamepath", "welcome");
+        }
+        if (args.length == 2 && "welcome".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "on", "off");
+        }
+        if (args.length == 2 && "setgamepath".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "<path>");
+        }
+        if (args.length == 3 && "setgamepath".equalsIgnoreCase(args[0])) {
+            return getListOfStringsMatchingLastWord(args, "[version]");
+        }
+        return null;
+    }
+
+    @Override
     public int getRequiredPermissionLevel() {
         return 2;
     }
@@ -64,9 +82,10 @@ public class YsmCommand extends CommandBase {
         if (args.length < 1) {
             throw new WrongUsageException(getCommandUsage(sender));
         }
-        // setgamepath is allowed for all players (client-side config only).
+        // setgamepath and welcome are allowed for all players (client-side config only).
         // Other subcommands require the default permission level.
-        if (!"setgamepath".equalsIgnoreCase(args[0]) && !super.canCommandSenderUseCommand(sender)) {
+        if (!"setgamepath".equalsIgnoreCase(args[0]) && !"welcome".equalsIgnoreCase(args[0])
+            && !super.canCommandSenderUseCommand(sender)) {
             throw new CommandException("commands.generic.permission");
         }
         if ("reload".equalsIgnoreCase(args[0])) {
@@ -77,6 +96,8 @@ public class YsmCommand extends CommandBase {
             processPlaySound(sender, args);
         } else if ("setgamepath".equalsIgnoreCase(args[0])) {
             processSetGamePath(sender, args);
+        } else if ("welcome".equalsIgnoreCase(args[0])) {
+            processWelcome(sender, args);
         } else {
             throw new WrongUsageException(getCommandUsage(sender));
         }
@@ -115,10 +136,23 @@ public class YsmCommand extends CommandBase {
         }
         EntityPlayerMP player = (EntityPlayerMP) sender;
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
-        if (eep != null) {
-            eep.playAnimation(animName);
-            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
+        if (eep == null) {
+            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cannot play animation: player data not found."));
+            return;
         }
+        // Check if the animation exists in the current model's animation file
+        net.minecraft.util.ResourceLocation modelId = eep.getModelId();
+        if (modelId != null) {
+            net.minecraft.util.ResourceLocation mainId = com.fox.ysmu.util.ModelIdUtil.getMainId(modelId);
+            software.bernie.geckolib3.file.AnimationFile animFile = software.bernie.geckolib3.resource.GeckoLibCache
+                .getInstance().getAnimations().get(mainId);
+            if (animFile == null || !animFile.animations.containsKey(animName)) {
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Animation §e" + animName + "§r not found in current model."));
+                return;
+            }
+        }
+        eep.playAnimation(animName);
+        player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
     }
 
     private void processPlaySound(ICommandSender sender, String[] args) {
@@ -167,13 +201,14 @@ public class YsmCommand extends CommandBase {
             String currentPath = com.fox.ysmu.Config.HIGH_VERSION_GAME_PATH;
             String currentVer = com.fox.ysmu.Config.HIGH_VERSION_ASSET_VERSION;
             if (currentPath.isEmpty()) {
-                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r No game path configured."));
-                player.addChatMessage(new ChatComponentText("§6Usage: §e/ysm setgamepath <path> [version]"));
-                player.addChatMessage(new ChatComponentText("§7Example: §e/ysm setgamepath C:/Users/x/.minecraft 1.21"));
+                player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.none"));
+                player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.usage"));
+                player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.example"));
             } else {
-                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Current game path: §e" + currentPath));
-                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Asset version: §e" + currentVer));
-                player.addChatMessage(new ChatComponentText("§7Use §e/ysm setgamepath \"\"§7 to clear."));
+                player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.current", currentPath));
+                player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.version", currentVer));
+                player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.usage"));
+                player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.example"));
             }
             return;
         }
@@ -190,12 +225,28 @@ public class YsmCommand extends CommandBase {
         NetworkHandler.CHANNEL.sendTo(new SyncGamePath(newPath, newVersion), player);
 
         if (newPath.isEmpty()) {
-            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Game path cleared."));
+            player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.cleared"));
         } else {
-            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Game path set to: §e" + newPath));
-            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Asset version: §e" + newVersion));
-            player.addChatMessage(new ChatComponentText("§7Changes are local only. Reconnect or reload models if needed."));
+            player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.set", newPath));
+            player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.version", newVersion));
+            player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.local_notice"));
         }
+    }
+
+    private void processWelcome(ICommandSender sender, String[] args) {
+        if (!(sender instanceof EntityPlayerMP)) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        EntityPlayerMP player = (EntityPlayerMP) sender;
+        boolean newValue = true; // default: on
+        if (args.length >= 2) {
+            if ("off".equalsIgnoreCase(args[1]) || "0".equalsIgnoreCase(args[1]) || "false".equalsIgnoreCase(args[1])) {
+                newValue = false;
+            }
+        }
+        NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.SetWelcomeConfig(newValue), player);
+        String key = newValue ? "commands.yes_steve_model.welcome.on" : "commands.yes_steve_model.welcome.off";
+        player.addChatMessage(new ChatComponentTranslation(key));
     }
 
     private void checkModelFiles(ICommandSender sender, Path rootPath) {

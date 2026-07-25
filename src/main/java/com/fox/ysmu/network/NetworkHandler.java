@@ -38,6 +38,7 @@ public final class NetworkHandler {
     private static final int CLIENTBOUND_OPENYSM_VERSION_CHECK_17 = 18;
     private static final int CLIENTBOUND_SEND_MODEL_FILE_CHUNK = 19;
     private static final int CLIENTBOUND_SYNC_GAME_PATH = 20;
+    private static final int CLIENTBOUND_SET_WELCOME_CONFIG = 21;
 
     public static final int OPEN_NPC_MODEL_GUI = 93;
     public static final int SET_NPC_MODEL_ID = 94;
@@ -153,6 +154,11 @@ public final class NetworkHandler {
             SyncGamePath.Handler.class,
             SyncGamePath.class,
             CLIENTBOUND_SYNC_GAME_PATH,
+            Side.CLIENT);
+        CHANNEL.registerMessage(
+            SetWelcomeConfig.Handler.class,
+            SetWelcomeConfig.class,
+            CLIENTBOUND_SET_WELCOME_CONFIG,
             Side.CLIENT);
     }
 

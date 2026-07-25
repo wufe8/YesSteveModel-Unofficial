@@ -98,7 +98,7 @@ public final class LocalAssetProvider {
         Path gameDir;
         try {
             gameDir = Paths.get(normalised);
-        } catch (Exception e) {
+        } catch (java.nio.file.InvalidPathException e) {
             ysmu.LOG.warn("[YSMU-ASSET] Invalid game path '{}': {}", gamePath, e.getMessage());
             initFailed = true;
             return;
@@ -177,17 +177,11 @@ public final class LocalAssetProvider {
      * 重新初始化（路径或版本变更后调用）。
      */
     public static void reinit() {
-        initialized = false;
-        initFailed = false;
-        soundEventMap = null;
-        assetIndex = null;
-        objectsDir = null;
+        reset();
         init();
     }
 
-    /**
-     * 重置状态（用于配置变更时重新加载）。
-     */
+    /** Reset cached state so the next access re-reads from config. */
     public static void reset() {
         initialized = false;
         initFailed = false;
@@ -494,7 +488,7 @@ public final class LocalAssetProvider {
         for (int i = pos + 1; i < s.length(); i++) {
             char c = s.charAt(i);
             if (inString) {
-                if (c == '\\') { i++; continue; }
+                if (c == '\\') { i += 2; continue; }
                 if (c == '"') inString = false;
             } else {
                 if (c == '"') inString = true;

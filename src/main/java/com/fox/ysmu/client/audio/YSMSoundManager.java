@@ -82,7 +82,15 @@ public final class YSMSoundManager {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc == null) return false;
             SoundHandler handler = mc.getSoundHandler();
-            java.lang.reflect.Field sndMgrFd = SoundHandler.class.getDeclaredField("sndManager");
+            // Find SoundManager field by type (works with MCP names and obfuscated names)
+            java.lang.reflect.Field sndMgrFd = null;
+            for (java.lang.reflect.Field f : SoundHandler.class.getDeclaredFields()) {
+                if (SoundManager.class.isAssignableFrom(f.getType())) {
+                    sndMgrFd = f;
+                    break;
+                }
+            }
+            if (sndMgrFd == null) return true;
             sndMgrFd.setAccessible(true);
             Object sndMgr = sndMgrFd.get(handler);
             java.lang.reflect.Field regFd = sndMgr.getClass().getDeclaredField("soundRegistry");
@@ -91,7 +99,7 @@ public final class YSMSoundManager {
             java.util.Map<String, ?> reg = (java.util.Map<String, ?>) regFd.get(sndMgr);
             return reg.containsKey(soundId);
         } catch (Exception e) {
-            return true; // 出错时保守处理，让 SoundHandler 自行判断
+            return true; // On error, behave conservatively — let SoundHandler decide
         }
     }
 
