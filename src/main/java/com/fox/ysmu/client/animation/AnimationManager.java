@@ -795,22 +795,26 @@ public final class AnimationManager {
                 event.getController()
                     .adjustTick(0);
             }
-            // 模型有自己的 swing 控制器 → 跳过整个 legacy 回退路径。
-            // 否则 swing:sword（默认 fallback，1.54s）会全程与模型自身的
-            // 攻击动画并行叠加，模型动画结束后剩余部分露出，造成"收刀二次播放"。
-            // prepareFrameVariables 已通过 ctrl.swing() 设置 v.swing_sword，
-            // 所以不需要 swing:sword 的时间轴来驱动 OpenYSM 控制器状态机。
-            //
-            // 清空 currentAnimationBuilder 并返回 STOP，防止 GeckoLib 残留
-            // 旧动画数据导致"串动"到下一次挥动或其他动作。不返回 CONTINUE
-            // 是因为空 builder + CONTINUE 会使 GeckoLib 控制器处于有数据但
-            // 无有效动画的状态，导致模型渲染异常甚至消失。
-            if (modelHasOwnSwingCtrl) {
-                event.getController().currentAnimationBuilder = new AnimationBuilder();
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
-                return PlayState.STOP;
-            }
+            // 模型有自己的 swing 控制器 → 检查是否需要跳过 legacy 回退路径。
+            // 当 OpenYSM controller 仅处理剑/矛类攻击（v.swing_sword 仅在
+            // ctrl.swing(':sword') 时被设置）时，非剑类物品（空手、斧头等）
+            // 的挥动在 OpenYSM 侧无实际动画（default 状态播放 attack_empty
+            // 空动画），需要让传统路径来提供 swing_hand/swing:axe 等。
             String conditionalAnimation = findSwingAnimation(event, player);
+            if (modelHasOwnSwingCtrl) {
+                // 只有剑/矛类的传统动画会与 OpenYSM 的攻击动画冲突
+                if ("swing:sword".equals(conditionalAnimation)
+                    || "swing:spear".equals(conditionalAnimation)) {
+                    // 跳过 legacy 回退 —— OpenYSM 控制器会处理剑/矛攻击。
+                    // 清空 currentAnimationBuilder 并返回 STOP，防止 GeckoLib
+                    // 残留旧动画数据导致"串动"到下一次挥动或其他动作。
+                    event.getController().currentAnimationBuilder = new AnimationBuilder();
+                    com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                    return PlayState.STOP;
+                }
+                // 非剑类（空手、斧头、镐等）→ 不走 OpenYSM 控制器，
+                // 让传统回退路径（swing_hand / swing:axe 等）正常播放。
+            }
 
             /*
             // 模型自定义 combo：检查是否有 Attackdown3/4/5 系列动画

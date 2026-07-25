@@ -39,10 +39,14 @@ public final class YSMSoundManager {
     /** Lazily cached SoundSystem reflection handle */
     private static Object sndSystem = null;
     private static boolean sndSystemSearched = false;
-    // Cooldown: disabled — the real issue is sounds playing when they shouldn't,
-    // not rapid retriggering. See cap_controller '使用' keyframe on GUI model select.
-    // private static final Map<String, Long> LAST_PLAY_TIME = new ConcurrentHashMap<>();
-    // private static final long SOUND_COOLDOWN_MS = 500L;
+    /**
+     * 防抖：同一 controller+sound 在短时间内的重复触发将被忽略。
+     * 当动画子条件变化（如站立→奔跑导致 sword_attack_01 切换到 sword_attack_run1）
+     * 时，GeckoLib 的 resetEventKeyFrames() 会清除已执行的关键帧记录，
+     * 导致声音关键帧在动画重设后再次触发。此防抖防止同一声音在短时间内重复播放。
+     */
+    private static final Map<String, Long> SOUND_KEYFRAME_LAST_TIME = new ConcurrentHashMap<>();
+    private static final long SOUND_KEYFRAME_COOLDOWN_MS = 100L;
 
     private YSMSoundManager() {}
 
@@ -188,6 +192,20 @@ public final class YSMSoundManager {
         if (Config.DEBUG_SOUND) {
             ysmu.LOG.info("[YSMU-SOUND] onSoundKeyframe: ctrl='{}' sound='{}'", controllerName, soundName);
         }
+        // 防抖：同一 controller+sound 在短时间内重复触发则忽略。
+        // 这解决了动画子条件变化（如站立攻击→奔跑攻击）时
+        // GeckoLib 重置关键帧导致声音重复播放的问题。
+        String debounceKey = controllerName + "::" + soundName;
+        long now = System.currentTimeMillis();
+        Long last = SOUND_KEYFRAME_LAST_TIME.get(debounceKey);
+        if (last != null && now - last < SOUND_KEYFRAME_COOLDOWN_MS) {
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND] debounced: ctrl='{}' sound='{}' ({}ms since last)",
+                    controllerName, soundName, now - last);
+            }
+            return;
+        }
+        SOUND_KEYFRAME_LAST_TIME.put(debounceKey, now);
         // If this controller was playing a different sound, stop the old one
         String oldSound = CONTROLLER_SOUNDS.get(controllerName);
         if (oldSound != null && !oldSound.equals(soundName)) {
@@ -201,6 +219,8 @@ public final class YSMSoundManager {
     public static void stopController(String controllerName) {
         String soundName = CONTROLLER_SOUNDS.remove(controllerName);
         if (soundName != null) stopSound(soundName);
+        // 清除该控制器的防抖记录，确保下次重新触发时能正常播放
+        SOUND_KEYFRAME_LAST_TIME.keySet().removeIf(k -> k.startsWith(controllerName + "::"));
     }
 
     /** 停止指定名称的音效 */

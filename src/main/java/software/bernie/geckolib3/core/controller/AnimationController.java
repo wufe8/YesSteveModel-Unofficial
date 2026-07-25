@@ -312,7 +312,14 @@ public class AnimationController<T extends IAnimatable> {
         this.justStartedTransition = false;
         this.justStopped = false;
         this.needsAnimationReload = false;
-        resetEventKeyFrames();
+        // Do NOT call resetEventKeyFrames() here — this method preserves the
+        // animation tick position when switching between conditional animation
+        // variants within the same state (e.g. sword_attack_01 → sword_attack_run1
+        // when the player starts/stops running while swinging).  Resetting would
+        // clear executedKeyFrames, causing sound keyframes at tick 0.0 to re-fire
+        // even though the playback position is already past them.  New Animation
+        // objects create distinct EventKeyFrame instances, so old keyframes in the
+        // set do not prevent new ones from executing at their appropriate ticks.
         return this.currentAnimation != null;
     }
 
