@@ -48,6 +48,18 @@ public final class YSMSoundManager {
     private static final Map<String, Long> SOUND_KEYFRAME_LAST_TIME = new ConcurrentHashMap<>();
     private static final long SOUND_KEYFRAME_COOLDOWN_MS = 100L;
 
+    /**
+     * When true, onSoundKeyframe / playSound will skip actual playback.
+     * Set by RenderUtil before rendering GUI previews (ModelButton, TextureButton)
+     * to prevent GeckoLib animation keyframes from playing sounds during off-screen
+     * model preview rendering.
+     */
+    private static boolean previewRendering = false;
+
+    public static void setPreviewRendering(boolean value) {
+        previewRendering = value;
+    }
+
     private YSMSoundManager() {}
 
     // ── Public API ────────────────────────────────────────
@@ -58,6 +70,7 @@ public final class YSMSoundManager {
             ysmu.LOG.warn("Failed to create sound cache", e);
             return;
         }
+        String modelKey = modelId.toString();
         for (Map.Entry<String, RawYsmModel.RawDataFile> e : raw.soundFiles.entrySet()) {
             String name = e.getKey();
             RawYsmModel.RawDataFile sf = e.getValue();
@@ -67,8 +80,10 @@ public final class YSMSoundManager {
             Path path = SOUND_CACHE.resolve(file);
             try {
                 if (!Files.exists(path)) Files.write(path, sf.data);
-                SOUND_FILES.put(name, path);
-                if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] cached '{}' → {} ({} bytes)", name, file, sf.data.length);
+                // Use modelKey + "::" + name as the key to prevent sound name
+                // collisions between different models (e.g. both having "kk2" or "使用").
+                SOUND_FILES.put(modelKey + "::" + name, path);
+                if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] cached '{}'::'{}' → {} ({} bytes)", modelKey, name, file, sf.data.length);
             } catch (IOException ex) {
                 ysmu.LOG.warn("Failed to cache sound {}: {}", name, ex.getMessage());
             }
@@ -108,28 +123,46 @@ public final class YSMSoundManager {
     }
 
     /**
-     * 播放音效。查找顺序：
-     * 1. 模型自定义音效（SOUND_FILES）
+     * 播放音效（带模型上下文）。查找顺序：
+     * 1. 模型自定义音效（SOUND_FILES，按 modelId::name 查找）
      * 2. 1.7.10 SoundHandler（仅在音效已注册时调用，避免内部 WARN）
      * 3. 命名空间翻译后的 SoundHandler
      * 4. LocalAssetProvider（高版本游戏本地资产）
      * 5. 全部失败 → 输出一条最终 WARN
      */
-    public static void playSound(EntityPlayer player, String soundName, float volume, float pitch) {
+    public static void playSound(EntityPlayer player, String soundName, ResourceLocation modelId, float volume, float pitch) {
         if (soundName == null || soundName.isEmpty()) return;
 
         if (Config.DEBUG_SOUND) {
-            ysmu.LOG.info("[YSMU-SOUND] playSound: '{}' vol={} pitch={}", soundName, volume, pitch);
+            ysmu.LOG.info("[YSMU-SOUND] playSound: '{}' vol={} pitch={} model={}", soundName, volume, pitch, modelId);
         }
 
-        // Step 1 — 模型自定义音效
-        Path file = SOUND_FILES.get(soundName);
-        if (file == null) {
+        // Step 1 — 模型自定义音效（按 modelId::name 隔离，避免跨模型同名冲突）
+        String modelKey = modelId != null ? modelId.toString() : null;
+        Path file = modelKey != null ? SOUND_FILES.get(modelKey + "::" + soundName) : null;
+        if (file == null && modelKey != null) {
             for (Map.Entry<String, Path> e : SOUND_FILES.entrySet()) {
-                if (e.getValue().getFileName().toString().equals(soundName)
-                    || e.getValue().getFileName().toString().equalsIgnoreCase(soundName)) {
-                    file = e.getValue();
-                    break;
+                String key = e.getKey();
+                // Only match sounds belonging to this model
+                if (key.startsWith(modelKey + "::")) {
+                    String fileName = e.getValue().getFileName().toString();
+                    if (fileName.equals(soundName) || fileName.equalsIgnoreCase(soundName)) {
+                        file = e.getValue();
+                        break;
+                    }
+                }
+            }
+        }
+        if (file == null && modelKey == null) {
+            // Legacy path (no modelId, e.g. debug command)
+            file = SOUND_FILES.get(soundName);
+            if (file == null) {
+                for (Map.Entry<String, Path> e : SOUND_FILES.entrySet()) {
+                    if (e.getValue().getFileName().toString().equals(soundName)
+                        || e.getValue().getFileName().toString().equalsIgnoreCase(soundName)) {
+                        file = e.getValue();
+                        break;
+                    }
                 }
             }
         }
@@ -178,9 +211,17 @@ public final class YSMSoundManager {
         }
     }
 
+    public static void playSound(EntityPlayer player, String soundName, float volume, float pitch) {
+        playSound(player, soundName, null, volume, pitch);
+    }
+
     public static void playSoundAtPlayer(String soundName) {
+        playSoundAtPlayer(soundName, null);
+    }
+
+    public static void playSoundAtPlayer(String soundName, ResourceLocation modelId) {
         Minecraft mc = Minecraft.getMinecraft();
-        if (mc.thePlayer != null) playSound(mc.thePlayer, soundName, 1.0f, 1.0f);
+        if (mc.thePlayer != null) playSound(mc.thePlayer, soundName, modelId, 1.0f, 1.0f);
     }
 
     /**
@@ -188,14 +229,37 @@ public final class YSMSoundManager {
      * 以便当该控制器/动画停止时能清理对应音效。
      */
     public static void onSoundKeyframe(String controllerName, String soundName) {
+        onSoundKeyframe(controllerName, soundName, null);
+    }
+
+    /**
+     * 由关键帧音效监听器调用。记录该音效来自哪个 GeckoLib 控制器和模型，
+     * 以便当该控制器/动画停止时能清理对应音效，并使用正确的模型上下文查找音效文件。
+     *
+     * @param controllerName GeckoLib 控制器名称
+     * @param soundName 音效名称（动画 keyframe 中定义的名称）
+     * @param modelId 当前模型的 ResourceLocation，用于隔离同名音效
+     */
+    public static void onSoundKeyframe(String controllerName, String soundName, ResourceLocation modelId) {
         if (controllerName == null || soundName == null) return;
+        if (previewRendering) {
+            // During GUI preview rendering, suppress sounds from parallel controllers
+            // (which would otherwise spam keyframe sounds every animation loop cycle).
+            // Cap controller (focus/hover) and main controller (idle/preview) sounds
+            // are still allowed — users expect to hear focus animation sound effects
+            // when clicking a model button.
+            if (controllerName.startsWith("parallel_") || controllerName.startsWith("pre_parallel_")) {
+                return;
+            }
+        }
         if (Config.DEBUG_SOUND) {
-            ysmu.LOG.info("[YSMU-SOUND] onSoundKeyframe: ctrl='{}' sound='{}'", controllerName, soundName);
+            ysmu.LOG.info("[YSMU-SOUND] onSoundKeyframe: ctrl='{}' sound='{}' model={}", controllerName, soundName, modelId);
         }
         // 防抖：同一 controller+sound 在短时间内重复触发则忽略。
         // 这解决了动画子条件变化（如站立攻击→奔跑攻击）时
         // GeckoLib 重置关键帧导致声音重复播放的问题。
         String debounceKey = controllerName + "::" + soundName;
+        if (modelId != null) debounceKey = modelId + "::" + debounceKey;
         long now = System.currentTimeMillis();
         Long last = SOUND_KEYFRAME_LAST_TIME.get(debounceKey);
         if (last != null && now - last < SOUND_KEYFRAME_COOLDOWN_MS) {
@@ -212,7 +276,7 @@ public final class YSMSoundManager {
             stopSound(oldSound);
         }
         CONTROLLER_SOUNDS.put(controllerName, soundName);
-        playSoundAtPlayer(soundName);
+        playSoundAtPlayer(soundName, modelId);
     }
 
     /** 停止指定控制器触发的音效（动画停止时调用） */

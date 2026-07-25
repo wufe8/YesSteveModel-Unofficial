@@ -103,7 +103,7 @@ public class CustomPlayerEntity implements IAnimatable {
                 controller.registerSoundListener(
                     event -> {
                         String ctrlName = event.getController().getName();
-                        com.fox.ysmu.client.audio.YSMSoundManager.onSoundKeyframe(ctrlName, event.sound);
+                        com.fox.ysmu.client.audio.YSMSoundManager.onSoundKeyframe(ctrlName, event.sound, getMainModel());
                     });
             });
     }

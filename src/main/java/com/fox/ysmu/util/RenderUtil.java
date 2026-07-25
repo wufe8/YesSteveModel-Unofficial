@@ -23,6 +23,7 @@ import org.lwjgl.util.vector.Quaternion;
 import org.lwjgl.opengl.GL11;
 import org.lwjgl.opengl.GL12;
 
+import com.fox.ysmu.client.audio.YSMSoundManager;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.renderer.CustomPlayerRenderer;
 import com.fox.ysmu.compat.Axis;
@@ -127,8 +128,9 @@ public final class RenderUtil {
         if (player == null) {
             return;
         }
+        IAnimatable animatable;
         try {
-            IAnimatable animatable = AnimatableCacheUtil.TEXTURE_GUI_CACHE.get(modelId, CustomPlayerEntity::new);
+            animatable = AnimatableCacheUtil.TEXTURE_GUI_CACHE.get(modelId, CustomPlayerEntity::new);
             if (animatable instanceof CustomPlayerEntity entity) {
                 entity.setPlayer(null);
                 consumer.accept(entity);
@@ -345,6 +347,10 @@ public final class RenderUtil {
     private static void renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, GeoReplacedEntityRenderer renderer,
         CustomPlayerEntity entity, boolean disablePreviewRotation) {
+        // Suppress sound playback during GUI preview rendering — GeckoLib animation
+        // keyframes would otherwise play sounds when just hovering over a model button.
+        YSMSoundManager.setPreviewRendering(true);
+        try {
         entity.setMainModel(ModelIdUtil.getMainId(modelId));
         entity.setTexture(textureId);
 
@@ -476,6 +482,9 @@ public final class RenderUtil {
             player.inventory.armorInventory[0] = itemStacks[3];
             player.inventory.mainInventory[player.inventory.currentItem] = itemStacks[4];
             BackhandCompat.setOffhandItem(player, itemStacks[5]);
+        }
+        } finally {
+            YSMSoundManager.setPreviewRendering(false);
         }
     }
 

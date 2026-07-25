@@ -149,10 +149,8 @@ git checkout feat-ExtraUI
 
 ## 已知问题
 
-- [FIXED] 动画不兼容battlegear2的盾牌和et futurum的鞘翅
 - [SKIP] battlegear2的盾牌位置不正确 目前会以物品的位置来握持(实际上就是物品而非工具)
 - [FIXED] 目前剑格挡重载为一个静止的使用动画 看起来会像格挡 此外格挡状态 模型可使用query.is_blocking Molang查询
-- [FIXED] 无法播放高于1.7.10的原版音效 如果有安装Et futurum 会尝试调用其api下载的音效 如果还是没有 可以用/ysm setgamepath <gamePath> <versionName> 设置本地高版本文件路径 gamePath可以是绝对路径或者相对路径 指向.minecraft文件夹 versionName为assets/indexes文件夹中的json名(不需要打json后缀)
 - 部分新版模型可能需要 `.molang` 函数文件桥接才能正常工作
 - [SKIP] WebP 解码器基于外部实现, 没搞定纯ImageIO
 - 子模型(投射物/载具)仍然存在一些问题 目前仅保证默认模型投射物可用
@@ -160,6 +158,8 @@ git checkout feat-ExtraUI
 - 粒子系统未实现
 - ysm格式的cube路径与文件夹json的cube路径不同 其poly_mash会丢失size<0的状态 导致本应是负缩放大小的模型无法通过正确翻转法线 来做到内外面翻转/描边的效果
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
+
+
 
 ---
 
