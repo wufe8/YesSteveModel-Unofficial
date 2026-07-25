@@ -757,10 +757,9 @@ public final class AnimationManager {
         }
 
         // 如果模型有 swing 相关的 OpenYSM 控制器（player.post_swing 等），
-        // 则在非新挥动的情况下跳过 legacy 回退路径。否则当 OpenYSM 控制器
-        // 完成攻击状态机后（transition 回 default），swing_controller
-        // 可能因 isSwingInProgress 仍在 true 而误播 legacy swing:sword
-        // 或 swing_hand，造成"收刀二次播放"的问题。
+        // 则跳过 legacy 回退路径，避免 swing:sword/swing_hand（来自默认模型
+        // 骨骼）与模型自身的攻击动画并行叠加导致骨骼变换冲突甚至模型消失。
+        // 但需要清空 GeckoLib 的旧动画数据，防止"串动"。
         ResourceLocation animId = getAnimationId(event);
         boolean modelHasOwnSwingCtrl = OpenYsmPlayerControllerRuntime.hasAnyController(animId)
             && (OpenYsmAnimationControllerRegistry.hasController(animId, "player.post_swing")
@@ -802,17 +801,11 @@ public final class AnimationManager {
             // prepareFrameVariables 已通过 ctrl.swing() 设置 v.swing_sword，
             // 所以不需要 swing:sword 的时间轴来驱动 OpenYSM 控制器状态机。
             //
-            // 注意：tryApply 在上方已返回 null，说明没有 OpenYSM 控制器直接
-            // 匹配 swing_controller。如果模型只有 overlay 控制器（post_swing/
-            // pre_swing，运行在独立的 GeckoLib 控制器上），需要检查它们是否
-            // 真的产生了有意义的动画。如果它们只在播 attack_empty（无骨骼的
-            // 占位动画），则不跳过 legacy 路径，让 swing_controller 播放下
-            // 默认的 swing_hand，为空手挥动提供视觉反馈，并防止 GeckoLib 的
-            // 旧动画数据残留导致"串动"。
+            // 清空 currentAnimationBuilder 防止 GeckoLib 残留旧动画数据
+            // 导致"串动"到下一次挥动或其他动作。
             if (modelHasOwnSwingCtrl) {
-                if (OpenYsmPlayerControllerRuntime.isSwingOverlayActive(animId, pid)) {
-                    return PlayState.CONTINUE;
-                }
+                event.getController().currentAnimationBuilder = new AnimationBuilder();
+                return PlayState.CONTINUE;
             }
             String conditionalAnimation = findSwingAnimation(event, player);
 

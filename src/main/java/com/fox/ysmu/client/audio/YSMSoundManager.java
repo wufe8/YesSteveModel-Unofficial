@@ -16,6 +16,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
 import com.fox.ysmu.Config;
+import com.fox.ysmu.compat.LocalAssetProvider;
 import com.fox.ysmu.compat.SoundNamespaceCompat;
 import com.fox.ysmu.model.ServerModelManager;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
@@ -131,15 +132,34 @@ public final class YSMSoundManager {
                 PositionedSoundRecord.func_147674_a(new ResourceLocation(soundName), volume));
             // Also try registered namespace providers for high-version sounds
             // (e.g. "minecraft:entity.player.attack.crit" → "minecraft_1.21.10:...")
+            // Note: we do NOT return after a successful translation because
+            // SoundHandler.playSound() is fire-and-forget — it silently ignores
+            // unknown soundEvents.  If Et-Futurum hasn't downloaded this sound,
+            // the handler call produces no audio.  We always fall through to
+            // LocalAssetProvider as the definitive fallback.
             ResourceLocation translated = SoundNamespaceCompat.resolve(soundName);
             if (translated != null) {
                 if (Config.DEBUG_SOUND) {
                     ysmu.LOG.info("[YSMU-SOUND] namespace translation: '{}' → '{}'", soundName, translated);
                 }
                 handler.playSound(PositionedSoundRecord.func_147674_a(translated, volume));
-            } else if (Config.DEBUG_SOUND && soundName.startsWith("minecraft:")) {
-                // Log high-version sounds that no provider could translate
-                ysmu.LOG.info("[YSMU-SOUND] no namespace provider for '{}' (not available in 1.7.10)", soundName);
+                // Deliberately fall through — SoundHandler may have failed silently.
+            }
+            // Last resort: try the local high-version game asset provider.
+            // This reads OGG files directly from the user's modern Minecraft
+            // installation and plays them via paulscode SoundSystem, bypassing
+            // the 1.7.10 SoundHandler entirely. No download required.
+            Path localOgg = LocalAssetProvider.resolveSound(soundName);
+            if (localOgg != null) {
+                if (Config.DEBUG_SOUND) {
+                    ysmu.LOG.info("[YSMU-SOUND] local asset: '{}' → {}", soundName, localOgg);
+                }
+                playOggDirect(localOgg, volume, pitch);
+                return;
+            }
+            if (Config.DEBUG_SOUND && soundName.startsWith("minecraft:")) {
+                // Log high-version sounds that no provider could resolve
+                ysmu.LOG.info("[YSMU-SOUND] no provider for '{}' (not available in 1.7.10)", soundName);
             }
         }
     }

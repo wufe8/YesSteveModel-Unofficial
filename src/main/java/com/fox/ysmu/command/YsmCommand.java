@@ -22,6 +22,8 @@ import org.apache.commons.lang3.time.StopWatch;
 
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.model.ServerModelManager;
+import com.fox.ysmu.network.NetworkHandler;
+import com.fox.ysmu.network.message.SyncGamePath;
 
 public class YsmCommand extends CommandBase {
 
@@ -32,7 +34,7 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm <reload|play|playsound> [soundName]";
+        return "/ysm <reload|play|playsound|setgamepath> [args]";
     }
 
     @Override
@@ -40,10 +42,32 @@ public class YsmCommand extends CommandBase {
         return 2;
     }
 
+    /**
+     * Allow setgamepath subcommand for non-OP players (client-side config only).
+     * Other subcommands still require the default permission level.
+     */
+    @Override
+    public boolean canCommandSenderUseCommand(ICommandSender sender) {
+        // If the sender has the default permission, allow everything
+        if (super.canCommandSenderUseCommand(sender)) return true;
+        // Otherwise, only allow setgamepath (client-side only, no server impact)
+        if (sender instanceof net.minecraft.command.ICommandSender) {
+            // We can't check args here easily, but we'll handle permission
+            // denial gracefully in processCommand for non-setgamepath subcommands.
+            return true; // allow all to reach processCommand; denied there
+        }
+        return false;
+    }
+
     @Override
     public void processCommand(ICommandSender sender, String[] args) {
         if (args.length < 1) {
             throw new WrongUsageException(getCommandUsage(sender));
+        }
+        // setgamepath is allowed for all players (client-side config only).
+        // Other subcommands require the default permission level.
+        if (!"setgamepath".equalsIgnoreCase(args[0]) && !super.canCommandSenderUseCommand(sender)) {
+            throw new CommandException("commands.generic.permission");
         }
         if ("reload".equalsIgnoreCase(args[0])) {
             processReload(sender);
@@ -51,6 +75,8 @@ public class YsmCommand extends CommandBase {
             processPlay(sender, args);
         } else if ("playsound".equalsIgnoreCase(args[0])) {
             processPlaySound(sender, args);
+        } else if ("setgamepath".equalsIgnoreCase(args[0])) {
+            processSetGamePath(sender, args);
         } else {
             throw new WrongUsageException(getCommandUsage(sender));
         }
@@ -128,6 +154,48 @@ public class YsmCommand extends CommandBase {
         // Try exact match first, then case-insensitive partial match
         com.fox.ysmu.client.audio.YSMSoundManager.playSound(player, soundName, 1.0f, 1.0f);
         player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Playing sound: " + soundName));
+    }
+
+    private void processSetGamePath(ICommandSender sender, String[] args) {
+        if (!(sender instanceof EntityPlayerMP)) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        EntityPlayerMP player = (EntityPlayerMP) sender;
+
+        if (args.length < 2) {
+            // Show current configuration
+            String currentPath = com.fox.ysmu.Config.HIGH_VERSION_GAME_PATH;
+            String currentVer = com.fox.ysmu.Config.HIGH_VERSION_ASSET_VERSION;
+            if (currentPath.isEmpty()) {
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r No game path configured."));
+                player.addChatMessage(new ChatComponentText("§6Usage: §e/ysm setgamepath <path> [version]"));
+                player.addChatMessage(new ChatComponentText("§7Example: §e/ysm setgamepath C:/Users/x/.minecraft 1.21"));
+            } else {
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Current game path: §e" + currentPath));
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Asset version: §e" + currentVer));
+                player.addChatMessage(new ChatComponentText("§7Use §e/ysm setgamepath \"\"§7 to clear."));
+            }
+            return;
+        }
+
+        String newPath = args[1];
+        String newVersion = args.length >= 3 ? args[2] : com.fox.ysmu.Config.HIGH_VERSION_ASSET_VERSION;
+
+        // Allow clearing the path with an empty string
+        if ("\"\"".equals(newPath) || "''".equals(newPath)) {
+            newPath = "";
+        }
+
+        // Send the updated config to the client via network packet
+        NetworkHandler.CHANNEL.sendTo(new SyncGamePath(newPath, newVersion), player);
+
+        if (newPath.isEmpty()) {
+            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Game path cleared."));
+        } else {
+            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Game path set to: §e" + newPath));
+            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Asset version: §e" + newVersion));
+            player.addChatMessage(new ChatComponentText("§7Changes are local only. Reconnect or reload models if needed."));
+        }
     }
 
     private void checkModelFiles(ICommandSender sender, Path rootPath) {
