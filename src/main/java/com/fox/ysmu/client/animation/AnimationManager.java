@@ -801,11 +801,14 @@ public final class AnimationManager {
             // prepareFrameVariables 已通过 ctrl.swing() 设置 v.swing_sword，
             // 所以不需要 swing:sword 的时间轴来驱动 OpenYSM 控制器状态机。
             //
-            // 清空 currentAnimationBuilder 防止 GeckoLib 残留旧动画数据
-            // 导致"串动"到下一次挥动或其他动作。
+            // 清空 currentAnimationBuilder 并返回 STOP，防止 GeckoLib 残留
+            // 旧动画数据导致"串动"到下一次挥动或其他动作。不返回 CONTINUE
+            // 是因为空 builder + CONTINUE 会使 GeckoLib 控制器处于有数据但
+            // 无有效动画的状态，导致模型渲染异常甚至消失。
             if (modelHasOwnSwingCtrl) {
                 event.getController().currentAnimationBuilder = new AnimationBuilder();
-                return PlayState.CONTINUE;
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                return PlayState.STOP;
             }
             String conditionalAnimation = findSwingAnimation(event, player);
 

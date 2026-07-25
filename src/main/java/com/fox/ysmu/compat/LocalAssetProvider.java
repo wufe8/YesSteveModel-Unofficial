@@ -75,7 +75,13 @@ public final class LocalAssetProvider {
         // On Windows, Paths.get handles both \ and /.
         // On Unix, \ is a valid filename character so we strip it if it looks
         // like a Windows path was accidentally given; expand ~ to user home.
+        // Split quotes that may have been stored in the config or passed via
+        // command (e.g. "/ysm setgamepath \"C:\\path\\to\\.minecraft\"").
+        // Also trim whitespace and normalise separators.
         String normalised = gamePath.trim();
+        if (normalised.startsWith("\"") && normalised.endsWith("\"")) {
+            normalised = normalised.substring(1, normalised.length() - 1).trim();
+        }
         if (org.apache.commons.lang3.SystemUtils.IS_OS_WINDOWS) {
             normalised = normalised.replace('/', '\\');
         } else {
@@ -89,7 +95,14 @@ public final class LocalAssetProvider {
             }
         }
 
-        Path gameDir = Paths.get(normalised);
+        Path gameDir;
+        try {
+            gameDir = Paths.get(normalised);
+        } catch (Exception e) {
+            ysmu.LOG.warn("[YSMU-ASSET] Invalid game path '{}': {}", gamePath, e.getMessage());
+            initFailed = true;
+            return;
+        }
         if (!Files.isDirectory(gameDir)) {
             ysmu.LOG.warn("[YSMU-ASSET] Game path '{}' is not a valid directory", gamePath);
             initFailed = true;

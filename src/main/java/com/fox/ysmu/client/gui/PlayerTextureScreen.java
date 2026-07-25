@@ -33,6 +33,7 @@ import java.util.List;
 public class PlayerTextureScreen extends GuiScreen {
 
     private static final String HIDDEN_PREFIX = "\u2014\u2014"; // "——"
+    private static final String MERGED_PREFIX = "__ysm_merged__";
 
     // 布局常量
     private static final int LEFT_PANEL_X = 5;
@@ -107,7 +108,8 @@ public class PlayerTextureScreen extends GuiScreen {
         AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
         if (file != null && file.animations != null) {
             for (String name : file.animations.keySet()) {
-                if (!name.startsWith(HIDDEN_PREFIX)) {
+                if (!name.startsWith(HIDDEN_PREFIX)
+                    && (com.fox.ysmu.Config.DEBUG_MERGED_ANIMATIONS || !name.startsWith(MERGED_PREFIX))) {
                     animationNames.add(name);
                 }
             }

@@ -43,6 +43,7 @@ public class Config {
     public static boolean DEBUG_MODEL_LOAD = false;
     public static boolean DEBUG_ANIMATION = false;
     public static boolean DEBUG_SOUND = false;
+    public static boolean DEBUG_MERGED_ANIMATIONS = false;
 
     // Model sync config
     public static boolean ENABLE_SYNC_PROTOCOL = true;
@@ -111,6 +112,7 @@ public class Config {
         DEBUG_MODEL_LOAD = syncBoolean("DebugModelLoad", "debug", DEBUG_MODEL_LOAD, "Enable model loading/debug logging ([YSMU-MODEL])", load);
         DEBUG_ANIMATION = syncBoolean("DebugAnimation", "debug", DEBUG_ANIMATION, "Enable animation playback debug logging ([YSMU-ANIM])", load);
         DEBUG_SOUND = syncBoolean("DebugSound", "debug", DEBUG_SOUND, "Enable sound cache/playback debug logging ([YSM Sound])", load);
+        DEBUG_MERGED_ANIMATIONS = syncBoolean("DebugMergedAnimations", "debug", DEBUG_MERGED_ANIMATIONS, "Show __ysm_merged__ animations in the preview GUI for debugging", load);
 
         // Model sync config values
         ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Whether to use the appended hash/cache/chunk sync path before legacy fallback", load);
