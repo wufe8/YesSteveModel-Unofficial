@@ -360,4 +360,7 @@ gui.yes_steve_model.sync_progress=Syncing models: %d / %d
 gui.yes_steve_model.sync_model=Loading: 
 molang.yes_steve_model.query.is_blocking.desc=Returns 1.0 if the entity is blocking with a sword, else it returns 0.0.
 gui.yes_steve_model.sync_waiting=Waiting for server...
+gui.yes_steve_model.texture.paused=[⏸ PAUSED]
+gui.yes_steve_model.texture.resume=Resume
+gui.yes_steve_model.model_count=%d models
 message.yes_steve_model.sync.complete=§6§l[§aYSM§6§l] §aClient sync complete in %d ms

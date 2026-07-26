@@ -12,7 +12,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ## 当前状态
 
-**最新版本：`1.9a1-04`**（`feat-ExtraUI` 分支）
+**最新版本：`1.9a1-05`**（`perf/previewUI` 分支）
 
 > [NOTE]
 > 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
@@ -27,7 +27,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
   - [UniMixins](https://github.com/LegacyModdingMC/UniMixins)
   - [GTNHLib](https://github.com/GTNewHorizons/GTNHLib)
 - **测试兼容性**: +unimixins-all-1.7.10-0.3.1.jar, angelica-2.1.42.jar, gtnhlib-0.10.9.jar, lwjgl3ify-3.0.25.jar, backhand-1.7.7.jar, modularui2-2.2.18-1.7.10.jar
-- **GTNH测试版本**: 2.8.4, 2.9.0beta1
+- **GTNH测试版本**: 2.8.4, 2.9.0beta2
 
 ### 安装步骤
 1. 安装 Forge 1.7.10（推荐 10.13.4.1614）
@@ -46,6 +46,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **模型包系统**：模型扫描、服务端/客户端同步协议、GUI 模型分组
 - **WebP 纹理解码**：移植 ImageStream 解码器，处理加密 `.ysm` 中的 WebP 贴图
 - **内置模型**：内置默认模型自动提取到 `config/ysmu/custom`
+- **负尺寸 Cube 归一化**：自动归一化 BlockBench 负尺寸 Cube + 移除零 UV 面，提升模型兼容性
 
 ### 动画系统
 - **动画控制器**：状态机、blend transition、timeline、`on_entry`/`on_exit`
@@ -57,6 +58,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **额外动画轮盘**：可定制的 8 槽位动画轮盘，支持子菜单导航、翻页
 - **骑乘退出检测**：下马时 40-ticks 停止其他控制器，确保过渡动画播放
 - **GUI 预览动画**：模型选择界面支持 hover/focus 动画和双控制器预览混合
+- **动画预览界面**：模型纹理选择页面重做为三栏布局（动画列表 + 3D 预览 + 贴图选择），支持暂停/复位/地面切换、鼠标拖拽旋转视角
 
 ### Molang 脚本引擎
 - **完整 Molang 解析器**：带运算符优先级修复、三元表达式、null-coalescing (`??`) 和赋值操作符
@@ -79,8 +81,8 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **配置页面改进**：透明度滑块、显示名称、包文件夹图标
 - **翻页/锁定按钮**：动画轮盘锁定、多页导航
 - **`/ysm play` 命令**：在游戏中播放指定动画
-- **预览刷新频率调整**：FBO 缓存刷新频率 在模型选择(Alt+Y)的设置页面中可以调整模型预览的刷新率 能有效提升预览页面的游戏帧数 但会导致预览动画卡顿
-- **HUD 自拍模型 FBO 缓存**：在 Alt+P 配置界面可按 C 切换。开启后 HUD 模型以动态帧率更新（>125fps 时以1/8的频率刷新，62.5-125fps 时缩放至 16-32fps，<62.5fps 时缩放至 0-32fps），大幅降低 HUD 渲染开销；关闭则每帧完整渲染（等效未优化行为）
+- **预览刷新频率调整**：FBO 缓存刷新频率 在模型选择(Alt+Y)的设置页面中可以调整模型预览的刷新率 能有效提升预览页面的游戏帧数 但会导致动画预览卡顿
+- **HUD 自拍模型 FBO 缓存**：在 Alt+P 配置界面可按 C 切换。开启后 HUD 模型以自适应帧率更新（>125fps 时每 8 帧刷新，62.5-125fps 每 4 帧，<62.5fps 每 2 帧），大幅降低 HUD 渲染开销（测试模型从 164fps 提升至 520fps）；关闭则每帧完整渲染
 
 ### 兼容性
 - **Backhand 双持**：通过 `BackhandCompat` 隔离, 副手物品正确检测
@@ -107,6 +109,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9-alpha1-pre1-feat-ExtraUI-02` | 潜行语义修正、头盔检测、范围滑块 roaming 变量初始化 |
 | `1.9a1-03` | 投射物渲染、攻击连击修复、并行模型缓存、格挡支持、滑条默认值修复 |
 | `1.9a1-04` | 一系列性能优化、负尺寸cube修复 |
+| `1.9a1-05` | 动画预览界面、HUD FBO 缓存、深度性能优化与 Bug 修复 |
 
 ---
 
@@ -118,7 +121,7 @@ git clone https://github.com/wufe8/YesSteveModel-Unofficial.git
 cd YesSteveModel-Unofficial
 
 # 检出活跃开发分支
-git checkout feat-ExtraUI
+git checkout perf/previewUI
 
 # 构建
 .\gradlew.bat build

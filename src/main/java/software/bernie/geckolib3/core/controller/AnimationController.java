@@ -178,20 +178,24 @@ public class AnimationController<T extends IAnimatable> {
 
     private final HashMap<String, BoneAnimationQueue> boneAnimationQueues = new HashMap<>();
     private final List<BoneAnimationQueue> activeBoneAnimationQueues = new ArrayList<>();
-    /** Pre-built bone name → IBone map — populated once per process() call,
-     *  reused by both the transition and running branches to avoid a second
-     *  HashMap build and to enable lazy BoneAnimationQueue creation. */
+        // YSMU perf: Pre-built bone name → IBone map — populated once per process() call,
+    // reused by both the transition and running branches to avoid a second
+    // HashMap build and to enable lazy BoneAnimationQueue creation.
     private HashMap<String, IBone> boneNameToBone = new HashMap<>();
+    // YSMU: tickOffset for animation frame time tracking
     public double tickOffset;
     public Queue<Animation> animationQueue = new LinkedList<>();
     public Animation currentAnimation;
     public AnimationBuilder currentAnimationBuilder = new AnimationBuilder();
     public boolean shouldResetTick = false;
     private final HashMap<String, BoneSnapshot> boneSnapshots = new HashMap<>();
+    // YSMU: justStopped/justStartedTransition — fix PLAY_ONCE restart detection
     private boolean justStopped = false;
     protected boolean justStartedTransition = false;
     public Function<Double, Double> customEasingMethod;
+    // YSMU: needsAnimationReload — signals rebuild when same builder is re-submitted
     protected boolean needsAnimationReload = false;
+    // YSMU: animationSpeed — external control for pause/freeze (used by animation preview screen)
     public double animationSpeed = 1D;
     private final Set<EventKeyFrame<?>> executedKeyFrames = new HashSet<>();
 
@@ -202,17 +206,15 @@ public class AnimationController<T extends IAnimatable> {
      * animation states.
      */
     public void setAnimation(AnimationBuilder builder) {
-        /// ADDED
+        // YSMU: Handle same-builder resubmission — restart PLAY_ONCE when Stopped,
+        // or restart LOOP when currentAnimation was lost (e.g. after cache clear).
         if (builder != null && !builder.getRawAnimationList()
             .isEmpty()) {
-            // Log pre_parallel/parallel animations being set (throttled: only when actually reloading)
             String animName = builder.getRawAnimationList().get(0).animationName;
             boolean animChanged = !builder.getRawAnimationList()
                 .equals(this.currentAnimationBuilder.getRawAnimationList());
             if (builder.getRawAnimationList()
                 .equals(this.currentAnimationBuilder.getRawAnimationList()) && !this.needsAnimationReload) {
-                // Restart animation when the controller is Stopped (PLAY_ONCE ended)
-                // or restart LOOP animations when currentAnimation was lost.
                 if (animationState == AnimationState.Stopped
                     || (builder.getRawAnimationList()
                         .get(builder.getRawAnimationList().size() - 1).loopType
@@ -221,7 +223,7 @@ public class AnimationController<T extends IAnimatable> {
                 }
             }
         }
-        /// END ADDED
+        // END YSMU
         IAnimatableModel<T> model = getModel(this.animatable);
         if (model != null) {
             if (builder == null || builder.getRawAnimationList()
@@ -236,7 +238,7 @@ public class AnimationController<T extends IAnimatable> {
                         .stream()
                         .map((rawAnimation) -> {
                             Animation animation = model.getAnimation(rawAnimation.animationName, animatable);
-                            // Fallback removed: scanning ALL files in GeckoLibCache
+                            // YSMU: Fallback removed — scanning ALL files in GeckoLibCache
                             // leaks per-model custom animations (e.g. rok's attack_1)
                             // into unrelated models, causing bone name mismatches.
                             // Each model must provide its own animations; the default

@@ -565,7 +565,7 @@ public class PlayerModelScreen extends GuiScreen {
             }
 
             // 模型数量
-            String countStr = modelCount + " models";
+            String countStr = I18n.format("gui.yes_steve_model.model_count", modelCount);
             this.drawCenteredString(font, countStr, cx, this.yPosition + this.height - 12, 0x888888);
 
             // 悬停边框

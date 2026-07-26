@@ -13,6 +13,11 @@ import com.fox.ysmu.compat.Utils;
 import software.bernie.geckolib3.geo.render.built.GeoBone;
 import software.bernie.geckolib3.geo.render.built.GeoCube;
 
+/**
+ * YSMU: Replaced GeckoLib's original LWJGL-only RenderUtils with JOML-based
+ * matrix operations via com.fox.ysmu.compat.Axis/Utils. Added convenience
+ * methods: prepMatrixForBone(), invertAndMultiplyMatrices().
+ */
 public final class RenderUtils {
 
     public static void translateMatrixToBone(GeoBone bone) {

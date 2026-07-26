@@ -297,4 +297,7 @@ gui.yes_steve_model.sync_progress=正在同步模型：%d / %d
 gui.yes_steve_model.sync_model=加载中：
 molang.yes_steve_model.query.is_blocking.desc=如果实体正在用剑格挡返回 1.0，否则返回 0.0。
 gui.yes_steve_model.sync_waiting=等待服务器中……
+gui.yes_steve_model.texture.paused=[⏸ 已暂停]
+gui.yes_steve_model.texture.resume=继续
+gui.yes_steve_model.model_count=%d 个模型
 message.yes_steve_model.sync.complete=§6§l【§aYSM§6§l】§a客户端同步完成，耗时 %d ms

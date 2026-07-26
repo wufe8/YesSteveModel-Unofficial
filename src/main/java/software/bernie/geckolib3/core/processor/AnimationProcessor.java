@@ -33,6 +33,9 @@ public class AnimationProcessor<T extends IAnimatable> {
         this.animatedModel = animatedModel;
     }
 
+    // YSMU: Added crashWhenCantFindBone parameter — when true, missing bones
+    // throw RuntimeException instead of silently skipping, useful for debugging
+    // model mismatch issues.
     public void tickAnimation(IAnimatable entity, Integer uniqueID, double seekTime, AnimationEvent event,
         MolangParser parser, boolean crashWhenCantFindBone) {
         AnimationRenderState renderState = AnimationRenderState.from(seekTime, event);

@@ -35,6 +35,12 @@ import com.fox.ysmu.ysmu;
 /**
  * MoLang 解析器
  * <a href="https://bedrock.dev/docs/1.19.0.0/1.19.30.23/Molang#Math%20Functions">Wiki</a>
+ *
+ * YSMU: Heavily modified — added function namespace remapping (ysm.*),
+ * null-coalescing (??) operator, vector function rewriting (bone_rot/bone_pos),
+ * string literal pooling, scoped variable support (ScopedMolangVariable),
+ * and OpenYSM expression compatibility. The original MolangParser has been
+ * largely rewritten to support YSMU's extended animation system.
  */
 public class MolangParser extends MathBuilder {
 

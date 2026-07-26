@@ -30,8 +30,9 @@ import java.util.List;
  * 中栏 (206px) — 大尺寸 3D 模型预览（LMB拖拽旋转、RMB拖拽平移、滚轮缩放）
  * 右栏 (118px) — 材质贴图缩略图 (2×2)
  */
-public class PlayerTextureScreen extends GuiScreen {
-
+public class PlayerTextureScreen extends GuiScreen {    // ============================================================
+    // SECTION: Constants & Layout
+    // ============================================================
     private static final String HIDDEN_PREFIX = "\u2014\u2014"; // "——"
     private static final String MERGED_PREFIX = "__ysm_merged__";
 
@@ -53,6 +54,10 @@ public class PlayerTextureScreen extends GuiScreen {
 
     private static final int GUI_W = 420;
     private static final int GUI_H = 235;
+
+    // ============================================================
+    // SECTION: Fields
+    // ============================================================
 
     // 预览交互状态
     private float offsetX;
@@ -130,6 +135,10 @@ public class PlayerTextureScreen extends GuiScreen {
         }
     }
 
+    // ============================================================
+    // SECTION: initGui — Button Layout
+    // ============================================================
+
     @Override
     public void initGui() {
         this.buttonList.clear();
@@ -200,6 +209,10 @@ public class PlayerTextureScreen extends GuiScreen {
         }
     }
 
+    // ============================================================
+    // SECTION: Action Handling
+    // ============================================================
+
     @Override
     protected void actionPerformed(GuiButton button) {
         switch (button.id) {
@@ -260,6 +273,10 @@ public class PlayerTextureScreen extends GuiScreen {
         }
     }
 
+    // ============================================================
+    // SECTION: Draw — Main Render
+    // ============================================================
+
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTick) {
         this.drawDefaultBackground();
@@ -311,7 +328,7 @@ public class PlayerTextureScreen extends GuiScreen {
 
         // 暂停提示
         if (this.paused) {
-            String pauseLabel = "[\u23F8 PAUSED]";
+            String pauseLabel = I18n.format("gui.yes_steve_model.texture.paused");
             int pauseX = guiLeft + CENTER_PANEL_X + (CENTER_PANEL_W - fontRendererObj.getStringWidth(pauseLabel)) / 2;
             this.drawString(fontRendererObj, pauseLabel, pauseX, guiTop + GUI_H - 24, 0xFF5555);
         }
@@ -339,7 +356,7 @@ public class PlayerTextureScreen extends GuiScreen {
                     if (btn.id >= 10 && btn.id <= 12) {
                         switch (btn.id) {
                             case 10:
-                                tip = paused ? "Resume" : I18n.format("gui.yes_steve_model.model.stop");
+                                tip = paused ? I18n.format("gui.yes_steve_model.texture.resume") : I18n.format("gui.yes_steve_model.model.stop");
                                 break;
                             case 11:
                                 tip = I18n.format("gui.yes_steve_model.model.reset");
@@ -366,6 +383,10 @@ public class PlayerTextureScreen extends GuiScreen {
             }
         }
     }
+
+    // ============================================================
+    // SECTION: Center Preview Rendering
+    // ============================================================
 
     /** 渲染中间预览区域的 3D 模型 */
     private void renderCenterPreview(int mouseX, int mouseY, float partialTick) {
@@ -418,7 +439,9 @@ public class PlayerTextureScreen extends GuiScreen {
         GL11.glDisable(GL11.GL_DEPTH_TEST);
     }
 
-    // ---- 鼠标交互 ----
+    // ============================================================
+    // SECTION: Mouse Interaction
+    // ============================================================
 
     @Override
     protected void mouseClicked(int mouseX, int mouseY, int mouseButton) {
@@ -492,7 +515,9 @@ public class PlayerTextureScreen extends GuiScreen {
         }
     }
 
-    // ---- 区域检测 ----
+    // ============================================================
+    // SECTION: Hit Testing & Utilities
+    // ============================================================
 
     private boolean isInPreviewArea(double mouseX, double mouseY) {
         return mouseX >= guiLeft + CENTER_PANEL_X && mouseX < guiLeft + CENTER_PANEL_X + CENTER_PANEL_W

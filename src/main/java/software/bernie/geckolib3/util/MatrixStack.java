@@ -12,6 +12,10 @@ import software.bernie.geckolib3.geo.render.built.GeoCube;
 /**
  * Array-backed matrix stack — avoids allocation on push/pop by
  * pre-allocating a fixed-capacity pool of Matrix4f/Matrix3f slots.
+ *
+ * YSMU: Added transformBone() combined matrix method and pre-allocated
+ * tempTransform/tempNormalTransform fields to eliminate per-bone Matrix4f
+ * allocations in the GeckoLib rendering hot path.
  */
 public class MatrixStack {
 
@@ -22,7 +26,8 @@ public class MatrixStack {
 
     private Matrix4f tempModelMatrix = new Matrix4f();
     private Matrix3f tempNormalMatrix = new Matrix3f();
-    /** Reusable temp matrix for per-bone/perpivot transforms — avoids allocation in transformBone/rotate. */
+    // YSMU perf: Pre-allocated temp matrices — avoids 6× new Matrix4f() + 4× new Matrix3f()
+    // per bone in transformBone() and rotate(GeoCube).
     private final Matrix4f tempTransform = new Matrix4f();
     /** Reusable temp normal matrix for per-bone normal transforms. */
     private final Matrix3f tempNormalTransform = new Matrix3f();
@@ -175,7 +180,7 @@ public class MatrixStack {
     }
 
     /**
-     * Combined bone transform: applies position, pivot, rotation, scale, and
+     * YSMU perf: Combines bone translate → pivot → rotate → scale →
      * -pivot in a single matrix multiplication instead of five separate ones.
      * This is equivalent to calling translate(bone) → moveToPivot(bone) →
      * rotate(bone) → scale(bone) → moveBackFromPivot(bone) in sequence, but
