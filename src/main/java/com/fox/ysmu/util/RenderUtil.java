@@ -206,6 +206,10 @@ public final class RenderUtil {
                             // Enable depth test and color material (renderModel does this too)
                             GL11.glEnable(GL11.GL_DEPTH_TEST);
                             GL11.glEnable(GL11.GL_COLOR_MATERIAL);
+                            // Explicitly disable face culling — GlStateManager.scale(1,1,-1) above
+                            // flips triangle winding, and IGeoRenderer.render() re-enables culling
+                            // on exit.  Without this, the model body's front faces are culled away.
+                            GL11.glDisable(GL11.GL_CULL_FACE);
                             // Render the GeckoLib model
                             CustomPlayerRenderer renderer = ClientProxy.getInstance();
                             AnimatedGeoModel provider = renderer.getGeoModelProvider();
@@ -220,6 +224,9 @@ public final class RenderUtil {
                             Minecraft.getMinecraft().getTextureManager()
                                 .bindTexture(provider.getTextureLocation(entity));
                             renderer.render(model, entity, 0, 1.0f, 1.0f, 1.0f, 1.0f);
+                            // renderer.render() re-enables culling — turn it back off for
+                            // subsequent renders (extra entity, ground) in the Z-flipped matrix.
+                            GL11.glDisable(GL11.GL_CULL_FACE);
                             // Render ride/boat vehicle entities on top
                             renderExtraEntity(yaw, player, entity, dispatcher);
                             // Render ground INSIDE the animation-adjustment matrix so it inherits

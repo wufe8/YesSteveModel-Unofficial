@@ -377,6 +377,11 @@ public class PlayerTextureScreen extends GuiScreen {
         int sX = (guiLeft + CENTER_PANEL_X) * scale;
         int sY = mc.displayHeight - (guiTop + GUI_H) * scale;
         GL11.glScissor(sX, sY, CENTER_PANEL_W * scale, GUI_H * scale);
+        // Clear depth buffer in the scissored area — the model may fail the
+        // depth test against stale values from the previous frame's world/HUD
+        // rendering otherwise, making body and head invisible while hair/eyes
+        // (rendered slightly in front) still pass.
+        GL11.glClear(GL11.GL_DEPTH_BUFFER_BIT);
 
         // 获取当前玩家选中的材质
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);

@@ -2,7 +2,9 @@ package com.fox.ysmu.client;
 
 import com.fox.ysmu.client.gui.ExtraPlayerConfigScreen;
 import com.fox.ysmu.client.compat.AngelicaCompat;
+import com.fox.ysmu.client.renderer.CustomPlayerRenderer;
 import com.fox.ysmu.client.renderer.FirstPersonHandRenderer;
+import com.fox.ysmu.client.renderer.HudPreviewCache;
 import com.fox.ysmu.util.RenderUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.AbstractClientPlayer;
@@ -41,6 +43,9 @@ public class ClientEventHandler {
     private static boolean pendingModelLoad;
     /** Whether the welcome message has been shown this session. */
     private static boolean welcomeShown = false;
+
+    /** Cached HUD player preview – avoids re-rendering the full GeckoLib pipeline every frame. */
+    private static final HudPreviewCache hudPreviewCache = new HudPreviewCache();
 
     @SubscribeEvent
     public static void onTextureStitchEventPost(TextureStitchEvent.Post event) {
@@ -233,7 +238,8 @@ public class ClientEventHandler {
         float scale = (float) Config.PLAYER_SCALE;
         float yawOffset = (float) Config.PLAYER_YAW_OFFSET;
         EXTRA_PLAYER = true;
-        RenderUtil.renderPlayerEntity(player, posX, posY, scale, yawOffset, -500, event.partialTicks);
+        // Use the cached HUD preview instead of rendering the full pipeline every frame.
+        hudPreviewCache.render(player, posX, posY, scale, yawOffset, event.partialTicks);
         EXTRA_PLAYER = false;
     }
 
