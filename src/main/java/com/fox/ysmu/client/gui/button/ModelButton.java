@@ -18,7 +18,6 @@ import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.client.renderer.Tessellator;
 import net.minecraft.client.renderer.texture.DynamicTexture;
-import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.util.IChatComponent;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.entity.player.EntityPlayer;
@@ -47,7 +46,7 @@ public class ModelButton extends GuiButton {
     private ResourceLocation bgTextureLocation;
 
     // Off-screen framebuffer cache for model preview — renders once, reuses texture.
-    private Framebuffer modelCacheFbo;
+    private final com.fox.ysmu.util.FboCache fboCache = new com.fox.ysmu.util.FboCache();
     private boolean modelCacheDirty = true;
     private String modelCacheGuiAnim = "";
     private boolean modelCacheWasHovered = false;
@@ -183,7 +182,7 @@ public class ModelButton extends GuiButton {
         int refreshInterval = guiEnhancements ? Config.GUI_MODEL_PREVIEW_REFRESH : 0;
         // Re-sync counter when user changes the config value.
         if (refreshInterval != modelCacheLastRefreshInterval) {
-            modelCacheFramesUntilRefresh = 0; // force refresh on next frame
+            modelCacheFramesUntilRefresh = 0;
             modelCacheLastRefreshInterval = refreshInterval;
         }
         boolean hoverChanged = this.field_146123_n != modelCacheWasHovered;
@@ -198,94 +197,52 @@ public class ModelButton extends GuiButton {
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
             int fbH = (this.height - 20) * scale;
-            if (fbW < 1) fbW = 1;
-            if (fbH < 1) fbH = 1;
 
-            // Create or resize FBO
-            if (modelCacheFbo == null || modelCacheFbo.framebufferTextureWidth != fbW
-                || modelCacheFbo.framebufferTextureHeight != fbH) {
-                if (modelCacheFbo != null) modelCacheFbo.deleteFramebuffer();
-                modelCacheFbo = new Framebuffer(fbW, fbH, true);
-                modelCacheFbo.setFramebufferColor(0.0F, 0.0F, 0.0F, 0.0F);
-            }
+            if (fboCache.checkAndResize(fbW, fbH, 0)) {
+                fboCache.bind();
+                GL11.glViewport(0, 0, fbW, fbH);
+                GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+                GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
 
-            // Bind FBO and set up viewport + projection to match the button area.
-            modelCacheFbo.bindFramebuffer(false);
-            GL11.glViewport(0, 0, fbW, fbH);
-            // Set clear color to transparent black BEFORE clearing.
-            GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-
-            // Set up GUI ortho projection matching the button area.
-            GL11.glMatrixMode(GL11.GL_PROJECTION);
-            GL11.glPushMatrix();
-            GL11.glLoadIdentity();
-            GL11.glOrtho(this.xPosition, this.xPosition + this.width,
-                this.yPosition + this.height - 20, this.yPosition,
-                1000.0, 3000.0);
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
-
-            // CRITICAL: wrap the render in try-finally. If renderEntityInInventory
-            // throws (e.g. model load failure), we MUST restore FBO/projection
-            // or the entire screen goes white from the corrupted GL state.
-            try {
-                final String finalGuiAnimName = guiAnimName;
-                final String baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
-                RenderUtil.renderEntityInInventory(
-                    this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
-                    mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0),
-                    entity -> {
-                        if (guiEnhancements) {
-                            entity.setGuiAnimationsEnabled(true);
-                            if (baseAnim != null && !baseAnim.isEmpty()) {
-                                entity.setGuiBaseAnimation(baseAnim);
-                            }
-                            entity.setPreviewAnimation(finalGuiAnimName);
-                        } else {
-                            entity.setGuiAnimationsEnabled(false);
-                            entity.setGuiBaseAnimation("");
-                            entity.setPreviewAnimation("");
-                        }
-                    },
-                    disablePreviewRotation);
-            } finally {
-                // Restore projection and unbind FBO (true = restore viewport).
                 GL11.glMatrixMode(GL11.GL_PROJECTION);
-                GL11.glPopMatrix();
+                GL11.glPushMatrix();
+                GL11.glLoadIdentity();
+                GL11.glOrtho(this.xPosition, this.xPosition + this.width,
+                    this.yPosition + this.height - 20, this.yPosition,
+                    1000.0, 3000.0);
                 GL11.glMatrixMode(GL11.GL_MODELVIEW);
-                mc.getFramebuffer().bindFramebuffer(true);
+
+                try {
+                    final String finalGuiAnimName = guiAnimName;
+                    final String baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
+                    RenderUtil.renderEntityInInventory(
+                        this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
+                        mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0),
+                        entity -> {
+                            if (guiEnhancements) {
+                                entity.setGuiAnimationsEnabled(true);
+                                if (baseAnim != null && !baseAnim.isEmpty()) {
+                                    entity.setGuiBaseAnimation(baseAnim);
+                                }
+                                entity.setPreviewAnimation(finalGuiAnimName);
+                            } else {
+                                entity.setGuiAnimationsEnabled(false);
+                                entity.setGuiBaseAnimation("");
+                                entity.setPreviewAnimation("");
+                            }
+                        },
+                        disablePreviewRotation);
+                } finally {
+                    GL11.glMatrixMode(GL11.GL_PROJECTION);
+                    GL11.glPopMatrix();
+                    GL11.glMatrixMode(GL11.GL_MODELVIEW);
+                    fboCache.unbind(mc);
+                }
             }
         }
 
         // Draw the cached FBO texture stretched to the model area of the button.
-        if (modelCacheFbo != null) {
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glDisable(GL11.GL_LIGHTING);
-            GL11.glDisable(GL11.GL_COLOR_MATERIAL);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-            // Reset texture matrix — GeckoLib may leave a transform that would
-            // distort the UV mapping and cause flickering/invisible textures.
-            GL11.glMatrixMode(GL11.GL_TEXTURE);
-            GL11.glLoadIdentity();
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, modelCacheFbo.framebufferTexture);
-            Tessellator tess = Tessellator.instance;
-            tess.startDrawingQuads();
-            int x0 = this.xPosition;
-            int y0 = this.yPosition;
-            int x1 = this.xPosition + this.width;
-            int y1 = this.yPosition + this.height - 20;
-            tess.addVertexWithUV(x0, y1, 0.0, 0.0, 0.0);
-            tess.addVertexWithUV(x1, y1, 0.0, 1.0, 0.0);
-            tess.addVertexWithUV(x1, y0, 0.0, 1.0, 1.0);
-            tess.addVertexWithUV(x0, y0, 0.0, 0.0, 1.0);
-            tess.draw();
-            // Keep depth test disabled — the original code path (model rendered
-            // in-place via scissor) also left it disabled; re-enabling here would
-            // cause subsequent GUI elements (text, tooltips) to fail depth test.
-        }
+        fboCache.draw(this.xPosition, this.yPosition, this.width, this.height - 20);
 
         // Draw GUI foreground texture (over model, full button area)
         if (guiEnhancements) {

@@ -12,8 +12,6 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
 import net.minecraft.client.gui.GuiButton;
 import net.minecraft.client.gui.ScaledResolution;
-import net.minecraft.client.renderer.Tessellator;
-import net.minecraft.client.shader.Framebuffer;
 import net.minecraft.util.ResourceLocation;
 import net.minecraft.entity.player.EntityPlayer;
 import org.lwjgl.opengl.GL11;
@@ -27,7 +25,7 @@ public class TextureButton extends GuiButton {
     private final EntityPlayer player;
 
     // Off-screen framebuffer cache for texture preview.
-    private Framebuffer modelCacheFbo;
+    private final com.fox.ysmu.util.FboCache fboCache = new com.fox.ysmu.util.FboCache();
     private boolean modelCacheDirty = true;
     private int modelCacheFramesUntilRefresh = 0;
     private int modelCacheLastRefreshInterval = -1;
@@ -73,66 +71,35 @@ public class TextureButton extends GuiButton {
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
             int fbH = (this.height - 20) * scale;
-            if (fbW < 1) fbW = 1;
-            if (fbH < 1) fbH = 1;
 
-            if (modelCacheFbo == null || modelCacheFbo.framebufferTextureWidth != fbW
-                || modelCacheFbo.framebufferTextureHeight != fbH) {
-                if (modelCacheFbo != null) modelCacheFbo.deleteFramebuffer();
-                modelCacheFbo = new Framebuffer(fbW, fbH, true);
-                modelCacheFbo.setFramebufferColor(0.0F, 0.0F, 0.0F, 0.0F);
-            }
+            if (fboCache.checkAndResize(fbW, fbH, 0)) {
+                fboCache.bind();
+                GL11.glViewport(0, 0, fbW, fbH);
+                GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+                GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
 
-            modelCacheFbo.bindFramebuffer(false);
-            GL11.glViewport(0, 0, fbW, fbH);
-            GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
-            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
-
-            GL11.glMatrixMode(GL11.GL_PROJECTION);
-            GL11.glPushMatrix();
-            GL11.glLoadIdentity();
-            GL11.glOrtho(this.xPosition, this.xPosition + this.width,
-                this.yPosition + this.height - 20, this.yPosition,
-                1000.0, 3000.0);
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
-
-            try {
-                RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 24,
-                    35, mc.thePlayer, modelId, textureId);
-            } finally {
                 GL11.glMatrixMode(GL11.GL_PROJECTION);
-                GL11.glPopMatrix();
+                GL11.glPushMatrix();
+                GL11.glLoadIdentity();
+                GL11.glOrtho(this.xPosition, this.xPosition + this.width,
+                    this.yPosition + this.height - 20, this.yPosition,
+                    1000.0, 3000.0);
                 GL11.glMatrixMode(GL11.GL_MODELVIEW);
-                mc.getFramebuffer().bindFramebuffer(true);
+
+                try {
+                    RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 24,
+                        35, mc.thePlayer, modelId, textureId);
+                } finally {
+                    GL11.glMatrixMode(GL11.GL_PROJECTION);
+                    GL11.glPopMatrix();
+                    GL11.glMatrixMode(GL11.GL_MODELVIEW);
+                    fboCache.unbind(mc);
+                }
             }
         }
 
         // Draw the cached FBO texture.
-        if (modelCacheFbo != null) {
-            GL11.glDisable(GL11.GL_DEPTH_TEST);
-            GL11.glDisable(GL11.GL_LIGHTING);
-            GL11.glDisable(GL11.GL_COLOR_MATERIAL);
-            GL11.glEnable(GL11.GL_BLEND);
-            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
-            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-            // Reset texture matrix — GeckoLib may leave a transform.
-            GL11.glMatrixMode(GL11.GL_TEXTURE);
-            GL11.glLoadIdentity();
-            GL11.glMatrixMode(GL11.GL_MODELVIEW);
-            GL11.glBindTexture(GL11.GL_TEXTURE_2D, modelCacheFbo.framebufferTexture);
-            Tessellator tess = Tessellator.instance;
-            tess.startDrawingQuads();
-            int x0 = this.xPosition;
-            int y0 = this.yPosition;
-            int x1 = this.xPosition + this.width;
-            int y1 = this.yPosition + this.height - 20;
-            tess.addVertexWithUV(x0, y1, 0.0, 0.0, 0.0);
-            tess.addVertexWithUV(x1, y1, 0.0, 1.0, 0.0);
-            tess.addVertexWithUV(x1, y0, 0.0, 1.0, 1.0);
-            tess.addVertexWithUV(x0, y0, 0.0, 0.0, 1.0);
-            tess.draw();
-            // Keep depth test disabled — the original code path left it disabled.
-        }
+        fboCache.draw(this.xPosition, this.yPosition, this.width, this.height - 20);
 
         List<String> split = font.listFormattedStringToWidth(name, 50);
         if (split.size() > 1) {

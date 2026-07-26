@@ -23,14 +23,12 @@ import com.fox.ysmu.util.RenderUtil;
  *
  * <h3>Invalidation</h3>
  * Triggered when player yaw, held item, armour, or configured position/scale
- * changes, plus a periodic forced refresh every {@value #REFRESH_INTERVAL}
- * frames (safety net for breathing animations).
+ * changes, plus a periodic forced refresh whose interval is chosen adaptively
+ * based on current frame rate (faster refresh at low FPS, slower at high FPS).
  */
 public class HudPreviewCache {
 
     private static final float YAW_THRESHOLD_DEG = 3.0F;
-    private static final int REFRESH_INTERVAL = 10;
-
     private final FboCache fboCache = new FboCache();
     private boolean needsUpdate = true;
 
@@ -43,6 +41,28 @@ public class HudPreviewCache {
     // Screen dimensions (pixels) when the FBO was last rendered
     private int prevScreenW;
     private int prevScreenH;
+
+    // ── Adaptive refresh ──
+    private long lastFrameTime;
+    private float smoothFrameDeltaMs = 16.0F; // start at ~60fps
+
+    /** Choose a refresh interval (frames) based on current frame time.
+     *  At high FPS we can afford a longer cache; at low FPS we update more
+     *  often because YSMU is not the bottleneck. */
+    private int chooseRefreshInterval() {
+        long now = Minecraft.getSystemTime();
+        if (lastFrameTime != 0) {
+            long rawDelta = now - lastFrameTime;
+            if (rawDelta > 0 && rawDelta < 200) {
+                smoothFrameDeltaMs = smoothFrameDeltaMs * 0.9F + rawDelta * 0.1F;
+            }
+        }
+        lastFrameTime = now;
+        // smoothFrameDeltaMs ≈ smoothed frame time in ms
+        if (smoothFrameDeltaMs > 16.0F) return 2;   // below ~62.5 fps
+        if (smoothFrameDeltaMs > 8.0F) return 4;   // 62.5-125 fps
+        return 8;                                   // above 125 fps
+    }
 
     public HudPreviewCache() {
         needsUpdate = true;
@@ -62,6 +82,12 @@ public class HudPreviewCache {
     public void render(EntityPlayer player, double posX, double posY,
                        double scale, double yawOffset, float partialTicks) {
         Minecraft mc = Minecraft.getMinecraft();
+
+        // ── Cache disabled: render directly every frame (no optimisation) ──
+        if (!com.fox.ysmu.Config.GUI_HUD_PREVIEW_CACHE) {
+            RenderUtil.renderPlayerEntity(player, posX, posY, (float) scale, (float) yawOffset, -500, partialTicks);
+            return;
+        }
 
         // ── Detect state changes ──
         float interpolatedYaw = player.prevRotationYaw
@@ -83,7 +109,7 @@ public class HudPreviewCache {
         }
 
         // ── Re-render model to screen-sized FBO if cache is dirty ──
-        boolean doRender = fboCache.checkAndResize(screenW, screenH, REFRESH_INTERVAL)
+        boolean doRender = fboCache.checkAndResize(screenW, screenH, chooseRefreshInterval())
             || needsUpdate || resized;
 
         if (doRender) {

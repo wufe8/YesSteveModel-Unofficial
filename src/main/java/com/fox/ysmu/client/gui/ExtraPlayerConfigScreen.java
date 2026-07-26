@@ -62,6 +62,12 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
             y += 10;
         }
 
+        // FBO cache toggle hint
+        String cacheStatus = I18n.format(Config.GUI_HUD_PREVIEW_CACHE
+            ? "gui.yes_steve_model.hud_cache.on"
+            : "gui.yes_steve_model.hud_cache.off");
+        this.drawString(fontRendererObj, cacheStatus, 15, height - 20, Config.GUI_HUD_PREVIEW_CACHE ? 0x55FF55 : 0xFFAA00);
+
         if (this.mc.thePlayer != null) {
             RenderUtil.renderPlayerEntity(this.mc.thePlayer, this.posX, this.posY, this.scale, this.yawOffset, 50, pPartialTick);
         }
@@ -128,6 +134,11 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
             this.scale = 40;
             this.yawOffset = 5;
             return; // Don't pass R to super (no text field anyway)
+        }
+        // Toggle HUD FBO cache
+        if (keyCode == org.lwjgl.input.Keyboard.KEY_C) {
+            Config.GUI_HUD_PREVIEW_CACHE = !Config.GUI_HUD_PREVIEW_CACHE;
+            return;
         }
         super.keyTyped(typedChar, keyCode);
     }
