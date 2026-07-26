@@ -72,8 +72,8 @@ public class TextureButton extends GuiButton {
             int fbW = this.width * scale;
             int fbH = (this.height - 20) * scale;
 
-            if (fboCache.checkAndResize(fbW, fbH, 0)) {
-                fboCache.bind();
+            fboCache.checkAndResize(fbW, fbH, 0);
+            fboCache.bind();
                 GL11.glViewport(0, 0, fbW, fbH);
                 GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
                 GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
@@ -95,7 +95,6 @@ public class TextureButton extends GuiButton {
                     GL11.glMatrixMode(GL11.GL_MODELVIEW);
                     fboCache.unbind(mc);
                 }
-            }
         }
 
         // Draw the cached FBO texture.

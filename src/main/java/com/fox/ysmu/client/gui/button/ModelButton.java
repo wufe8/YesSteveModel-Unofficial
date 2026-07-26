@@ -198,8 +198,11 @@ public class ModelButton extends GuiButton {
             int fbW = this.width * scale;
             int fbH = (this.height - 20) * scale;
 
-            if (fboCache.checkAndResize(fbW, fbH, 0)) {
-                fboCache.bind();
+            // Ensure FBO exists with correct size (the outer if already determined
+            // that a re-render is needed — don't gate on checkAndResize's return
+            // value, which is false when refreshInterval=0 on subsequent passes).
+            fboCache.checkAndResize(fbW, fbH, 0);
+            fboCache.bind();
                 GL11.glViewport(0, 0, fbW, fbH);
                 GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
                 GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
@@ -238,7 +241,6 @@ public class ModelButton extends GuiButton {
                     GL11.glMatrixMode(GL11.GL_MODELVIEW);
                     fboCache.unbind(mc);
                 }
-            }
         }
 
         // Draw the cached FBO texture stretched to the model area of the button.
