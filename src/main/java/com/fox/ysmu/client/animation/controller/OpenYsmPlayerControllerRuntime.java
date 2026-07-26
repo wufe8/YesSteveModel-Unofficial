@@ -708,13 +708,26 @@ public final class OpenYsmPlayerControllerRuntime {
                 // Fall through to the setAnimation logic below.
             } else if (ctrlName != null
                 && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))) {
-                boolean hasRoamingRef = false;
                 if (!mergedTimeline.isEmpty()) {
+                    // First pass: check if any instruction references roaming
+                    // variables.  If none do, we can skip the per-frame
+                    // execute() entirely — GeckoLib's processKeyFrameEvents
+                    // already fires each instruction once per animation loop,
+                    // which is sufficient for non-roaming variables.
+                    boolean hasRoamingRef = false;
                     for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : mergedTimeline) {
                         String data = kf.getEventData();
-                        if (data != null) {
-                            if (data.contains("roaming.")) hasRoamingRef = true;
-                            MolangInstructionExecutor.execute(data);
+                        if (data != null && data.contains("roaming.")) {
+                            hasRoamingRef = true;
+                            break;
+                        }
+                    }
+                    if (hasRoamingRef) {
+                        for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : mergedTimeline) {
+                            String data = kf.getEventData();
+                            if (data != null) {
+                                MolangInstructionExecutor.execute(data);
+                            }
                         }
                     }
                 }

@@ -20,6 +20,27 @@ public final class MolangInstructionExecutor {
         .newSetFromMap(new ConcurrentHashMap<String, Boolean>());
     /** Cache for parsed Molang expressions — avoids re-parsing same string every frame. */
     private static final ConcurrentHashMap<String, IValue> EXPRESSION_CACHE = new ConcurrentHashMap<>();
+    /**
+     * Instruction-level cache: maps the full instruction string (e.g.
+     * "v.bq_eye = v.roaming.bq_eye;;v.qh = 0") to a pre-parsed array of
+     * operations.  Subsequent executions of the same instruction string
+     * skip splitStatements(), parseCached(), and findAssignmentOperator()
+     * entirely — only the parsed IValue.get() calls remain.
+     */
+    private static final ConcurrentHashMap<String, ParsedInstruction[]> INSTRUCTION_CACHE = new ConcurrentHashMap<>();
+
+    /** A single pre-parsed operation within a multi-statement instruction. */
+    private static final class ParsedInstruction {
+        final boolean isAssignment;
+        final String target;   // non-null for assignments starting with "v."
+        final IValue value;    // the parsed expression to evaluate
+
+        ParsedInstruction(boolean isAssignment, String target, IValue value) {
+            this.isAssignment = isAssignment;
+            this.target = target;
+            this.value = value;
+        }
+    }
 
     private MolangInstructionExecutor() {}
 
@@ -27,6 +48,15 @@ public final class MolangInstructionExecutor {
         if (StringUtils.isBlank(instructions)) {
             return;
         }
+
+        // ── Instruction-level cache hit: skip split + parse entirely ──
+        ParsedInstruction[] cached = INSTRUCTION_CACHE.get(instructions);
+        if (cached != null) {
+            executeCached(cached);
+            return;
+        }
+
+        // ── Cache miss: parse the instruction string and cache the result ──
         MolangParser parser = GeckoLibCache.getInstance().parser;
         Iterable<String> statements;
         try {
@@ -35,6 +65,7 @@ public final class MolangInstructionExecutor {
             warnOnce(instructions, e);
             return;
         }
+        java.util.ArrayList<ParsedInstruction> ops = new java.util.ArrayList<>();
         for (String statement : statements) {
             String trimmed = statement.trim();
             if (trimmed.isEmpty()) {
@@ -49,24 +80,7 @@ public final class MolangInstructionExecutor {
                     try {
                         IValue val = parseCached(parser, valueExpr);
                         if (val != null) {
-                            double d = val.get();
-                            // Write through MolangParser.VARIABLES so ScopedMolangVariable
-                            // (if it exists) sees the change. This works because
-                            // LazyVariable.set() / ScopedMolangVariable.set() will
-                            // propagate to MolangPhysicsRuntime when inside a render frame.
-                            MolangParser.VARIABLES.computeIfAbsent(target,
-                                k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0)).set(d);
-                            // Also write directly to MolangPhysicsRuntime so that
-                            // syncToRuntimeState() can see the value even when no
-                            // ScopedMolangVariable was previously registered for this key
-                            // (e.g. v.bq_eye set by pre_parallel7's timeline).
-                            com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setVariable(target, d);
-                            // Log v.qh timeline variable assignments for debugging
-                            if (("v.qh".equals(target) || "v.qh2".equals(target)
-                                || "v.jump".equals(target) || "v.random".equals(target))
-                                && com.fox.ysmu.Config.DEBUG_CONTROLLER) {
-                                ysmu.LOG.info("[YSMU-TL-SET] {} = {} (from '{}')", target, d, valueExpr);
-                            }
+                            ops.add(new ParsedInstruction(true, target, val));
                         }
                     } catch (Exception e) {
                         warnOnce(trimmed, e);
@@ -77,12 +91,44 @@ public final class MolangInstructionExecutor {
             // Not an assignment — evaluate as a normal expression
             try {
                 IValue result = parseCached(parser, trimmed);
-                if (result == null) {
-                    continue;
+                if (result != null) {
+                    ops.add(new ParsedInstruction(false, null, result));
                 }
-                result.get();
             } catch (Exception e) {
                 warnOnce(trimmed, e);
+            }
+        }
+        if (!ops.isEmpty()) {
+            cached = ops.toArray(new ParsedInstruction[0]);
+            INSTRUCTION_CACHE.put(instructions, cached);
+            executeCached(cached);
+        }
+    }
+
+    /** Execute a pre-parsed instruction array — no split/parse overhead. */
+    private static void executeCached(ParsedInstruction[] ops) {
+        for (ParsedInstruction pi : ops) {
+            if (pi.isAssignment) {
+                double d = pi.value.get();
+                // Write through MolangParser.VARIABLES so ScopedMolangVariable
+                // (if it exists) sees the change.
+                MolangParser.VARIABLES.computeIfAbsent(pi.target,
+                    k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0)).set(d);
+                // Also write directly to MolangPhysicsRuntime so that
+                // syncToRuntimeState() can see the value even when no
+                // ScopedMolangVariable was previously registered for this key
+                // (e.g. v.bq_eye set by pre_parallel7's timeline).
+                com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setVariable(pi.target, d);
+                // Log v.qh timeline variable assignments for debugging
+                if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                    String t = pi.target;
+                    if ("v.qh".equals(t) || "v.qh2".equals(t)
+                        || "v.jump".equals(t) || "v.random".equals(t)) {
+                        ysmu.LOG.info("[YSMU-TL-SET] {} = {}", t, d);
+                    }
+                }
+            } else {
+                pi.value.get(); // evaluate for side effects
             }
         }
     }
@@ -138,6 +184,7 @@ public final class MolangInstructionExecutor {
     /** Clear parsed expression cache — call when models are reloaded. */
     public static void clearCache() {
         EXPRESSION_CACHE.clear();
+        INSTRUCTION_CACHE.clear();
     }
 
     private static void warnOnce(String instruction, Exception e) {

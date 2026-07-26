@@ -153,19 +153,15 @@ public class HudPreviewCache {
         int guiW = res.getScaledWidth();
         int guiH = res.getScaledHeight();
 
-        boolean depthWasOn = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
-        boolean lightWasOn = GL11.glIsEnabled(GL11.GL_LIGHTING);
-        boolean colorMatWasOn = GL11.glIsEnabled(GL11.GL_COLOR_MATERIAL);
-        boolean blendWasOn = GL11.glIsEnabled(GL11.GL_BLEND);
-
+        // FboCache.draw() always disables depth, lighting, colour-material and enables blend.
+        // We know the expected post-state — no need to query via expensive glIsEnabled JNI calls.
         GL11.glDepthMask(false);
         fboCache.draw(0, 0, guiW, guiH);
 
-        // Restore GL state
-        if (depthWasOn) GL11.glEnable(GL11.GL_DEPTH_TEST); else GL11.glDisable(GL11.GL_DEPTH_TEST);
-        if (lightWasOn) GL11.glEnable(GL11.GL_LIGHTING); else GL11.glDisable(GL11.GL_LIGHTING);
-        if (colorMatWasOn) GL11.glEnable(GL11.GL_COLOR_MATERIAL); else GL11.glDisable(GL11.GL_COLOR_MATERIAL);
-        if (!blendWasOn) GL11.glDisable(GL11.GL_BLEND);
+        // Unconditional restore (avoids glIsEnabled which is ~1 % of this profile under LWJGL3)
+        GL11.glEnable(GL11.GL_DEPTH_TEST);
+        GL11.glEnable(GL11.GL_LIGHTING);
+        GL11.glEnable(GL11.GL_COLOR_MATERIAL);
         GL11.glDepthMask(true);
     }
 
