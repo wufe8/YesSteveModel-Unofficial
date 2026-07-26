@@ -262,27 +262,34 @@ public final class RenderUtil {
     private static final RenderBlocks renderBlocks = new RenderBlocks();
 
     /** Render ground blocks inside the current matrix (inherits animation adjustments).
-     *  Called from renderTextureScreenEntity's animation-adjustment block. */
+     *  Called from renderTextureScreenEntity's animation-adjustment block.
+     *  Each block uses an explicit push/pop + absolute position so that the
+     *  layout is correct regardless of whether Angelica's GlStateManager is
+     *  present (vanilla 1.7.10 RenderBlocks may leave the matrix in an
+     *  unexpected state after renderBlockAsItem, which would corrupt the
+     *  cumulative-translate approach used previously). */
+    // 动画预览页面的地板 默认是3x3草方块+草和玫瑰 可以自行修改 方向分别是左右, 上下, 前后, 正负均需互换
     private static void renderSceneGround(float pScale) {
-        // Position ground relative to model feet (in the inherited model/animation space)
-        GlStateManager.translate(-1, -0.5, -2.5);
         Minecraft.getMinecraft().getTextureManager().bindTexture(TextureMap.locationBlocksTexture);
-        // 3×3 grass blocks — translate accumulates to space them out
+        // 3×3 grass blocks — each wrapped in push/pop with explicit position
         for (int i = 0; i < 3; i++) {
             for (int j = 0; j < 3; j++) {
-                GlStateManager.translate(0, 0, 1);
+                GlStateManager.pushMatrix();
+                GlStateManager.translate(-1.0f + i, -0.5f, -1.5f + j);
                 renderBlocks.renderBlockAsItem(Blocks.grass, 0, 1.0F);
+                GlStateManager.popMatrix();
             }
-            GlStateManager.translate(1, 0, -3);
         }
-        // Tall grass and flower decorations
+        // Tall grass at the front-right corner of the grid
         GlStateManager.pushMatrix();
-        GlStateManager.translate(-1, 1, 1);
+        GlStateManager.translate(1.0f, 0.5f, -1.5f);
         renderBlocks.renderBlockAsItem(Blocks.tallgrass, 1, 1.0F);
         GlStateManager.popMatrix();
-        // Rose at the opposite corner from tall grass (back-left of 3×3 grid)
-        GlStateManager.translate(-3, 1, 2);
+        // Rose at the front-left corner of the grid
+        GlStateManager.pushMatrix();
+        GlStateManager.translate(-1.0f, 0.5f, -0.5f);
         renderBlocks.renderBlockAsItem(Blocks.red_flower, 0, 1.0F);
+        GlStateManager.popMatrix();
     }
 
     // Placeholder for ride/boat vehicle entity rendering (not yet implemented).
