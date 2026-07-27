@@ -100,111 +100,7 @@ public interface IGeoRenderer<T> {
                 }
             }
 
-            // Glow bones (name starts with "ysmGlow"): the negative-size cube
-            // encloses the positive-size cube, but its front faces are CLOSER
-            // to the camera (origin adjustment pushes them outward). Normal
-            // depth testing would let the negative cube occlude the positive.
-            //
-            // Strategy — render negatives FIRST using CULL_FRONT (only back
-            // faces, i.e. faces facing away from the camera), which are at the
-            // FARTHEST depth. Then render positives SECOND with default depth
-            // testing (LEQUAL) — the positive cube's front faces (closer to
-            // camera) pass against the negative's far-depth and render on top.
-            // At the silhouette edges no positive geometry exists, so the
-            // negative's back-face ring remains visible.
-            //
-            // NOTE: CULL_FRONT on a standard CCW-wound cube culls front faces
-            // (facing camera) and renders back faces (facing away). This gives
-            // us the far-side depth without vertex reversal trickery.
-            if (bone.isGlow) {
-                Tessellator.instance.draw();
-
-                // Single scan: detect whether we have neg/pos cubes at all.
-                boolean anyNeg = false, anyPos = false;
-                for (GeoCube c : bone.childCubes) {
-                    if (c.hasNegSize) anyNeg = true;
-                    else anyPos = true;
-                    if (anyNeg && anyPos) break;
-                }
-
-                // ── Batch 1: negative-size cubes (CULL_FRONT → far faces only) ──
-                if (anyNeg) {
-                    Tessellator.instance.startDrawing(GL11.GL_QUADS);
-                    GL11.glEnable(GL11.GL_CULL_FACE);
-                    GL11.glCullFace(GL11.GL_FRONT);
-                    for (GeoCube cube : bone.childCubes) {
-                        if (!cube.hasNegSize) continue;
-                        MATRIX_STACK.push();
-                        renderCube(builder, cube, red, green, blue, alpha);
-                        MATRIX_STACK.pop();
-                    }
-                    Tessellator.instance.draw();
-                    GL11.glCullFace(GL11.GL_BACK);
-                    GL11.glDisable(GL11.GL_CULL_FACE);
-                }
-
-                // ── Batch 2: positive-size cubes (normal depth testing) ──
-                if (anyPos) {
-                    Tessellator.instance.startDrawing(GL11.GL_QUADS);
-                    for (GeoCube cube : bone.childCubes) {
-                        if (cube.hasNegSize) continue;
-                        MATRIX_STACK.push();
-                        renderCube(builder, cube, red, green, blue, alpha);
-                        MATRIX_STACK.pop();
-                    }
-                    Tessellator.instance.draw();
-                }
-
-                Tessellator.instance.startDrawing(GL11.GL_QUADS);
-            } else {
-                // Non-glow bones may also use negative-size cubes as an outline
-                // (slightly larger wrapper mapped to #223063 outline color).
-                // The negative and positive cubes' front faces are at the same
-                // depth. With GL_LEQUAL, rendering the negative second would
-                // overwrite the main textured geometry. Apply the same two-pass
-                // strategy as glow bones: render negatives with CULL_FRONT
-                // first (only back faces = farthest depth), then positives
-                // normally (front faces are closer → pass LEQUAL).
-                boolean hasNeg = false;
-                for (GeoCube c : bone.childCubes) {
-                    if (c.hasNegSize) { hasNeg = true; break; }
-                }
-                if (hasNeg) {
-                    Tessellator.instance.draw();
-
-                    // Batch 1: negative-size cubes (CULL_FRONT → far faces only)
-                    Tessellator.instance.startDrawing(GL11.GL_QUADS);
-                    GL11.glEnable(GL11.GL_CULL_FACE);
-                    GL11.glCullFace(GL11.GL_FRONT);
-                    for (GeoCube cube : bone.childCubes) {
-                        if (!cube.hasNegSize) continue;
-                        MATRIX_STACK.push();
-                        renderCube(builder, cube, red, green, blue, alpha);
-                        MATRIX_STACK.pop();
-                    }
-                    Tessellator.instance.draw();
-                    GL11.glCullFace(GL11.GL_BACK);
-                    GL11.glDisable(GL11.GL_CULL_FACE);
-
-                    // Batch 2: positive-size cubes (normal depth testing)
-                    Tessellator.instance.startDrawing(GL11.GL_QUADS);
-                    for (GeoCube cube : bone.childCubes) {
-                        if (cube.hasNegSize) continue;
-                        MATRIX_STACK.push();
-                        renderCube(builder, cube, red, green, blue, alpha);
-                        MATRIX_STACK.pop();
-                    }
-                    Tessellator.instance.draw();
-
-                    Tessellator.instance.startDrawing(GL11.GL_QUADS);
-                } else {
-                    for (GeoCube cube : bone.childCubes) {
-                        MATRIX_STACK.push();
-                        renderCube(builder, cube, red, green, blue, alpha);
-                        MATRIX_STACK.pop();
-                    }
-                }
-            }
+            renderBoneCubes(builder, bone, red, green, blue, alpha);
 
             // Restore the original texture binding after rendering this bone's cubes.
             if (savedTextureId >= 0) {
@@ -218,6 +114,77 @@ public interface IGeoRenderer<T> {
         }
 
         MATRIX_STACK.pop();
+    }
+
+    /**
+     * Renders a bone's child cubes, handling negative-size outline geometry.
+     * <p>
+     * Some models use a negative-size cube as a slightly larger outline wrapper
+     * that encloses the main positive-size textured cube. Both cubes' front
+     * faces end up at the same depth after origin adjustment. With GL_LEQUAL as
+     * the default depth function, rendering the negative cube second would
+     * overwrite the main textured geometry.
+     * <p>
+     * Strategy — render negatives FIRST using CULL_FRONT (only back faces,
+     * i.e. faces facing away from the camera), which are at the FARTHEST
+     * depth. Then render positives SECOND with normal depth testing — the
+     * positive cube's front faces (closer to camera) pass LEQUAL and render
+     * on top. At the silhouette edges no positive geometry exists, so the
+     * negative's back-face ring remains visible as the intended outline.
+     * <p>
+     * CULL_FRONT on a standard CCW-wound cube culls front faces (facing
+     * camera) and renders back faces (facing away). This gives us the
+     * far-side depth without vertex reversal trickery.
+     * <p>
+     * If the bone has only positive-size cubes, a single pass is used.
+     */
+    default void renderBoneCubes(Tessellator builder, GeoBone bone,
+        float red, float green, float blue, float alpha) {
+        // Single scan: detect whether we have neg/pos cubes at all.
+        boolean anyNeg = false, anyPos = false;
+        for (GeoCube c : bone.childCubes) {
+            if (c.hasNegSize) anyNeg = true;
+            else anyPos = true;
+            if (anyNeg && anyPos) break;
+        }
+
+        if (!anyNeg) {
+            // Single pass: all cubes are positive-size
+            for (GeoCube cube : bone.childCubes) {
+                MATRIX_STACK.push();
+                renderCube(builder, cube, red, green, blue, alpha);
+                MATRIX_STACK.pop();
+            }
+            return;
+        }
+
+        Tessellator.instance.draw();
+
+        // ── Pass 1: negative-size cubes (CULL_FRONT → back faces only) ──
+        Tessellator.instance.startDrawing(GL11.GL_QUADS);
+        GL11.glEnable(GL11.GL_CULL_FACE);
+        GL11.glCullFace(GL11.GL_FRONT);
+        for (GeoCube cube : bone.childCubes) {
+            if (!cube.hasNegSize) continue;
+            MATRIX_STACK.push();
+            renderCube(builder, cube, red, green, blue, alpha);
+            MATRIX_STACK.pop();
+        }
+        Tessellator.instance.draw();
+        GL11.glCullFace(GL11.GL_BACK);
+        GL11.glDisable(GL11.GL_CULL_FACE);
+
+        // ── Pass 2: positive-size cubes (normal depth testing) ──
+        Tessellator.instance.startDrawing(GL11.GL_QUADS);
+        for (GeoCube cube : bone.childCubes) {
+            if (cube.hasNegSize) continue;
+            MATRIX_STACK.push();
+            renderCube(builder, cube, red, green, blue, alpha);
+            MATRIX_STACK.pop();
+        }
+        Tessellator.instance.draw();
+
+        Tessellator.instance.startDrawing(GL11.GL_QUADS);
     }
 
     default void renderCube(Tessellator builder, GeoCube cube, float red, float green, float blue, float alpha) {
