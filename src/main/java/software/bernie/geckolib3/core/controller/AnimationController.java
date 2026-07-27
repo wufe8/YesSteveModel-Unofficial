@@ -928,19 +928,19 @@ public class AnimationController<T extends IAnimatable> {
         Axis axis) {
         KeyFrameLocation<KeyFrame<IValue>> location = getCurrentKeyFrameLocation(frames, tick);
         KeyFrame<IValue> currentFrame = location.currentFrame;
-        double startValue = currentFrame.getStartValue()
-            .get();
-        double endValue = currentFrame.getEndValue()
-            .get();
+        double startValue = currentFrame.getStartValueDouble();
+        double endValue = currentFrame.getEndValueDouble();
 
         if (isRotation) {
-            if (!(currentFrame.getStartValue() instanceof ConstantValue)) {
+            // Primitive-inlined values were pre-converted by JsonKeyFrameUtils;
+            // Molang-expression values need runtime conversion.
+            if (!currentFrame.isStartPrimitive()) {
                 startValue = Math.toRadians(startValue);
                 if (axis == Axis.X || axis == Axis.Y) {
                     startValue *= -1;
                 }
             }
-            if (!(currentFrame.getEndValue() instanceof ConstantValue)) {
+            if (!currentFrame.isEndPrimitive()) {
                 endValue = Math.toRadians(endValue);
                 if (axis == Axis.X || axis == Axis.Y) {
                     endValue *= -1;

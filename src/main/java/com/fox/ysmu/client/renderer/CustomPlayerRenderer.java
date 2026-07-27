@@ -84,6 +84,11 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
             .get(location);
         if (geoModel != null) {
             this.geoModel = geoModel;
+            // Ensure animation data is loaded; lazy-loads from raw bytes if unloaded
+            if (this.animatable != null) {
+                com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(
+                    this.animatable.getMainModel());
+            }
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
             // 渲染 AdventureBackpack2 背部可穿戴物品（直升机背包等）
             if (entityObj instanceof EntityPlayer player

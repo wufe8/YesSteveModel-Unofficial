@@ -54,9 +54,20 @@ public class ClientEventHandler {
         }
     }
 
+    /** Tick counter for periodic lazy-animation unload (~every 100 ticks = 5s). */
+    private static int unloadTick = 0;
+
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
-        if (event.phase != TickEvent.Phase.END || !pendingModelLoad) {
+        if (event.phase != TickEvent.Phase.END) {
+            return;
+        }
+        // Periodically unload unused animation data from GeckoLibCache
+        if (++unloadTick >= 100) {
+            unloadTick = 0;
+            ClientModelManager.unloadUnusedAnimations();
+        }
+        if (!pendingModelLoad) {
             return;
         }
         pendingModelLoad = false;

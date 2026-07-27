@@ -8,6 +8,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -134,6 +135,14 @@ public class ClientModelManager {
     public static final Map<ResourceLocation, List<ResourceLocation>> PROJECTILE_TEXTURE_IDS = Maps.newHashMap();
 
     private static final String PROJECTILE_KEY_PREFIX = "projectile_";
+
+    // ── Lazy animation loading ────────────────────────────────────────────
+    /** Maps main model ID → cache filename (MD5) for re-reading from encrypted client cache. */
+    private static final Map<ResourceLocation, String> CACHED_MODEL_MD5 = new HashMap<>();
+    /** Timestamp (System.currentTimeMillis) of last animation usage, for auto-unloading. */
+    private static final Map<ResourceLocation, Long> ANIMATION_LAST_USED = new HashMap<>();
+    /** How long (ms) since last use before animations are unloaded from GeckoLibCache. */
+    private static final long ANIMATION_UNLOAD_MS = 30_000L;
 
     private static boolean isProjectileKey(String key) {
         return key.startsWith(PROJECTILE_KEY_PREFIX);
@@ -812,6 +821,81 @@ public class ClientModelManager {
         return output;
     }
 
+    /**
+     * Ensures the animation data for the given model is loaded in GeckoLibCache.
+     * If not present, re-reads the encrypted client cache file, decrypts it,
+     * and re-parses the animation JSON bytes.
+     */
+    public static void ensureAnimationsLoaded(ResourceLocation modelId) {
+        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+        HashMap<ResourceLocation, AnimationFile> cache = GeckoLibCache.getInstance().getAnimations();
+        if (cache.containsKey(mainId)) {
+            ANIMATION_LAST_USED.put(mainId, System.currentTimeMillis());
+            return;
+        }
+
+        String md5 = CACHED_MODEL_MD5.get(mainId);
+        if (md5 == null || md5.isEmpty()) return;
+
+        try {
+            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(md5).toFile();
+            if (!cacheFile.isFile()) return;
+
+            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
+            ModelData data = com.fox.ysmu.data.EncryptTools.decryptModel(
+                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
+            if (data == null) return;
+
+            Map<String, byte[]> animBytes = data.getAnimation();
+            if (animBytes == null || animBytes.isEmpty()) return;
+
+            AnimationFile animFile = new AnimationFile();
+            for (Map.Entry<String, byte[]> entry : animBytes.entrySet()) {
+                String key = entry.getKey();
+                byte[] animData = entry.getValue();
+                if (YsmControllerResources.isMolangResource(key)) continue;
+                if (animData == null || animData.length == 0) continue;
+                try {
+                    AnimationFile other = getAnimationFile(new String(animData, StandardCharsets.UTF_8));
+                    mergeAnimationFile(animFile, other);
+                } catch (Exception e) {
+                    ysmu.LOG.warn("Failed to re-parse animation {} for model {}: {}",
+                        key, modelId, e.getMessage());
+                }
+            }
+            if (!animFile.animations.isEmpty()) {
+                cache.put(mainId, animFile);
+                ANIMATION_LAST_USED.put(mainId, System.currentTimeMillis());
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Lazy-loaded {} animations for model {} from cache",
+                        animFile.animations.size(), modelId);
+                }
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to lazy-load animations for model {}: {}", modelId, e.getMessage());
+        }
+    }
+
+    /**
+     * Unloads animation data for models that haven't been accessed recently.
+     * Frees ~9 MB per model of GeckoLib KeyFrame/ConstantValue/boxed-object overhead.
+     * Periodically called from the client tick.
+     */
+    public static void unloadUnusedAnimations() {
+        long now = System.currentTimeMillis();
+        HashMap<ResourceLocation, AnimationFile> cache = GeckoLibCache.getInstance().getAnimations();
+        cache.keySet().removeIf(key -> {
+            Long lastUsed = ANIMATION_LAST_USED.get(key);
+            boolean shouldUnload = lastUsed != null && (now - lastUsed) > ANIMATION_UNLOAD_MS;
+            if (shouldUnload && Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Unloading unused animations for model {}", key);
+            }
+            return shouldUnload;
+        });
+    }
+
+    // ── End lazy animation loading ────────────────────────────────────────
+
     private static void clearRuntimeModelCaches() {
         ysmu.LOG.info(
             "YSM client clearing runtime model caches: models={}, scales={}, extraInfo={}, extraAnimations={}, modelStats={}, previewAnimations={}, molangStateMaps={}, molangConditionalMaps={}, previewBoneCache={}, geoModels={}, animations={}",
@@ -845,6 +929,8 @@ public class ClientModelManager {
         GeckoLibCache.getInstance().getAnimations().clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.clear();
+        CACHED_MODEL_MD5.clear();
+        ANIMATION_LAST_USED.clear();
         com.fox.ysmu.client.model.CustomPlayerModel.clearPreviewBoneCache();
         com.fox.ysmu.client.audio.YSMSoundManager.clear();
         ConditionManager.clear();
@@ -976,6 +1062,13 @@ public class ClientModelManager {
             if (!CACHE_MD5.contains(md5)) {
                 CACHE_MD5.add(md5);
             }
+        }
+    }
+
+    /** Records the MD5 filename for a model so {@link #ensureAnimationsLoaded} can re-read from encrypted cache. */
+    public static void rememberModelMd5(ResourceLocation modelId, String md5) {
+        if (modelId != null && md5 != null && !md5.isEmpty()) {
+            CACHED_MODEL_MD5.put(ModelIdUtil.getMainId(modelId), md5);
         }
     }
 

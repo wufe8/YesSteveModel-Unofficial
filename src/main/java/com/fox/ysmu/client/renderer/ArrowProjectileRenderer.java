@@ -505,7 +505,7 @@ public class ArrowProjectileRenderer {
 
         // If there's only one keyframe, return its end value
         if (keyFrames.size() == 1) {
-            return (float) keyFrames.get(0).getEndValue().get();
+            return (float) keyFrames.get(0).getEndValueDouble();
         }
 
         // Find the current keyframe
@@ -520,8 +520,8 @@ public class ArrowProjectileRenderer {
                 double localTick = tick - totalTime;
                 double progress = frameLength > 0 ? Math.min(localTick / frameLength, 1.0) : 1.0;
 
-                double startVal = frame.getStartValue().get();
-                double endVal = frame.getEndValue().get();
+                double startVal = frame.getStartValueDouble();
+                double endVal = frame.getEndValueDouble();
 
                 // Apply easing
                 EasingType easing = frame.easingType != null ? frame.easingType : EasingType.Linear;
@@ -534,7 +534,7 @@ public class ArrowProjectileRenderer {
 
         // Past all keyframes - return last keyframe's end value
         KeyFrame<IValue> lastFrame = keyFrames.get(keyFrames.size() - 1);
-        return (float) lastFrame.getEndValue().get();
+        return (float) lastFrame.getEndValueDouble();
     }
 
     /**

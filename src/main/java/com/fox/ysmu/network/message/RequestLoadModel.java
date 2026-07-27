@@ -91,8 +91,13 @@ public class RequestLoadModel implements IMessage {
                         .decryptModel(UuidUtils.asBytes(passwordUuid), password, fileBytes);
                     if (data != null) {
                         if (Config.DEBUG_MODEL_LOAD) {
-                            ysmu.LOG.info("[YSMU-MODEL] Decrypted model {}, registering...", fileName);
+                            ysmu.LOG.info("[YSMU-MODEL] Decrypted model {} (id={}), registering...",
+                                fileName, data.getModelId());
                         }
+                        // Record MD5 mapping for lazy animation re-loading
+                        ClientModelManager.rememberModelMd5(
+                            new net.minecraft.util.ResourceLocation(com.fox.ysmu.ysmu.MODID, data.getModelId()),
+                            fileName);
                         // Parse geometry/animation on background thread, only register on main thread.
                         com.fox.ysmu.client.model.PreParsedModelBundle bundle;
                         try {
