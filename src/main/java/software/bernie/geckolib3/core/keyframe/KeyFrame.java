@@ -6,7 +6,7 @@
 package software.bernie.geckolib3.core.keyframe;
 
 import java.io.Serializable;
-import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
 import java.util.Objects;
 
@@ -21,9 +21,11 @@ public class KeyFrame<T> implements Serializable {
     public EasingType easingType;
     public List<Double> easingArgs;
 
+    private static final List<Double> EMPTY_EASING_ARGS = Collections.emptyList();
+
     public KeyFrame(Double length, T startValue, T endValue) {
         this.easingType = EasingType.Linear;
-        this.easingArgs = new ArrayList();
+        this.easingArgs = EMPTY_EASING_ARGS;
         this.length = length;
         this.startValue = startValue;
         this.endValue = endValue;
@@ -31,7 +33,7 @@ public class KeyFrame<T> implements Serializable {
 
     public KeyFrame(Double length, T startValue, T endValue, EasingType easingType) {
         this.easingType = EasingType.Linear;
-        this.easingArgs = new ArrayList();
+        this.easingArgs = EMPTY_EASING_ARGS;
         this.length = length;
         this.startValue = startValue;
         this.endValue = endValue;
@@ -40,7 +42,6 @@ public class KeyFrame<T> implements Serializable {
 
     public KeyFrame(Double length, T startValue, T endValue, EasingType easingType, List<Double> easingArgs) {
         this.easingType = EasingType.Linear;
-        this.easingArgs = new ArrayList();
         this.length = length;
         this.startValue = startValue;
         this.endValue = endValue;

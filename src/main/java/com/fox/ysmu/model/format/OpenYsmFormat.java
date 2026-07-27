@@ -86,6 +86,7 @@ public final class OpenYsmFormat {
             RAW_MODEL_INFO.put(modelId, raw);
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
                 ysmu.LOG.warn("OpenYSM folder model {} parsed but cannot be bridged to legacy ModelData", dir);
+                RAW_MODEL_INFO.remove(modelId);
                 return;
             }
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
@@ -98,6 +99,8 @@ public final class OpenYsmFormat {
             }
             OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
             OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
+            // RawYsmModel 在缓存构建完成后不再需要，释放内存
+            RAW_MODEL_INFO.remove(modelId);
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load OpenYSM folder model {}", dir, e);
         }
@@ -176,6 +179,8 @@ public final class OpenYsmFormat {
                 } else if (Config.DEBUG_MODEL_LOAD) {
                     ysmu.LOG.info("[YSMU-MODEL] Model {} not bridgeable, skipped legacy cache but OpenYSM sync info written", modelId);
                 }
+                // RawYsmModel 在缓存构建完成后不再需要，释放内存
+                RAW_MODEL_INFO.remove(modelId);
             }
         } catch (UnsupportedOperationException e) {
             ysmu.LOG.warn("Unsupported OpenYSM binary model {} (size={}): {}",

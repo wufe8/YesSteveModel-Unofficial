@@ -37,9 +37,9 @@ public class JsonKeyFrameUtils {
         IValue previousYValue = null;
         IValue previousZValue = null;
 
-        List<KeyFrame<IValue>> xKeyFrames = new ArrayList();
-        List<KeyFrame<IValue>> yKeyFrames = new ArrayList();
-        List<KeyFrame<IValue>> zKeyFrames = new ArrayList();
+        List<KeyFrame<IValue>> xKeyFrames = new ArrayList<>(element.size());
+        List<KeyFrame<IValue>> yKeyFrames = new ArrayList<>(element.size());
+        List<KeyFrame<IValue>> zKeyFrames = new ArrayList<>(element.size());
 
         for (int i = 0; i < element.size(); i++) {
             Map.Entry<String, JsonElement> keyframe = element.get(i);
