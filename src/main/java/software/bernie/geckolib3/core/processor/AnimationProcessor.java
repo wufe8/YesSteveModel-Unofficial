@@ -96,6 +96,15 @@ public class AnimationProcessor<T extends IAnimatable> {
                 // If there's any rotation points for this bone
                 DirtyTracker dirtyTracker = modelTracker.get(bone.getName());
                 if (dirtyTracker == null) {
+                    if (rXPoint != null) rXPoint.recycle();
+                    if (rYPoint != null) rYPoint.recycle();
+                    if (rZPoint != null) rZPoint.recycle();
+                    if (pXPoint != null) pXPoint.recycle();
+                    if (pYPoint != null) pYPoint.recycle();
+                    if (pZPoint != null) pZPoint.recycle();
+                    if (sXPoint != null) sXPoint.recycle();
+                    if (sYPoint != null) sYPoint.recycle();
+                    if (sZPoint != null) sZPoint.recycle();
                     continue;
                 }
                 if (rXPoint != null && rYPoint != null && rZPoint != null) {
@@ -143,6 +152,17 @@ public class AnimationProcessor<T extends IAnimatable> {
 
                     dirtyTracker.hasScaleChanged = true;
                 }
+
+                // Recycle all polled AnimationPoints back to the pool
+                if (rXPoint != null) rXPoint.recycle();
+                if (rYPoint != null) rYPoint.recycle();
+                if (rZPoint != null) rZPoint.recycle();
+                if (pXPoint != null) pXPoint.recycle();
+                if (pYPoint != null) pYPoint.recycle();
+                if (pZPoint != null) pZPoint.recycle();
+                if (sXPoint != null) sXPoint.recycle();
+                if (sYPoint != null) sYPoint.recycle();
+                if (sZPoint != null) sZPoint.recycle();
             }
         }
 

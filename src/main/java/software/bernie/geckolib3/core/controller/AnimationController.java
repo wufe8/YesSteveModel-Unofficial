@@ -598,26 +598,29 @@ public class AnimationController<T extends IAnimatable> {
                         AnimationPoint yPoint = getAnimationPointAtTick(rotationKeyFrames.yKeyFrames, 0, true, Axis.Y);
                         AnimationPoint zPoint = getAnimationPointAtTick(rotationKeyFrames.zKeyFrames, 0, true, Axis.Z);
                         boneAnimationQueue.rotationXQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.rotationValueX - initialSnapshot.rotationValueX,
                                 xPoint.animationStartValue));
                         boneAnimationQueue.rotationYQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.rotationValueY - initialSnapshot.rotationValueY,
                                 yPoint.animationStartValue));
                         boneAnimationQueue.rotationZQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.rotationValueZ - initialSnapshot.rotationValueZ,
                                 zPoint.animationStartValue));
+                        xPoint.recycle();
+                        yPoint.recycle();
+                        zPoint.recycle();
                     }
 
                     if (!positionKeyFrames.xKeyFrames.isEmpty()) {
@@ -625,26 +628,29 @@ public class AnimationController<T extends IAnimatable> {
                         AnimationPoint yPoint = getAnimationPointAtTick(positionKeyFrames.yKeyFrames, 0, false, Axis.Y);
                         AnimationPoint zPoint = getAnimationPointAtTick(positionKeyFrames.zKeyFrames, 0, false, Axis.Z);
                         boneAnimationQueue.positionXQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.positionOffsetX,
                                 xPoint.animationStartValue));
                         boneAnimationQueue.positionYQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.positionOffsetY,
                                 yPoint.animationStartValue));
                         boneAnimationQueue.positionZQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.positionOffsetZ,
                                 zPoint.animationStartValue));
+                        xPoint.recycle();
+                        yPoint.recycle();
+                        zPoint.recycle();
                     }
 
                     if (!scaleKeyFrames.xKeyFrames.isEmpty()) {
@@ -652,26 +658,29 @@ public class AnimationController<T extends IAnimatable> {
                         AnimationPoint yPoint = getAnimationPointAtTick(scaleKeyFrames.yKeyFrames, 0, false, Axis.Y);
                         AnimationPoint zPoint = getAnimationPointAtTick(scaleKeyFrames.zKeyFrames, 0, false, Axis.Z);
                         boneAnimationQueue.scaleXQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.scaleValueX,
                                 xPoint.animationStartValue));
                         boneAnimationQueue.scaleYQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.scaleValueY,
                                 yPoint.animationStartValue));
                         boneAnimationQueue.scaleZQueue.add(
-                            new AnimationPoint(
+                            AnimationPoint.obtain(
                                 null,
                                 tick,
                                 transitionLengthTicks,
                                 boneSnapshot.scaleValueZ,
                                 zPoint.animationStartValue));
+                        xPoint.recycle();
+                        yPoint.recycle();
+                        zPoint.recycle();
                     }
                 }
             }
@@ -948,7 +957,7 @@ public class AnimationController<T extends IAnimatable> {
             }
         }
 
-        return new AnimationPoint(currentFrame, location.currentTick, currentFrame.getLength(), startValue, endValue);
+        return AnimationPoint.obtain(currentFrame, location.currentTick, currentFrame.getLength(), startValue, endValue);
     }
 
     /** Cache entry for {@link #getCurrentKeyFrameLocation} — remembers the last
@@ -956,10 +965,14 @@ public class AnimationController<T extends IAnimatable> {
      *  calls (with monotonically increasing tick) can skip the linear scan from
      *  index 0 and start from the cached position instead. */
     private static final class KfCacheEntry {
-        final int index;
-        final double cumulativeTime;
-        final double ageInTicks;
+        int index;
+        double cumulativeTime;
+        double ageInTicks;
+        KfCacheEntry() {}
         KfCacheEntry(int index, double cumulativeTime, double ageInTicks) {
+            set(index, cumulativeTime, ageInTicks);
+        }
+        void set(int index, double cumulativeTime, double ageInTicks) {
             this.index = index;
             this.cumulativeTime = cumulativeTime;
             this.ageInTicks = ageInTicks;
@@ -987,7 +1000,7 @@ public class AnimationController<T extends IAnimatable> {
                     KeyFrame<IValue> frame = frames.get(cached.index);
                     double prevTotal = cached.cumulativeTime - frame.getLength();
                     double tick = ageInTicks - prevTotal;
-                    kfCache.put(frames, new KfCacheEntry(cached.index, cached.cumulativeTime, ageInTicks));
+                    kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(cached.index, cached.cumulativeTime, ageInTicks);
                     return new KeyFrameLocation<>(frame, tick);
                 } else {
                     // Moved to a later keyframe — scan from cached index + 1
@@ -997,14 +1010,14 @@ public class AnimationController<T extends IAnimatable> {
                         double newTotal = totalTimeTracker + frame.getLength();
                         if (newTotal > ageInTicks) {
                             double tick = ageInTicks - totalTimeTracker;
-                            kfCache.put(frames, new KfCacheEntry(i, newTotal, ageInTicks));
+                            kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(i, newTotal, ageInTicks);
                             return new KeyFrameLocation<>(frame, tick);
                         }
                         totalTimeTracker = newTotal;
                     }
                     // Past all frames — return last
                     int last = frames.size() - 1;
-                    kfCache.put(frames, new KfCacheEntry(last, totalTimeTracker, ageInTicks));
+                    kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(last, totalTimeTracker, ageInTicks);
                     return new KeyFrameLocation<>(frames.get(last), ageInTicks);
                 }
             }
@@ -1020,7 +1033,7 @@ public class AnimationController<T extends IAnimatable> {
                 if (kfCache == null) {
                     kfCache = new java.util.IdentityHashMap<>();
                 }
-                kfCache.put(frames, new KfCacheEntry(i, totalTimeTracker, ageInTicks));
+                kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(i, totalTimeTracker, ageInTicks);
                 return new KeyFrameLocation<>(frame, tick);
             }
         }
@@ -1028,7 +1041,7 @@ public class AnimationController<T extends IAnimatable> {
         if (kfCache == null) {
             kfCache = new java.util.IdentityHashMap<>();
         }
-        kfCache.put(frames, new KfCacheEntry(last, totalTimeTracker, ageInTicks));
+        kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(last, totalTimeTracker, ageInTicks);
         return new KeyFrameLocation<>(frames.get(last), ageInTicks);
     }
 

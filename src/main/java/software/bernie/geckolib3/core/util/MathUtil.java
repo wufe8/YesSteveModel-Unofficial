@@ -16,18 +16,24 @@ public class MathUtil {
      */
     public static float lerpValues(AnimationPoint animationPoint, EasingType easingType,
         Function<Double, Double> customEasingMethod) {
+        // Safety: pooled AnimationPoint should always have valid tick values
+        if (animationPoint.currentTick == null || animationPoint.animationEndTick == null) {
+            return 0f;
+        }
         if (animationPoint.currentTick >= animationPoint.animationEndTick) {
-            return animationPoint.animationEndValue.floatValue();
+            return animationPoint.animationEndValue != null
+                ? animationPoint.animationEndValue.floatValue() : 0f;
         }
         if (animationPoint.currentTick == 0 && animationPoint.animationEndTick == 0) {
-            return animationPoint.animationEndValue.floatValue();
+            return animationPoint.animationEndValue != null
+                ? animationPoint.animationEndValue.floatValue() : 0f;
         }
 
         if (easingType == EasingType.CUSTOM && customEasingMethod != null) {
             return lerpValues(
                 customEasingMethod.apply(animationPoint.currentTick / animationPoint.animationEndTick),
-                animationPoint.animationStartValue,
-                animationPoint.animationEndValue);
+                animationPoint.animationStartValue != null ? animationPoint.animationStartValue : 0,
+                animationPoint.animationEndValue != null ? animationPoint.animationEndValue : 0);
         } else if (easingType == EasingType.NONE && animationPoint.keyframe != null) {
             easingType = animationPoint.keyframe.easingType;
         }
@@ -35,7 +41,9 @@ public class MathUtil {
             animationPoint.currentTick / animationPoint.animationEndTick,
             easingType,
             animationPoint.keyframe == null ? null : animationPoint.keyframe.easingArgs);
-        return lerpValues(ease, animationPoint.animationStartValue, animationPoint.animationEndValue);
+        return lerpValues(ease,
+            animationPoint.animationStartValue != null ? animationPoint.animationStartValue : 0,
+            animationPoint.animationEndValue != null ? animationPoint.animationEndValue : 0);
     }
 
     /**
