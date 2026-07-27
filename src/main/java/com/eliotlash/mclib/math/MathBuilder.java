@@ -375,6 +375,14 @@ public class MathBuilder {
                 // 取负
                 if (symbol.startsWith("-")) {
                     symbol = symbol.substring(1);
+                    // Handle -!prefix: "-!v.xxx" was tokenised as a single
+                    // token (since ! is not an operator in breakdownChars).
+                    // The ! has higher precedence than unary - per Bedrock
+                    // Molang spec, so -!v.x ≡ Negative(Negate(v.x)).
+                    if (symbol.startsWith("!")) {
+                        return new Negative(
+                            new Negate(this.valueFromObject(symbol.substring(1))));
+                    }
                     Variable value = this.getVariable(symbol);
 
                     if (value != null) {
