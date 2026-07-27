@@ -75,6 +75,15 @@ public final class OpenYsmPlayerControllerRuntime {
     private static final Map<ResourceLocation, java.util.Set<String>> MODEL_ROAMING_VARS = new ConcurrentHashMap<>();
 
     /**
+     * Per-model initial default values for roaming variables, set during
+     * {@code registerExtraWheel()} from each model's ysm.json config forms.
+     * These are used as the base in {@link #computeRoamingVarsForModel},
+     * overlaid with any explicitly user-set values from {@link #PENDING_ROAMING}.
+     * Key = model ResourceLocation (mainId), value = varName → default double.
+     */
+    private static final Map<ResourceLocation, Map<String, Double>> MODEL_ROAMING_DEFAULTS = new ConcurrentHashMap<>();
+
+    /**
      * Frame-scoped cache for getRoamingVarsForModel — valid only within begin()/end().
      * Keyed by modelId to prevent cross-model contamination when multiple models
      * render in the same frame (e.g. GUI preview + player entity have different
@@ -90,6 +99,17 @@ public final class OpenYsmPlayerControllerRuntime {
     public static void registerModelRoamingVar(ResourceLocation modelId, String varName) {
         MODEL_ROAMING_VARS.computeIfAbsent(modelId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()))
             .add(varName);
+    }
+
+    /**
+     * Stores a per-model default value for a roaming variable, set from the
+     * model's ysm.json config forms.  Used as the base value in
+     * {@link #computeRoamingVarsForModel} when the variable has not been
+     * explicitly set by the user via the wheel GUI.
+     */
+    public static void setModelRoamingDefault(ResourceLocation modelId, String varName, double value) {
+        MODEL_ROAMING_DEFAULTS.computeIfAbsent(modelId, k -> new ConcurrentHashMap<>())
+            .put(varName, value);
     }
 
     /**
@@ -115,40 +135,52 @@ public final class OpenYsmPlayerControllerRuntime {
 
     /** Computes the roaming variable map for the given model — no caching. */
     private static Map<String, Double> computeRoamingVarsForModel(ResourceLocation modelId) {
-        if (modelId == null || PENDING_ROAMING.isEmpty()) {
+        if (modelId == null) {
             return java.util.Collections.emptyMap();
         }
         java.util.Set<String> knownVars = MODEL_ROAMING_VARS.get(modelId);
-        if (knownVars == null || knownVars.isEmpty()) {
-            // Model has no registered roaming vars — only include global vars.
-            Map<String, Double> result = new java.util.HashMap<>();
-            // Global variables that are not model-specific
-            String[] globalVars = {"lock_wheel", "wheel_anim"};
-            for (String gv : globalVars) {
-                Double val = PENDING_ROAMING.get(gv);
-                if (val != null) result.put(gv, val);
-            }
-            return result;
-        }
         Map<String, Double> result = new java.util.HashMap<>();
+
+        // 1. Start with per-model defaults from ysm.json config forms.
+        //    This ensures each model gets its own initial values regardless
+        //    of model load order (fixes cross-model default contamination).
+        Map<String, Double> defaults = MODEL_ROAMING_DEFAULTS.getOrDefault(modelId,
+            java.util.Collections.emptyMap());
+        result.putAll(defaults);
+
+        // 2. Overlay with explicitly user-set values from PENDING_ROAMING.
+        //    Only vars in EXPLICIT_ROAMING are overlaid — initial defaults
+        //    set by registerExtraWheel() are NOT in EXPLICIT_ROAMING, so
+        //    they stay per-model.
         for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
             String key = entry.getKey();
-            // Include vars known to this model, plus global vars, plus vars
-            // explicitly set via the wheel (radio/checkbox forms that use
-            // "value" instead of "defaultValue" and thus aren't pre-registered).
-            boolean inKnown = knownVars.contains(key);
             boolean inExplicit = EXPLICIT_ROAMING.contains(key);
-            if (inKnown || "lock_wheel".equals(key) || "wheel_anim".equals(key)
-                || inExplicit) {
+            // Global vars that are not model-specific
+            boolean isGlobal = "lock_wheel".equals(key) || "wheel_anim".equals(key);
+            if (inExplicit || isGlobal) {
                 result.put(key, entry.getValue());
             }
         }
+
+        // 3. For models with no registered vars, also include any PENDING_ROAMING
+        //    entries that are explicitly set but not known to any registered model
+        //    (e.g. runtime-registered vars from radio button expressions).
+        if (knownVars == null || knownVars.isEmpty()) {
+            for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
+                String key = entry.getKey();
+                if (EXPLICIT_ROAMING.contains(key)) {
+                    result.put(key, entry.getValue());
+                }
+            }
+        }
+
         return result;
     }
 
     /** Clears the per-model roaming variable tracking (called during cache reset). */
     public static void clearModelRoamingVars() {
         MODEL_ROAMING_VARS.clear();
+        MODEL_ROAMING_DEFAULTS.clear();
     }
 
     private OpenYsmPlayerControllerRuntime() {}

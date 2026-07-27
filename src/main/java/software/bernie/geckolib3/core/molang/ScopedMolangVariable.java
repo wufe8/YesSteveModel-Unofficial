@@ -4,35 +4,58 @@ import java.util.function.DoubleSupplier;
 
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 
+/**
+ * A {@link LazyVariable} for {@code v.} Molang variables that scopes reads
+ * and writes to the per-(player, model) frame context.
+ * <p>
+ * {@link #get()} always delegates to {@link MolangPhysicsRuntime#getVariable},
+ * which looks up the value in the current frame's per-model {@code ScopeState}.
+ * If no frame context is active or the variable has not been set in the current
+ * scope, the fallback is {@code 0.0} — a neutral default. This prevents
+ * cross-model contamination via the global {@link MolangParser#VARIABLES} map:
+ * each model's {@code v.} variables live in its own {@code ScopeState},
+ * isolated by {@code (playerId, modelId)} key.
+ * <p>
+ * {@link #set(double)} writes through to the frame's {@code ScopeState} when
+ * a frame context is active. Outside a frame context (e.g. during model
+ * initialisation), the value is stored in the global {@code VARIABLES} map
+ * via the parent {@link LazyVariable#set(double)} for compatibility, but
+ * {@link #get()} will never read it — cross-model reads always default to 0.
+ */
 public class ScopedMolangVariable extends LazyVariable {
 
-    private DoubleSupplier fallbackSupplier;
-
     public ScopedMolangVariable(String name, double value) {
-        this(name, () -> value);
+        super(name, () -> value);
     }
 
     public ScopedMolangVariable(String name, DoubleSupplier fallbackSupplier) {
         super(name, fallbackSupplier);
-        this.fallbackSupplier = fallbackSupplier;
     }
 
     @Override
     public void set(double value) {
         if (!MolangPhysicsRuntime.setVariable(getName(), value)) {
-            this.fallbackSupplier = () -> value;
             super.set(value);
         }
     }
 
     @Override
     public void set(DoubleSupplier valueSupplier) {
-        this.fallbackSupplier = valueSupplier;
         super.set(valueSupplier);
     }
 
     @Override
     public double get() {
-        return MolangPhysicsRuntime.getVariable(getName(), fallbackSupplier.getAsDouble());
+        // During a render frame, read from the per-(player, model) ScopeState
+        // to keep v. variables isolated across models. If the variable has not
+        // been set in this model's ScopeState yet, fall through to super.get()
+        // which returns the global VARIABLES value (set by an earlier set()
+        // outside a frame context, e.g. model init or test evaluation).
+        // Roaming/wheel variables are injected into ScopeState every frame by
+        // MolangPhysicsRuntime.begin(), so they always take the frame path.
+        if (MolangPhysicsRuntime.containsKey(getName())) {
+            return MolangPhysicsRuntime.getVariable(getName(), 0.0);
+        }
+        return super.get();
     }
 }

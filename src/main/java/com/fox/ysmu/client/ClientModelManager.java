@@ -962,23 +962,31 @@ public class ClientModelManager {
                 if (StringUtils.isBlank(varName)) continue;
                 com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
                     .registerModelRoamingVar(modelId, varName);
+                // Compute and store per-model default (overrides global PENDING_ROAMING).
+                double initVal;
+                if ("range".equals(form.type) && form.min < form.max) {
+                    // For range sliders, pick a sensible default.
+                    if (form.min <= 0.0f && 0.0f <= form.max) {
+                        initVal = 0.0;
+                    } else if (form.min <= 1.0f && 1.0f <= form.max) {
+                        initVal = 1.0;
+                    } else {
+                        initVal = form.min;
+                    }
+                    if (form.step > 0) initVal = Math.round(initVal / form.step) * form.step;
+                } else {
+                    // Checkbox/radio: default to 0 (off).
+                    initVal = 0.0;
+                }
+                // Store per-model default so computeRoamingVarsForModel() uses
+                // the correct value for THIS model regardless of load order.
+                com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                    .setModelRoamingDefault(modelId, varName, initVal);
+                // Also put into global PENDING_ROAMING for GUI compat (getMolangVar).
+                // computeRoamingVarsForModel() now overlays PENDING_ROAMING only for
+                // EXPLICIT_ROAMING vars, so the global value won't contaminate rendering.
                 if (!com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
                     .PENDING_ROAMING.containsKey(varName)) {
-                    double initVal;
-                    if ("range".equals(form.type) && form.min < form.max) {
-                        // For range sliders, pick a sensible default.
-                        if (form.min <= 0.0f && 0.0f <= form.max) {
-                            initVal = 0.0;
-                        } else if (form.min <= 1.0f && 1.0f <= form.max) {
-                            initVal = 1.0;
-                        } else {
-                            initVal = form.min;
-                        }
-                        if (form.step > 0) initVal = Math.round(initVal / form.step) * form.step;
-                    } else {
-                        // Checkbox/radio: default to 0 (off).
-                        initVal = 0.0;
-                    }
                     com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
                         .PENDING_ROAMING.put(varName, initVal);
                 }

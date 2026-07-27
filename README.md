@@ -12,7 +12,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ## 当前状态
 
-**最新版本：`1.9a1-05`**（`perf/previewUI` 分支）
+**最新版本：`1.9a1-06`**（`perf/previewUI` 分支）
 
 > [NOTE]
 > 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
@@ -82,6 +82,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **翻页/锁定按钮**：动画轮盘锁定、多页导航
 - **`/ysm play` 命令**：在游戏中播放指定动画
 - **预览刷新频率调整**：FBO 缓存刷新频率 在模型选择(Alt+Y)的设置页面中可以调整模型预览的刷新率 能有效提升预览页面的游戏帧数 但会导致动画预览卡顿
+- **堆内存优化**：原始模型数据在同步完成后释放（~1GB）；GeckoLib 动画缓存自动卸载闲置模型（每模型 ~9MB）；KeyFrame ConstantValue 内联为原始 double 字段（~160MB）；AnimationPoint 对象池复用减少 GC 压力
 - **HUD 自拍模型 FBO 缓存**：在 Alt+P 配置界面可按 C 切换。开启后 HUD 模型以自适应帧率更新（>125fps 时每 8 帧刷新，62.5-125fps 每 4 帧，<62.5fps 每 2 帧），大幅降低 HUD 渲染开销（测试模型从 164fps 提升至 520fps）；关闭则每帧完整渲染
 
 ### 兼容性
@@ -91,6 +92,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **Battlegear2 盾牌格挡**：通过 `BlockingCompat` 反射调用格挡检测，支持剑格挡、双持盾牌
 - **TiConstruct 十字弩 (GTNH)**：通过 `TinkersCrossbowCompat` 识别弩的装填/加载状态，使 `use_mainhand:crossbow` 拉弦动画和 `hold_mainhand:charged_crossbow` 蓄能待机动画正常工作
 - **高版本音效**：通过 `SoundNamespaceCompat` + `LocalAssetProvider` 加载本地高版本 Minecraft 资源包音效（`/ysm setgamepath`）
+- **DirectBuffer 看门狗**：自动监控 Direct Buffer 内存使用，超过阈值自动 GC，缓解 ZGC 下某些 mod（如 Distant Horizons）的 DirectByteBuffer 泄漏影响；可通过配置关闭或调整阈值。`/ysm buffer` 命令可随时查看内存状态
 - **UniMixins** 和 **GTNHLib** 为运行时必需
 
 ---
@@ -110,6 +112,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-03` | 投射物渲染、攻击连击修复、并行模型缓存、格挡支持、滑条默认值修复 |
 | `1.9a1-04` | 一系列性能优化、负尺寸cube修复 |
 | `1.9a1-05` | 动画预览界面、HUD FBO 缓存、深度性能优化与 Bug 修复 |
+| `1.9a1-06` | 堆内存优化（降低~1-2GB占用）、GC 频率优化、负大小 cube 渲染修复 |
 
 ---
 
@@ -162,6 +165,7 @@ git checkout perf/previewUI
 - 粒子系统未实现
 - ysm格式的cube路径与文件夹json的cube路径不同 其poly_mash会丢失size<0的状态 导致本应是负缩放大小的模型无法通过正确翻转法线 来做到内外面翻转/描边的效果
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
+- [SKIP] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为安全兜底（默认 1024 MB 触发 GC），可通过配置关闭
 
 
 
