@@ -34,14 +34,14 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm <reload|play|playsound|setgamepath> [args]";
+        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome> [args]";
     }
 
     @Override
     public List addTabCompletionOptions(ICommandSender sender, String[] args) {
         if (args.length == 1) {
             return getListOfStringsMatchingLastWord(args,
-                "reload", "play", "playsound", "setgamepath", "welcome");
+                "reload", "play", "playsound", "setgamepath", "buffer", "welcome");
         }
         if (args.length == 2 && "welcome".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "on", "off");
@@ -82,9 +82,10 @@ public class YsmCommand extends CommandBase {
         if (args.length < 1) {
             throw new WrongUsageException(getCommandUsage(sender));
         }
-        // setgamepath and welcome are allowed for all players (client-side config only).
+        // setgamepath, welcome, and buffer are allowed for all players (client-side only).
         // Other subcommands require the default permission level.
         if (!"setgamepath".equalsIgnoreCase(args[0]) && !"welcome".equalsIgnoreCase(args[0])
+            && !"buffer".equalsIgnoreCase(args[0])
             && !super.canCommandSenderUseCommand(sender)) {
             throw new CommandException("commands.generic.permission");
         }
@@ -96,6 +97,8 @@ public class YsmCommand extends CommandBase {
             processPlaySound(sender, args);
         } else if ("setgamepath".equalsIgnoreCase(args[0])) {
             processSetGamePath(sender, args);
+        } else if ("buffer".equalsIgnoreCase(args[0])) {
+            processBuffer(sender);
         } else if ("welcome".equalsIgnoreCase(args[0])) {
             processWelcome(sender, args);
         } else {
@@ -231,6 +234,17 @@ public class YsmCommand extends CommandBase {
             player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.version", newVersion));
             player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.setgamepath.local_notice"));
         }
+    }
+
+    private void processBuffer(ICommandSender sender) {
+        if (!(sender instanceof net.minecraft.entity.player.EntityPlayerMP)) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        net.minecraft.entity.player.EntityPlayerMP player = (net.minecraft.entity.player.EntityPlayerMP) sender;
+        // Send a packet to the client to read MBeans and display buffer info
+        com.fox.ysmu.network.NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.ShowBufferInfo(), player);
+        player.addChatMessage(new net.minecraft.util.ChatComponentText(
+            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Querying buffer info..."));
     }
 
     private void processWelcome(ICommandSender sender, String[] args) {

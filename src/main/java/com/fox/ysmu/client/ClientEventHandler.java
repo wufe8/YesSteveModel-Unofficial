@@ -63,9 +63,10 @@ public class ClientEventHandler {
             return;
         }
         // Periodically unload unused animation data from GeckoLibCache
-        if (++unloadTick >= 100) {
+        if (++unloadTick >= 1200) {
             unloadTick = 0;
             ClientModelManager.unloadUnusedAnimations();
+            DirectBufferWatchdog.tick();
         }
         if (!pendingModelLoad) {
             return;
