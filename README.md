@@ -65,6 +65,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **高版本桥接**：解析 `.molang` 函数文件，将 `ctrl.set_animation('正常_行走')` 映射为标准状态名
 - **变量支持**：
   - `query.*` — 玩家/世界/物品查询函数
+  - `query.is_blocking` 查询格挡状态
   - `ysm.*` — YSM 特有变量（`ground_speed2`、`fps`、`input_vertical/horizontal`、`has_helmet`、`attack_time` 等）
   - `v.roaming.*` — 服务端同步的 roaming 变量（`helmet` 等）
   - `ctrl.hold`/`ctrl.use`/`ctrl.swing` — 完整实现的物品检测函数
@@ -112,7 +113,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-03` | 投射物渲染、攻击连击修复、并行模型缓存、格挡支持、滑条默认值修复 |
 | `1.9a1-04` | 一系列性能优化、负尺寸cube修复 |
 | `1.9a1-05` | 动画预览界面、HUD FBO 缓存、深度性能优化与 Bug 修复 |
-| `1.9a1-06` | 堆内存优化（降低~1-2GB占用）、GC 频率优化 |
+| `1.9a1-06` | 堆内存优化（降低~1-2GB占用）、GC 频率优化、Molang 表达式解析修复、跨模型变量污染修复、负尺寸 Cube 两遍渲染（文件夹 + .ysm 格式）、`query.is_blocking` 支持 |
 
 ---
 
@@ -155,17 +156,18 @@ git checkout perf/previewUI
 ---
 
 ## 已知问题
+已修复问题通常会在下一次release时删除
 
 - [SKIP] battlegear2的盾牌位置不正确 目前会以物品的位置来握持(实际上就是物品而非工具)
-- [FIXED] 目前剑格挡重载为一个静止的使用动画 看起来会像格挡 此外格挡状态 模型可使用query.is_blocking Molang查询
-- 部分新版模型可能需要 `.molang` 函数文件桥接才能正常工作
 - [SKIP] WebP 解码器基于外部实现, 没搞定纯ImageIO
-- 子模型(投射物/载具)仍然存在一些问题 目前仅保证默认模型投射物可用
+- 部分控制器变量与molang函数可能存在bug
+- 未实现molnag自定义函数处理
+- 子模型(投射物/载具)可能还存在一些问题 目前仅保证默认模型投射物可用
 - [SKIP] v.roaming长期变量目前不会永久保存 可能 wont fix
 - 粒子系统未实现
-- ysm格式的cube路径与文件夹json的cube路径不同 其poly_mash会丢失size<0的状态 导致本应是负缩放大小的模型无法通过正确翻转法线 来做到内外面翻转/描边的效果
+- [FIXED] ysm格式的cube路径与文件夹json的cube路径不同 其poly_mash会丢失size<0的状态 导致本应是负缩放大小的模型无法通过正确翻转法线 来做到内外面翻转/描边的效果
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
-- [SKIP] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为安全兜底（默认 1024 MB 触发 GC），可通过配置关闭
+- [SKIP] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为高阈值兜底（默认 1024 MB + 60秒后触发 强制GC），可通过配置关闭
 
 
 

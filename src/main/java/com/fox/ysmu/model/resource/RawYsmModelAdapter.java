@@ -651,8 +651,10 @@ public final class RawYsmModelAdapter {
         JsonArray normals = new JsonArray();
         JsonArray uvs = new JsonArray();
 
-        // Vertex index order for each quad: normal=[0,1,2,3], reversed=[0,1,3,2]
-        int[] order = reverseWinding ? new int[] { 0, 1, 3, 2 } : new int[] { 0, 1, 2, 3 };
+        // Vertex index order for each quad: normal=[0,1,2,3], reversed=[0,3,2,1]
+        // [0,3,2,1] walks the circular order backwards (v0→v3→v2→v1), reversing
+        // winding from CW→CCW. Both GL_QUADS decomposition triangles become CCW.
+        int[] order = reverseWinding ? new int[] { 0, 3, 2, 1 } : new int[] { 0, 1, 2, 3 };
 
         for (RawYsmModel.RawCube rawCube : cubes) {
             for (RawYsmModel.RawFace face : rawCube.faces) {
