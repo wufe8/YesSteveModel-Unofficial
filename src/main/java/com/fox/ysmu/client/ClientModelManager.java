@@ -301,6 +301,10 @@ public class ClientModelManager {
         if (!bundle.extraAnimationNames.isEmpty()) {
             EXTRA_ANIMATION_NAME.putAll(bundle.extraAnimationNames);
         }
+        // Register preview animation synchronously with model registration
+        if (StringUtils.isNotBlank(bundle.previewAnimation)) {
+            PREVIEW_ANIMATION.put(modelId, bundle.previewAnimation);
+        }
 
         // Register textures (OpenGL — must be main thread)
         for (Map.Entry<ResourceLocation, byte[]> e : bundle.texturesToRegister.entrySet()) {

@@ -137,8 +137,24 @@ public class ModelButton extends GuiButton {
         // controller only handles temporary overlays — they blend naturally.
         String guiAnimName = "";
         if (guiEnhancements) {
-            if (this.field_146123_n) {
-                // Hovering: play "hover" animation
+            ExtendedModelInfo eep = ExtendedModelInfo.get(player);
+            boolean isSelected = eep != null && eep.getModelId() != null
+                && mainModelId.equals(ModelIdUtil.getMainId(eep.getModelId()));
+
+            if (isSelected) {
+                // Selected model: always play focus (per wiki: "当选中该模型按钮时播放")
+                if (!hasFocusAnim) {
+                    AnimationFile af = GeckoLibCache.getInstance().getAnimations().get(mainModelId);
+                    if (af != null) {
+                        software.bernie.geckolib3.core.builder.Animation fa = af.getAnimation("focus");
+                        hasFocusAnim = fa != null && fa.boneAnimations != null && !fa.boneAnimations.isEmpty();
+                    }
+                }
+                if (hasFocusAnim) {
+                    guiAnimName = "focus";
+                }
+            } else if (this.field_146123_n) {
+                // Hovering over a non-selected model: play "hover"
                 this.lastHoverTime = System.currentTimeMillis();
                 guiAnimName = hasHoverAnim ? "hover" : "";
             } else if (this.lastHoverTime >= 0) {
@@ -147,14 +163,6 @@ public class ModelButton extends GuiButton {
                     guiAnimName = "hover_fadeout";
                 } else {
                     this.lastHoverTime = -1;
-                }
-            }
-            // If nothing from hover/fadeout and this model is selected, play "focus" as overlay
-            if (guiAnimName.isEmpty()) {
-                ExtendedModelInfo eep = ExtendedModelInfo.get(player);
-                if (eep != null && hasFocusAnim && eep.getModelId() != null
-                    && mainModelId.equals(ModelIdUtil.getMainId(eep.getModelId()))) {
-                    guiAnimName = "focus";
                 }
             }
         }

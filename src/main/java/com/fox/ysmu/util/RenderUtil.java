@@ -344,6 +344,13 @@ public final class RenderUtil {
             IAnimatable animatable = AnimatableCacheUtil.ANIMATABLE_CACHE.get(modelId, CustomPlayerEntity::new);
             if (animatable instanceof CustomPlayerEntity entity) {
                 entity.setPlayer(null);
+                // Clear per-frame dedup cache so every GUI preview FBO render
+                // gets fresh animation processing.  Without this,
+                // AnimationProcessor.tickAnimation() skips identical entities
+                // within the same frame, causing subsequent copies of the same
+                // model to re-use stale bone values from the first render's
+                // transitioning phase instead of showing the correct animation.
+                renderer.getGeoModelProvider().getAnimationProcessor().clearAnimatedEntities();
                 consumer.accept(entity);
                 renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity, disablePreviewRotation);
             }
@@ -376,9 +383,9 @@ public final class RenderUtil {
         GL11.glScalef(pScale, pScale, -pScale);
         GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F); // 将模型从倒置状态翻转过来
         if (!disablePreviewRotation) {
-            // Match OpenYSM: pure X-axis -10° tilt, no Y component
             GL11.glRotatef(-10.0F, 1.0F, 0.0F, 0.0F);
             GL11.glRotatef(-20.0F, 0.0F, 1.0F, 0.0F);
+            // DEMO:
             // GL11.glRotatef(45.0F, 1.0F, 0.0F, 0.0F);
             // 关闭preview时 模型沿-x轴(屏幕向左) 右手螺旋顺时针45度(模型向屏幕上方看)
             // GL11.glRotatef(45.0F, 0.0F, 1.0F, 0.0F);

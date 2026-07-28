@@ -537,6 +537,14 @@ public class AnimationController<T extends IAnimatable> {
             // The animation should transition to the model's initial state
             animationState = AnimationState.Stopped;
             justStopped = true;
+            // YSMU: Clear bone animation queues when the controller stops.
+            // Without this, stale queues from the last non-STOP frame persist
+            // and their animation points continue to override bones set by
+            // other controllers (e.g. cap_controller's "hover" pose lingers
+            // after the hover ends, corrupting the main controller's preview
+            // animation).
+            this.boneAnimationQueues.clear();
+            this.activeBoneAnimationQueues.clear();
             return;
         }
 

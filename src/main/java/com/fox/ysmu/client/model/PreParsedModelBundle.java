@@ -40,6 +40,13 @@ public class PreParsedModelBundle {
     public int totalCubes;
     public int totalAnims;
 
+    /** Preview animation name from ysm.json (e.g. "gui"). Set by
+     *  parseAndRegisterModel() before scheduleApply(), consumed by
+     *  applyPreParsed() to populate PREVIEW_ANIMATION synchronously,
+     *  eliminating the race between async registerExtraWheel() and
+     *  the first ModelButton FBO render. */
+    public String previewAnimation = "";
+
     // Projectile registration tracking
     public final Map<ResourceLocation, List<String>> projectileModelIds = new LinkedHashMap<>();
     public final Map<ResourceLocation, List<ResourceLocation>> projectileTextureIds = new LinkedHashMap<>();

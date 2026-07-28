@@ -29,6 +29,14 @@ public class AnimationProcessor<T extends IAnimatable> {
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
     private final IAnimatableModel animatedModel;
 
+    /** YSMU: Clear the per-frame deduplication cache so the next tickAnimation()
+     *  call is guaranteed to process animation even for the same entity+seekTime.
+     *  Used by GUI preview rendering (ModelButton FBOs) where multiple renders of
+     *  the same cached entity must each produce fresh bone values. */
+    public void clearAnimatedEntities() {
+        animatedEntities.clear();
+    }
+
     public AnimationProcessor(IAnimatableModel animatedModel) {
         this.animatedModel = animatedModel;
     }

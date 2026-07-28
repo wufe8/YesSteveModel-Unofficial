@@ -473,27 +473,40 @@ public final class AnimationManager {
             if (!animatable.areGuiAnimationsEnabled()) {
                 return PlayState.STOP;
             }
-            // First, check the entity's guiBaseAnimation (set directly by ModelButton).
+            // Try guiBaseAnimation first (set by ModelButton from PREVIEW_ANIMATION).
+            String baseAnim = null;
             if (animatable.hasGuiBaseAnimation()) {
-                return playLoopAnimation(event, animatable.getGuiBaseAnimation());
+                baseAnim = animatable.getGuiBaseAnimation();
             }
             // Fallback: look up PREVIEW_ANIMATION from the model registry.
+            if (baseAnim == null || baseAnim.isEmpty()) {
+                ResourceLocation mainModel = animatable.getMainModel();
+                if (mainModel != null) {
+                    baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModel);
+                    // Also try the raw model ID (without /main suffix)
+                    if ((baseAnim == null || baseAnim.isEmpty()) && mainModel.getResourcePath().endsWith("/main")) {
+                        ResourceLocation rawId = new ResourceLocation(mainModel.getResourceDomain(),
+                            mainModel.getResourcePath().substring(0, mainModel.getResourcePath().length() - 5));
+                        baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(rawId);
+                    }
+                }
+            }
+            if (baseAnim != null && !baseAnim.isEmpty()) {
+                return playLoopAnimation(event, baseAnim);
+            }
+            // Final fallback: try "gui" first (models without an explicit
+            // previewAnimation in ysm.json still usually define a "gui"
+            // animation), then "idle".
             ResourceLocation mainModel = animatable.getMainModel();
             if (mainModel != null) {
-                String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModel);
-                // Also try the raw model ID (without /main suffix)
-                if ((previewAnim == null || previewAnim.isEmpty()) && mainModel.getResourcePath().endsWith("/main")) {
-                    ResourceLocation rawId = new ResourceLocation(mainModel.getResourceDomain(),
-                        mainModel.getResourcePath().substring(0, mainModel.getResourcePath().length() - 5));
-                    previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(rawId);
-                }
-                if (previewAnim != null && !previewAnim.isEmpty()) {
-                    return playLoopAnimation(event, previewAnim);
-                }
-                // Final fallback: if the model has "idle" animation, play it
                 AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(mainModel);
-                if (file != null && file.getAnimation("idle") != null) {
-                    return playLoopAnimation(event, "idle");
+                if (file != null) {
+                    if (file.getAnimation("gui") != null) {
+                        return playLoopAnimation(event, "gui");
+                    }
+                    if (file.getAnimation("idle") != null) {
+                        return playLoopAnimation(event, "idle");
+                    }
                 }
             }
             return PlayState.STOP;

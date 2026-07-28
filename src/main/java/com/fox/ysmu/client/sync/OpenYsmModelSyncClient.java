@@ -327,6 +327,7 @@ public final class OpenYsmModelSyncClient {
             com.fox.ysmu.client.model.PreParsedModelBundle bundle;
             try {
                 bundle = ClientModelManager.preParseModel(data);
+            bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
                 return false;
