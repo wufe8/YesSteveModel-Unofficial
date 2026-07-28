@@ -17,6 +17,10 @@ final class OpenYsmControllerDefinitions {
         String name = "";
         String initialState = "";
         final Map<String, State> states = new LinkedHashMap<>();
+        /** true 表示该控制器的 condition/transition 中引用了 {@code ctrl.tac_*}
+         *  控制变量。当 TacZ 模组未加载时可在运行时跳过此控制器，避免
+         *  无效动画播放和音效误触发。在 {@code parseController()} 中设置。 */
+        boolean hasTacZConditions = false;
 
         State getInitialState() {
             if (states.containsKey(initialState)) {

@@ -242,6 +242,18 @@ public final class OpenYsmPlayerControllerRuntime {
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
+        // 跳过完全依赖 TacZ 控制变量的控制器（如 player.parallel_3）。
+        // 没有 TacZ 时这些控制器的 transition 条件永远无法满足，
+        // 导致卡在 default 状态循环播放在动画中带有音效关键帧的动画。
+        if (!com.fox.ysmu.compat.TacZCompat.isTacZLoaded() && match.controller.hasTacZConditions) {
+            // 清空运行时状态防止残留
+            runtimeState.currentState = "";
+            runtimeState.lastSelectedAnimationState = "";
+            runtimeState.lastSelectedAnimation = "";
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            event.getController().currentAnimationBuilder = new AnimationBuilder();
+            return null;
+        }
         // Inject roaming variables scoped to the current model only.
         // Using getRoamingVarsForModel() instead of directly iterating
         // PENDING_ROAMING prevents cross-model variable contamination.

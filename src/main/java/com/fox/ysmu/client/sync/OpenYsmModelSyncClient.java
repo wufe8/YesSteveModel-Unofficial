@@ -175,16 +175,24 @@ public final class OpenYsmModelSyncClient {
             File cachedFile = localCacheMap.get(context.uuid);
             if (YSMClientCache.verifyFileContent(cachedFile, hash1, hash2)) {
                 cacheHitCount++;
-                byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
-                byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
-                if (Config.DEBUG_MODEL_LOAD) {
-                    ysmu.LOG.info("[YSMU-MODEL] Client cache HIT for {} ({}), cachedFile={}",
-                        modelId, context.uuid, cachedFile);
+                try {
+                    byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
+                    byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info("[YSMU-MODEL] Client cache HIT for {} ({}), cachedFile={}",
+                            modelId, context.uuid, cachedFile);
+                    }
+                    if (parseAndRegisterModel(clearBytes, context)) {
+                        loadedModelsCount++;
+                    }
+                    ysmu.LOG.info("OpenYSM client cache hit for {} ({})", modelId, context.uuid);
+                } catch (Exception e) {
+                    // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
+                    // 避免整个同步流程因此崩溃，导致加载进度条无法显示。
+                    ysmu.LOG.warn("OpenYSM client cache HIT but decrypt FAILED for {} ({}), falling back to download: {}",
+                        modelId, context.uuid, e.getMessage());
+                    modelsToRequest.add(new ModelHash(hash1, hash2));
                 }
-                if (parseAndRegisterModel(clearBytes, context)) {
-                    loadedModelsCount++;
-                }
-                ysmu.LOG.info("OpenYSM client cache hit for {} ({})", modelId, context.uuid);
             } else {
                 modelsToRequest.add(new ModelHash(hash1, hash2));
                 if (Config.DEBUG_MODEL_LOAD) {

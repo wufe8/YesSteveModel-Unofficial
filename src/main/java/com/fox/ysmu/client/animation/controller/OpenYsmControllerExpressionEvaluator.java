@@ -213,7 +213,10 @@ final class OpenYsmControllerExpressionEvaluator {
         }
         if (c == '\'' || c == '"') {
             readQuotedString(expr, idx);
-            return ctx -> FALSE;
+            // 字符串字面量在数值上下文中返回 NaN，防止意外匹配 0.0。
+            // 例如模型写 ctrl.tac_gun_type=='rifle'，若 'rifle' 也返回 0.0，
+            // 则 0.0==0.0 永远为 true，导致所有 Tac 条件动画同时播放造成闪烁。
+            return ctx -> Double.NaN;
         }
         if (Character.isDigit(c) || (c == '.' && idx[0] + 1 < expr.length()
             && Character.isDigit(expr.charAt(idx[0] + 1)))) {

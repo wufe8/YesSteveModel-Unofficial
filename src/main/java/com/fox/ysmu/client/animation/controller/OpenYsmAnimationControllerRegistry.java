@@ -118,6 +118,24 @@ public final class OpenYsmAnimationControllerRegistry {
                 controller.states.put(state.name, state);
             }
         }
+        // 扫描所有 condition 中是否引用了 ctrl.tac_* 控制变量。
+        // 若依赖 TacZ 且模组未加载，运行时可以跳过此控制器。
+        for (State s : controller.states.values()) {
+            for (Transition t : s.transitions) {
+                if (t.condition != null && t.condition.contains("ctrl.tac_")) {
+                    controller.hasTacZConditions = true;
+                    break;
+                }
+            }
+            if (controller.hasTacZConditions) break;
+            for (OpenYsmControllerDefinitions.AnimationEntry ae : s.animations) {
+                if (ae.condition != null && ae.condition.contains("ctrl.tac_")) {
+                    controller.hasTacZConditions = true;
+                    break;
+                }
+            }
+            if (controller.hasTacZConditions) break;
+        }
         return controller;
     }
 
