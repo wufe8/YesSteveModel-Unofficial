@@ -22,6 +22,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import javax.vecmath.Vector3f;
+
 import javax.imageio.ImageIO;
 
 import org.apache.commons.lang3.StringUtils;
@@ -520,6 +522,87 @@ public final class RawYsmModelAdapter {
         return root;
     }
 
+    /**
+     * Detects whether a RawCube represents a negative-volume (inside-out) shell.
+     * Uses OpenYSM's two-phase detection:
+     * Phase 1 — For each face, compute cross(e1, e2) · normal.
+     *           If any face has dot < -1e-5f, the cube is negative volume.
+     * Phase 2 — For pairs of faces with opposite normals (dot < -0.99f),
+     *           check whether the face with the positive normal is geometrically
+     *           closer to the origin than the face with the negative normal.
+     *           If so, the cube is negative volume.
+     */
+    private static boolean isNegativeVolume(RawYsmModel.RawCube cube) {
+        if (cube.faces.isEmpty()) return false;
+
+        // Phase 1: per-face cross-product check
+        for (RawYsmModel.RawFace face : cube.faces) {
+            Vector3f v0 = new Vector3f(
+                getVectorValue(face.positions[0], 0),
+                getVectorValue(face.positions[0], 1),
+                getVectorValue(face.positions[0], 2));
+            Vector3f v1 = new Vector3f(
+                getVectorValue(face.positions[1], 0),
+                getVectorValue(face.positions[1], 1),
+                getVectorValue(face.positions[1], 2));
+            Vector3f v2 = new Vector3f(
+                getVectorValue(face.positions[2], 0),
+                getVectorValue(face.positions[2], 1),
+                getVectorValue(face.positions[2], 2));
+            Vector3f normal = new Vector3f(
+                getVectorValue(face.normal, 0),
+                getVectorValue(face.normal, 1),
+                getVectorValue(face.normal, 2));
+            Vector3f e1 = new Vector3f(v1);
+            e1.sub(v0);
+            Vector3f e2 = new Vector3f(v2);
+            e2.sub(v1);
+            Vector3f cross = new Vector3f();
+            cross.cross(e1, e2);
+            if (cross.dot(normal) < -1e-5f) {
+                return true;
+            }
+        }
+
+        // Phase 2: opposite-face position check
+        int faceCount = cube.faces.size();
+        for (int i = 0; i < faceCount; i++) {
+            RawYsmModel.RawFace faceA = cube.faces.get(i);
+            Vector3f normA = new Vector3f(
+                getVectorValue(faceA.normal, 0),
+                getVectorValue(faceA.normal, 1),
+                getVectorValue(faceA.normal, 2));
+            for (int j = i + 1; j < faceCount; j++) {
+                RawYsmModel.RawFace faceB = cube.faces.get(j);
+                Vector3f normB = new Vector3f(
+                    getVectorValue(faceB.normal, 0),
+                    getVectorValue(faceB.normal, 1),
+                    getVectorValue(faceB.normal, 2));
+                if (normA.dot(normB) < -0.99f) {
+                    Vector3f centerA = getFaceCenter(faceA);
+                    Vector3f centerB = getFaceCenter(faceB);
+                    Vector3f diff = new Vector3f(centerA);
+                    diff.sub(centerB);
+                    if (diff.dot(normA) < -1e-5f) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    /** Computes the average of the 4 vertex positions of a face. */
+    private static Vector3f getFaceCenter(RawYsmModel.RawFace face) {
+        float cx = 0, cy = 0, cz = 0;
+        for (int i = 0; i < 4; i++) {
+            cx += getVectorValue(face.positions[i], 0);
+            cy += getVectorValue(face.positions[i], 1);
+            cz += getVectorValue(face.positions[i], 2);
+        }
+        return new Vector3f(cx / 4f, cy / 4f, cz / 4f);
+    }
+
     private static JsonObject createBoneJson(RawYsmModel.RawBone rawBone, RawYsmModel.RawGeometry geometry) {
         JsonObject bone = new JsonObject();
         bone.addProperty("name", StringUtils.defaultIfBlank(rawBone.name, "bone"));
@@ -528,21 +611,53 @@ public final class RawYsmModelAdapter {
         }
         bone.add("pivot", generatedPivotArray(rawBone.pivot));
         bone.add("rotation", generatedRotationArray(rawBone.rotation));
-        JsonObject polyMesh = createPolyMeshJson(rawBone);
+
+        // Separate cubes into positive and negative volume groups.
+        // Negative-volume cubes (inside-out shells) need a separate poly_mesh
+        // so GeoBuilder can create a GeoCube with hasNegSize=true, enabling
+        // the two-pass CULL_FRONT rendering for the outline effect.
+        List<RawYsmModel.RawCube> posCubes = new ArrayList<>();
+        List<RawYsmModel.RawCube> negCubes = new ArrayList<>();
+        for (RawYsmModel.RawCube rawCube : rawBone.cubes) {
+            if (isNegativeVolume(rawCube)) {
+                negCubes.add(rawCube);
+            } else {
+                posCubes.add(rawCube);
+            }
+        }
+
+        JsonObject polyMesh = createPolyMeshFromCubes(posCubes, false);
         if (polyMesh != null) {
             bone.add("poly_mesh", polyMesh);
+        }
+        // Additional poly_mesh for negative-volume cubes — GeoBuilder will
+        // create a second GeoCube with hasNegSize=true from this field.
+        // Vertex winding is reversed because BlockBench negative-size cubes
+        // have CW winding; reversing to standard CCW makes CULL_FRONT
+        // correctly show only the far-side faces (outline effect).
+        JsonObject negMesh = createPolyMeshFromCubes(negCubes, true);
+        if (negMesh != null) {
+            bone.add("__ysm_neg_mesh", negMesh);
         }
         return bone;
     }
 
-    private static JsonObject createPolyMeshJson(RawYsmModel.RawBone rawBone) {
+    /** Builds a poly_mesh JSON object from a list of RawCubes.
+     * @param reverseWinding if true, reverses vertex winding (swaps v2↔v3)
+     *        so quads become standard CCW. Needed for negative-volume cubes
+     *        whose BlockBench faces have CW winding from the .ysm exporter. */
+    private static JsonObject createPolyMeshFromCubes(List<RawYsmModel.RawCube> cubes, boolean reverseWinding) {
         JsonArray positions = new JsonArray();
         JsonArray normals = new JsonArray();
         JsonArray uvs = new JsonArray();
 
-        for (RawYsmModel.RawCube rawCube : rawBone.cubes) {
+        // Vertex index order for each quad: normal=[0,1,2,3], reversed=[0,1,3,2]
+        int[] order = reverseWinding ? new int[] { 0, 1, 3, 2 } : new int[] { 0, 1, 2, 3 };
+
+        for (RawYsmModel.RawCube rawCube : cubes) {
             for (RawYsmModel.RawFace face : rawCube.faces) {
-                for (int i = 0; i < 4; i++) {
+                for (int idx = 0; idx < 4; idx++) {
+                    int i = order[idx];
                     float[] position = face.positions[i];
                     positions.add(new JsonPrimitive((double) getVectorValue(position, 0)));
                     positions.add(new JsonPrimitive((double) getVectorValue(position, 1)));

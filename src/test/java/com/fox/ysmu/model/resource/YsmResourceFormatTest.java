@@ -122,10 +122,13 @@ class YsmResourceFormatTest {
             .getAsJsonArray("minecraft:geometry")
             .get(0)
             .getAsJsonObject();
-        JsonObject polyMesh = geometry.getAsJsonArray("bones")
+        JsonObject boneObj = geometry.getAsJsonArray("bones")
             .get(0)
-            .getAsJsonObject()
-            .getAsJsonObject("poly_mesh");
+            .getAsJsonObject();
+        // The test geometry has a single flat face with vertex winding opposite to
+        // its stored normal → detected as negative volume → goes to __ysm_neg_mesh.
+        JsonObject polyMesh = boneObj.getAsJsonObject("__ysm_neg_mesh");
+        assertNotNull(polyMesh, "Expected __ysm_neg_mesh for negative-volume cube");
         assertEquals("quad_list", polyMesh.get("polys").getAsString());
         assertTrue(polyMesh.get("normalized_uvs").getAsBoolean());
         assertEquals(12, polyMesh.getAsJsonArray("positions").size());

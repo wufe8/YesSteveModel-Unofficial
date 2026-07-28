@@ -17,6 +17,12 @@ public class Bone {
     private String parent;
     private double[] pivot = new double[] { 0, 0, 0 };
     private PolyMesh polyMesh;
+    /**
+     * YSMU extension: secondary poly_mesh for negative-volume (inside-out) cubes.
+     * GeoBuilder creates a separate GeoCube with hasNegSize=true from this field,
+     * enabling two-pass CULL_FRONT rendering for the outline/glow-ring effect.
+     */
+    private PolyMesh ysmNegMesh;
     private Long renderGroupID;
     private Boolean reset;
     private double[] rotation = new double[] { 0, 0, 0 };
@@ -160,6 +166,21 @@ public class Bone {
     @JsonProperty("poly_mesh")
     public void setPolyMesh(PolyMesh value) {
         this.polyMesh = value;
+    }
+
+    /**
+     * YSMU extension: secondary poly_mesh for negative-volume (inside-out) cubes.
+     * GeoBuilder creates a separate GeoCube with hasNegSize=true from this field,
+     * enabling two-pass CULL_FRONT rendering for the outline/glow-ring effect.
+     */
+    @JsonProperty("__ysm_neg_mesh")
+    public PolyMesh getYsmNegMesh() {
+        return ysmNegMesh;
+    }
+
+    @JsonProperty("__ysm_neg_mesh")
+    public void setYsmNegMesh(PolyMesh value) {
+        this.ysmNegMesh = value;
     }
 
     @JsonProperty("render_group_id")

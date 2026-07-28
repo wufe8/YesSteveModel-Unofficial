@@ -106,6 +106,14 @@ public class GeoBuilder implements IGeoBuilder {
         if (rawBone.getPolyMesh() != null) {
             geoBone.childCubes.add(GeoCube.createFromPolyMesh(rawBone.getPolyMesh(), properties));
         }
+        // YSMU extension: secondary poly_mesh for negative-volume (inside-out)
+        // cubes. Create a separate GeoCube with hasNegSize=true so
+        // renderBoneCubes() applies two-pass CULL_FRONT rendering.
+        if (rawBone.getYsmNegMesh() != null) {
+            GeoCube negCube = GeoCube.createFromPolyMesh(rawBone.getYsmNegMesh(), properties);
+            negCube.hasNegSize = true;
+            geoBone.childCubes.add(negCube);
+        }
 
         for (RawBoneGroup child : bone.children.values()) {
             geoBone.childBones.add(constructBone(child, properties, geoBone));
