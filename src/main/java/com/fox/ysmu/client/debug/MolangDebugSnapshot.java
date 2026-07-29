@@ -120,18 +120,84 @@ public final class MolangDebugSnapshot {
     }
 
     /**
-     * 在聊天框输出单个变量值。
+     * 解析变量名，支持精确匹配、通配符(*)前缀匹配、以及模糊子串匹配。
+     *
+     * @param pattern 变量名模式
+     * @return 匹配的变量名 → 值的映射
+     */
+    public static Map<String, Double> resolveVariables(String pattern) {
+        // 1. 精确匹配
+        double exact = queryVariable(pattern);
+        if (!Double.isNaN(exact)) {
+            Map<String, Double> result = new LinkedHashMap<>();
+            result.put(pattern, exact);
+            return result;
+        }
+        // 2. 通配符 * 前缀匹配
+        if (pattern.contains("*")) {
+            String prefix = pattern.substring(0, pattern.lastIndexOf('*'));
+            Map<String, Double> result = new LinkedHashMap<>();
+            for (Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry
+                : MolangParser.VARIABLES.entrySet()) {
+                if (entry.getKey().startsWith(prefix)) {
+                    result.put(entry.getKey(), entry.getValue().get());
+                }
+            }
+            // v.roaming.* 通配符
+            if ((prefix.equals("v.") || prefix.equals("v.roaming.")) && result.isEmpty()) {
+                String rp = prefix.equals("v.roaming.") ? "v.roaming." : "v.";
+                for (Map.Entry<String, Double> entry
+                    : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+                    result.put(rp + entry.getKey(), entry.getValue());
+                }
+            }
+            if (!result.isEmpty()) return result;
+        }
+        // 3. 模糊子串匹配（不包含通配符但也不是精确匹配）
+        Map<String, Double> result = new LinkedHashMap<>();
+        String lower = pattern.toLowerCase(java.util.Locale.ROOT);
+        for (Map.Entry<String, software.bernie.geckolib3.core.molang.LazyVariable> entry
+            : MolangParser.VARIABLES.entrySet()) {
+            if (entry.getKey().toLowerCase(java.util.Locale.ROOT).contains(lower)) {
+                result.put(entry.getKey(), entry.getValue().get());
+            }
+        }
+        // v. 模糊匹配 — 扫描 PENDING_ROAMING
+        if (lower.startsWith("v.") || lower.startsWith("v.roaming.")) {
+            for (Map.Entry<String, Double> entry
+                : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+                if (entry.getKey().toLowerCase(java.util.Locale.ROOT).contains(
+                    lower.startsWith("v.roaming.") ? lower.substring(10) : lower.substring(2))) {
+                    result.put("v." + entry.getKey(), entry.getValue());
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * 在聊天框输出变量值，支持通配符和模糊匹配。
      */
     public static void printSingleToChat(String name) {
-        double value = queryVariable(name);
+        Map<String, Double> resolved = resolveVariables(name);
         EntityPlayer player = Minecraft.getMinecraft().thePlayer;
         if (player == null) return;
-        if (Double.isNaN(value)) {
+        if (resolved.isEmpty()) {
             player.addChatMessage(new ChatComponentText(
                 CHAT_PREFIX + " §e" + name + "§r = §7<unknown>"));
-        } else {
+        } else if (resolved.size() == 1 && resolved.containsKey(name)) {
+            // 精确匹配单个变量
+            double value = resolved.get(name);
             player.addChatMessage(new ChatComponentText(
                 CHAT_PREFIX + " §e" + name + "§r = " + formatValue(value)));
+        } else {
+            // 多个匹配结果
+            player.addChatMessage(new ChatComponentText(
+                CHAT_PREFIX + " §a" + resolved.size() + " variable(s) matching §e" + name + "§r:"));
+            for (Map.Entry<String, Double> entry : resolved.entrySet()) {
+                player.addChatMessage(new ChatComponentText(
+                    "  §e" + entry.getKey() + "§r = " + formatValue(entry.getValue())));
+            }
         }
     }
 
