@@ -25,7 +25,7 @@ import com.fox.ysmu.compat.EtFuturumCompat;
 import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 
-final class OpenYsmControllerExpressionEvaluator {
+public final class OpenYsmControllerExpressionEvaluator {
 
     private static final double TRUE = 1.0d;
     private static final double FALSE = 0.0d;
@@ -437,6 +437,70 @@ final class OpenYsmControllerExpressionEvaluator {
             }
         }
         return -1;
+    }
+    /**
+     * Static helper for debug queries — evaluates a ctrl.* state using only
+     * the player reference, without needing AnimationEvent or RuntimeState.
+     * LimbSwing-dependent states (swim/sneak/run/walk) are approximated.
+     */
+    public static double evaluateCtrlState(String name, EntityPlayer player) {
+        if (player == null) return FALSE;
+        if ("death".equals(name)) return player.isDead ? TRUE : FALSE;
+        if ("sleep".equals(name)) return player.isPlayerSleeping() ? TRUE : FALSE;
+        if ("swim".equals(name)) return player.isInWater() ? TRUE : FALSE;
+        if ("climb".equals(name) || "climbing".equals(name)) return player.isOnLadder() ? TRUE : FALSE;
+        if ("ladder_up".equals(name)) return (player.isOnLadder() && evalMotionY(player, 0.1) > 0) ? TRUE : FALSE;
+        if ("ladder_stillness".equals(name)) return (player.isOnLadder() && evalMotionY(player, 0.1) == 0) ? TRUE : FALSE;
+        if ("ladder_down".equals(name)) return (player.isOnLadder() && evalMotionY(player, 0.1) < 0) ? TRUE : FALSE;
+        if ("ride_pig".equals(name)) return player.ridingEntity instanceof net.minecraft.entity.passive.EntityPig ? TRUE : FALSE;
+        if ("boat".equals(name)) return player.ridingEntity instanceof net.minecraft.entity.item.EntityBoat ? TRUE : FALSE;
+        if ("ride".equals(name) || "sit".equals(name)) return player.isRiding() ? TRUE : FALSE;
+        if ("elytra_fly".equals(name)) return com.fox.ysmu.compat.EtFuturumCompat.isElytraFlying(player) ? TRUE : FALSE;
+        if ("fly".equals(name)) return evalIsFlying(player) ? TRUE : FALSE;
+        if ("swim_stand".equals(name)) return player.isInWater() ? TRUE : FALSE;
+        if ("attacked".equals(name)) return player.hurtTime > 0 ? TRUE : FALSE;
+        if ("jump".equals(name)) {
+            if (evalIsFlying(player) || player.isRiding() || evalIsOnGround(player) || player.isInWater()) return FALSE;
+            return evalMotionY(player, 0.0) != 0 ? TRUE : FALSE;
+        }
+        if ("sneak".equals(name) || "sneaking".equals(name)) {
+            return (evalIsOnGround(player) && player.isSneaking()) ? TRUE : FALSE;
+        }
+        if ("run".equals(name)) return (evalIsOnGround(player) && player.isSprinting()) ? TRUE : FALSE;
+        if ("walk".equals(name)) {
+            boolean moving = Math.abs(player.motionX) > 0.001 || Math.abs(player.motionZ) > 0.001;
+            return (evalIsOnGround(player) && !player.isSprinting() && moving) ? TRUE : FALSE;
+        }
+        if ("idle".equals(name)) {
+            if (player.isDead || player.isPlayerSleeping() || player.isInWater()
+                || player.isOnLadder() || player.isRiding() || player.hurtTime > 0
+                || !evalIsOnGround(player) || player.isSprinting() || player.isSneaking()) return FALSE;
+            return TRUE;
+        }
+        return Double.NaN;
+    }
+
+    private static boolean evalIsFlying(EntityPlayer player) {
+        if (com.fox.ysmu.compat.EtFuturumCompat.isElytraFlying(player)) return true;
+        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer) {
+            return player.capabilities.isFlying;
+        }
+        return com.fox.ysmu.client.animation.RemotePlayerMotionStates.isFlying(player);
+    }
+
+    private static boolean evalIsOnGround(EntityPlayer player) {
+        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer) {
+            return player.onGround;
+        }
+        return com.fox.ysmu.client.animation.RemotePlayerMotionStates.isOnGround(player);
+    }
+
+    private static int evalMotionY(EntityPlayer player, double threshold) {
+        double motionY = player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
+            ? player.motionY : (player.posY - player.prevPosY) * 2.0d;
+        if (motionY > threshold) return 1;
+        if (motionY < -threshold) return -1;
+        return 0;
     }
 
     static final class Context {

@@ -48,9 +48,12 @@ public final class MolangDebugSnapshot {
             if (gVar != null) return gVar.get();
             return Double.NaN;
         }
-        // 3. ctrl.* 控制器状态
+        // 3. ctrl.* 控制器状态 — 委托到真实的 evaluator
         if (name.startsWith("ctrl.")) {
-            return queryCtrlState(name.substring("ctrl.".length()));
+            EntityPlayer p = Minecraft.getMinecraft().thePlayer;
+            if (p == null) return Double.NaN;
+            return com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
+                .evaluateCtrlState(name.substring("ctrl.".length()), p);
         }
         return Double.NaN;
     }
@@ -102,7 +105,7 @@ public final class MolangDebugSnapshot {
     // ---- 聊天输出 ----
 
     /**
-     * 获取所有已注册变量的完整快照（用于 overlay 全量显示）。
+     * 获取所有变量的完整快照（用于 overlay 全量显示）。
      * 包括 query.* / ysm.* / math.* / ctrl.* / v.roaming.*
      */
     public static Map<String, Double> getAllVariables() {
@@ -114,6 +117,20 @@ public final class MolangDebugSnapshot {
         // v.roaming.* 漫游变量
         for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
             result.put("v." + entry.getKey(), entry.getValue());
+        }
+        // ctrl.* 动态状态 — 使用 evaluator 的实时评估
+        EntityPlayer p = Minecraft.getMinecraft().thePlayer;
+        if (p != null) {
+            String[] ctrlStates = {"idle", "death", "sleep", "swim", "climb", "climbing",
+                "ladder_up", "ladder_stillness", "ladder_down",
+                "ride", "ride_pig", "boat", "sit",
+                "elytra_fly", "fly", "swim_stand",
+                "attacked", "jump", "sneak", "sneaking", "run", "walk"};
+            for (String s : ctrlStates) {
+                result.put("ctrl." + s,
+                    com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
+                        .evaluateCtrlState(s, p));
+            }
         }
         return result;
     }
@@ -232,17 +249,5 @@ public final class MolangDebugSnapshot {
         return String.format("§b%.6f", value);
     }
 
-    private static double queryCtrlState(String name) {
-        EntityPlayer player = Minecraft.getMinecraft().thePlayer;
-        if (player == null) return Double.NaN;
-        if ("death".equals(name)) return player.isDead ? 1.0 : 0.0;
-        if ("sleep".equals(name)) return player.isPlayerSleeping() ? 1.0 : 0.0;
-        if ("sneak".equals(name) || "sneaking".equals(name)) return player.isSneaking() ? 1.0 : 0.0;
-        if ("fly".equals(name)) return player.capabilities.isFlying ? 1.0 : 0.0;
-        if ("jump".equals(name)) return (!player.onGround && !player.isInWater()) ? 1.0 : 0.0;
-        if ("ride".equals(name)) return player.isRiding() ? 1.0 : 0.0;
-        if ("swim".equals(name)) return player.isInWater() ? 1.0 : 0.0;
-        if ("idle".equals(name)) return 1.0;
-        return Double.NaN;
-    }
+
 }

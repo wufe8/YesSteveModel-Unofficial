@@ -58,16 +58,21 @@ public class PacketQueryMolangVar implements IMessage {
             if (ctx.side != Side.CLIENT) return null;
             if (msg.varNames == null || msg.varNames.isEmpty()) return null;
 
-            // 先在聊天框输出标题，再逐个输出变量值
-            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
-            if (mc.thePlayer != null) {
-                int count = msg.varNames.size();
-                mc.thePlayer.addChatMessage(new ChatComponentText(
-                    MolangDebugSnapshot.CHAT_PREFIX + " §aQuerying " + count + " variable(s)..."));
-                for (String name : msg.varNames) {
-                    MolangDebugSnapshot.printSingleToChat(name);
+            // 调度到主线程执行，确保 player 状态（motionY, onGround 等）可正确读取
+            final java.util.List<String> names = msg.varNames;
+            net.minecraft.client.Minecraft.getMinecraft().func_152344_a(new Runnable() {
+                @Override
+                public void run() {
+                    if (net.minecraft.client.Minecraft.getMinecraft().thePlayer == null) return;
+                    int count = names.size();
+                    net.minecraft.client.Minecraft.getMinecraft().thePlayer.addChatMessage(
+                        new ChatComponentText(
+                            MolangDebugSnapshot.CHAT_PREFIX + " §aQuerying " + count + " variable(s)..."));
+                    for (String name : names) {
+                        MolangDebugSnapshot.printSingleToChat(name);
+                    }
                 }
-            }
+            });
             return null;
         }
     }
