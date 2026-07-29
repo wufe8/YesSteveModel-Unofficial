@@ -13,8 +13,10 @@ import net.minecraft.util.MathHelper;
 
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
+import net.minecraft.world.EnumSkyBlock;
 
 import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
@@ -120,6 +122,7 @@ public class AnimationRegister {
         parser.register(new LazyVariable("query.is_sprinting", MolangUtils.FALSE));
         parser.register(new LazyVariable("query.is_swimming", MolangUtils.FALSE));
         parser.register(new LazyVariable("query.is_using_item", MolangUtils.FALSE));
+        parser.register(new LazyVariable("query.is_blocking", MolangUtils.FALSE));
         parser.register(new LazyVariable("query.item_in_use_duration", 0));
         parser.register(new LazyVariable("query.item_max_use_duration", 0));
         parser.register(new LazyVariable("query.item_remaining_use_duration", 0));
@@ -171,6 +174,15 @@ public class AnimationRegister {
         parser.register(new LazyVariable("ysm.hurt_time", 0));
         parser.register(new LazyVariable("ysm.food_level", 20));
         parser.register(new LazyVariable("ysm.time_delta", 0));
+        parser.register(new LazyVariable("ysm.person_view", 0));
+        parser.register(new LazyVariable("ysm.rendering_in_inventory", MolangUtils.FALSE));
+        parser.register(new LazyVariable("ysm.rendering_in_paperdoll", MolangUtils.FALSE));
+        parser.register(new LazyVariable("ysm.is_open_air", MolangUtils.FALSE));
+        parser.register(new LazyVariable("ysm.weather", 0));
+        parser.register(new LazyVariable("ysm.dimension_name", 0));
+        parser.register(new LazyVariable("ysm.block_light", 0));
+        parser.register(new LazyVariable("ysm.sky_light", 0));
+        parser.register(new LazyVariable("ysm.texture_name", 0));
 
         // parser.register(new LazyVariable("ysm.first_person_mod_hide", MolangUtils.FALSE));
     }
@@ -187,7 +199,7 @@ public class AnimationRegister {
         setStateQueryValues(parser, player, mc);
         setItemUseQueryValues(parser, player);
         setWorldQueryValues(parser, player, mc);
-        setYsmValues(animationEvent, parser, data, player, queryValues);
+        setYsmValues(animationEvent, parser, data, player, mc, queryValues);
     }
 
     private static void setEntityQueryValues(MolangParser parser, EntityModelData data, EntityPlayer player,
@@ -199,7 +211,12 @@ public class AnimationRegister {
         // renderYawOffset 对应身体的偏航角（转动头部时身体不会立即跟随），
         // 等效于 OpenYSM 中的 yBodyRot。切勿使用 rotationYaw（头部偏航）。
         parser.setValue("query.body_y_rotation", () -> MathHelper.wrapAngleTo180_float(player.renderYawOffset));
-        parser.setValue("query.cardinal_facing_2d", () -> MathHelper.floor_double((double) (player.rotationYaw * 4.0F / 360.0F) + 0.5D) & 3);
+        parser.setValue("query.cardinal_facing_2d", () -> {
+            int facing = MathHelper.floor_double((double) (player.rotationYaw * 4.0F / 360.0F) + 0.5D) & 3;
+            // YSM mapping: North=2, South=3, West=4, East=5
+            double[] YSM_CARDINAL = {3.0, 4.0, 2.0, 5.0};
+            return YSM_CARDINAL[facing];
+        });
         parser.setValue("query.distance_from_camera", () -> mc.renderViewEntity.getDistanceToEntity(player));
         parser.setValue("query.equipment_count", () -> getEquipmentCount(player));
         parser.setValue("query.eye_target_x_rotation", () -> player.rotationPitch);
@@ -207,8 +224,8 @@ public class AnimationRegister {
         parser.setValue("query.ground_speed", queryValues.groundSpeed());
         parser.setValue("query.has_cape", () -> MolangUtils.booleanToFloat(hasCape(player)));
         parser.setValue("query.has_rider", () -> MolangUtils.booleanToFloat(player.riddenByEntity != null));
-        parser.setValue("query.head_x_rotation", queryValues.headYaw());
-        parser.setValue("query.head_y_rotation", () -> data.headPitch);
+        parser.setValue("query.head_x_rotation", () -> data.headPitch);
+        parser.setValue("query.head_y_rotation", queryValues.headYaw());
         parser.setValue("query.health", player::getHealth);
         parser.setValue("query.hurt_time", () -> player.hurtTime);
         parser.setValue("query.modified_distance_moved", () -> player.distanceWalkedModified);
@@ -242,6 +259,7 @@ public class AnimationRegister {
         parser.setValue("query.is_sprinting", () -> MolangUtils.booleanToFloat(player.isSprinting()));
         parser.setValue("query.is_swimming", () -> MolangUtils.booleanToFloat(player.isInWater()));
         parser.setValue("query.is_using_item", () -> MolangUtils.booleanToFloat(player.isUsingItem()));
+        parser.setValue("query.is_blocking", () -> MolangUtils.booleanToFloat(BlockingCompat.isBlocking(player)));
     }
 
     private static void setItemUseQueryValues(MolangParser parser, EntityPlayer player) {
@@ -260,7 +278,7 @@ public class AnimationRegister {
     }
 
     private static void setYsmValues(AnimationEvent<CustomPlayerEntity> animationEvent, MolangParser parser,
-        EntityModelData data, EntityPlayer player, RemotePlayerAnimationQueries.QueryValues queryValues) {
+        EntityModelData data, EntityPlayer player, Minecraft mc, RemotePlayerAnimationQueries.QueryValues queryValues) {
         parser.setValue("ysm.head_yaw", queryValues.headYaw());
         parser.setValue("ysm.head_pitch", () -> data.headPitch);
         parser.setValue("ysm.has_helmet", () -> getSlotValue(player, 4));
@@ -291,6 +309,32 @@ public class AnimationRegister {
         parser.setValue("ysm.elytra_rot_x", () -> player.rotationPitch);
         parser.setValue("ysm.elytra_rot_y", () -> player.rotationYaw);
         parser.setValue("ysm.elytra_rot_z", 0);
+        parser.setValue("ysm.person_view", () -> mc.gameSettings.thirdPersonView);
+        parser.setValue("ysm.rendering_in_inventory", () -> MolangUtils.booleanToFloat(
+            com.fox.ysmu.util.RenderUtil.RENDERING_IN_INVENTORY));
+        parser.setValue("ysm.rendering_in_paperdoll", () -> MolangUtils.booleanToFloat(
+            com.fox.ysmu.util.RenderUtil.RENDERING_IN_PAPERDOLL));
+        parser.setValue("ysm.is_open_air", () -> MolangUtils.booleanToFloat(
+            player.worldObj.canBlockSeeTheSky(
+                MathHelper.floor_double(player.posX),
+                MathHelper.floor_double(player.posY + 1.0D),
+                MathHelper.floor_double(player.posZ))));
+        parser.setValue("ysm.weather", () -> {
+            if (mc.theWorld.isThundering()) return 2.0;
+            if (mc.theWorld.isRaining()) return 1.0;
+            return 0.0;
+        });
+        parser.setValue("ysm.dimension_name", () -> (double) player.dimension);
+        parser.setValue("ysm.block_light", () -> player.worldObj.getBlockLightValue(
+            MathHelper.floor_double(player.posX),
+            MathHelper.floor_double(player.posY),
+            MathHelper.floor_double(player.posZ)));
+        parser.setValue("ysm.sky_light", () -> player.worldObj.getSavedLightValue(
+            EnumSkyBlock.Sky,
+            MathHelper.floor_double(player.posX),
+            MathHelper.floor_double(player.posY),
+            MathHelper.floor_double(player.posZ)));
+        parser.setValue("ysm.texture_name", 0);
     }
 
     private static boolean hasCape(EntityPlayer player) {

@@ -647,6 +647,72 @@ final class OpenYsmControllerExpressionEvaluator {
             if ("is_on_ground".equals(name)) {
                 return isOnGround() ? TRUE : FALSE;
             }
+            if ("head_x_rotation".equals(name)) {
+                return player.rotationPitch;
+            }
+            if ("head_y_rotation".equals(name)) {
+                return player.rotationYaw;
+            }
+            if ("cardinal_facing_2d".equals(name)) {
+                int facing = net.minecraft.util.MathHelper.floor_double(
+                    (player.rotationYaw * 4.0F / 360.0F) + 0.5D) & 3;
+                double[] YSM_CARDINAL = {3.0, 4.0, 2.0, 5.0};
+                return YSM_CARDINAL[facing];
+            }
+            if ("distance_from_camera".equals(name)) {
+                Minecraft mc = Minecraft.getMinecraft();
+                return mc.renderViewEntity == null ? 0.0d
+                    : mc.renderViewEntity.getDistanceToEntity(player);
+            }
+            if ("equipment_count".equals(name)) {
+                int count = 0;
+                for (net.minecraft.item.ItemStack s : player.inventory.armorInventory) {
+                    if (s != null) count++;
+                }
+                return count;
+            }
+            if ("eye_target_x_rotation".equals(name)) {
+                return player.rotationPitch;
+            }
+            if ("eye_target_y_rotation".equals(name)) {
+                return player.rotationYaw;
+            }
+            if ("has_cape".equals(name)) {
+                return FALSE;
+            }
+            if ("has_rider".equals(name)) {
+                return player.riddenByEntity != null ? TRUE : FALSE;
+            }
+            if ("actor_count".equals(name)) {
+                Minecraft mc = Minecraft.getMinecraft();
+                return mc.theWorld == null ? 0.0d : mc.theWorld.loadedEntityList.size();
+            }
+            if ("is_spectator".equals(name)) {
+                return FALSE; // 1.7.10 has no spectator mode
+            }
+            if ("player_level".equals(name)) {
+                return player.experienceLevel;
+            }
+            if ("moon_phase".equals(name)) {
+                Minecraft mc = Minecraft.getMinecraft();
+                return mc.theWorld == null ? 0.0d : mc.theWorld.getMoonPhase();
+            }
+            if ("yaw_speed".equals(name)) {
+                return 0.0d; // yawSpeed needs QueryValues not available in controller context
+            }
+            if ("item_in_use_duration".equals(name)) {
+                net.minecraft.item.ItemStack useItem = player.getItemInUse();
+                if (useItem == null) return 0.0d;
+                return (useItem.getMaxItemUseDuration() - player.getItemInUseCount()) / 20.0d;
+            }
+            if ("item_max_use_duration".equals(name)) {
+                net.minecraft.item.ItemStack useItem = player.getItemInUse();
+                if (useItem == null) return 0.0d;
+                return useItem.getMaxItemUseDuration() / 20.0d;
+            }
+            if ("item_remaining_use_duration".equals(name)) {
+                return player.getItemInUseCount() / 20.0d;
+            }
             if ("is_sneaking".equals(name)) {
                 return player.isSneaking() ? TRUE : FALSE;
             }
@@ -811,6 +877,42 @@ final class OpenYsmControllerExpressionEvaluator {
             }
             if ("time_delta".equals(name)) {
                 return com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.getTimeDelta();
+            }
+            if ("person_view".equals(name)) {
+                return Minecraft.getMinecraft().gameSettings.thirdPersonView;
+            }
+            if ("rendering_in_inventory".equals(name)) {
+                return com.fox.ysmu.util.RenderUtil.RENDERING_IN_INVENTORY ? TRUE : FALSE;
+            }
+            if ("rendering_in_paperdoll".equals(name)) {
+                return com.fox.ysmu.util.RenderUtil.RENDERING_IN_PAPERDOLL ? TRUE : FALSE;
+            }
+            if ("is_open_air".equals(name)) {
+                return player.worldObj.canBlockSeeTheSky(
+                    net.minecraft.util.MathHelper.floor_double(player.posX),
+                    net.minecraft.util.MathHelper.floor_double(player.posY + 1.0D),
+                    net.minecraft.util.MathHelper.floor_double(player.posZ)) ? TRUE : FALSE;
+            }
+            if ("weather".equals(name)) {
+                if (player.worldObj.isThundering()) return 2.0;
+                if (player.worldObj.isRaining()) return 1.0;
+                return 0.0;
+            }
+            if ("dimension_name".equals(name)) {
+                return player.dimension; // 1.7.10 uses integer dimension IDs
+            }
+            if ("block_light".equals(name)) {
+                return player.worldObj.getBlockLightValue(
+                    net.minecraft.util.MathHelper.floor_double(player.posX),
+                    net.minecraft.util.MathHelper.floor_double(player.posY),
+                    net.minecraft.util.MathHelper.floor_double(player.posZ));
+            }
+            if ("sky_light".equals(name)) {
+                return player.worldObj.getSavedLightValue(
+                    net.minecraft.world.EnumSkyBlock.Sky,
+                    net.minecraft.util.MathHelper.floor_double(player.posX),
+                    net.minecraft.util.MathHelper.floor_double(player.posY),
+                    net.minecraft.util.MathHelper.floor_double(player.posZ));
             }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "ysm:" + name,

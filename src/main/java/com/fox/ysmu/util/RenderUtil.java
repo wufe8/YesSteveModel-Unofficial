@@ -43,6 +43,10 @@ public final class RenderUtil {
 
     /** Set by PlayerTextureScreen before renderTextureScreenEntity to control ground visibility. */
     public static boolean SHOW_GROUND = true;
+    /** True while rendering inside an inventory/GUI screen (model selection, texture picker). */
+    public static boolean RENDERING_IN_INVENTORY = false;
+    /** True while rendering the paperdoll/HUD overlay player icon. */
+    public static boolean RENDERING_IN_PAPERDOLL = false;
 
     private static final float GUI_LIGHTMAP_BRIGHTNESS = 240.0F;
     /** Direct buffer for boosted GL light model ambient (1.275x = 0.51). */
@@ -301,6 +305,7 @@ public final class RenderUtil {
         if (player == null) {
             return;
         }
+        RENDERING_IN_INVENTORY = true;
         try {
             CustomPlayerRenderer renderer = ClientProxy.getInstance();
             IAnimatable animatable = AnimatableCacheUtil.ANIMATABLE_CACHE.get(modelId, CustomPlayerEntity::new);
@@ -314,6 +319,8 @@ public final class RenderUtil {
             }
         } catch (ExecutionException e) {
             e.printStackTrace();
+        } finally {
+            RENDERING_IN_INVENTORY = false;
         }
     }
 
@@ -339,6 +346,7 @@ public final class RenderUtil {
         if (player == null) {
             return;
         }
+        RENDERING_IN_INVENTORY = true;
         try {
             CustomPlayerRenderer renderer = ClientProxy.getInstance();
             IAnimatable animatable = AnimatableCacheUtil.ANIMATABLE_CACHE.get(modelId, CustomPlayerEntity::new);
@@ -356,6 +364,8 @@ public final class RenderUtil {
             }
         } catch (ExecutionException e) {
             e.printStackTrace();
+        } finally {
+            RENDERING_IN_INVENTORY = false;
         }
     }
 
@@ -526,6 +536,7 @@ public final class RenderUtil {
      */
     public static void renderPlayerEntity(EntityPlayer player, double posX, double posY, float scale, float yawOffset, double z, float partialTicks) {
         if (player != Minecraft.getMinecraft().thePlayer) return;
+        RENDERING_IN_PAPERDOLL = true;
         GL11.glEnable(GL11.GL_COLOR_MATERIAL);
         GL11.glPushMatrix();
         try {
@@ -550,6 +561,7 @@ public final class RenderUtil {
             OpenGlHelper.setActiveTexture(OpenGlHelper.lightmapTexUnit);
             GL11.glDisable(GL11.GL_TEXTURE_2D);
             OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
+            RENDERING_IN_PAPERDOLL = false;
         }
     }
 
