@@ -16,6 +16,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.ControllerSet;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
+import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
@@ -67,6 +68,46 @@ public final class OpenYsmAnimationControllerRegistry {
     public static boolean hasController(ResourceLocation animationId, String controllerName) {
         ControllerSet set = CONTROLLERS.get(animationId);
         return set != null && set.controllers.containsKey(controllerName);
+    }
+
+    /**
+     * Post-registration scan: marks controllers as TacZ-dependent if any of their
+     * state animations reference a keyframe Molang expression that contains
+     * ctrl.tac_* variables. This catches cases where a controller's own conditions
+     * don't reference TacZ, but the animation keyframes it plays do
+     * (e.g. pre_parallel_5 playing parallel7 which has ctrl.tac_hold_gun in scale expressions).
+     *
+     * @param animationId the model's main animation ID
+     * @param tacAnimNames set of animation names whose keyframes contain ctrl.tac_*
+     */
+    public static void scanAnimKeyframesForTacZ(ResourceLocation animationId,
+        java.util.Set<String> tacAnimNames) {
+        if (animationId == null || tacAnimNames == null || tacAnimNames.isEmpty()) {
+            return;
+        }
+        ControllerSet set = CONTROLLERS.get(animationId);
+        if (set == null) {
+            return;
+        }
+        for (Controller ctrl : set.controllers.values()) {
+            if (ctrl.hasTacZConditions) {
+                continue; // already marked
+            }
+            for (State s : ctrl.states.values()) {
+                for (OpenYsmControllerDefinitions.AnimationEntry ae : s.animations) {
+                    // Bare string animation names match directly
+                    if (ae.animationName != null && tacAnimNames.contains(ae.animationName)) {
+                        ctrl.hasTacZConditions = true;
+                        if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                            ysmu.LOG.info("[YSMU-CTRL] TacZ scan: marked {} as TacZ-dependent (animation '{}' has ctrl.tac_ in keyframes)",
+                                ctrl.name, ae.animationName);
+                        }
+                        break;
+                    }
+                }
+                if (ctrl.hasTacZConditions) break;
+            }
+        }
     }
 
     public static void clear() {

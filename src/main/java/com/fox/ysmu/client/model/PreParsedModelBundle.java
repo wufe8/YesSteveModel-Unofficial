@@ -54,6 +54,10 @@ public class PreParsedModelBundle {
     public final Map<ResourceLocation, AnimationFile> projAnimationFiles = new LinkedHashMap<>();
     /** Projectile controller file bytes keyed by projectile animation ID. */
     public final Map<ResourceLocation, byte[]> projControllerFiles = new LinkedHashMap<>();
+    /** Set of animation names whose keyframe Molang expressions reference ctrl.tac_* variables.
+     *  Populated during parseAnimationsToBundle() by scanning raw animation JSON bytes,
+     *  consumed by applyPreParsed() to expand TacZ dependency detection in controllers. */
+    public final java.util.Set<String> tacAnimNames = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     public PreParsedModelBundle(ResourceLocation modelId) {
         this.modelId = modelId;

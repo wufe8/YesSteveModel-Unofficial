@@ -357,6 +357,13 @@ public class ClientModelManager {
         if (!bundle.controllerFiles.isEmpty()) {
             OpenYsmAnimationControllerRegistry.register(ModelIdUtil.getMainId(modelId), bundle.controllerFiles.values());
         }
+        // Post-registration: expand TacZ dependency detection to controllers whose
+        // animation keyframe Molang expressions reference ctrl.tac_* variables
+        // (even when the controller's own conditions/transitions don't).
+        if (!bundle.tacAnimNames.isEmpty()) {
+            OpenYsmAnimationControllerRegistry.scanAnimKeyframesForTacZ(
+                ModelIdUtil.getMainId(modelId), bundle.tacAnimNames);
+        }
         // Register animation conditions (must be on main thread with GeckoLib state)
         ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
         if (bundle.animationFile.animations != null) {
@@ -583,8 +590,28 @@ public class ClientModelManager {
                 bundle.controllerFiles.put(key, animData);
                 continue;
             }
+            // Scan raw animation JSON for ctrl.tac_* references in keyframe Molang expressions.
+            // This catches cases where a controller's animation entries are bare strings
+            // (no conditions), but the animation keyframe values themselves reference
+            // TacZ variables like ctrl.tac_hold_gun.
+            String animJsonStr = new String(animData, StandardCharsets.UTF_8);
+            if (animJsonStr.contains("ctrl.tac_")) {
+                try {
+                    com.google.gson.JsonObject animRoot = new com.google.gson.JsonParser().parse(animJsonStr)
+                        .getAsJsonObject();
+                    com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
+                    if (anims != null) {
+                        for (java.util.Map.Entry<String, com.google.gson.JsonElement> animEntry : anims.entrySet()) {
+                            String animName = animEntry.getKey();
+                            bundle.tacAnimNames.add(animName);
+                        }
+                    }
+                } catch (Exception ignored) {
+                    // Best-effort scan; parsing failures are harmless
+                }
+            }
             try {
-                AnimationFile other = getAnimationFile(new String(animData, StandardCharsets.UTF_8));
+                AnimationFile other = getAnimationFile(animJsonStr);
                 mergeAnimationFile(main, other);
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to parse animation file {} for model {}: {}: {}",
