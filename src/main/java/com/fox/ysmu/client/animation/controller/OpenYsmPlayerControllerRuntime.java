@@ -245,7 +245,10 @@ public final class OpenYsmPlayerControllerRuntime {
         // 跳过完全依赖 TacZ 控制变量的控制器（如 player.parallel_3）。
         // 没有 TacZ 时这些控制器的 transition 条件永远无法满足，
         // 导致卡在 default 状态循环播放在动画中带有音效关键帧的动画。
-        if (!com.fox.ysmu.compat.TacZCompat.isTacZLoaded() && match.controller.hasTacZConditions) {
+        // 跳过依赖了未加载可选模组的控制器（如无 TacZ 时跳过 ctrl.tac_* 控制器）。
+        // 依赖集合在解析阶段通过扫描条件和动画关键帧自动检测。
+        if (!match.controller.modDependencies.isEmpty()
+            && ModDependencyRegistry.hasUnmetDependencies(match.controller.modDependencies)) {
             // 清空运行时状态防止残留
             runtimeState.currentState = "";
             runtimeState.lastSelectedAnimationState = "";

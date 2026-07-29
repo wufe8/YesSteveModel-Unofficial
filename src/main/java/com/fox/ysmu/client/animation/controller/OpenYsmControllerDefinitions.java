@@ -2,8 +2,10 @@ package com.fox.ysmu.client.animation.controller;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 final class OpenYsmControllerDefinitions {
 
@@ -17,10 +19,10 @@ final class OpenYsmControllerDefinitions {
         String name = "";
         String initialState = "";
         final Map<String, State> states = new LinkedHashMap<>();
-        /** true 表示该控制器的 condition/transition 中引用了 {@code ctrl.tac_*}
-         *  控制变量。当 TacZ 模组未加载时可在运行时跳过此控制器，避免
-         *  无效动画播放和音效误触发。在 {@code parseController()} 中设置。 */
-        boolean hasTacZConditions = false;
+        /** 该控制器依赖的可选模组 modId 集合。
+         *  在控制器解析阶段通过扫描条件和动画关键帧自动检测。
+         *  运行时若集合中任一 mod 未加载，则跳过此控制器。 */
+        final Set<String> modDependencies = new LinkedHashSet<>();
 
         State getInitialState() {
             if (states.containsKey(initialState)) {

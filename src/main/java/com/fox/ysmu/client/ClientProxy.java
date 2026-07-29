@@ -27,6 +27,24 @@ public class ClientProxy extends CommonProxy {
         super.init(event);
         AnimationRegister.registerAnimationState();
         AnimationRegister.registerVariables();
+
+        // 注册可选模组依赖检测。当控制器使用某模组的变量（如 ctrl.tac_*），
+        // 但该模组未加载时，运行时自动跳过对应控制器。
+        com.fox.ysmu.client.animation.controller.ModDependencyRegistry.register(
+            new com.fox.ysmu.client.animation.controller.ModDependency("tacz",
+                "ctrl.tac_"));
+        // 以下模组在 1.7.10 上通常不存在，注册后其控制器的变量条件
+        // 会被自动检测并跳过。如需在 1.7.10 上使用这些模组，只需确保
+        // Loader.isModLoaded() 返回 true 即可。
+        com.fox.ysmu.client.animation.controller.ModDependencyRegistry.register(
+            new com.fox.ysmu.client.animation.controller.ModDependency("parcool",
+                "ctrl.parcool_"));
+        com.fox.ysmu.client.animation.controller.ModDependencyRegistry.register(
+            new com.fox.ysmu.client.animation.controller.ModDependency("slashblade",
+                "ctrl.slashblade_"));
+        com.fox.ysmu.client.animation.controller.ModDependencyRegistry.register(
+            new com.fox.ysmu.client.animation.controller.ModDependency("swem",
+                "ctrl.swem_"));
         CUSTOM_PLAYER_RENDERER = new CustomPlayerRenderer();
         GeoReplacedEntityRenderer.registerReplacedEntity(CustomPlayerEntity.class, CUSTOM_PLAYER_RENDERER);
         ClientRegistry.registerKeyBinding(AnimationRouletteKey.ANIMATION_ROULETTE_KEY);

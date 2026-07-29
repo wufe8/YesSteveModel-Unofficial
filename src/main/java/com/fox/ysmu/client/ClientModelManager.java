@@ -357,12 +357,12 @@ public class ClientModelManager {
         if (!bundle.controllerFiles.isEmpty()) {
             OpenYsmAnimationControllerRegistry.register(ModelIdUtil.getMainId(modelId), bundle.controllerFiles.values());
         }
-        // Post-registration: expand TacZ dependency detection to controllers whose
-        // animation keyframe Molang expressions reference ctrl.tac_* variables
+        // Post-registration: expand mod dependency detection to controllers whose
+        // animation keyframe Molang expressions reference mod-specific variables
         // (even when the controller's own conditions/transitions don't).
-        if (!bundle.tacAnimNames.isEmpty()) {
-            OpenYsmAnimationControllerRegistry.scanAnimKeyframesForTacZ(
-                ModelIdUtil.getMainId(modelId), bundle.tacAnimNames);
+        if (!bundle.animToModIds.isEmpty()) {
+            OpenYsmAnimationControllerRegistry.scanAnimKeyframesForDeps(
+                ModelIdUtil.getMainId(modelId), bundle.animToModIds);
         }
         // Register animation conditions (must be on main thread with GeckoLib state)
         ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
@@ -590,24 +590,38 @@ public class ClientModelManager {
                 bundle.controllerFiles.put(key, animData);
                 continue;
             }
-            // Scan raw animation JSON for ctrl.tac_* references in keyframe Molang expressions.
-            // This catches cases where a controller's animation entries are bare strings
-            // (no conditions), but the animation keyframe values themselves reference
-            // TacZ variables like ctrl.tac_hold_gun.
+            // Scan raw animation JSON for mod-specific variable references (e.g. ctrl.tac_*)
+            // in keyframe Molang expressions. This catches cases where a controller's
+            // animation entries are bare strings with no conditions, but the animation
+            // keyframe values reference mod-specific variables like ctrl.tac_hold_gun.
             String animJsonStr = new String(animData, StandardCharsets.UTF_8);
-            if (animJsonStr.contains("ctrl.tac_")) {
-                try {
-                    com.google.gson.JsonObject animRoot = new com.google.gson.JsonParser().parse(animJsonStr)
-                        .getAsJsonObject();
-                    com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
-                    if (anims != null) {
-                        for (java.util.Map.Entry<String, com.google.gson.JsonElement> animEntry : anims.entrySet()) {
-                            String animName = animEntry.getKey();
-                            bundle.tacAnimNames.add(animName);
-                        }
+            java.util.Map<String, java.util.Set<String>> fileAnimToMods = null;
+            for (com.fox.ysmu.client.animation.controller.ModDependency dep :
+                com.fox.ysmu.client.animation.controller.ModDependencyRegistry.getAll()) {
+                if (dep.matches(animJsonStr)) {
+                    if (fileAnimToMods == null) {
+                        fileAnimToMods = new java.util.LinkedHashMap<>();
                     }
-                } catch (Exception ignored) {
-                    // Best-effort scan; parsing failures are harmless
+                    // If any animation in this file matches, add ALL animation names
+                    // from this file with this modId.
+                    try {
+                        com.google.gson.JsonObject animRoot = new com.google.gson.JsonParser().parse(animJsonStr)
+                            .getAsJsonObject();
+                        com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
+                        if (anims != null) {
+                            for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae : anims.entrySet()) {
+                                fileAnimToMods.computeIfAbsent(ae.getKey(), k -> new java.util.LinkedHashSet<>())
+                                    .add(dep.getModId());
+                            }
+                        }
+                    } catch (Exception ignored) {
+                        // Best-effort scan; parsing failures are harmless
+                    }
+                }
+            }
+            if (fileAnimToMods != null) {
+                for (java.util.Map.Entry<String, java.util.Set<String>> e : fileAnimToMods.entrySet()) {
+                    bundle.animToModIds.merge(e.getKey(), e.getValue(), (a, b) -> { a.addAll(b); return a; });
                 }
             }
             try {

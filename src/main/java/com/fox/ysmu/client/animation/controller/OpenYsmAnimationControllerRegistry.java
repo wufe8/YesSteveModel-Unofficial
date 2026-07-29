@@ -71,18 +71,18 @@ public final class OpenYsmAnimationControllerRegistry {
     }
 
     /**
-     * Post-registration scan: marks controllers as TacZ-dependent if any of their
-     * state animations reference a keyframe Molang expression that contains
-     * ctrl.tac_* variables. This catches cases where a controller's own conditions
-     * don't reference TacZ, but the animation keyframes it plays do
-     * (e.g. pre_parallel_5 playing parallel7 which has ctrl.tac_hold_gun in scale expressions).
+     * Post-registration scan: marks controllers as dependent on optional mods if
+     * their state animations reference keyframe Molang expressions that contain
+     * mod-specific variables. Catches cases where the controller's own conditions
+     * don't reference the mod, but the animation keyframes it plays do
+     * (e.g. pre_parallel_5 playing parallel7 which has ctrl.tac_hold_gun).
      *
-     * @param animationId the model's main animation ID
-     * @param tacAnimNames set of animation names whose keyframes contain ctrl.tac_*
+     * @param animationId   the model's main animation ID
+     * @param animToModIds  map of animation name → set of matching modIds
      */
-    public static void scanAnimKeyframesForTacZ(ResourceLocation animationId,
-        java.util.Set<String> tacAnimNames) {
-        if (animationId == null || tacAnimNames == null || tacAnimNames.isEmpty()) {
+    public static void scanAnimKeyframesForDeps(ResourceLocation animationId,
+        java.util.Map<String, java.util.Set<String>> animToModIds) {
+        if (animationId == null || animToModIds == null || animToModIds.isEmpty()) {
             return;
         }
         ControllerSet set = CONTROLLERS.get(animationId);
@@ -90,22 +90,19 @@ public final class OpenYsmAnimationControllerRegistry {
             return;
         }
         for (Controller ctrl : set.controllers.values()) {
-            if (ctrl.hasTacZConditions) {
-                continue; // already marked
-            }
             for (State s : ctrl.states.values()) {
-                for (OpenYsmControllerDefinitions.AnimationEntry ae : s.animations) {
-                    // Bare string animation names match directly
-                    if (ae.animationName != null && tacAnimNames.contains(ae.animationName)) {
-                        ctrl.hasTacZConditions = true;
-                        if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
-                            ysmu.LOG.info("[YSMU-CTRL] TacZ scan: marked {} as TacZ-dependent (animation '{}' has ctrl.tac_ in keyframes)",
-                                ctrl.name, ae.animationName);
+                for (AnimationEntry ae : s.animations) {
+                    if (ae.animationName != null) {
+                        java.util.Set<String> mods = animToModIds.get(ae.animationName);
+                        if (mods != null && !mods.isEmpty()) {
+                            ctrl.modDependencies.addAll(mods);
+                            if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                                ysmu.LOG.info("[YSMU-CTRL] Dep scan: {} now depends on {} (via animation '{}')",
+                                    ctrl.name, mods, ae.animationName);
+                            }
                         }
-                        break;
                     }
                 }
-                if (ctrl.hasTacZConditions) break;
             }
         }
     }
@@ -159,23 +156,19 @@ public final class OpenYsmAnimationControllerRegistry {
                 controller.states.put(state.name, state);
             }
         }
-        // 扫描所有 condition 中是否引用了 ctrl.tac_* 控制变量。
-        // 若依赖 TacZ 且模组未加载，运行时可以跳过此控制器。
+        // 扫描所有 condition 中是否引用了可选模组的控制变量（如 ctrl.tac_*）。
+        // 运行时若对应模组未加载，跳过此控制器避免无效动画和音效误触发。
         for (State s : controller.states.values()) {
             for (Transition t : s.transitions) {
-                if (t.condition != null && t.condition.contains("ctrl.tac_")) {
-                    controller.hasTacZConditions = true;
-                    break;
+                if (t.condition != null) {
+                    controller.modDependencies.addAll(ModDependencyRegistry.detect(t.condition));
                 }
             }
-            if (controller.hasTacZConditions) break;
-            for (OpenYsmControllerDefinitions.AnimationEntry ae : s.animations) {
-                if (ae.condition != null && ae.condition.contains("ctrl.tac_")) {
-                    controller.hasTacZConditions = true;
-                    break;
+            for (AnimationEntry ae : s.animations) {
+                if (ae.condition != null) {
+                    controller.modDependencies.addAll(ModDependencyRegistry.detect(ae.condition));
                 }
             }
-            if (controller.hasTacZConditions) break;
         }
         return controller;
     }
