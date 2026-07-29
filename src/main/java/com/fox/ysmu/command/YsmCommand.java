@@ -48,14 +48,19 @@ public class YsmCommand extends CommandBase {
                 return getListOfStringsMatchingLastWord(args, "on", "off");
             }
             if ("debug".equalsIgnoreCase(args[0])) {
-                return getListOfStringsMatchingLastWord(args, "query");
+                return getListOfStringsMatchingLastWord(args, "query", "overlay");
             }
         }
         if (args.length == 2 && "setgamepath".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "<path>");
         }
-        if (args.length == 3 && "setgamepath".equalsIgnoreCase(args[0])) {
-            return getListOfStringsMatchingLastWord(args, "[version]");
+        if (args.length == 3) {
+            if ("setgamepath".equalsIgnoreCase(args[0])) {
+                return getListOfStringsMatchingLastWord(args, "[version]");
+            }
+            if ("debug".equalsIgnoreCase(args[0]) && "overlay".equalsIgnoreCase(args[1])) {
+                return getListOfStringsMatchingLastWord(args, "on", "off", "toggle");
+            }
         }
         return null;
     }
@@ -288,24 +293,36 @@ public class YsmCommand extends CommandBase {
                     "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug query <variable> [variable2 ...]"));
                 return;
             }
-            // Collect variable names (supporting wildcards like "ysm.*")
             java.util.ArrayList<String> varNames = new java.util.ArrayList<>();
             for (int i = 2; i < args.length; i++) {
                 String name = args[i];
-                // Remove surrounding quotes if any
                 if (name.startsWith("\"") && name.endsWith("\"")) {
                     name = name.substring(1, name.length() - 1);
                 }
                 varNames.add(name);
             }
-            // Send packet to client — all chat output is handled client-side
-            // to guarantee correct ordering (header before individual values).
             NetworkHandler.CHANNEL.sendTo(
                 new com.fox.ysmu.network.message.PacketQueryMolangVar(varNames), player);
+        } else if ("overlay".equals(sub)) {
+            if (args.length >= 3 && "off".equalsIgnoreCase(args[2])) {
+                if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
+                    com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
+                }
+            } else if (args.length >= 3 && "on".equalsIgnoreCase(args[2])) {
+                if (!com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
+                    com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
+                }
+            } else {
+                com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
+            }
+            String status = com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()
+                ? "\u00a7aON" : "\u00a77OFF";
+            player.addChatMessage(new ChatComponentText(
+                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Debug overlay: " + status));
         } else {
             player.addChatMessage(new ChatComponentText(
                 "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub
-                + ". Use: query"));
+                + ". Use: query | overlay"));
         }
     }
 

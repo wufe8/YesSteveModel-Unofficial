@@ -277,6 +277,7 @@ key.yes_steve_model.extra_animation.5.desc=播放额外动画 5
 key.yes_steve_model.extra_animation.6.desc=播放额外动画 6
 key.yes_steve_model.extra_animation.7.desc=播放额外动画 7
 key.yes_steve_model.debug_animation.desc=打开动画调试
+key.yes_steve_model.debug_overlay.desc=切换 Molang 调试面板
 key.yes_steve_model.open_extra_player_render.desc=打开额外玩家渲染配置
 
 # ---- 命令 ----
