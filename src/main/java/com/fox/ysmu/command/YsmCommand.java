@@ -34,17 +34,22 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome> [args]";
+        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome|debug> [args]";
     }
 
     @Override
     public List addTabCompletionOptions(ICommandSender sender, String[] args) {
         if (args.length == 1) {
             return getListOfStringsMatchingLastWord(args,
-                "reload", "play", "playsound", "setgamepath", "buffer", "welcome");
+                "reload", "play", "playsound", "setgamepath", "buffer", "welcome", "debug");
         }
-        if (args.length == 2 && "welcome".equalsIgnoreCase(args[0])) {
-            return getListOfStringsMatchingLastWord(args, "on", "off");
+        if (args.length == 2) {
+            if ("welcome".equalsIgnoreCase(args[0])) {
+                return getListOfStringsMatchingLastWord(args, "on", "off");
+            }
+            if ("debug".equalsIgnoreCase(args[0])) {
+                return getListOfStringsMatchingLastWord(args, "query");
+            }
         }
         if (args.length == 2 && "setgamepath".equalsIgnoreCase(args[0])) {
             return getListOfStringsMatchingLastWord(args, "<path>");
@@ -83,7 +88,8 @@ public class YsmCommand extends CommandBase {
             throw new WrongUsageException(getCommandUsage(sender));
         }
         // setgamepath, welcome, and buffer are allowed for all players (client-side only).
-        // Other subcommands require the default permission level.
+        // Other subcommands (play, reload, debug) require the default permission level.
+        // TODO: add @p/@a/@r target selector support for debug and play subcommands.
         if (!"setgamepath".equalsIgnoreCase(args[0]) && !"welcome".equalsIgnoreCase(args[0])
             && !"buffer".equalsIgnoreCase(args[0])
             && !super.canCommandSenderUseCommand(sender)) {
@@ -101,6 +107,8 @@ public class YsmCommand extends CommandBase {
             processBuffer(sender);
         } else if ("welcome".equalsIgnoreCase(args[0])) {
             processWelcome(sender, args);
+        } else if ("debug".equalsIgnoreCase(args[0])) {
+            processDebug(sender, args);
         } else {
             throw new WrongUsageException(getCommandUsage(sender));
         }
@@ -261,6 +269,44 @@ public class YsmCommand extends CommandBase {
         NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.SetWelcomeConfig(newValue), player);
         String key = newValue ? "commands.yes_steve_model.welcome.on" : "commands.yes_steve_model.welcome.off";
         player.addChatMessage(new ChatComponentTranslation(key));
+    }
+
+    private void processDebug(ICommandSender sender, String[] args) {
+        if (!(sender instanceof EntityPlayerMP)) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        EntityPlayerMP player = (EntityPlayerMP) sender;
+        if (args.length < 2) {
+            player.addChatMessage(new ChatComponentText(
+                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug query <name> [name2 ...]"));
+            return;
+        }
+        String sub = args[1].toLowerCase(java.util.Locale.ROOT);
+        if ("query".equals(sub)) {
+            if (args.length < 3) {
+                player.addChatMessage(new ChatComponentText(
+                    "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug query <variable> [variable2 ...]"));
+                return;
+            }
+            // Collect variable names (supporting wildcards like "ysm.*")
+            java.util.ArrayList<String> varNames = new java.util.ArrayList<>();
+            for (int i = 2; i < args.length; i++) {
+                String name = args[i];
+                // Remove surrounding quotes if any
+                if (name.startsWith("\"") && name.endsWith("\"")) {
+                    name = name.substring(1, name.length() - 1);
+                }
+                varNames.add(name);
+            }
+            // Send packet to client — all chat output is handled client-side
+            // to guarantee correct ordering (header before individual values).
+            NetworkHandler.CHANNEL.sendTo(
+                new com.fox.ysmu.network.message.PacketQueryMolangVar(varNames), player);
+        } else {
+            player.addChatMessage(new ChatComponentText(
+                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub
+                + ". Use: query"));
+        }
     }
 
     private void checkModelFiles(ICommandSender sender, Path rootPath) {

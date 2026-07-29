@@ -40,6 +40,7 @@ public final class NetworkHandler {
     private static final int CLIENTBOUND_SYNC_GAME_PATH = 20;
     private static final int CLIENTBOUND_SET_WELCOME_CONFIG = 21;
     private static final int CLIENTBOUND_SHOW_BUFFER_INFO = 22;
+    private static final int CLIENTBOUND_QUERY_MOLANG_VAR = 23;
 
     public static final int OPEN_NPC_MODEL_GUI = 93;
     public static final int SET_NPC_MODEL_ID = 94;
@@ -165,6 +166,11 @@ public final class NetworkHandler {
             ShowBufferInfo.Handler.class,
             ShowBufferInfo.class,
             CLIENTBOUND_SHOW_BUFFER_INFO,
+            Side.CLIENT);
+        CHANNEL.registerMessage(
+            PacketQueryMolangVar.Handler.class,
+            PacketQueryMolangVar.class,
+            CLIENTBOUND_QUERY_MOLANG_VAR,
             Side.CLIENT);
     }
 
