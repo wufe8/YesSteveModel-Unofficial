@@ -304,14 +304,11 @@ public class YsmCommand extends CommandBase {
             NetworkHandler.CHANNEL.sendTo(
                 new com.fox.ysmu.network.message.PacketQueryMolangVar(varNames), player);
         } else if ("overlay".equals(sub)) {
+            boolean wasActive = com.fox.ysmu.client.gui.debug.DebugOverlay.isActive();
             if (args.length >= 3 && "off".equalsIgnoreCase(args[2])) {
-                if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
-                    com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
-                }
+                if (wasActive) com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
             } else if (args.length >= 3 && "on".equalsIgnoreCase(args[2])) {
-                if (!com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
-                    com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
-                }
+                if (!wasActive) com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
             } else {
                 com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
             }
@@ -319,6 +316,9 @@ public class YsmCommand extends CommandBase {
                 ? "\u00a7aON" : "\u00a77OFF";
             player.addChatMessage(new ChatComponentText(
                 "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Debug overlay: " + status));
+            if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
+                com.fox.ysmu.client.gui.debug.DebugOverlay.tryShowToggleHint();
+            }
         } else {
             player.addChatMessage(new ChatComponentText(
                 "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub

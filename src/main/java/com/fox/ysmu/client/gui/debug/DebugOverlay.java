@@ -28,6 +28,10 @@ import com.fox.ysmu.client.debug.MolangDebugSnapshot;
 public final class DebugOverlay {
 
     private static boolean active = false;
+    /** true 时键盘输入会进入过滤框；false 时仅响应方向键/Esc */
+    private static boolean searchMode = false;
+    /** 每会话一次，通过命令开启时提示快捷键 */
+    private static boolean overlayHintShown = false;
 
     // ---- 渲染状态 ----
     private static String filterText = "";
@@ -40,6 +44,7 @@ public final class DebugOverlay {
     // ---- 布局常量 ----
     private static final int MARGIN = 10;
     private static final int HEADER_HEIGHT = 22;
+    private static final int HELP_HEIGHT = 10;
     private static final int COL_NAME_X = 20;
     private static final int COL_VALUE_X = 250;
     private static final int ROW_HEIGHT = 10;
@@ -62,10 +67,23 @@ public final class DebugOverlay {
     public static void toggle() {
         active = !active;
         if (active) {
-            // 重置状态
             filterText = "";
+            searchMode = false;
             scrollOffset = 0;
             refreshSnapshot();
+        }
+    }
+
+    /** 从命令开启时，会话内首次提示快捷键 */
+    public static void tryShowToggleHint() {
+        if (!overlayHintShown) {
+            overlayHintShown = true;
+            String hint = MolangDebugSnapshot.CHAT_PREFIX
+                + " \u00a77Toggle with \u00a7eCtrl+<Alt+P key>\u00a77 in-game.";
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            if (mc.thePlayer != null) {
+                mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(hint));
+            }
         }
     }
 
@@ -110,10 +128,23 @@ public final class DebugOverlay {
         char c = Keyboard.getEventCharacter();
 
         if (key == Keyboard.KEY_ESCAPE) {
-            toggle();
+            if (searchMode) {
+                searchMode = false;
+            } else {
+                toggle();
+            }
             return true;
         }
         if (key == Keyboard.KEY_RETURN || key == Keyboard.KEY_NUMPADENTER) {
+            if (searchMode) {
+                searchMode = false; // 回车确认搜索
+            } else {
+                // 回车进入搜索模式
+                searchMode = true;
+                filterText = "";
+                scrollOffset = 0;
+                refreshSnapshot();
+            }
             return true;
         }
         if (key == Keyboard.KEY_UP) {
@@ -124,11 +155,11 @@ public final class DebugOverlay {
             if (scrollOffset < displayEntries.size() - 1) scrollOffset++;
             return true;
         }
-        if (key == Keyboard.KEY_PRIOR) { // PageUp
+        if (key == Keyboard.KEY_LEFT || key == Keyboard.KEY_PRIOR) { // ← / PageUp
             scrollOffset = Math.max(0, scrollOffset - VISIBLE_ROWS);
             return true;
         }
-        if (key == Keyboard.KEY_NEXT) { // PageDown
+        if (key == Keyboard.KEY_RIGHT || key == Keyboard.KEY_NEXT) { // → / PageDown
             scrollOffset = Math.min(displayEntries.size() - 1, scrollOffset + VISIBLE_ROWS);
             return true;
         }
@@ -140,14 +171,16 @@ public final class DebugOverlay {
             scrollOffset = Math.max(0, displayEntries.size() - 1);
             return true;
         }
-        if (key == Keyboard.KEY_BACK) {
-            backspaceFilter();
-            return true;
-        }
-        // 可打印字符
-        if (c >= ' ' && c <= '~') {
-            appendFilter(c);
-            return true;
+        // 搜索模式下：Backspace + 可打印字符
+        if (searchMode) {
+            if (key == Keyboard.KEY_BACK) {
+                backspaceFilter();
+                return true;
+            }
+            if (c >= ' ' && c <= '~') {
+                appendFilter(c);
+                return true;
+            }
         }
         return false;
     }
@@ -180,14 +213,32 @@ public final class DebugOverlay {
             displayEntries.size());
         font.drawStringWithShadow(title, MARGIN, 6, COLOR_TITLE);
 
-        // 过滤框
-        String filterDisplay = filterText.isEmpty()
-            ? "\u00a77[type to filter...]"
-            : "\u00a7f" + filterText + "\u00a77_";
+        // 过滤框 + 快捷键提示（标题栏右侧）
+        String filterDisplay;
+        if (searchMode) {
+            filterDisplay = filterText.isEmpty()
+                ? "\u00a7a[search] \u00a77type..."
+                : "\u00a7a[search] \u00a7f" + filterText + "\u00a77_";
+        } else {
+            filterDisplay = filterText.isEmpty()
+                ? "\u00a7e[Enter] \u00a77search"
+                : "\u00a7e[Enter] \u00a7f" + filterText;
+        }
         font.drawStringWithShadow(filterDisplay, 200, 6, COLOR_FILTER);
 
+        // 帮助信息（标题栏最右侧，过滤有内容时隐藏避免与搜索文字重叠）
+        if (filterText.isEmpty()) {
+            String helpBar = String.format(
+                "\u00a77[\u00a7f\u2191\u2193\u00a77 scroll]  "
+                + "[\u00a7f\u2190\u2192\u00a77/\u00a7fPgUp/PgDn\u00a77 page]  "
+                + "[\u00a7fEsc\u00a77 close]  "
+                + "(\u00a77%d\u00a77/\u00a77%d\u00a77)",
+                displayEntries.size(), currentSnapshot.size());
+            font.drawStringWithShadow(helpBar, w - font.getStringWidth(helpBar) - MARGIN, 6, COLOR_HELP);
+        }
+
         // 3. 表头
-        int headerY = HEADER_HEIGHT;
+        int headerY = HEADER_HEIGHT + HELP_HEIGHT;
         Gui.drawRect(0, headerY, w, headerY + ROW_HEIGHT + 2, 0xCC444466);
         font.drawStringWithShadow("\u00a77Name", COL_NAME_X, headerY + 1, 0xFFAAAAAA);
         font.drawStringWithShadow("\u00a77Value", COL_VALUE_X, headerY + 1, 0xFFAAAAAA);
@@ -235,13 +286,12 @@ public final class DebugOverlay {
             font.drawStringWithShadow(getTypeHint(name), w - 40, y, 0xFF666666);
         }
 
-        // 5. 底部帮助
-        String help = String.format(
-            "\u00a77[\u00a7f\u2191\u2192\u00a77/\u00a7fPgUp/PgDn\u00a77 scroll]  "
-            + "[\u00a77type\u00a77 filter]  [\u00a77Esc\u00a77 close]  "
-            + "(\u00a77%d\u00a77 filtered, \u00a77%d\u00a77 total)",
-            displayEntries.size(), currentSnapshot.size());
-        font.drawStringWithShadow(help, MARGIN, h - font.FONT_HEIGHT - 4, COLOR_HELP);
+        // 5. 底部提示（搜索模式时显示操作提示）
+        if (searchMode) {
+            font.drawStringWithShadow(
+                "\u00a7a[search mode] \u00a77Enter=confirm  Esc=cancel",
+                MARGIN, h - font.FONT_HEIGHT - 4, COLOR_HELP);
+        }
     }
 
     // ---- 内部 ----
