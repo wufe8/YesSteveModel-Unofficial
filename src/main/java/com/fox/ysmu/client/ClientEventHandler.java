@@ -190,6 +190,13 @@ public class ClientEventHandler {
     @SubscribeEvent
     public static void onRenderOverlay(RenderGameOverlayEvent.Post event) {
         if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
+
+        // Debug overlay 优先渲染（在所有其他 overlay 之上）
+        if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
+            com.fox.ysmu.client.gui.debug.DebugOverlay.render(event.resolution);
+            return;
+        }
+
         if (!Config.SHOW_LOADING_PROGRESS) return;
         if (!ClientModelManager.SYNC_IN_PROGRESS) return;
 

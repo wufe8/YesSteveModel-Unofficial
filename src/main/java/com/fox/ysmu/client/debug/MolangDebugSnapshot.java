@@ -10,6 +10,7 @@ import net.minecraft.util.ChatComponentText;
 
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 
+import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangParser;
 
 /**
@@ -99,6 +100,23 @@ public final class MolangDebugSnapshot {
     }
 
     // ---- 聊天输出 ----
+
+    /**
+     * 获取所有已注册变量的完整快照（用于 overlay 全量显示）。
+     * 包括 query.* / ysm.* / math.* / ctrl.* / v.roaming.*
+     */
+    public static Map<String, Double> getAllVariables() {
+        Map<String, Double> result = new LinkedHashMap<>();
+        // MolangParser.VARIABLES 中的静态注册变量
+        for (Map.Entry<String, LazyVariable> entry : MolangParser.VARIABLES.entrySet()) {
+            result.put(entry.getKey(), entry.getValue().get());
+        }
+        // v.roaming.* 漫游变量
+        for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+            result.put("v." + entry.getKey(), entry.getValue());
+        }
+        return result;
+    }
 
     /**
      * 在聊天框输出一组变量值。
