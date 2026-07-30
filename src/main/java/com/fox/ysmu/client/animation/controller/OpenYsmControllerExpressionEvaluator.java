@@ -106,11 +106,25 @@ public final class OpenYsmControllerExpressionEvaluator {
             if (match(expr, idx, "==")) {
                 CompiledExpr right = parseComparisonCompiled(expr, idx);
                 CompiledExpr l = left, r = right;
-                left = ctx -> nearlyEqual(l.eval(ctx), r.eval(ctx)) ? TRUE : FALSE;
+                left = ctx -> {
+                    double lv = l.eval(ctx);
+                    double rv = r.eval(ctx);
+                    // NaN is never equal to anything, not even itself.
+                    if (Double.isNaN(lv) || Double.isNaN(rv)) return FALSE;
+                    return nearlyEqual(lv, rv) ? TRUE : FALSE;
+                };
             } else if (match(expr, idx, "!=")) {
                 CompiledExpr right = parseComparisonCompiled(expr, idx);
                 CompiledExpr l = left, r = right;
-                left = ctx -> !nearlyEqual(l.eval(ctx), r.eval(ctx)) ? TRUE : FALSE;
+                left = ctx -> {
+                    double lv = l.eval(ctx);
+                    double rv = r.eval(ctx);
+                    // When either side is NaN, the comparison is meaningless;
+                    // return false so that conditions like ctrl.parcool_state!=''
+                    // don't spuriously match when parcool is absent ('' → NaN).
+                    if (Double.isNaN(lv) || Double.isNaN(rv)) return FALSE;
+                    return !nearlyEqual(lv, rv) ? TRUE : FALSE;
+                };
             } else {
                 return left;
             }

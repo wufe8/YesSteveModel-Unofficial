@@ -242,20 +242,27 @@ public final class OpenYsmPlayerControllerRuntime {
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
-        // 跳过完全依赖 TacZ 控制变量的控制器（如 player.parallel_3）。
-        // 没有 TacZ 时这些控制器的 transition 条件永远无法满足，
+        // 跳过依赖未加载模组的平行控制器（如 player.parallel_3）。
+        // 没有 TacZ 时平行控制器的 transition 条件永远无法满足，
         // 导致卡在 default 状态循环播放在动画中带有音效关键帧的动画。
-        // 跳过依赖了未加载可选模组的控制器（如无 TacZ 时跳过 ctrl.tac_* 控制器）。
-        // 依赖集合在解析阶段通过扫描条件和动画关键帧自动检测。
+        //
+        // 主控制器（post_main/main/base/move）不跳过——它们的非模组
+        // 相关状态（如 idle/walk/run/jump）可以正常运行，模组相关条件
+        // 自然返回 false。
         if (!match.controller.modDependencies.isEmpty()
             && ModDependencyRegistry.hasUnmetDependencies(match.controller.modDependencies)) {
-            // 清空运行时状态防止残留
-            runtimeState.currentState = "";
-            runtimeState.lastSelectedAnimationState = "";
-            runtimeState.lastSelectedAnimation = "";
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
-            event.getController().currentAnimationBuilder = new AnimationBuilder();
-            return null;
+            // 仅跳过平行控制器，不跳过主身体控制器
+            String ctrlName = geckoControllerName;
+            boolean isParallel = ctrlName != null
+                && (ctrlName.startsWith("parallel_") || ctrlName.startsWith("pre_parallel_"));
+            if (isParallel) {
+                runtimeState.currentState = "";
+                runtimeState.lastSelectedAnimationState = "";
+                runtimeState.lastSelectedAnimation = "";
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+                event.getController().currentAnimationBuilder = new AnimationBuilder();
+                return null;
+            }
         }
         // Inject roaming variables scoped to the current model only.
         // Using getRoamingVarsForModel() instead of directly iterating
