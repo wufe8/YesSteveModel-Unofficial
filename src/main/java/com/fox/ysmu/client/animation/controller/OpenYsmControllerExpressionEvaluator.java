@@ -116,15 +116,7 @@ public final class OpenYsmControllerExpressionEvaluator {
             } else if (match(expr, idx, "!=")) {
                 CompiledExpr right = parseComparisonCompiled(expr, idx);
                 CompiledExpr l = left, r = right;
-                left = ctx -> {
-                    double lv = l.eval(ctx);
-                    double rv = r.eval(ctx);
-                    // When either side is NaN, the comparison is meaningless;
-                    // return false so that conditions like ctrl.parcool_state!=''
-                    // don't spuriously match when parcool is absent ('' → NaN).
-                    if (Double.isNaN(lv) || Double.isNaN(rv)) return FALSE;
-                    return !nearlyEqual(lv, rv) ? TRUE : FALSE;
-                };
+                left = ctx -> !nearlyEqual(l.eval(ctx), r.eval(ctx)) ? TRUE : FALSE;
             } else {
                 return left;
             }
@@ -226,10 +218,13 @@ public final class OpenYsmControllerExpressionEvaluator {
             return inner;
         }
         if (c == '\'' || c == '"') {
-            readQuotedString(expr, idx);
-            // 字符串字面量在数值上下文中返回 NaN，防止意外匹配 0.0。
-            // 例如模型写 ctrl.tac_gun_type=='rifle'，若 'rifle' 也返回 0.0，
-            // 则 0.0==0.0 永远为 true，导致所有 Tac 条件动画同时播放造成闪烁。
+            String s = readQuotedString(expr, idx);
+            // 空字符串返回 FALSE (0.0)，使 ctrl.x=='' 能正确表示"变量为空"。
+            // 非空字符串返回 NaN，防止 ctrl.tac_gun_type=='rifle' 在无 TacZ 时
+            // 误判为 0.0==0.0（所有 TacZ 条件动画同时播放）。
+            if (s.isEmpty()) {
+                return ctx -> FALSE;
+            }
             return ctx -> Double.NaN;
         }
         if (Character.isDigit(c) || (c == '.' && idx[0] + 1 < expr.length()
