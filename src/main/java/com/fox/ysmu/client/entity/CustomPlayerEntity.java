@@ -114,6 +114,13 @@ public class CustomPlayerEntity implements IAnimatable {
             .containsKey(this.mainModel)) {
             return mainModel;
         }
+        // Lazy-load geo model from encrypted cache before falling back to default
+        com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(this.mainModel);
+        if (GeckoLibCache.getInstance()
+            .getGeoModels()
+            .containsKey(this.mainModel)) {
+            return mainModel;
+        }
         return CustomPlayerModel.DEFAULT_MAIN_MODEL;
     }
 

@@ -144,6 +144,22 @@ public class ClientModelManager {
     /** How long (ms) since last use before animations are unloaded from GeckoLibCache. */
     private static final long ANIMATION_UNLOAD_MS = 30_000L;
 
+    // ── Lazy geoModel loading ─────────────────────────────────────────────
+    /** Timestamp (System.currentTimeMillis) of last geoModel usage, for auto-unloading. */
+    private static final Map<ResourceLocation, Long> GEO_MODEL_LAST_USED = new HashMap<>();
+    /** How long (ms) since last use before geoModels are unloaded from GeckoLibCache. */
+    private static final long GEO_MODEL_UNLOAD_MS = 30_000L;
+
+    // ── Texture GPU memory management ─────────────────────────────────────
+    /** Timestamp (System.currentTimeMillis) of last texture usage, for auto-unloading. */
+    private static final Map<ResourceLocation, Long> TEXTURE_LAST_USED = new HashMap<>();
+    /** How long (ms) since last use before textures are freed from GPU. */
+    private static final long TEXTURE_UNLOAD_MS = 30_000L;
+    /** Texture raw bytes, kept for fast re-upload without re-reading encrypted cache. */
+    private static final Map<ResourceLocation, byte[]> TEXTURE_BYTES = new HashMap<>();
+    /** OuterFileTexture references kept across GPU unload/reload cycles. */
+    private static final Map<ResourceLocation, net.minecraft.client.renderer.texture.ITextureObject> YSM_TEXTURE_OBJECTS = new HashMap<>();
+
     private static boolean isProjectileKey(String key) {
         return key.startsWith(PROJECTILE_KEY_PREFIX);
     }
@@ -640,7 +656,28 @@ public class ClientModelManager {
         int newHash = java.util.Arrays.hashCode(data);
         Integer oldHash = TEXTURE_CONTENT_HASH.get(id);
         if (oldHash != null && oldHash == newHash) {
-            return; // Texture unchanged — existing OpenGL texture ID is still valid
+            // Content unchanged — check if GPU texture needs re-upload
+            OuterFileTexture existing = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(id);
+            if (existing != null && existing.getGlTextureId() == -1) {
+                try {
+                    existing.loadTexture(Minecraft.getMinecraft().getResourceManager());
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info("[YSMU-TEX] re-uploadTexture({}): OK", id);
+                    }
+                } catch (Exception e) {
+                    ysmu.LOG.warn("[YSMU-TEX] re-uploadTexture({}): failed: {}", id, e.getMessage());
+                }
+            } else if (existing == null) {
+                // YSM_TEXTURE_OBJECTS was cleared (e.g. /ysm reload) — re-register fully
+                OuterFileTexture newTex = new OuterFileTexture(data);
+                try {
+                    Minecraft.getMinecraft().getTextureManager().loadTexture(id, newTex);
+                    YSM_TEXTURE_OBJECTS.put(id, newTex);
+                } catch (Exception e) {
+                    ysmu.LOG.warn("[YSMU-TEX] re-registerTexture({}): failed: {}", id, e.getMessage());
+                }
+            }
+            return; // Content unchanged
         }
         // Diagnostic: validate texture data before registration
         if (data == null) {
@@ -678,6 +715,8 @@ public class ClientModelManager {
             }
         }
         TEXTURE_CONTENT_HASH.put(id, newHash);
+        YSM_TEXTURE_OBJECTS.put(id, outerTex);
+        TEXTURE_BYTES.put(id, data);
     }
 
     private static boolean isControllerResource(String name, byte[] data) {
@@ -872,14 +911,15 @@ public class ClientModelManager {
      * and re-parses the animation JSON bytes.
      */
     public static void ensureAnimationsLoaded(ResourceLocation modelId) {
-        ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+        // modelId is already a mainId (e.g. "ysmu:model_id/main") from getMainModel().
+        // The animation cache also uses mainId as key, so use modelId directly.
         HashMap<ResourceLocation, AnimationFile> cache = GeckoLibCache.getInstance().getAnimations();
-        if (cache.containsKey(mainId)) {
-            ANIMATION_LAST_USED.put(mainId, System.currentTimeMillis());
+        if (cache.containsKey(modelId)) {
+            ANIMATION_LAST_USED.put(modelId, System.currentTimeMillis());
             return;
         }
 
-        String md5 = CACHED_MODEL_MD5.get(mainId);
+        String md5 = CACHED_MODEL_MD5.get(modelId);
         if (md5 == null || md5.isEmpty()) return;
 
         try {
@@ -909,8 +949,8 @@ public class ClientModelManager {
                 }
             }
             if (!animFile.animations.isEmpty()) {
-                cache.put(mainId, animFile);
-                ANIMATION_LAST_USED.put(mainId, System.currentTimeMillis());
+                cache.put(modelId, animFile);
+                ANIMATION_LAST_USED.put(modelId, System.currentTimeMillis());
                 if (Config.DEBUG_MODEL_LOAD) {
                     ysmu.LOG.info("[YSMU-MODEL] Lazy-loaded {} animations for model {} from cache",
                         animFile.animations.size(), modelId);
@@ -922,14 +962,114 @@ public class ClientModelManager {
     }
 
     /**
-     * Unloads animation data for models that haven't been accessed recently.
-     * Frees ~9 MB per model of GeckoLib KeyFrame/ConstantValue/boxed-object overhead.
-     * Periodically called from the client tick.
+     * Ensures the geo model data for the given model is loaded in GeckoLibCache.
+     * If not present, re-reads the encrypted client cache file, decrypts it,
+     * and re-parses the geometry JSON bytes.
+     * Called from the render thread when a model becomes visible.
      */
-    public static void unloadUnusedAnimations() {
+    public static void ensureGeoModelLoaded(ResourceLocation modelId) {
+        // modelId is already a mainId (e.g. "ysmu:model_id/main") from getMainModel().
+        HashMap<ResourceLocation, GeoModel> cache = GeckoLibCache.getInstance().getGeoModels();
+        if (cache.containsKey(modelId)) {
+            GEO_MODEL_LAST_USED.put(modelId, System.currentTimeMillis());
+            return;
+        }
+
+        String md5 = CACHED_MODEL_MD5.get(modelId);
+        if (md5 == null || md5.isEmpty()) return;
+
+        try {
+            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(md5).toFile();
+            if (!cacheFile.isFile()) return;
+
+            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
+            ModelData data = com.fox.ysmu.data.EncryptTools.decryptModel(
+                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
+            if (data == null) return;
+
+            Map<String, byte[]> modelBytes = data.getModel();
+            if (modelBytes == null || modelBytes.isEmpty()) return;
+
+            // Re-parse geometry on the calling thread (same pattern as ensureAnimationsLoaded)
+            // Use modelId as the base for sub-model IDs, since it's the mainId.
+            ResourceLocation baseId = com.fox.ysmu.util.ModelIdUtil.getModelIdFromMainId(modelId);
+            PreParsedModelBundle bundle = new PreParsedModelBundle(baseId);
+            for (Map.Entry<String, byte[]> entry : modelBytes.entrySet()) {
+                parseGeoToBundle(bundle, com.fox.ysmu.util.ModelIdUtil.getSubModelId(baseId, entry.getKey()), entry.getValue());
+            }
+            for (Map.Entry<ResourceLocation, GeoModel> e : bundle.geoModels.entrySet()) {
+                cache.put(e.getKey(), e.getValue());
+            }
+            // Restore scale/extra info that was lost with the geoModel
+            SCALE_INFO.putAll(bundle.scaleInfo);
+            for (Map.Entry<ResourceLocation, ExtraInfo> e : bundle.extraInfo.entrySet()) {
+                EXTRA_INFO.put(modelId, handleExtraInfo(modelId, e.getValue()));
+            }
+            if (!bundle.extraAnimationNames.isEmpty()) {
+                EXTRA_ANIMATION_NAME.putAll(bundle.extraAnimationNames);
+            }
+
+            GEO_MODEL_LAST_USED.put(modelId, System.currentTimeMillis());
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Lazy-loaded geo model {} from cache", modelId);
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to lazy-load geo model {}: {}", modelId, e.getMessage());
+        }
+    }
+
+    /**
+     * Ensures textures for the given model are uploaded to the GPU.
+     * If textures were unloaded (GPU memory freed), re-registers from stored bytes.
+     */
+    public static void ensureTexturesLoaded(ResourceLocation modelId) {
+        // MODELS map uses base modelId (e.g. "ysmu:model_id"), not mainId.
+        ResourceLocation baseId = ModelIdUtil.getModelIdFromMainId(modelId);
+        List<ResourceLocation> texIds = MODELS.get(baseId);
+        if (texIds == null || texIds.isEmpty()) return;
+
+        // Check if any texture needs re-upload
+        boolean needsReload = false;
+        for (ResourceLocation texId : texIds) {
+            OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
+            if (tex == null || tex.getGlTextureId() == -1) {
+                needsReload = true;
+                break;
+            }
+        }
+        if (!needsReload) {
+            TEXTURE_LAST_USED.put(modelId, System.currentTimeMillis());
+            return;
+        }
+
+        // Re-register from stored bytes
+        for (ResourceLocation texId : texIds) {
+            byte[] texBytes = TEXTURE_BYTES.get(texId);
+            if (texBytes != null) {
+                registerTexture(texId, texBytes);
+            }
+        }
+        TEXTURE_LAST_USED.put(modelId, System.currentTimeMillis());
+    }
+
+    /**
+     * Unloads animation, geoModel, and texture data for models that haven't been
+     * accessed recently. Periodically called from the client tick.
+     *
+     * <ul>
+     *   <li>Animations: frees ~9 MB per model (GeckoLib KeyFrame/ConstantValue)</li>
+     *   <li>GeoModels: frees ~1-3 MB per model (GeckoLib GeoBone/GeoCube hierarchy)</li>
+     *   <li>Textures: frees GPU memory (OpenGL texture objects stay registered but
+     *       underlying GL texture is deleted; {@link #ensureTexturesLoaded} can
+     *       re-upload from stored bytes).</li>
+     * </ul>
+     */
+    public static void unloadUnusedCaches() {
         long now = System.currentTimeMillis();
-        HashMap<ResourceLocation, AnimationFile> cache = GeckoLibCache.getInstance().getAnimations();
-        cache.keySet().removeIf(key -> {
+
+        // 1. Unload unused animations
+        HashMap<ResourceLocation, AnimationFile> animCache = GeckoLibCache.getInstance().getAnimations();
+        animCache.keySet().removeIf(key -> {
             Long lastUsed = ANIMATION_LAST_USED.get(key);
             boolean shouldUnload = lastUsed != null && (now - lastUsed) > ANIMATION_UNLOAD_MS;
             if (shouldUnload && Config.DEBUG_MODEL_LOAD) {
@@ -937,6 +1077,39 @@ public class ClientModelManager {
             }
             return shouldUnload;
         });
+
+        // 2. Unload unused geoModels
+        // Both geoModel cache keys and GEO_MODEL_LAST_USED keys are mainIds (e.g. "ysmu:model_id/main").
+        HashMap<ResourceLocation, GeoModel> geoCache = GeckoLibCache.getInstance().getGeoModels();
+        geoCache.keySet().removeIf(key -> {
+            Long lastUsed = GEO_MODEL_LAST_USED.get(key);
+            boolean shouldUnload = lastUsed != null && (now - lastUsed) > GEO_MODEL_UNLOAD_MS;
+            if (shouldUnload && Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Unloading unused geo model for {}", key);
+            }
+            return shouldUnload;
+        });
+
+        // 3. Unload unused textures (free GPU memory, keep bytes for re-upload)
+        // TEXTURE_LAST_USED keys are mainIds (e.g. "ysmu:model_id/main").
+        // MODELS keys are base IDs (e.g. "ysmu:model_id"). We match by checking
+        // if the texture belongs to an unloaded model via lookup.
+        for (Map.Entry<ResourceLocation, List<ResourceLocation>> entry : MODELS.entrySet()) {
+            ResourceLocation modelBaseId = entry.getKey();
+            ResourceLocation mainId = ModelIdUtil.getMainId(modelBaseId);
+            Long lastUsed = TEXTURE_LAST_USED.get(mainId);
+            boolean shouldUnload = lastUsed != null && (now - lastUsed) > TEXTURE_UNLOAD_MS;
+            if (!shouldUnload) continue;
+            for (ResourceLocation texId : entry.getValue()) {
+                OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
+                if (tex != null && tex.getGlTextureId() != -1) {
+                    tex.deleteGlTexture(); // Free GPU memory only; bytes stay in TEXTURE_BYTES
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, mainId);
+                    }
+                }
+            }
+        }
     }
 
     // ── End lazy animation loading ────────────────────────────────────────
@@ -976,6 +1149,17 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.clear();
         CACHED_MODEL_MD5.clear();
         ANIMATION_LAST_USED.clear();
+        GEO_MODEL_LAST_USED.clear();
+        TEXTURE_LAST_USED.clear();
+        // Free GPU textures
+        for (net.minecraft.client.renderer.texture.ITextureObject tex : YSM_TEXTURE_OBJECTS.values()) {
+            if (tex instanceof net.minecraft.client.renderer.texture.AbstractTexture) {
+                ((net.minecraft.client.renderer.texture.AbstractTexture) tex).deleteGlTexture();
+            }
+        }
+        YSM_TEXTURE_OBJECTS.clear();
+        TEXTURE_BYTES.clear();
+        TEXTURE_CONTENT_HASH.clear();
         com.fox.ysmu.client.model.CustomPlayerModel.clearPreviewBoneCache();
         com.fox.ysmu.client.audio.YSMSoundManager.clear();
         ConditionManager.clear();

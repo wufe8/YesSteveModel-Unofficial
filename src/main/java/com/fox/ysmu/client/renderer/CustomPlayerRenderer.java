@@ -79,15 +79,25 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
             }
         }
         ResourceLocation location = this.modelProvider.getModelLocation(animatable);
+        ResourceLocation mainModelId = this.animatable != null
+            ? this.animatable.getMainModel() : null;
         GeoModel geoModel = GeckoLibCache.getInstance()
             .getGeoModels()
             .get(location);
+        if (geoModel == null && mainModelId != null) {
+            // Lazy-load geo model from encrypted cache if it was unloaded
+            com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(mainModelId);
+            geoModel = GeckoLibCache.getInstance()
+                .getGeoModels()
+                .get(location);
+        }
         if (geoModel != null) {
             this.geoModel = geoModel;
-            // Ensure animation data is loaded; lazy-loads from raw bytes if unloaded
-            if (this.animatable != null) {
-                com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(
-                    this.animatable.getMainModel());
+            if (mainModelId != null) {
+                // Ensure all caches are loaded and mark as recently used
+                com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(mainModelId);
+                com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(mainModelId);
+                com.fox.ysmu.client.ClientModelManager.ensureTexturesLoaded(mainModelId);
             }
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
             // 渲染 AdventureBackpack2 背部可穿戴物品（直升机背包等）

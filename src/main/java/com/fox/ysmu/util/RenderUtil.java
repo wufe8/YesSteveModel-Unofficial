@@ -139,8 +139,13 @@ public final class RenderUtil {
                 entity.setPlayer(null);
                 consumer.accept(entity);
 
-                entity.setMainModel(ModelIdUtil.getMainId(modelId));
+                ResourceLocation mainModelId = ModelIdUtil.getMainId(modelId);
+                entity.setMainModel(mainModelId);
                 entity.setTexture(textureId);
+                // Ensure textures, geo, and animations are loaded for GUI preview (bypasses doRender())
+                com.fox.ysmu.client.ClientModelManager.ensureTexturesLoaded(mainModelId);
+                com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(mainModelId);
+                com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(mainModelId);
 
                 GlStateManager.pushMatrix();
                 GlStateManager.matrixMode(GL11.GL_MODELVIEW);
@@ -382,8 +387,13 @@ public final class RenderUtil {
         // keyframes would otherwise play sounds when just hovering over a model button.
         YSMSoundManager.setPreviewRendering(true);
         try {
-        entity.setMainModel(ModelIdUtil.getMainId(modelId));
+        ResourceLocation mainModelId = ModelIdUtil.getMainId(modelId);
+        entity.setMainModel(mainModelId);
         entity.setTexture(textureId);
+        // Ensure textures, geo, and animations are loaded for GUI preview (bypasses doRender())
+        com.fox.ysmu.client.ClientModelManager.ensureTexturesLoaded(mainModelId);
+        com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(mainModelId);
+        com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(mainModelId);
 
         GL11.glEnable(GL11.GL_COLOR_MATERIAL);
         GL11.glEnable(GL11.GL_DEPTH_TEST);
