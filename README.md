@@ -168,6 +168,7 @@ git checkout perf/previewUI
 - [FIXED] ysm格式的cube路径与文件夹json的cube路径不同 其poly_mash会丢失size<0的状态 导致本应是负缩放大小的模型无法通过正确翻转法线 来做到内外面翻转/描边的效果
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
 - [SKIP] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为高阈值兜底（默认 1024 MB + 60秒后触发 强制GC），可通过配置关闭
+- [SKIP] 目前最新Angelica(angelica-2.1.50.jar)会导致ysm模型受到原版亮度设置的影响 如果觉得太暗 尝试在设置中将原版的亮度滑条设置为100(明亮) wont fix
 
 
 

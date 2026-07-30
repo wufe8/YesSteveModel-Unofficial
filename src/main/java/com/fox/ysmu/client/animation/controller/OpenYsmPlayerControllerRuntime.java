@@ -304,14 +304,11 @@ public final class OpenYsmPlayerControllerRuntime {
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
-        // Debug: log post_swing transition evaluation details (rate-limited to 1s)
-        if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing") && allowDebugLog("PS-EVAL")) {
+        // Debug: log transition evaluation details for all controllers (rate-limited to 1s)
+        if (Config.DEBUG_CONTROLLER && allowDebugLog("CTRL-EVAL-" + geckoControllerName)) {
             StringBuilder sb = new StringBuilder();
-            sb.append("[YSMU-PS-EVAL] from='").append(state.name).append("' vars:");
-            sb.append(" swing=").append(runtimeState.variables.getOrDefault("swing", -999.0));
-            sb.append(" attack=").append(runtimeState.variables.getOrDefault("attack", -999.0));
-            sb.append(" swing_end=").append(runtimeState.variables.getOrDefault("swing_end", -999.0));
-            sb.append(" roaming.swing_sword=").append(runtimeState.variables.getOrDefault("roaming.swing_sword", -999.0));
+            sb.append("[YSMU-CTRL-EVAL] ").append(geckoControllerName)
+              .append(" from='").append(state.name).append("'");
             if (state.transitions != null) {
                 for (Transition t : state.transitions) {
                     State target = match.controller.states.get(t.targetState);
@@ -326,13 +323,10 @@ public final class OpenYsmPlayerControllerRuntime {
         for (int i = 0; i < 4; i++) {
             String prevStateName = state.name;
             State nextState = applyTransition(event, match.controller, state, runtimeState, context);
-            // Log state transitions for post_swing (rate-limited to 1s)
-            if (Config.DEBUG_CONTROLLER && geckoControllerName.contains("post_swing") && nextState != state && allowDebugLog("PS-TRANS")) {
-                ysmu.LOG.info("[YSMU-PS-TRANS] iter={}: {} -> {} (swing={} attack={} swing_end={})",
-                    i, prevStateName, nextState.name,
-                    runtimeState.variables.getOrDefault("swing", -999.0),
-                    runtimeState.variables.getOrDefault("attack", -999.0),
-                    runtimeState.variables.getOrDefault("swing_end", -999.0));
+            // Log state transitions (rate-limited to 1s per controller)
+            if (Config.DEBUG_CONTROLLER && nextState != state && allowDebugLog("CTRL-TRANS-" + geckoControllerName)) {
+                ysmu.LOG.info("[YSMU-CTRL-TRANS] iter={}: {} -> {} [{}]",
+                    i, prevStateName, nextState.name, geckoControllerName);
             }
             if (nextState == state) {
                 break;

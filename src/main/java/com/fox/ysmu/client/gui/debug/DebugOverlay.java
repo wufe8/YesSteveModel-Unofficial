@@ -79,7 +79,7 @@ public final class DebugOverlay {
         if (!overlayHintShown) {
             overlayHintShown = true;
             String hint = MolangDebugSnapshot.CHAT_PREFIX
-                + " \u00a77Toggle with \u00a7eCtrl+<Alt+P key>\u00a77 in-game.";
+                + " \u00a77Toggle with \u00a7eCtrl+P key\u00a77 in-game.";
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
             if (mc.thePlayer != null) {
                 mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentText(hint));

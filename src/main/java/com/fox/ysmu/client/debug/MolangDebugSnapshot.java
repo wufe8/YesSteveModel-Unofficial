@@ -31,6 +31,14 @@ public final class MolangDebugSnapshot {
      * @return 变量值，如果未知则返回 {@code NaN}
      */
     public static double queryVariable(String name) {
+        // ctrl.* 必须最先检查 —— MolangParser.VARIABLES 中可能有
+        // computeIfAbsent 残留的默认值 0.0 条目，会覆盖动态评估结果。
+        if (name.startsWith("ctrl.")) {
+            EntityPlayer p = Minecraft.getMinecraft().thePlayer;
+            if (p == null) return Double.NaN;
+            return com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
+                .evaluateCtrlState(name.substring("ctrl.".length()), p);
+        }
         // 1. 静态注册变量 (query.* / ysm.* / math.*)
         software.bernie.geckolib3.core.molang.LazyVariable var =
             MolangParser.VARIABLES.get(name);
@@ -47,13 +55,6 @@ public final class MolangDebugSnapshot {
                 MolangParser.VARIABLES.get(name);
             if (gVar != null) return gVar.get();
             return Double.NaN;
-        }
-        // 3. ctrl.* 控制器状态 — 委托到真实的 evaluator
-        if (name.startsWith("ctrl.")) {
-            EntityPlayer p = Minecraft.getMinecraft().thePlayer;
-            if (p == null) return Double.NaN;
-            return com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
-                .evaluateCtrlState(name.substring("ctrl.".length()), p);
         }
         return Double.NaN;
     }
@@ -186,6 +187,10 @@ public final class MolangDebugSnapshot {
                     result.put(rp + entry.getKey(), entry.getValue());
                 }
             }
+            // ctrl.* 通配符 — 使用动态评估
+            if (prefix.equals("ctrl.")) {
+                addDynamicCtrlStates(result);
+            }
             if (!result.isEmpty()) return result;
         }
         // 3. 模糊子串匹配（不包含通配符但也不是精确匹配）
@@ -207,7 +212,27 @@ public final class MolangDebugSnapshot {
                 }
             }
         }
+        // ctrl.* 模糊匹配 — 使用动态评估
+        if (lower.startsWith("ctrl.")) {
+            addDynamicCtrlStates(result);
+        }
         return result;
+    }
+
+    /** 把动态 ctrl.* 状态评估结果加入 result */
+    private static void addDynamicCtrlStates(Map<String, Double> result) {
+        EntityPlayer p = Minecraft.getMinecraft().thePlayer;
+        if (p == null) return;
+        String[] ctrlStates = {"idle", "death", "sleep", "swim", "climb", "climbing",
+            "ladder_up", "ladder_stillness", "ladder_down",
+            "ride", "ride_pig", "boat", "sit",
+            "elytra_fly", "fly", "swim_stand",
+            "attacked", "jump", "sneak", "sneaking", "run", "walk"};
+        for (String s : ctrlStates) {
+            result.put("ctrl." + s,
+                com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
+                    .evaluateCtrlState(s, p));
+        }
     }
 
     /**
