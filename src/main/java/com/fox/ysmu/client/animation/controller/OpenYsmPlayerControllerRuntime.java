@@ -372,17 +372,17 @@ public final class OpenYsmPlayerControllerRuntime {
                 ysmu.LOG.info("[YSMU-CTRL] {}: no active animations, state='{}'",
                     geckoControllerName, runtimeState.currentState);
             }
-            State initialState = match.controller.getInitialState();
-            if (initialState != null && !runtimeState.currentState.equals(initialState.name)) {
-                runtimeState.currentState = initialState.name;
-                runtimeState.enteredTick = event.getAnimationTick();
-            }
-            // Reset animation tracking so a future re-entry of the same state
-            // (e.g. 挥剑1→default→挥剑1) won't incorrectly match via sameAnim
-            // and skip setAnimation, causing the animation to start from a
-            // stale position instead of tick 0.
+            // Clear animation tracking so the next frame's transition to a valid
+            // state (e.g. 起跳/潜行) will force setAnimation instead of skipping
+            // via sameAnim with a stale animation name.
             runtimeState.lastSelectedAnimationState = "";
             runtimeState.lastSelectedAnimation = "";
+            // Do NOT reset currentState to initial state. The controller stays in
+            // its current state (e.g. 空闲) so that transitions are re-evaluated
+            // next frame. Without this, the controller resets to 入场动画 and
+            // q.all_animations_finished may return false (stale animation from a
+            // previous state still stuck in getCurrentAnimation()), permanently
+            // preventing the transition loop from ever evaluating 空闲's transitions.
             if ("ysm-builtin".equals(runtimeState.currentState)) {
             } else {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);

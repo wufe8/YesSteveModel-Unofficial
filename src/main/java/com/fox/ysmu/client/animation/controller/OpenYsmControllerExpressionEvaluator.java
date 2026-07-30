@@ -1194,7 +1194,15 @@ public final class OpenYsmControllerExpressionEvaluator {
         private boolean allAnimationsFinished() {
             Animation current = event.getController() == null ? null : event.getController().getCurrentAnimation();
             if (current == null || current.animationLength == null || current.animationLength <= 0.0d) {
-                return false;
+                // No animation to play — trivially all finished.
+                return true;
+            }
+            // If the controller's animation builder is empty (cleared by the empty-state
+            // handler returning null last frame), the current animation is stale/leftover
+            // from a previous state and should be treated as finished.
+            if (event.getController().currentAnimationBuilder == null
+                || event.getController().currentAnimationBuilder.getRawAnimationList().isEmpty()) {
+                return true;
             }
             // event.getAnimationTick() 和 current.animationLength 都是 tick 数（20 TPS），
             // 两者单位一致，直接比较。注意 anim_time 查询会除以 20 转成秒给 Molang 用，

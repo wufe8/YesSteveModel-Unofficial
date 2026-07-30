@@ -136,6 +136,8 @@ public class AnimationRegister {
         parser.register(new LazyVariable("query.time_of_day", 0));
         parser.register(new LazyVariable("query.time_stamp", 0));
         parser.register(new LazyVariable("query.vertical_speed", 0));
+        parser.register(new LazyVariable("query.all_animations_finished", MolangUtils.FALSE));
+        parser.register(new LazyVariable("query.any_animation_finished", MolangUtils.FALSE));
         parser.register(new LazyVariable("query.walk_distance", 0));
         parser.register(new LazyVariable("query.yaw_speed", 0));
 
