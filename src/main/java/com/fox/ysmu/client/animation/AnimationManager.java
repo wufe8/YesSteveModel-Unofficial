@@ -797,7 +797,8 @@ public final class AnimationManager {
             return PlayState.STOP;
         }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
-        if (controllerState != null) {
+        boolean openYsmProducedAnimation = controllerState != null;
+        if (openYsmProducedAnimation) {
             return controllerState;
         }
 
@@ -805,8 +806,12 @@ public final class AnimationManager {
         // 则跳过 legacy 回退路径，避免 swing:sword/swing_hand（来自默认模型
         // 骨骼）与模型自身的攻击动画并行叠加导致骨骼变换冲突甚至模型消失。
         // 但需要清空 GeckoLib 的旧动画数据，防止"串动"。
+        // 注意: 仅当 OpenYSM 控制器实际产生了动画时才跳过 legacy。
+        // 如果控制器存在但没有任何可播放的动画（tryApply 返回 null），
+        // 仍需回退到 legacy 系统播放默认挥动动画。
         ResourceLocation animId = getAnimationId(event);
-        boolean modelHasOwnSwingCtrl = OpenYsmPlayerControllerRuntime.hasAnyController(animId)
+        boolean modelHasOwnSwingCtrl = openYsmProducedAnimation
+            && OpenYsmPlayerControllerRuntime.hasAnyController(animId)
             && (OpenYsmAnimationControllerRegistry.hasController(animId, "player.post_swing")
                 || OpenYsmAnimationControllerRegistry.hasController(animId, "player.pre_swing")
                 || OpenYsmAnimationControllerRegistry.hasController(animId, "player.swing")
