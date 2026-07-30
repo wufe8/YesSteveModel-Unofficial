@@ -242,28 +242,23 @@ public final class OpenYsmPlayerControllerRuntime {
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
-        // 跳过依赖未加载模组的平行控制器（如 player.parallel_3）。
-        // 没有 TacZ 时平行控制器的 transition 条件永远无法满足，
-        // 导致卡在 default 状态循环播放在动画中带有音效关键帧的动画。
-        //
-        // 主控制器（post_main/main/base/move）不跳过——它们的非模组
-        // 相关状态（如 idle/walk/run/jump）可以正常运行，模组相关条件
-        // 自然返回 false。
-        if (!match.controller.modDependencies.isEmpty()
-            && ModDependencyRegistry.hasUnmetDependencies(match.controller.modDependencies)) {
-            // 仅跳过平行控制器，不跳过主身体控制器
-            String ctrlName = geckoControllerName;
-            boolean isParallel = ctrlName != null
-                && (ctrlName.startsWith("parallel_") || ctrlName.startsWith("pre_parallel_"));
-            if (isParallel) {
-                runtimeState.currentState = "";
-                runtimeState.lastSelectedAnimationState = "";
-                runtimeState.lastSelectedAnimation = "";
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
-                event.getController().currentAnimationBuilder = new AnimationBuilder();
-                return null;
-            }
-        }
+        // [路线C] 临时注释跳过逻辑——让所有控制器全走默认值，
+        // 观察无 TacZ 时各控制器的实际行为（哪些能正常工作，
+        // 哪些空转/循环音效）。
+        // if (!match.controller.modDependencies.isEmpty()
+        //     && ModDependencyRegistry.hasUnmetDependencies(match.controller.modDependencies)) {
+        //     String ctrlName = geckoControllerName;
+        //     boolean isParallel = ctrlName != null
+        //         && (ctrlName.startsWith("parallel_") || ctrlName.startsWith("pre_parallel_"));
+        //     if (isParallel) {
+        //         runtimeState.currentState = "";
+        //         runtimeState.lastSelectedAnimationState = "";
+        //         runtimeState.lastSelectedAnimation = "";
+        //         com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+        //         event.getController().currentAnimationBuilder = new AnimationBuilder();
+        //         return null;
+        //     }
+        // }
         // Inject roaming variables scoped to the current model only.
         // Using getRoamingVarsForModel() instead of directly iterating
         // PENDING_ROAMING prevents cross-model variable contamination.

@@ -311,7 +311,7 @@ public final class OpenYsmControllerExpressionEvaluator {
         int start = idx[0];
         while (idx[0] < expr.length()) {
             char c = expr.charAt(idx[0]);
-            if (Character.isLetter(c) || c == '_' || c == '.') {
+            if (Character.isLetter(c) || Character.isDigit(c) || c == '_' || c == '.') {
                 idx[0]++;
             } else {
                 break;
