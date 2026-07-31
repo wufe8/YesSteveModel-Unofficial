@@ -6,6 +6,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.animation.VirtualBone;
 import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.keyframe.BoneAnimation;
@@ -258,8 +259,8 @@ public class CustomPlayerModel extends AnimatedGeoModel {
                 }
             }
         }
-        // Diagnostic: log visibility stats once per model switch (throttled per animId)
-        if (hiddenCount > 0 || totalBones > 0) {
+        // Diagnostic: log visibility stats once per model switch (throttled per animId, gated)
+        if (Config.DEBUG_MODEL_LOAD && (hiddenCount > 0 || totalBones > 0)) {
             String throttleKey = animId.toString();
             if (VISIBILITY_LOG_THROTTLE.add(throttleKey)) {
                 com.fox.ysmu.ysmu.LOG.info(

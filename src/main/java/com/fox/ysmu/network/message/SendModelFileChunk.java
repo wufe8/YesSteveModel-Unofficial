@@ -10,6 +10,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import org.apache.commons.io.FileUtils;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.model.ServerModelManager;
 import com.fox.ysmu.ysmu;
@@ -138,10 +139,12 @@ public class SendModelFileChunk implements IMessage {
                     ACCUMULATORS.remove(fileName, accumulator);
                     ClientModelManager.rememberCachedModel(fileName);
                     RequestLoadModel.loadModel(fileName);
-                    ysmu.LOG.info(
-                        "Received chunked YSM model cache file {} ({} bytes)",
-                        fileName,
-                        accumulator.totalLength);
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info(
+                            "Received chunked YSM model cache file {} ({} bytes)",
+                            fileName,
+                            accumulator.totalLength);
+                    }
                 } catch (IOException e) {
                     ACCUMULATORS.remove(fileName, accumulator);
                     ysmu.LOG.warn("Failed to finish YSM chunked model cache file " + fileName, e);

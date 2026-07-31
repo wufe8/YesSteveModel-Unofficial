@@ -69,13 +69,17 @@ public final class OpenYsmModelSyncClient {
         key1 = null;
         lastKey = null;
         serverKey = null;
-        clientKey = null;
         currentCacheFolderName = null;
         SERVER_MODELS.clear();
+        // NOTE: clientKey is intentionally KEPT — lazy geo/anim/texture reload
+        // re-decrypts the client cache files with it after an idle unload, and
+        // the sync teardown (sendComplete) also calls resetConnectionState(). It
+        // is only cleared on disconnect (clearConnectionState).
     }
 
     public static synchronized void clearConnectionState() {
         resetConnectionState();
+        clientKey = null;
     }
 
     private static synchronized void processServerData(byte[] packetBytes) {
@@ -345,10 +349,11 @@ public final class OpenYsmModelSyncClient {
                 return false;
             }
             // Record the encrypted client cache file (relative path under
-            // CACHE_CLIENT) so lazy geo/anim/texture reload can re-decrypt it on
-            // demand after an idle unload. Without this the OpenYSM cache files
-            // are never re-discovered and unloaded models cannot be restored.
-            ClientModelManager.rememberModelMd5(
+            // CACHE_CLIENT, OpenYSM format) so lazy geo/anim/texture reload can
+            // re-decrypt it on demand after an idle unload. Without this the
+            // OpenYSM cache files are never re-discovered and unloaded models
+            // cannot be restored.
+            ClientModelManager.rememberOpenYsmModelCache(
                 new ResourceLocation(ysmu.MODID, context.modelId),
                 currentCacheFolderName + "/" + YSMClientCache.generateCacheFileName(context.hash1, context.hash2, clientKey));
             ClientModelManager.scheduleApply(bundle);
@@ -534,6 +539,18 @@ public final class OpenYsmModelSyncClient {
         });
         if (buf.getRawBuf().readableBytes() > 0) {
             buf.readVarInt();
+        }
+    }
+
+    /** Decrypts a client cache file written by this session's OpenYSM sync into
+     *  clear bytes using the session client key. Returns null on failure. Used by
+     *  ClientModelManager lazy-reload (geo/anim/texture) after an idle unload. */
+    public static byte[] readClientCacheToClearBytes(byte[] cacheBytes) {
+        if (clientKey == null) return null;
+        try {
+            return YsmCrypt.read(cacheBytes, clientKey);
+        } catch (Exception e) {
+            return null;
         }
     }
 

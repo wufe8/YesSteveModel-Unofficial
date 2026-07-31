@@ -140,8 +140,12 @@ public class ClientModelManager {
     private static final String PROJECTILE_KEY_PREFIX = "projectile_";
 
     // ── Lazy animation loading ────────────────────────────────────────────
-    /** Maps main model ID → cache filename (MD5) for re-reading from encrypted client cache. */
+    /** Maps main model ID → cache file path (relative to CACHE_CLIENT) for re-reading from the encrypted client cache. */
     private static final Map<ResourceLocation, String> CACHED_MODEL_MD5 = new HashMap<>();
+    /** Main model IDs whose encrypted client cache uses the OpenYSM (YsmCrypt) format.
+     *  Those files are decrypted with the session client key, not the legacy password. */
+    private static final java.util.Set<ResourceLocation> OPENYSM_CACHE_FORMAT =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** Timestamp (System.currentTimeMillis) of last animation usage, for auto-unloading. */
     private static final Map<ResourceLocation, Long> ANIMATION_LAST_USED = new HashMap<>();
     /** How long (ms) since last use before animations are unloaded from GeckoLibCache. */
@@ -156,13 +160,12 @@ public class ClientModelManager {
     // ── Texture GPU memory management ─────────────────────────────────────
     /** Timestamp (System.currentTimeMillis) of last texture usage, for auto-unloading. */
     private static final Map<ResourceLocation, Long> TEXTURE_LAST_USED = new HashMap<>();
-    /** How long (ms) since last use before textures are freed from GPU + heap. */
+    /** How long (ms) since last use before textures are freed from the GPU (raw bytes stay in RAM). */
     private static final long TEXTURE_UNLOAD_MS = 30_000L;
     /** OuterFileTexture references kept across GPU unload/reload cycles.
-     *  Raw bytes live inside each OuterFileTexture and are dropped on unload;
-     *  the encrypted client cache file (CACHE_CLIENT/&lt;md5&gt;) retains the model
-     *  data, so bytes are restored by re-decrypting on demand — the disk never
-     *  holds plaintext model data. */
+     *  Raw bytes live inside each OuterFileTexture and stay in RAM across idle
+     *  unloads (only the GPU copy is freed), so re-upload never needs to restore
+     *  bytes from the encrypted client cache and white models cannot occur. */
     private static final Map<ResourceLocation, net.minecraft.client.renderer.texture.ITextureObject> YSM_TEXTURE_OBJECTS = new HashMap<>();
 
     private static boolean isProjectileKey(String key) {
@@ -716,8 +719,7 @@ public class ClientModelManager {
                     ysmu.LOG.warn("[YSMU-TEX] re-registerTexture({}): failed: {}", id, e.getMessage());
                 }
             }
-            // Note: if existing bytes were freed on unload they are restored lazily
-            // from the encrypted client cache by ensureTexturesLoaded.
+            // Raw bytes stay in RAM across unloads, so nothing else to restore here.
             return; // Content unchanged
         }
         // Diagnostic: validate texture data before registration
@@ -740,8 +742,8 @@ public class ClientModelManager {
         // decode+upload happens on first bind (getGlTextureId) or via
         // ensureTexturesLoaded. This avoids pushing every model's textures into
         // VRAM at sync time — VRAM grows only for models actually rendered.
-        // Raw bytes are kept only in memory while the model is hot (dropped on
-        // unload) — the disk never holds plaintext model data.
+        // Raw bytes are kept in RAM for the whole session (re-upload is always
+        // possible without touching the encrypted cache / disk).
         OuterFileTexture outerTex = new OuterFileTexture(id, data);
         try {
             Minecraft.getMinecraft()
@@ -960,6 +962,44 @@ public class ClientModelManager {
     }
 
     /**
+     * Loads the legacy {@link ModelData} for a model from its encrypted client
+     * cache file, handling both cache formats:
+     * <ul>
+     *   <li>Legacy (EncryptTools + sync password): {@code cache/client/<md5>}.</li>
+     *   <li>OpenYSM (YsmCrypt + session client key): {@code cache/client/<folder>/<name>},
+     *       deserialized and bridged back to legacy {@link ModelData}.</li>
+     * </ul>
+     * Returns null when the file is missing, cannot be decrypted, or is not bridgeable.
+     */
+    @Nullable
+    private static ModelData loadLegacyModelData(ResourceLocation mainModelId) {
+        String path = CACHED_MODEL_MD5.get(mainModelId);
+        if (path == null || path.isEmpty()) return null;
+        try {
+            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(path).toFile();
+            if (!cacheFile.isFile()) return null;
+            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
+            if (OPENYSM_CACHE_FORMAT.contains(mainModelId)) {
+                byte[] clearBytes = com.fox.ysmu.client.sync.OpenYsmModelSyncClient.readClientCacheToClearBytes(fileBytes);
+                if (clearBytes == null) return null;
+                try (com.fox.ysmu.model.resource.YSMBinaryDeserializer deserializer =
+                         new com.fox.ysmu.model.resource.YSMBinaryDeserializer(clearBytes, 32)) {
+                    com.fox.ysmu.model.resource.pojo.RawYsmModel raw = deserializer.deserializeKeepOpen();
+                    deserializer.parseYSMFooter(raw);
+                    String modelId = com.fox.ysmu.util.ModelIdUtil.getModelIdFromMainId(mainModelId).getResourcePath();
+                    raw.modelId = modelId;
+                    return com.fox.ysmu.model.resource.RawYsmModelAdapter.toLegacyModelData(raw, modelId);
+                }
+            }
+            return com.fox.ysmu.data.EncryptTools.decryptModel(
+                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to load model data for {}: {}", mainModelId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * Ensures the animation data for the given model is loaded in GeckoLibCache.
      * If not present, re-reads the encrypted client cache file, decrypts it,
      * and re-parses the animation JSON bytes.
@@ -973,16 +1013,8 @@ public class ClientModelManager {
             return;
         }
 
-        String md5 = CACHED_MODEL_MD5.get(modelId);
-        if (md5 == null || md5.isEmpty()) return;
-
         try {
-            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(md5).toFile();
-            if (!cacheFile.isFile()) return;
-
-            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
-            ModelData data = com.fox.ysmu.data.EncryptTools.decryptModel(
-                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
+            ModelData data = loadLegacyModelData(modelId);
             if (data == null) return;
 
             Map<String, byte[]> animBytes = data.getAnimation();
@@ -1033,16 +1065,8 @@ public class ClientModelManager {
             return;
         }
 
-        String md5 = CACHED_MODEL_MD5.get(modelId);
-        if (md5 == null || md5.isEmpty()) return;
-
         try {
-            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(md5).toFile();
-            if (!cacheFile.isFile()) return;
-
-            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
-            ModelData data = com.fox.ysmu.data.EncryptTools.decryptModel(
-                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
+            ModelData data = loadLegacyModelData(modelId);
             if (data == null) return;
 
             Map<String, byte[]> modelBytes = data.getModel();
@@ -1086,8 +1110,8 @@ public class ClientModelManager {
         List<ResourceLocation> texIds = MODELS.get(baseId);
         if (texIds == null || texIds.isEmpty()) return;
 
-        // Upload any texture that isn't on the GPU yet, restoring its raw bytes
-        // from the disk cache if they were freed on unload.
+        // Upload any texture that isn't on the GPU yet (bytes are always in RAM;
+        // the restore below is only a defensive fallback).
         // NOTE: use isUploaded() not getGlTextureId()==-1 — the latter lazily
         // allocates a fresh GL texture ID on check, masking the unloaded state
         // and skipping the re-upload (rendering white).
@@ -1099,9 +1123,9 @@ public class ClientModelManager {
                 continue;
             }
             if (!tex.hasData()) {
-                // Bytes were freed on unload — restore from the encrypted client
-                // cache (same decrypt path as geo/anim lazy reload). The disk never
-                // stores plaintext model data.
+                // Defensive: normally bytes are always present. If a future change
+                // frees them, restore from the encrypted client cache (same decrypt
+                // path as geo/anim lazy reload).
                 restoreTextureData(tex, modelId, texId);
             }
             tex.upload();
@@ -1110,26 +1134,29 @@ public class ClientModelManager {
     }
 
     /**
-     * Restores a texture's raw bytes from the encrypted client cache file when
-     * the in-memory copy was freed on unload. Re-decrypts the (small) model file
-     * on demand, same as {@link #ensureGeoModelLoaded} / {@link #ensureAnimationsLoaded}.
+     * Defensive fallback: restores a texture's raw bytes from the encrypted client
+     * cache file if the in-memory copy is missing. Currently unused in normal flow
+     * (bytes stay in RAM), but kept so unload can be re-enabled safely. Re-decrypts
+     * the (small) model file on demand, same as
+     * {@link #ensureGeoModelLoaded} / {@link #ensureAnimationsLoaded}.
      */
     private static void restoreTextureData(OuterFileTexture tex, ResourceLocation mainModelId, ResourceLocation texId) {
-        String md5 = CACHED_MODEL_MD5.get(mainModelId);
-        if (md5 == null || md5.isEmpty()) return;
         try {
-            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(md5).toFile();
-            if (!cacheFile.isFile()) return;
-            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
-            ModelData data = com.fox.ysmu.data.EncryptTools.decryptModel(
-                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
-            if (data == null) return;
+            ModelData data = loadLegacyModelData(mainModelId);
+            if (data == null) {
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Texture restore skipped for {} (model {}): no cache data", texId, mainModelId);
+                }
+                return;
+            }
             Map<String, byte[]> texMap = data.getTexture();
             if (texMap == null || texMap.isEmpty()) return;
             String texName = com.fox.ysmu.util.ModelIdUtil.getSubNameFromId(texId);
             byte[] texBytes = texName != null ? texMap.get(texName) : null;
             if (texBytes != null) {
                 tex.setData(texBytes);
+            } else if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("[YSMU-MODEL] Texture restore MISS for {} (model {}): key '{}' not in cache", texId, mainModelId, texName);
             }
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to restore texture {} from cache: {}", texId, e.getMessage());
@@ -1143,9 +1170,9 @@ public class ClientModelManager {
      * <ul>
      *   <li>Animations: frees ~9 MB per model (GeckoLib KeyFrame/ConstantValue)</li>
      *   <li>GeoModels: frees ~1-3 MB per model (GeckoLib GeoBone/GeoCube hierarchy)</li>
-     *   <li>Textures: frees GPU memory (OpenGL texture objects stay registered but
-     *       underlying GL texture is deleted; {@link #ensureTexturesLoaded} can
-     *       re-upload from stored bytes).</li>
+     *   <li>Textures: frees the GPU copy only (OpenGL texture objects stay
+     *       registered; raw bytes remain in RAM so {@link #ensureTexturesLoaded}
+     *       re-uploads from memory without touching the encrypted cache).</li>
      * </ul>
      */
     public static void unloadUnusedCaches() {
@@ -1174,7 +1201,7 @@ public class ClientModelManager {
             return shouldUnload;
         });
 
-        // 3. Unload unused textures (free GPU + heap bytes; disk cache keeps raw data)
+        // 3. Unload unused textures (free GPU only; raw bytes stay in RAM)
         // TEXTURE_LAST_USED keys are mainIds (e.g. "ysmu:model_id/main").
         // MODELS keys are base IDs (e.g. "ysmu:model_id"). We match by checking
         // if the texture belongs to an unloaded model via lookup.
@@ -1186,13 +1213,15 @@ public class ClientModelManager {
             if (!shouldUnload) continue;
             for (ResourceLocation texId : entry.getValue()) {
                 OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
-                if (tex != null) {
-                    if (tex.isUploaded()) {
-                        tex.freeGlTexture(); // Free GPU memory
-                    }
-                    tex.freeData(); // Free heap bytes; encrypted client cache allows re-decrypt restore
+                if (tex != null && tex.isUploaded()) {
+                    // Free GPU memory only. Raw bytes are KEPT in RAM so re-upload
+                    // never depends on the encrypted-cache restore path, which has
+                    // caused recurring white models on large libraries. Lazy GPU
+                    // upload already bounds VRAM; holding texture bytes matches the
+                    // pre-optimization baseline and keeps rendering robust.
+                    tex.freeGlTexture();
                     if (Config.DEBUG_MODEL_LOAD) {
-                        ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture + bytes for {} (model {})", texId, mainId);
+                        ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, mainId);
                     }
                 }
             }
@@ -1236,6 +1265,7 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.clear();
         CACHED_MODEL_MD5.clear();
+        OPENYSM_CACHE_FORMAT.clear();
         ANIMATION_LAST_USED.clear();
         GEO_MODEL_LAST_USED.clear();
         TEXTURE_LAST_USED.clear();
@@ -1393,10 +1423,23 @@ public class ClientModelManager {
         }
     }
 
-    /** Records the MD5 filename for a model so {@link #ensureAnimationsLoaded} can re-read from encrypted cache. */
+    /** Records the cache file path (legacy encrypted format) for a model so lazy
+     *  geo/anim/texture reload can re-read it on demand. */
     public static void rememberModelMd5(ResourceLocation modelId, String md5) {
         if (modelId != null && md5 != null && !md5.isEmpty()) {
-            CACHED_MODEL_MD5.put(ModelIdUtil.getMainId(modelId), md5);
+            ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+            CACHED_MODEL_MD5.put(mainId, md5);
+            OPENYSM_CACHE_FORMAT.remove(mainId);
+        }
+    }
+
+    /** Records the cache file path (OpenYSM encrypted format) for a model so lazy
+     *  geo/anim/texture reload can re-read and re-decrypt it with the session key. */
+    public static void rememberOpenYsmModelCache(ResourceLocation modelId, String cachePath) {
+        if (modelId != null && cachePath != null && !cachePath.isEmpty()) {
+            ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+            CACHED_MODEL_MD5.put(mainId, cachePath);
+            OPENYSM_CACHE_FORMAT.add(mainId);
         }
     }
 

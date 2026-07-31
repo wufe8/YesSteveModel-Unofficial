@@ -38,6 +38,10 @@ public class OuterFileTexture extends AbstractTexture {
 
     /** True after a decode/upload failed; suppresses repeated retries. */
     private boolean failed;
+    /** Timestamp of the last failure; retries are allowed after {@link #FAILED_RETRY_MS}. */
+    private long failedAt;
+    /** Cooldown before a failed upload is retried (avoids permanent white from transient errors). */
+    private static final long FAILED_RETRY_MS = 2000L;
 
     public OuterFileTexture(ResourceLocation id, byte[] data) {
         this.id = id;
@@ -65,9 +69,13 @@ public class OuterFileTexture extends AbstractTexture {
      * via {@link #setData}, e.g. ClientModelManager#restoreTextureData).
      */
     public void upload() {
-        if (this.uploaded || this.failed) {
+        if (this.uploaded) {
             return;
         }
+        if (this.failed && System.currentTimeMillis() - this.failedAt < FAILED_RETRY_MS) {
+            return;
+        }
+        this.failed = false; // cooldown elapsed — allow a retry
         if (this.data == null) {
             return; // bytes freed — restore via setData before re-upload
         }
@@ -83,6 +91,7 @@ public class OuterFileTexture extends AbstractTexture {
                 ysmu.LOG.warn("[YSMU-TEX] upload({}): ImageIO returned null for {} bytes", this.id, this.data.length);
                 // Suppress repeated decode attempts until data is restored (setData/freeData).
                 this.failed = true;
+                this.failedAt = System.currentTimeMillis();
                 return;
             }
             TextureUtil.uploadTextureImageAllocate(super.getGlTextureId(), bufferedImage, false, false);
@@ -93,6 +102,7 @@ public class OuterFileTexture extends AbstractTexture {
             // Marked failed to avoid retrying a broken texture on every bind.
             ysmu.LOG.warn("[YSMU-TEX] upload({}): failed to upload: {}", this.id, e.getMessage());
             this.failed = true;
+            this.failedAt = System.currentTimeMillis();
         }
     }
 
