@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 
@@ -173,7 +174,7 @@ public final class MolangPhysicsRuntime {
     public static double getVariable(String name, double fallback) {
         FrameContext context = currentFrameContext;
         if (context == null) {
-            if (name.startsWith("v.roaming.") && LOGGED_VARS.add(name)) {
+            if (Config.DEBUG_ANIMATION && name.startsWith("v.roaming.") && LOGGED_VARS.add(name)) {
                 com.fox.ysmu.ysmu.LOG.info(
                     "YSM MolangPhysicsRuntime: getVariable('{}') – NO FRAME CONTEXT, fallback={}",
                     name, fallback);
@@ -181,8 +182,8 @@ public final class MolangPhysicsRuntime {
             return fallback;
         }
         Double value = context.state.variables.get(name);
-        // 只记录 v.roaming.* 变量，每个变量名只记录第一次
-        if (name.startsWith("v.roaming.") && LOGGED_VARS.add(name)) {
+        // 只记录 v.roaming.* 变量，每个变量名只记录第一次（仅 DEBUG_ANIMATION 时输出）
+        if (Config.DEBUG_ANIMATION && name.startsWith("v.roaming.") && LOGGED_VARS.add(name)) {
             com.fox.ysmu.ysmu.LOG.info(
                 "YSM MolangPhysicsRuntime: getVariable('{}') = {} (fallback={})",
                 name, value, fallback);

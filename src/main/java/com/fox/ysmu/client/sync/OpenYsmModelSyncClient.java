@@ -157,8 +157,8 @@ public final class OpenYsmModelSyncClient {
         ClientModelManager.SYNC_LOADED = 0;
         ClientModelManager.SYNC_IN_PROGRESS = true;
         syncStartTimeMs = System.currentTimeMillis();
-        ysmu.LOG.info("OpenYSM client received sync index: models={}", serverModelCount);
         if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] OpenYSM client received sync index: models={}", serverModelCount);
             ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
                 serverModelCount, localCacheMap.size());
         }
@@ -185,7 +185,9 @@ public final class OpenYsmModelSyncClient {
                     if (parseAndRegisterModel(clearBytes, context)) {
                         loadedModelsCount++;
                     }
-                    ysmu.LOG.info("OpenYSM client cache hit for {} ({})", modelId, context.uuid);
+                    if (Config.DEBUG_MODEL_LOAD) {
+                        ysmu.LOG.info("[YSMU-MODEL] OpenYSM client cache hit for {} ({})", modelId, context.uuid);
+                    }
                 } catch (Exception e) {
                     // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
                     // 避免整个同步流程因此崩溃，导致加载进度条无法显示。
@@ -199,8 +201,8 @@ public final class OpenYsmModelSyncClient {
                     ysmu.LOG.info("[YSMU-MODEL] Client cache MISS for {} ({}), cachedFile={}",
                         modelId, context.uuid,
                         cachedFile != null ? cachedFile : "(no local cache)");
+                    ysmu.LOG.info("[YSMU-MODEL] OpenYSM client cache miss for {} ({})", modelId, context.uuid);
                 }
-                ysmu.LOG.info("OpenYSM client cache miss for {} ({})", modelId, context.uuid);
             }
         }
 
@@ -248,7 +250,9 @@ public final class OpenYsmModelSyncClient {
                 downloadedModelsCount++;
             }
             pendingModelsCount--;
-            ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
+            if (Config.DEBUG_MODEL_LOAD) {
+                ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
+            }
             if (pendingModelsCount <= 0) {
                 sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
             }
@@ -340,6 +344,13 @@ public final class OpenYsmModelSyncClient {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
                 return false;
             }
+            // Record the encrypted client cache file (relative path under
+            // CACHE_CLIENT) so lazy geo/anim/texture reload can re-decrypt it on
+            // demand after an idle unload. Without this the OpenYSM cache files
+            // are never re-discovered and unloaded models cannot be restored.
+            ClientModelManager.rememberModelMd5(
+                new ResourceLocation(ysmu.MODID, context.modelId),
+                currentCacheFolderName + "/" + YSMClientCache.generateCacheFileName(context.hash1, context.hash2, clientKey));
             ClientModelManager.scheduleApply(bundle);
             return true;
         } catch (Exception e) {

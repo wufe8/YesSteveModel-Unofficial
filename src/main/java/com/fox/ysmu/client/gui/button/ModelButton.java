@@ -105,10 +105,23 @@ public class ModelButton extends GuiButton {
         }
     }
 
-    /** Releases the off-screen FBO. Must be called when this button is removed
-     *  from the screen (page flip / screen close) to avoid VRAM leaks. */
+    /** Releases the off-screen FBO and any GUI DynamicTextures. Must be called
+     *  when this button is removed from the screen (page flip / screen close)
+     *  to avoid VRAM leaks. */
     public void dispose() {
         fboCache.delete();
+        // Free the DynamicTextures created for the foreground/background images.
+        // Without this, browsing a large library uploads a permanent GL texture
+        // per model button that has GUI images (VRAM growth that never shrinks).
+        Minecraft mc = Minecraft.getMinecraft();
+        if (fgTextureLocation != null) {
+            mc.getTextureManager().deleteTexture(fgTextureLocation);
+            fgTextureLocation = null;
+        }
+        if (bgTextureLocation != null) {
+            mc.getTextureManager().deleteTexture(bgTextureLocation);
+            bgTextureLocation = null;
+        }
         modelCacheDirty = true;
     }
 

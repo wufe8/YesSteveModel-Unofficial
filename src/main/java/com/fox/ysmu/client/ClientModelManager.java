@@ -156,11 +156,13 @@ public class ClientModelManager {
     // ── Texture GPU memory management ─────────────────────────────────────
     /** Timestamp (System.currentTimeMillis) of last texture usage, for auto-unloading. */
     private static final Map<ResourceLocation, Long> TEXTURE_LAST_USED = new HashMap<>();
-    /** How long (ms) since last use before textures are freed from GPU. */
+    /** How long (ms) since last use before textures are freed from GPU + heap. */
     private static final long TEXTURE_UNLOAD_MS = 30_000L;
-    /** Texture raw bytes, kept for fast re-upload without re-reading encrypted cache. */
-    private static final Map<ResourceLocation, byte[]> TEXTURE_BYTES = new HashMap<>();
-    /** OuterFileTexture references kept across GPU unload/reload cycles. */
+    /** OuterFileTexture references kept across GPU unload/reload cycles.
+     *  Raw bytes live inside each OuterFileTexture and are dropped on unload;
+     *  the encrypted client cache file (CACHE_CLIENT/&lt;md5&gt;) retains the model
+     *  data, so bytes are restored by re-decrypting on demand — the disk never
+     *  holds plaintext model data. */
     private static final Map<ResourceLocation, net.minecraft.client.renderer.texture.ITextureObject> YSM_TEXTURE_OBJECTS = new HashMap<>();
 
     private static boolean isProjectileKey(String key) {
@@ -410,12 +412,14 @@ public class ClientModelManager {
             PROJECTILE_TEXTURE_IDS.putAll(bundle.projectileTextureIds);
         }
 
-        // Log and update progress
+        // Log and update progress (gated: one line per model is noisy with 100+ models)
         int texCount = bundle.textureIdList.size();
-        ysmu.LOG.info(
-            "YSM client registered model {}: totalModelEntries={}, textureCount={}, projectileModels={}",
-            modelId, geoModels.size(), texCount,
-            PROJECTILE_MODEL_IDS.containsKey(modelId) ? PROJECTILE_MODEL_IDS.get(modelId).size() : 0);
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info(
+                "YSM client registered model {}: totalModelEntries={}, textureCount={}, projectileModels={}",
+                modelId, geoModels.size(), texCount,
+                PROJECTILE_MODEL_IDS.containsKey(modelId) ? PROJECTILE_MODEL_IDS.get(modelId).size() : 0);
+        }
 
         MODEL_STATS.put(ModelIdUtil.getMainId(modelId),
             new int[]{bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims});
@@ -477,8 +481,10 @@ public class ClientModelManager {
             MODEL_PACKS.clear();
             MODEL_PACKS.putAll(renamed);
         }
-        ysmu.LOG.info("YSM client detected {} model packs from {} models: {}",
-            MODEL_PACKS.size(), MODELS.size(), MODEL_PACKS.keySet());
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("YSM client detected {} model packs from {} models: {}",
+                MODEL_PACKS.size(), MODELS.size(), MODEL_PACKS.keySet());
+        }
     }
 
     private static ResourceLocation getModelId(ModelData data) {
@@ -698,20 +704,11 @@ public class ClientModelManager {
         int newHash = java.util.Arrays.hashCode(data);
         Integer oldHash = TEXTURE_CONTENT_HASH.get(id);
         if (oldHash != null && oldHash == newHash) {
-            // Content unchanged — check if GPU texture needs re-upload
+            // Content unchanged — ensure the texture object still exists and has bytes.
             OuterFileTexture existing = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(id);
-            if (existing != null && !existing.isUploaded()) {
-                try {
-                    existing.loadTexture(Minecraft.getMinecraft().getResourceManager());
-                    if (Config.DEBUG_MODEL_LOAD) {
-                        ysmu.LOG.info("[YSMU-TEX] re-uploadTexture({}): OK", id);
-                    }
-                } catch (Exception e) {
-                    ysmu.LOG.warn("[YSMU-TEX] re-uploadTexture({}): failed: {}", id, e.getMessage());
-                }
-            } else if (existing == null) {
+            if (existing == null) {
                 // YSM_TEXTURE_OBJECTS was cleared (e.g. /ysm reload) — re-register fully
-                OuterFileTexture newTex = new OuterFileTexture(data);
+                OuterFileTexture newTex = new OuterFileTexture(id, data);
                 try {
                     Minecraft.getMinecraft().getTextureManager().loadTexture(id, newTex);
                     YSM_TEXTURE_OBJECTS.put(id, newTex);
@@ -719,6 +716,8 @@ public class ClientModelManager {
                     ysmu.LOG.warn("[YSMU-TEX] re-registerTexture({}): failed: {}", id, e.getMessage());
                 }
             }
+            // Note: if existing bytes were freed on unload they are restored lazily
+            // from the encrypted client cache by ensureTexturesLoaded.
             return; // Content unchanged
         }
         // Diagnostic: validate texture data before registration
@@ -736,7 +735,14 @@ public class ClientModelManager {
                 : "too-short";
             ysmu.LOG.info("[YSMU-TEX] registerTexture({}): {} bytes, magic={}", id, data.length, magic);
         }
-        OuterFileTexture outerTex = new OuterFileTexture(data);
+        // GPU upload is DEFERRED: loadTexture only registers the object in the
+        // TextureManager. OuterFileTexture.loadTexture() is a no-op; the real
+        // decode+upload happens on first bind (getGlTextureId) or via
+        // ensureTexturesLoaded. This avoids pushing every model's textures into
+        // VRAM at sync time — VRAM grows only for models actually rendered.
+        // Raw bytes are kept only in memory while the model is hot (dropped on
+        // unload) — the disk never holds plaintext model data.
+        OuterFileTexture outerTex = new OuterFileTexture(id, data);
         try {
             Minecraft.getMinecraft()
                 .getTextureManager()
@@ -758,7 +764,6 @@ public class ClientModelManager {
         }
         TEXTURE_CONTENT_HASH.put(id, newHash);
         YSM_TEXTURE_OBJECTS.put(id, outerTex);
-        TEXTURE_BYTES.put(id, data);
     }
 
     private static boolean isControllerResource(String name, byte[] data) {
@@ -1081,31 +1086,54 @@ public class ClientModelManager {
         List<ResourceLocation> texIds = MODELS.get(baseId);
         if (texIds == null || texIds.isEmpty()) return;
 
-        // Check if any texture needs re-upload
+        // Upload any texture that isn't on the GPU yet, restoring its raw bytes
+        // from the disk cache if they were freed on unload.
         // NOTE: use isUploaded() not getGlTextureId()==-1 — the latter lazily
         // allocates a fresh GL texture ID on check, masking the unloaded state
         // and skipping the re-upload (rendering white).
-        boolean needsReload = false;
         for (ResourceLocation texId : texIds) {
             OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
-            if (tex == null || !tex.isUploaded()) {
-                needsReload = true;
-                break;
+            if (tex == null) {
+                // Should not normally happen (YSM_TEXTURE_OBJECTS and MODELS are
+                // cleared together) — skip defensively.
+                continue;
             }
-        }
-        if (!needsReload) {
-            TEXTURE_LAST_USED.put(modelId, System.currentTimeMillis());
-            return;
-        }
-
-        // Re-register from stored bytes
-        for (ResourceLocation texId : texIds) {
-            byte[] texBytes = TEXTURE_BYTES.get(texId);
-            if (texBytes != null) {
-                registerTexture(texId, texBytes);
+            if (!tex.hasData()) {
+                // Bytes were freed on unload — restore from the encrypted client
+                // cache (same decrypt path as geo/anim lazy reload). The disk never
+                // stores plaintext model data.
+                restoreTextureData(tex, modelId, texId);
             }
+            tex.upload();
         }
         TEXTURE_LAST_USED.put(modelId, System.currentTimeMillis());
+    }
+
+    /**
+     * Restores a texture's raw bytes from the encrypted client cache file when
+     * the in-memory copy was freed on unload. Re-decrypts the (small) model file
+     * on demand, same as {@link #ensureGeoModelLoaded} / {@link #ensureAnimationsLoaded}.
+     */
+    private static void restoreTextureData(OuterFileTexture tex, ResourceLocation mainModelId, ResourceLocation texId) {
+        String md5 = CACHED_MODEL_MD5.get(mainModelId);
+        if (md5 == null || md5.isEmpty()) return;
+        try {
+            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(md5).toFile();
+            if (!cacheFile.isFile()) return;
+            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
+            ModelData data = com.fox.ysmu.data.EncryptTools.decryptModel(
+                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
+            if (data == null) return;
+            Map<String, byte[]> texMap = data.getTexture();
+            if (texMap == null || texMap.isEmpty()) return;
+            String texName = com.fox.ysmu.util.ModelIdUtil.getSubNameFromId(texId);
+            byte[] texBytes = texName != null ? texMap.get(texName) : null;
+            if (texBytes != null) {
+                tex.setData(texBytes);
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to restore texture {} from cache: {}", texId, e.getMessage());
+        }
     }
 
     /**
@@ -1146,7 +1174,7 @@ public class ClientModelManager {
             return shouldUnload;
         });
 
-        // 3. Unload unused textures (free GPU memory, keep bytes for re-upload)
+        // 3. Unload unused textures (free GPU + heap bytes; disk cache keeps raw data)
         // TEXTURE_LAST_USED keys are mainIds (e.g. "ysmu:model_id/main").
         // MODELS keys are base IDs (e.g. "ysmu:model_id"). We match by checking
         // if the texture belongs to an unloaded model via lookup.
@@ -1158,10 +1186,13 @@ public class ClientModelManager {
             if (!shouldUnload) continue;
             for (ResourceLocation texId : entry.getValue()) {
                 OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
-                if (tex != null && tex.isUploaded()) {
-                    tex.freeGlTexture(); // Free GPU memory only; bytes stay in TEXTURE_BYTES
+                if (tex != null) {
+                    if (tex.isUploaded()) {
+                        tex.freeGlTexture(); // Free GPU memory
+                    }
+                    tex.freeData(); // Free heap bytes; encrypted client cache allows re-decrypt restore
                     if (Config.DEBUG_MODEL_LOAD) {
-                        ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, mainId);
+                        ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture + bytes for {} (model {})", texId, mainId);
                     }
                 }
             }
@@ -1208,14 +1239,14 @@ public class ClientModelManager {
         ANIMATION_LAST_USED.clear();
         GEO_MODEL_LAST_USED.clear();
         TEXTURE_LAST_USED.clear();
-        // Free GPU textures
+        // Free GPU textures + heap bytes
         for (net.minecraft.client.renderer.texture.ITextureObject tex : YSM_TEXTURE_OBJECTS.values()) {
             if (tex instanceof com.fox.ysmu.client.texture.OuterFileTexture oft) {
                 oft.freeGlTexture();
+                oft.freeData();
             }
         }
         YSM_TEXTURE_OBJECTS.clear();
-        TEXTURE_BYTES.clear();
         TEXTURE_CONTENT_HASH.clear();
         com.fox.ysmu.client.model.CustomPlayerModel.clearPreviewBoneCache();
         com.fox.ysmu.client.audio.YSMSoundManager.clear();
