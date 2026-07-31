@@ -113,6 +113,9 @@ public class PlayerModelScreen extends GuiScreen {
 
     @Override
     public void initGui() {
+        // Release off-screen FBOs of old preview buttons before clearing, otherwise
+        // page flips leak VRAM (each ModelButton owns a Framebuffer).
+        disposePreviewButtons();
         // clearWidgets() -> buttonList.clear()
         this.buttonList.clear();
         if (ClientModelManager.MODELS.isEmpty() && !this.requestedModelSync) {
@@ -434,6 +437,24 @@ public class PlayerModelScreen extends GuiScreen {
             this.mc.getSoundHandler().playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
             this.initGui();
         }
+    }
+
+    /** Releases off-screen FBOs of all preview buttons (ModelButton / TextureButton).
+     *  Called before {@code buttonList.clear()} on page flips and on screen close. */
+    private void disposePreviewButtons() {
+        for (Object btn : this.buttonList) {
+            if (btn instanceof com.fox.ysmu.client.gui.button.ModelButton mb) {
+                mb.dispose();
+            } else if (btn instanceof com.fox.ysmu.client.gui.button.TextureButton tb) {
+                tb.dispose();
+            }
+        }
+    }
+
+    @Override
+    public void onGuiClosed() {
+        disposePreviewButtons();
+        super.onGuiClosed();
     }
 
     /** Returns the best display name for a model: ysm.json metadata.name if available, else decoded path. */

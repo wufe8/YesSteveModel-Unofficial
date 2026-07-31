@@ -50,6 +50,13 @@ public class TextureButton extends GuiButton {
         }
     }
 
+    /** Releases the off-screen FBO. Must be called when this button is removed
+     *  from the screen (page flip / screen close) to avoid VRAM leaks. */
+    public void dispose() {
+        fboCache.delete();
+        modelCacheDirty = true;
+    }
+
     @Override
     public void drawButton(Minecraft mc, int mouseX, int mouseY) {
         FontRenderer font = mc.fontRenderer;

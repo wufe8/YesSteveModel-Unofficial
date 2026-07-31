@@ -101,6 +101,13 @@ public class ModelButton extends GuiButton {
         }
     }
 
+    /** Releases the off-screen FBO. Must be called when this button is removed
+     *  from the screen (page flip / screen close) to avoid VRAM leaks. */
+    public void dispose() {
+        fboCache.delete();
+        modelCacheDirty = true;
+    }
+
     /**
      * Creates a DynamicTexture from a RawImage and registers it with the texture manager.
      * The caller should cache the returned ResourceLocation.

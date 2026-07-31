@@ -47,7 +47,16 @@ public class JsonAnimationUtils {
      *         and the JsonElement is the actual animation
      */
     public static Set<Map.Entry<String, JsonElement>> getAnimations(JsonObject json) {
-        return getObjectListAsArray(json.getAsJsonObject("animations"));
+        if (json == null || !json.has("animations") || json.get("animations").isJsonNull()) {
+            // Some models put non-animation JSON (controllers, molang, etc.) in the
+            // animation map. Defensively return an empty set instead of NPE.
+            return new java.util.LinkedHashSet<>();
+        }
+        JsonObject animations = json.getAsJsonObject("animations");
+        if (animations == null) {
+            return new java.util.LinkedHashSet<>();
+        }
+        return getObjectListAsArray(animations);
     }
 
     /**

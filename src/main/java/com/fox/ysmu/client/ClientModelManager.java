@@ -658,7 +658,7 @@ public class ClientModelManager {
         if (oldHash != null && oldHash == newHash) {
             // Content unchanged — check if GPU texture needs re-upload
             OuterFileTexture existing = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(id);
-            if (existing != null && existing.getGlTextureId() == -1) {
+            if (existing != null && !existing.isUploaded()) {
                 try {
                     existing.loadTexture(Minecraft.getMinecraft().getResourceManager());
                     if (Config.DEBUG_MODEL_LOAD) {
@@ -938,7 +938,11 @@ public class ClientModelManager {
             for (Map.Entry<String, byte[]> entry : animBytes.entrySet()) {
                 String key = entry.getKey();
                 byte[] animData = entry.getValue();
+                // Skip molang function files and controller files — same filtering as
+                // parseAnimationsToBundle. Controller JSON has no "animations" key
+                // and would NPE in getAnimationFile().
                 if (YsmControllerResources.isMolangResource(key)) continue;
+                if (isControllerResource(key, animData)) continue;
                 if (animData == null || animData.length == 0) continue;
                 try {
                     AnimationFile other = getAnimationFile(new String(animData, StandardCharsets.UTF_8));
@@ -1029,10 +1033,13 @@ public class ClientModelManager {
         if (texIds == null || texIds.isEmpty()) return;
 
         // Check if any texture needs re-upload
+        // NOTE: use isUploaded() not getGlTextureId()==-1 — the latter lazily
+        // allocates a fresh GL texture ID on check, masking the unloaded state
+        // and skipping the re-upload (rendering white).
         boolean needsReload = false;
         for (ResourceLocation texId : texIds) {
             OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
-            if (tex == null || tex.getGlTextureId() == -1) {
+            if (tex == null || !tex.isUploaded()) {
                 needsReload = true;
                 break;
             }
@@ -1102,8 +1109,8 @@ public class ClientModelManager {
             if (!shouldUnload) continue;
             for (ResourceLocation texId : entry.getValue()) {
                 OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
-                if (tex != null && tex.getGlTextureId() != -1) {
-                    tex.deleteGlTexture(); // Free GPU memory only; bytes stay in TEXTURE_BYTES
+                if (tex != null && tex.isUploaded()) {
+                    tex.freeGlTexture(); // Free GPU memory only; bytes stay in TEXTURE_BYTES
                     if (Config.DEBUG_MODEL_LOAD) {
                         ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, mainId);
                     }
@@ -1153,8 +1160,8 @@ public class ClientModelManager {
         TEXTURE_LAST_USED.clear();
         // Free GPU textures
         for (net.minecraft.client.renderer.texture.ITextureObject tex : YSM_TEXTURE_OBJECTS.values()) {
-            if (tex instanceof net.minecraft.client.renderer.texture.AbstractTexture) {
-                ((net.minecraft.client.renderer.texture.AbstractTexture) tex).deleteGlTexture();
+            if (tex instanceof com.fox.ysmu.client.texture.OuterFileTexture oft) {
+                oft.freeGlTexture();
             }
         }
         YSM_TEXTURE_OBJECTS.clear();

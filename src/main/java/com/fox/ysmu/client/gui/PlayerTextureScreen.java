@@ -141,6 +141,8 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
 
     @Override
     public void initGui() {
+        // Release off-screen FBOs of old preview buttons before clearing.
+        disposePreviewButtons();
         this.buttonList.clear();
         this.guiLeft = (width - GUI_W) / 2;
         this.guiTop = (height - GUI_H) / 2;
@@ -513,6 +515,24 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
                 PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
             this.initGui();
         }
+    }
+
+    /** Releases off-screen FBOs of all preview buttons (TextureButton etc.)
+     *  before {@code buttonList.clear()} on page flips and on screen close. */
+    private void disposePreviewButtons() {
+        for (Object btn : this.buttonList) {
+            if (btn instanceof com.fox.ysmu.client.gui.button.ModelButton mb) {
+                mb.dispose();
+            } else if (btn instanceof com.fox.ysmu.client.gui.button.TextureButton tb) {
+                tb.dispose();
+            }
+        }
+    }
+
+    @Override
+    public void onGuiClosed() {
+        disposePreviewButtons();
+        super.onGuiClosed();
     }
 
     // ============================================================

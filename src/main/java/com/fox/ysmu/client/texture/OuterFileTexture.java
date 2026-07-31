@@ -14,6 +14,17 @@ public class OuterFileTexture extends AbstractTexture {
 
     private final byte[] data;
 
+    /**
+     * Whether the pixel data has been uploaded to a valid GPU texture.
+     * <p>
+     * We track this explicitly instead of relying on {@code glTextureId != -1}:
+     * {@link AbstractTexture#getGlTextureId()} lazily allocates a new GL texture
+     * ID on first call, so merely checking {@code getGlTextureId() == -1} after
+     * {@code deleteGlTexture()} would allocate a fresh (empty) ID and make the
+     * texture look "valid" — skipping the re-upload and rendering white.
+     */
+    private volatile boolean uploaded;
+
     public OuterFileTexture(byte[] data) {
         this.data = data;
     }
@@ -42,5 +53,17 @@ public class OuterFileTexture extends AbstractTexture {
         boolean blur = false; // 是否使用模糊/线性过滤
         boolean clamp = false; // 是否使用边缘拉伸
         TextureUtil.uploadTextureImageAllocate(this.getGlTextureId(), bufferedImage, blur, clamp);
+        this.uploaded = true;
+    }
+
+    /** Frees the GPU texture and marks this object as needing a re-upload. */
+    public void freeGlTexture() {
+        this.deleteGlTexture();
+        this.uploaded = false;
+    }
+
+    /** Whether pixel data is currently uploaded to a valid GPU texture. */
+    public boolean isUploaded() {
+        return this.uploaded;
     }
 }
