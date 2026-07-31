@@ -122,8 +122,19 @@ public final class RawYsmModelAdapter {
         }
 
         Map<String, byte[]> textures = new LinkedHashMap<>();
+        // Author avatars are sometimes ALSO stored in the texture section of
+        // binary .ysm files (same name as metadata avatar). Exclude them so they
+        // don't show up as selectable player textures.
+        java.util.Set<String> avatarNames = collectAvatarNames(raw);
         for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
             if (texture.data == null) {
+                continue;
+            }
+            if (avatarNames.contains(texture.name)) {
+                if (Config.DEBUG_MODEL_LOAD) {
+                    ysmu.LOG.info("[YSMU-MODEL] Excluding author avatar texture {} from model {}",
+                        texture.name, modelId);
+                }
                 continue;
             }
             byte[] textureData = getLegacyTextureData(texture);
@@ -180,6 +191,41 @@ public final class RawYsmModelAdapter {
         putMolangFunctions(animations, raw);
 
         return new ModelData(modelId, Type.FOLDER, model, textures, animations);
+    }
+
+    /**
+     * Collects the names of author avatar images so they can be excluded from the
+     * selectable texture list. Binary .ysm files often store the author avatar in
+     * the texture section (same name as the metadata avatar), which would otherwise
+     * appear as a bogus texture option in the GUI.
+     */
+    private static java.util.Set<String> collectAvatarNames(RawYsmModel raw) {
+        java.util.Set<String> names = new java.util.HashSet<>();
+        if (raw.metadata == null) {
+            return names;
+        }
+        // Author avatars (RawImage.name)
+        for (RawYsmModel.RawMetadata.Author author : raw.metadata.authors) {
+            if (author == null) continue;
+            if (author.avatarImage != null && !StringUtils.isBlank(author.avatarImage.name)) {
+                names.add(author.avatarImage.name);
+            }
+            // Path form e.g. "avatar/Almeta_owx.png" → basename variants
+            if (!StringUtils.isBlank(author.avatar)) {
+                String base = org.apache.commons.io.FilenameUtils.getName(author.avatar);
+                names.add(base);
+                if (base.endsWith(".png")) {
+                    names.add(base.substring(0, base.length() - 4));
+                }
+            }
+        }
+        // extraAvatars (RawImage.name)
+        for (RawYsmModel.RawImage img : raw.metadata.extraAvatars) {
+            if (img != null && !StringUtils.isBlank(img.name)) {
+                names.add(img.name);
+            }
+        }
+        return names;
     }
 
     private static boolean hasGeometry(RawYsmModel.RawGeometry geometry) {

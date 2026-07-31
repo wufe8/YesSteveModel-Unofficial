@@ -2,13 +2,15 @@
 """
 YSMU Log Filter — 从 latest.log 中筛选所有 YSM 相关内容，去重、分组、筛选。
 
-支持 [YSM_DEBUG], [YSM], [YSM Sound], [ysmu] 标签以及 YSMU 相关的 WARN/ERROR 日志。
+支持 [YSM_DEBUG], [YSM], [YSM Sound], [ysmu] 标签、当前主代码的 [YSMU-XXX] 前缀标签，
+以及 YSMU 相关的 WARN/ERROR 日志。未落入具体分类的 [YSMU-XXX] 行会按标签自动分组。
 
 用法:
     python tools/filter_ysm_log.py < lat.log
     python tools/filter_ysm_log.py h:\\minecraft\\...\\lat.log
     python tools/filter_ysm_log.py --raw < lat.log
     python tools/filter_ysm_log.py --model 玲纱 < lat.log
+    python tools/filter_ysm_log.py --tag YSMU-CTRL < lat.log
     python tools/filter_ysm_log.py --level WARN < lat.log
     python tools/filter_ysm_log.py --context 2 < lat.log
     python tools/filter_ysm_log.py --hex < lat.log
@@ -26,6 +28,7 @@ from typing import Optional
 # ============================================================
 SHOW_RAW = False
 MODEL_FILTER: Optional[str] = None
+TAG_FILTER: Optional[str] = None
 LEVEL_FILTER: Optional[str] = None
 CONTEXT_LINES = 0
 SHOW_HEX = False
@@ -74,6 +77,7 @@ YSM_LINE_RE = re.compile(
     r'|model sync.*'
     r'|Failed to load texture: ysmu'
     r'|\[CHAT\]'
+    r'|\[YSMU-[A-Za-z0-9-]+\]'
     r'|texture texture: format'
 )
 
@@ -200,6 +204,11 @@ def classify(line: str) -> str:
     if '[CHAT]' in line:
         return 'chat'
 
+    # 通用 [YSMU-XXX] 标签分组（未被上述具体规则命中的按标签归组）
+    m = re.search(r'\[(YSMU-[A-Za-z0-9-]+)\]', line)
+    if m:
+        return 'tag:' + m.group(1).upper()
+
     return 'other'
 
 
@@ -269,6 +278,10 @@ def filter_log(text: str):
         if MODEL_FILTER and MODEL_FILTER.lower() not in stripped.lower():
             continue
 
+        # Apply [YSMU-XXX] tag filter
+        if TAG_FILTER and TAG_FILTER.lower() not in line.lower():
+            continue
+
         raw_lines.append((idx, stripped, line))
 
     if not raw_lines:
@@ -325,14 +338,17 @@ def filter_log(text: str):
         g = classify(stripped)
         groups[g].append((line_no, stripped, original))
 
+    # 动态标签组（如 tag:YSMU-CTRL）排在固定分组之后
+    dynamic = sorted(g for g in groups if g not in GROUP_ORDER)
+
     # Summary
     total = len(deduped)
     print(f"{'=' * 60}")
     print(f"Summary ({total} lines after dedup):")
-    for g in GROUP_ORDER:
+    for g in GROUP_ORDER + dynamic:
         entries = groups.get(g)
         if entries:
-            name = GROUP_NAMES[g].strip('= ').strip()
+            name = GROUP_NAMES.get(g, g).strip('= ').strip()
             print(f"  {name}: {len(entries)}")
     # Hint about DEBUG-level logs
     has_debug_only = any(g in ('bin_skip', 'bin_corrupt') and groups.get(g) for g in GROUP_ORDER)
@@ -341,11 +357,11 @@ def filter_log(text: str):
     print(f"{'=' * 60}")
 
     # Grouped output
-    for g in GROUP_ORDER:
+    for g in GROUP_ORDER + dynamic:
         entries = groups.get(g)
         if not entries:
             continue
-        print(f"\n{GROUP_NAMES[g]}")
+        print(f"\n{GROUP_NAMES.get(g, g)}")
         print('-' * 60)
         last_no = -1
         for line_no, stripped, original in entries:
@@ -391,6 +407,8 @@ Examples:
                         help='Show all YSM lines in chronological order')
     parser.add_argument('--model',
                         help='Filter by model name (substring match, case-insensitive)')
+    parser.add_argument('--tag',
+                        help='Only keep lines containing the given [YSMU-XXX] tag (substring match)')
     parser.add_argument('--level', choices=['DEBUG', 'INFO', 'WARN', 'ERROR', 'FATAL'],
                         help='Filter by log level')
     parser.add_argument('--context', type=int, default=0,
@@ -404,6 +422,7 @@ Examples:
 
     SHOW_RAW = args.raw
     MODEL_FILTER = args.model
+    TAG_FILTER = args.tag
     LEVEL_FILTER = args.level
     CONTEXT_LINES = args.context
     SHOW_HEX = args.hex
