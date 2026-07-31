@@ -90,14 +90,18 @@ public class ModelButton extends GuiButton {
     }
 
     public void doPress() {
+        // Use the model's default_texture (falling back to the first texture),
+        // matching official YSM behavior — the first texture is not necessarily
+        // the intended default.
+        ResourceLocation defaultTex = ClientModelManager.resolveDefaultTexture(mainModelId, modelInfo.getRight());
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null) {
-            eep.setModelAndTexture(modelInfo.getLeft(), modelInfo.getRight().get(0));
+            eep.setModelAndTexture(modelInfo.getLeft(), defaultTex);
         }
         if (player.equals(Minecraft.getMinecraft().thePlayer)) {
-            NetworkHandler.CHANNEL.sendToServer(new SetModelAndTexture(modelInfo.getLeft(), modelInfo.getRight().get(0)));
+            NetworkHandler.CHANNEL.sendToServer(new SetModelAndTexture(modelInfo.getLeft(), defaultTex));
         } else {
-            NetworkHandler.CHANNEL.sendToServer(new SetNpcModelAndTexture(modelInfo.getLeft(), modelInfo.getRight().get(0), OpenModelGuiMessage.CURRENT_NPC_ID));
+            NetworkHandler.CHANNEL.sendToServer(new SetNpcModelAndTexture(modelInfo.getLeft(), defaultTex, OpenModelGuiMessage.CURRENT_NPC_ID));
         }
     }
 
@@ -233,9 +237,11 @@ public class ModelButton extends GuiButton {
                 try {
                     final String finalGuiAnimName = guiAnimName;
                     final String baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
+                    // Preview uses the model's default_texture, not the first texture.
+                    final ResourceLocation previewTex = ClientModelManager.resolveDefaultTexture(mainModelId, modelInfo.getRight());
                     RenderUtil.renderEntityInInventory(
                         this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
-                        mc.thePlayer, modelInfo.getLeft(), modelInfo.getRight().get(0),
+                        mc.thePlayer, modelInfo.getLeft(), previewTex,
                         entity -> {
                             if (guiEnhancements) {
                                 entity.setGuiAnimationsEnabled(true);

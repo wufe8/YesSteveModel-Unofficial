@@ -410,7 +410,8 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         ResourceLocation previewTex = (eep != null && eep.getSelectTexture() != null)
             ? eep.getSelectTexture()
-            : (textures.isEmpty() ? null : textures.get(0));
+            : com.fox.ysmu.client.ClientModelManager.resolveDefaultTexture(
+                com.fox.ysmu.util.ModelIdUtil.getMainId(modelId), textures);
 
         if (previewTex != null) {
             // Match OpenYSM position: slightly left-of-center so the model faces into the frame

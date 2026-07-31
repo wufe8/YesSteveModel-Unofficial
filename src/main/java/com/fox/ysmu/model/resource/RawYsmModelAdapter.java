@@ -124,16 +124,25 @@ public final class RawYsmModelAdapter {
         Map<String, byte[]> textures = new LinkedHashMap<>();
         // Author avatars are sometimes ALSO stored in the texture section of
         // binary .ysm files (same name as metadata avatar). Exclude them so they
-        // don't show up as selectable player textures.
+        // don't show up as selectable player textures. Matching is by name, with
+        // a byte-content fallback for .ysm files whose avatar name differs from
+        // the texture name.
         java.util.Set<String> avatarNames = collectAvatarNames(raw);
+        java.util.List<byte[]> avatarDataList = collectAvatarData(raw);
+        if (Config.DEBUG_MODEL_LOAD) {
+            ysmu.LOG.info("[YSMU-MODEL] avatar filter for model {}: names={}, textureCount={}",
+                modelId, avatarNames, raw.mainEntity.textures.size());
+        }
         for (RawYsmModel.RawTexture texture : raw.mainEntity.textures.values()) {
             if (texture.data == null) {
                 continue;
             }
-            if (avatarNames.contains(texture.name)) {
+            boolean nameMatch = avatarNames.contains(texture.name);
+            boolean contentMatch = matchesAvatarContent(texture.data, avatarDataList);
+            if (nameMatch || contentMatch) {
                 if (Config.DEBUG_MODEL_LOAD) {
-                    ysmu.LOG.info("[YSMU-MODEL] Excluding author avatar texture {} from model {}",
-                        texture.name, modelId);
+                    ysmu.LOG.info("[YSMU-MODEL] Excluding avatar texture {} from model {} (name={}, content={})",
+                        texture.name, modelId, nameMatch, contentMatch);
                 }
                 continue;
             }
@@ -204,28 +213,74 @@ public final class RawYsmModelAdapter {
         if (raw.metadata == null) {
             return names;
         }
-        // Author avatars (RawImage.name)
         for (RawYsmModel.RawMetadata.Author author : raw.metadata.authors) {
             if (author == null) continue;
-            if (author.avatarImage != null && !StringUtils.isBlank(author.avatarImage.name)) {
-                names.add(author.avatarImage.name);
+            // Author display name — the avatar texture in the texture section is
+            // usually named exactly after the author (e.g. "Almeta_owx").
+            addNameVariants(names, author.name);
+            // Author avatar RawImage.name
+            if (author.avatarImage != null) {
+                addNameVariants(names, author.avatarImage.name);
             }
             // Path form e.g. "avatar/Almeta_owx.png" → basename variants
             if (!StringUtils.isBlank(author.avatar)) {
-                String base = org.apache.commons.io.FilenameUtils.getName(author.avatar);
-                names.add(base);
-                if (base.endsWith(".png")) {
-                    names.add(base.substring(0, base.length() - 4));
-                }
+                addNameVariants(names, org.apache.commons.io.FilenameUtils.getName(author.avatar));
             }
         }
         // extraAvatars (RawImage.name)
         for (RawYsmModel.RawImage img : raw.metadata.extraAvatars) {
-            if (img != null && !StringUtils.isBlank(img.name)) {
-                names.add(img.name);
+            if (img != null) {
+                addNameVariants(names, img.name);
             }
         }
         return names;
+    }
+
+    /** Adds a name plus its ".png"-suffixed / stripped variants so matching is
+     *  robust against extension differences. */
+    private static void addNameVariants(java.util.Set<String> names, String name) {
+        if (StringUtils.isBlank(name)) {
+            return;
+        }
+        names.add(name);
+        if (name.endsWith(".png")) {
+            names.add(name.substring(0, name.length() - 4));
+        } else {
+            names.add(name + ".png");
+        }
+    }
+
+    /** Collects the raw byte content of author avatars for content-based matching. */
+    private static java.util.List<byte[]> collectAvatarData(RawYsmModel raw) {
+        java.util.List<byte[]> data = new java.util.ArrayList<>();
+        if (raw.metadata == null) {
+            return data;
+        }
+        for (RawYsmModel.RawMetadata.Author author : raw.metadata.authors) {
+            if (author != null && author.avatarImage != null && author.avatarImage.data != null) {
+                data.add(author.avatarImage.data);
+            }
+        }
+        for (RawYsmModel.RawImage img : raw.metadata.extraAvatars) {
+            if (img != null && img.data != null) {
+                data.add(img.data);
+            }
+        }
+        return data;
+    }
+
+    /** True if the given texture bytes are byte-identical to any author avatar image. */
+    private static boolean matchesAvatarContent(byte[] textureData, java.util.List<byte[]> avatarDataList) {
+        if (textureData == null || avatarDataList == null || avatarDataList.isEmpty()) {
+            return false;
+        }
+        for (byte[] avatar : avatarDataList) {
+            if (avatar != null && avatar.length == textureData.length
+                && java.util.Arrays.equals(avatar, textureData)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private static boolean hasGeometry(RawYsmModel.RawGeometry geometry) {

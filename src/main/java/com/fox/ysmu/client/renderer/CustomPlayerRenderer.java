@@ -61,7 +61,19 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 } else {
                     newModel = ModelIdUtil.getMainId(eep.getModelId());
                     this.animatable.setMainModel(newModel);
-                    this.animatable.setTexture(eep.getSelectTexture());
+                    ResourceLocation selTex = eep.getSelectTexture();
+                    if (selTex == null || !com.fox.ysmu.client.ClientModelManager.isTextureRegistered(selTex)) {
+                        // Persisted selection may reference a texture that was filtered
+                        // out (e.g. author avatar) or never registered — fall back to
+                        // the model's default texture (or first valid) and repair it.
+                        java.util.List<ResourceLocation> validTex =
+                            com.fox.ysmu.client.ClientModelManager.MODELS.get(eep.getModelId());
+                        selTex = com.fox.ysmu.client.ClientModelManager.resolveDefaultTexture(newModel, validTex);
+                        if (selTex != null) {
+                            eep.setSelectTexture(selTex);
+                        }
+                    }
+                    this.animatable.setTexture(selTex);
                 }
                 // Detect model switch and reset stale per-player animation state
                 if (oldModel != null && !oldModel.equals(newModel)) {

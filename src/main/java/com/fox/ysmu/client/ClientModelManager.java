@@ -92,6 +92,9 @@ public class ClientModelManager {
     public static Map<ResourceLocation, ExtraWheelData> EXTRA_WHEEL = Maps.newHashMap();
     /** Preview animation name per model, read from ysm.json preview_animation field. */
     public static Map<ResourceLocation, String> PREVIEW_ANIMATION = Maps.newHashMap();
+    /** Default texture name per model (basename without .png), from ysm.json default_texture / .ysm properties.
+     *  Keyed by mainId (e.g. "ysmu:model_id/main"), matching PREVIEW_ANIMATION. */
+    public static Map<ResourceLocation, String> DEFAULT_TEXTURE = Maps.newHashMap();
     /** GUI foreground texture RawImage per model, from ysm.json gui_foreground. */
     public static Map<ResourceLocation, com.fox.ysmu.model.resource.pojo.RawYsmModel.RawImage> GUI_FOREGROUND_IMAGE = Maps.newHashMap();
     /** GUI background texture RawImage per model, from ysm.json gui_background. */
@@ -652,6 +655,45 @@ public class ClientModelManager {
         bundle.animationFile = main;
     }
 
+    /** Whether a texture ResourceLocation has been registered by YSMU.
+     *  Used to detect stale/persisted selections that reference textures which
+     *  were filtered out (e.g. author avatars). */
+    public static boolean isTextureRegistered(ResourceLocation texId) {
+        return texId != null && YSM_TEXTURE_OBJECTS.containsKey(texId);
+    }
+
+    /**
+     * Resolves the default texture for a model according to its {@code default_texture}
+     * property (basename without {@code .png}), falling back to the first texture in
+     * the list when the name does not match (matching official YSM behavior).
+     *
+     * @param mainId   main model id (e.g. "ysmu:model_id/main")
+     * @param textures the model's texture ResourceLocations (from {@link #MODELS})
+     */
+    public static ResourceLocation resolveDefaultTexture(ResourceLocation mainId, List<ResourceLocation> textures) {
+        if (textures == null || textures.isEmpty()) {
+            return null;
+        }
+        String defaultTex = DEFAULT_TEXTURE.get(mainId);
+        if (StringUtils.isNotBlank(defaultTex)) {
+            String target = defaultTex.endsWith(".png")
+                ? defaultTex.substring(0, defaultTex.length() - 4)
+                : defaultTex;
+            for (ResourceLocation tex : textures) {
+                String name = ModelIdUtil.getSubNameFromId(tex);
+                if (name != null) {
+                    if (name.endsWith(".png")) {
+                        name = name.substring(0, name.length() - 4);
+                    }
+                    if (name.equalsIgnoreCase(target)) {
+                        return tex;
+                    }
+                }
+            }
+        }
+        return textures.get(0);
+    }
+
     public static void registerTexture(ResourceLocation id, byte[] data) {
         int newHash = java.util.Arrays.hashCode(data);
         Integer oldHash = TEXTURE_CONTENT_HASH.get(id);
@@ -801,6 +843,13 @@ public class ClientModelManager {
                 try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(builtinDefault)) {
                     RawYsmModel raw = deserializer.deserialize();
                     raw.modelId = "default";
+                    // Record default_texture for the builtin default model (loaded
+                    // outside the OpenYSM sync path that calls registerExtraWheel).
+                    if (StringUtils.isNotBlank(raw.properties.defaultTexture)) {
+                        DEFAULT_TEXTURE.put(
+                            new ResourceLocation(ysmu.MODID, "default/main"),
+                            raw.properties.defaultTexture);
+                    }
                     if (RawYsmModelAdapter.isBridgeable(raw)) {
                         data = RawYsmModelAdapter.toLegacyModelData(raw, "default");
                     }
@@ -1145,6 +1194,7 @@ public class ClientModelManager {
         CLIENT_PACKS.clear();
         MODEL_DISPLAY_NAMES.clear();
         PREVIEW_ANIMATION.clear();
+        DEFAULT_TEXTURE.clear();
         GUI_FOREGROUND_IMAGE.clear();
         GUI_BACKGROUND_IMAGE.clear();
         DISABLE_PREVIEW_ROTATION.clear();
@@ -1230,6 +1280,9 @@ public class ClientModelManager {
         }
         if (StringUtils.isNotBlank(raw.properties.previewAnimation)) {
             PREVIEW_ANIMATION.put(modelId, raw.properties.previewAnimation);
+        }
+        if (StringUtils.isNotBlank(raw.properties.defaultTexture)) {
+            DEFAULT_TEXTURE.put(modelId, raw.properties.defaultTexture);
         }
         // Resolve display name: lang file (当前语言) > ysm.json metadata > empty
         String displayName = null;
