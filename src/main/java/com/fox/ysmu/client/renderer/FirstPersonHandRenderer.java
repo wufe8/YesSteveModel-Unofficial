@@ -398,9 +398,15 @@ public final class FirstPersonHandRenderer {
         if (modelId == null) {
             return null;
         }
-        GeoModel geoModel = GeckoLibCache.getInstance()
-            .getGeoModels()
-            .get(ModelIdUtil.getArmId(modelId));
+        ResourceLocation armId = ModelIdUtil.getArmId(modelId);
+        GeoModel geoModel = GeckoLibCache.getInstance().getGeoModels().get(armId);
+        if (geoModel == null) {
+            // Trigger a background reload through the asset lifecycle framework if the
+            // arm geo was idle-unloaded; the first-person hand resumes on a later frame
+            // once the reload is applied on the main thread (no render-thread stutter).
+            com.fox.ysmu.client.asset.AssetManager.geo(armId).get();
+            return null;
+        }
         if (!hasRenderableRightArm(geoModel)) {
             return null;
         }

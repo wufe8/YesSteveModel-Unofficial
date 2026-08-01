@@ -97,8 +97,10 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
             .getGeoModels()
             .get(location);
         if (geoModel == null && mainModelId != null) {
-            // Lazy-load geo model from encrypted cache if it was unloaded
-            com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(mainModelId);
+            // Trigger a background reload through the asset lifecycle framework if the
+            // geo was idle-unloaded; the result is applied on the main thread a few
+            // frames later — no more render-thread stutter on reload.
+            com.fox.ysmu.client.asset.AssetManager.geo(mainModelId).get();
             geoModel = GeckoLibCache.getInstance()
                 .getGeoModels()
                 .get(location);
@@ -106,9 +108,10 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         if (geoModel != null) {
             this.geoModel = geoModel;
             if (mainModelId != null) {
-                // Ensure all caches are loaded and mark as recently used
-                com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(mainModelId);
-                com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(mainModelId);
+                // Keep geo/anim warm via the framework and ensure textures are uploaded
+                // (raw bytes stay in RAM, so upload is cheap and synchronous).
+                com.fox.ysmu.client.asset.AssetManager.geo(mainModelId).touch();
+                com.fox.ysmu.client.asset.AssetManager.anim(mainModelId).get();
                 com.fox.ysmu.client.ClientModelManager.ensureTexturesLoaded(mainModelId);
             }
             super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
@@ -118,8 +121,11 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 com.fox.ysmu.compat.AdventureBackpackCompat.renderWearable(
                     player, x, y, z, partialTicks);
             }
-        } else {
-            // Throttled logging: only log once per missing model per game session
+        } else if (mainModelId == null
+            || !com.fox.ysmu.client.asset.AssetManager.geo(mainModelId).isPending()) {
+            // Only log as truly missing when the model isn't being (re)loaded in the
+            // background — avoids false "missing" noise during async reload.
+            // Throttled: only log once per missing model per game session.
             if (missingGeoModelLogged.add(location.toString())) {
                 com.fox.ysmu.ysmu.LOG.info(
                     "YSM renderer cannot find geo model: location={}, mainModel={}, texture={}, geoModelsInCache={}",

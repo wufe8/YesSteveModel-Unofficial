@@ -365,6 +365,28 @@ public final class RenderUtil {
                 // transitioning phase instead of showing the correct animation.
                 renderer.getGeoModelProvider().getAnimationProcessor().clearAnimatedEntities();
                 consumer.accept(entity);
+                // Keep the previewed model's geo/anim warm in the asset lifecycle
+                // framework. GUI preview renders via RenderUtil (not
+                // CustomPlayerRenderer.doRender), so without this the model being
+                // browsed could be idle-evicted mid-browse — leaving its geo present
+                // but animation missing, which would otherwise fall back to a
+                // mismatched default skeleton (see CustomPlayerEntity.getAnimation)
+                // and NPE. Trigger background reload as well so a freshly shown
+                // model animates as soon as it is ready.
+                ResourceLocation previewMainId = ModelIdUtil.getMainId(modelId);
+                com.fox.ysmu.client.asset.AssetManager.geo(previewMainId).touch();
+                com.fox.ysmu.client.asset.AssetManager.anim(previewMainId).get();
+                // If the previewed model's geo is still absent (idle-evicted and
+                // reloading in the background, or genuinely missing), skip this
+                // frame — GeckoLib's getModel() throws GeoModelException when the
+                // geo isn't in GeckoLibCache, which would crash the preview GUI.
+                // The background reload is applied on the main thread and the next
+                // frame renders normally.
+                if (software.bernie.geckolib3.resource.GeckoLibCache.getInstance()
+                    .getGeoModels()
+                    .get(previewMainId) == null) {
+                    return;
+                }
                 renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity, disablePreviewRotation);
             }
         } catch (ExecutionException e) {

@@ -134,7 +134,15 @@ public class CustomPlayerEntity implements IAnimatable {
             .containsKey(this.mainModel)) {
             return mainModel;
         }
-        return CustomPlayerModel.DEFAULT_MAIN_ANIMATION;
+        // 主模型动画缺失（已闲置卸载 / 后台加载中 / 该模型确实无动画）。
+        // 绝不能 fallback 到内置默认模型动画：默认动画的骨架与当前模型不同，
+        // controller 播放它时会在当前骨架的 boneSnapshot 里查不到对应骨 → NPE
+        // （AnimationController.process 读 boneSnapshot.rotationValueX）。
+        // 改为返回 mainModel：缺失动画会被 GeckoLib 安全跳过（仅 warn），并触发
+        // 后台重载（ensureAnimationsLoaded → AssetManager.anim().get()），
+        // 就绪后下一帧恢复正常播放。
+        com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(this.mainModel);
+        return this.mainModel;
     }
 
     public float getHeightScale() {
