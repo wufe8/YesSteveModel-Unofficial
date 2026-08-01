@@ -86,7 +86,6 @@ public final class OpenYsmFormat {
             RAW_MODEL_INFO.put(modelId, raw);
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
                 ysmu.LOG.warn("OpenYSM folder model {} parsed but cannot be bridged to legacy ModelData", dir);
-                RAW_MODEL_INFO.remove(modelId);
                 return;
             }
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
@@ -99,14 +98,17 @@ public final class OpenYsmFormat {
             }
             OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
             OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
-            // RawYsmModel 在缓存构建完成后不再需要，释放内存
-            RAW_MODEL_INFO.remove(modelId);
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load OpenYSM folder model {}", dir, e);
+        } finally {
+            // 无论成功/失败都释放 raw：原先异常路径会把 RawYsmModel（含全部纹理
+            // 字节）泄漏在 RAW_MODEL_INFO，多个失败模型累积会显著抬高预初始化峰值。
+            RAW_MODEL_INFO.remove(modelId);
         }
     }
 
     private static void cacheBinaryModel(Path rootPath, Path file) {
+        String modelId = null;
         try {
             byte[] encrypted = Files.readAllBytes(file);
             String fileName = file.getFileName().toString();
@@ -133,7 +135,7 @@ public final class OpenYsmFormat {
             try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(rawBytes)) {
                 RawYsmModel raw = deserializer.deserializeKeepOpen();
                 deserializer.parseYSMFooter(raw);
-                String modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
+                modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
                 raw.modelId = modelId;
 
                 if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
@@ -179,8 +181,6 @@ public final class OpenYsmFormat {
                 } else if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] Model {} not bridgeable, skipped legacy cache but OpenYSM sync info written", modelId);
                 }
-                // RawYsmModel 在缓存构建完成后不再需要，释放内存
-                RAW_MODEL_INFO.remove(modelId);
             }
         } catch (UnsupportedOperationException e) {
             ysmu.LOG.warn("Unsupported OpenYSM binary model {} (size={}): {}",
@@ -190,6 +190,12 @@ public final class OpenYsmFormat {
                 file, file.toFile().length(), e.getClass().getSimpleName(), e.getMessage());
             if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN || ysmu.LOG.isDebugEnabled()) {
                 ysmu.LOG.warn("[YSMU-MODEL] OpenYSM binary model {} load failure detail", file, e);
+            }
+        } finally {
+            // 无论成功/失败都释放 raw，避免异常路径把 RawYsmModel（含全部纹理字节）
+            // 泄漏在 RAW_MODEL_INFO，多个失败模型累积会抬高预初始化内存峰值。
+            if (modelId != null) {
+                RAW_MODEL_INFO.remove(modelId);
             }
         }
     }

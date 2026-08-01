@@ -185,10 +185,34 @@ public class ClientModelManager {
         new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /**
+     * Backpressure cap: how many fully-parsed bundles may wait in
+     * {@link #PENDING_APPLY} for the main thread to apply them.
+     *
+     * <p>Background parsing (4 threads by default) runs far ahead of the main
+     * thread's one-apply-per-tick consumer, so without a cap ALL 247 bundles
+     * pile up at once — each bundle holds the model's GeoModel + AnimationFile
+     * + every texture byte[] — which is the load-time 10G+ heap peak.
+     * A permit is taken before enqueuing and released after {@link
+     * #applyPreParsed} finishes, so background threads block until the main
+     * thread catches up instead of queueing unboundedly.
+     */
+    private static final int MAX_PENDING_APPLY = Math.max(2, Config.THREAD_COUNT);
+    private static final java.util.concurrent.Semaphore APPLY_SLOTS =
+        new java.util.concurrent.Semaphore(MAX_PENDING_APPLY);
+
+    /**
      * Schedules {@link #applyPreParsed(PreParsedModelBundle)} to run on the
-     * Minecraft main thread, at most one bundle per render tick.
+     * Minecraft main thread, at most one bundle per render tick. Blocks the
+     * calling background thread when too many bundles are already queued.
      */
     public static void scheduleApply(PreParsedModelBundle bundle) {
+        try {
+            APPLY_SLOTS.acquire();
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            // Rare; don't drop the model — enqueue anyway (backpressure is a
+            // best-effort cap, not a correctness requirement).
+        }
         PENDING_APPLY.add(bundle);
         // Ensure at least one processor is queued on the main thread.
         Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
@@ -196,12 +220,17 @@ public class ClientModelManager {
 
     private static void processNextApply() {
         PreParsedModelBundle bundle = PENDING_APPLY.poll();
-        if (bundle == null) return;
+        if (bundle == null) {
+            // Redundant wake-up (another processNextApply consumed the head);
+            // don't release a slot we never took a bundle for.
+            return;
+        }
         try {
             applyPreParsed(bundle);
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", bundle.modelId, e.getMessage());
         }
+        APPLY_SLOTS.release();
         // Schedule the next one if more are pending.
         if (!PENDING_APPLY.isEmpty()) {
             Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
