@@ -81,6 +81,11 @@ public class Converter {
     private static void instantiateMapper() {
         ObjectMapper mapper = new ObjectMapper();
         mapper.findAndRegisterModules();
+        // YSMU: allow // and /* */ comments in model JSON. Some YSM models exported
+        // from third-party tools embed comments (e.g. inside ysm_extra_info), which
+        // otherwise fail both server-side cache building (YsmFormat.getBytes) and
+        // client-side first-load parsing.
+        mapper.configure(JsonParser.Feature.ALLOW_COMMENTS, true);
         mapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
         SimpleModule module = new SimpleModule();
         module.addDeserializer(OffsetDateTime.class, new JsonDeserializer<OffsetDateTime>() {

@@ -64,7 +64,7 @@ public final class FolderFormat {
         if (dirs == null) {
             return;
         }
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] FolderFormat scanning {}: found {} subdirectories", rootPath, dirs.length);
         }
         for (File dir : dirs) {
@@ -89,31 +89,31 @@ public final class FolderFormat {
                 }
             }
             if (noMainModelFile) {
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] FolderFormat: {} skipped (no main.json)", dirName);
                 }
                 continue;
             }
             if (noArmModelFile) {
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] FolderFormat: {} skipped (no arm.json)", dirName);
                 }
                 continue;
             }
             if (noTextureFile) {
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] FolderFormat: {} skipped (no .png texture)", dirName);
                 }
                 continue;
             }
             String modelId = ModelIdUtil.getInternalModelId(dirName);
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                 ysmu.LOG.info("[YSMU-MODEL] FolderFormat caching: {} -> modelId={}", dirName, modelId);
             }
             ServerModelInfo info = cacheModel(dir.toPath(), modelId);
             if (info != null) {
                 CACHE_NAME_INFO.put(modelId, info);
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] FolderFormat {}: cached to CACHE_NAME_INFO", modelId);
                 }
             }

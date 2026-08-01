@@ -63,9 +63,6 @@ public class RequestLoadModel implements IMessage {
     public static void loadModel(String fileName) {
         ThreadTools.THREAD_POOL.submit(() -> {
             try {
-                if (Config.DEBUG_MODEL_LOAD) {
-                    ysmu.LOG.info("[YSMU-MODEL] RequestLoadModel.loadModel: fileName={}", fileName);
-                }
                 // Decryption waits for SendModelPassword; resource registration returns to the client thread.
                 int retries = 0;
                 while ((ClientModelManager.PASSWORD == null || ClientModelManager.PASSWORD_UUID == null)
@@ -82,15 +79,11 @@ public class RequestLoadModel implements IMessage {
                 if (Minecraft.getMinecraft().thePlayer != null) {
                     File modelFile = ServerModelManager.CACHE_CLIENT.resolve(fileName)
                         .toFile();
-                    if (Config.DEBUG_MODEL_LOAD) {
-                        ysmu.LOG.info("[YSMU-MODEL] Loading cache file: {} (exists={}, size={})",
-                            modelFile, modelFile.isFile(), modelFile.length());
-                    }
                     byte[] fileBytes = FileUtils.readFileToByteArray(modelFile);
                     ModelData data = EncryptTools
                         .decryptModel(UuidUtils.asBytes(passwordUuid), password, fileBytes);
                     if (data != null) {
-                        if (Config.DEBUG_MODEL_LOAD) {
+                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                             ysmu.LOG.info("[YSMU-MODEL] Decrypted model {} (id={}), registering...",
                                 fileName, data.getModelId());
                         }

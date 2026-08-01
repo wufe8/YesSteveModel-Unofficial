@@ -139,7 +139,7 @@ public class SendModelFileChunk implements IMessage {
                     ACCUMULATORS.remove(fileName, accumulator);
                     ClientModelManager.rememberCachedModel(fileName);
                     RequestLoadModel.loadModel(fileName);
-                    if (Config.DEBUG_MODEL_LOAD) {
+                    if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                         ysmu.LOG.info(
                             "Received chunked YSM model cache file {} ({} bytes)",
                             fileName,

@@ -299,7 +299,7 @@ public class ClientModelManager {
         ResourceLocation modelId = bundle.modelId;
         SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
         MolangInstructionExecutor.clearCache();
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("[YSMU-MODEL] applyPreParsed start: modelId={}", modelId);
         }
 
@@ -343,7 +343,7 @@ public class ClientModelManager {
             AssetManager.registerAnim(ModelIdUtil.getMainId(modelId), bundle.animationFile);
         }
         // Register projectile animations under their own GeoModel IDs
-        if (!bundle.projAnimationFiles.isEmpty() && com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        if (!bundle.projAnimationFiles.isEmpty() && com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("[YSMU-MODEL] applyPreParsed: registering {} projectile animations for {}",
                 bundle.projAnimationFiles.size(), modelId);
             for (Map.Entry<ResourceLocation, AnimationFile> e : bundle.projAnimationFiles.entrySet()) {
@@ -357,7 +357,7 @@ public class ClientModelManager {
             }
         }
         // Register projectile controllers under their own animation IDs
-        if (!bundle.projControllerFiles.isEmpty() && com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        if (!bundle.projControllerFiles.isEmpty() && com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("[YSMU-MODEL] applyPreParsed: registering {} projectile controllers for {}",
                 bundle.projControllerFiles.size(), modelId);
             for (Map.Entry<ResourceLocation, byte[]> e : bundle.projControllerFiles.entrySet()) {
@@ -415,7 +415,7 @@ public class ClientModelManager {
 
         // Log and update progress (gated: one line per model is noisy with 100+ models)
         int texCount = bundle.textureIdList.size();
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info(
                 "YSM client registered model {}: totalModelEntries={}, textureCount={}, projectileModels={}",
                 modelId, geoModels.size(), texCount,
@@ -425,7 +425,7 @@ public class ClientModelManager {
         MODEL_STATS.put(ModelIdUtil.getMainId(modelId),
             new int[]{bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims});
         SYNC_LOADED++;
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("[YSMU-MODEL] applyPreParsed done: modelId={}, textures={}, bones={}, faces={}, anims={}",
                 modelId, texCount, bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims);
         }
@@ -482,7 +482,7 @@ public class ClientModelManager {
             MODEL_PACKS.clear();
             MODEL_PACKS.putAll(renamed);
         }
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("YSM client detected {} model packs from {} models: {}",
                 MODEL_PACKS.size(), MODELS.size(), MODEL_PACKS.keySet());
         }
@@ -732,7 +732,7 @@ public class ClientModelManager {
             ysmu.LOG.warn("[YSMU-TEX] registerTexture({}): data is EMPTY (0 bytes), skipping!", id);
             return;
         }
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             String magic = data.length >= 4
                 ? String.format("%02X%02X%02X%02X", data[0], data[1], data[2], data[3])
                 : "too-short";
@@ -750,14 +750,14 @@ public class ClientModelManager {
             Minecraft.getMinecraft()
                 .getTextureManager()
                 .loadTexture(id, outerTex);
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
                 ysmu.LOG.info("[YSMU-TEX] registerTexture({}): TextureManager.loadTexture OK", id);
             }
         } catch (Exception e) {
             ysmu.LOG.warn("[YSMU-TEX] registerTexture({}): TextureManager.loadTexture threw:", id, e);
         }
         // Post-registration verification (only when DEBUG_MODEL_LOAD enabled)
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             try {
                 Minecraft.getMinecraft().getTextureManager().bindTexture(id);
                 ysmu.LOG.info("[YSMU-TEX] registerTexture({}): post-bind verification SUCCEEDED", id);
@@ -1043,12 +1043,17 @@ public class ClientModelManager {
      */
     @Nullable
     public static GeoModel parseSingleGeoFromCache(ResourceLocation geoId) {
-        ResourceLocation mainId = ModelIdUtil.getMainId(geoId);
+        // geoId is a sub-model id ("ysmu:model/main" or "ysmu:model/arm"). Derive the
+        // base id, then the main id for the encrypted-cache lookup. Calling
+        // getMainId(geoId) directly would append "/main" a second time (e.g.
+        // "ysmu:model/main/main") and miss the CACHED_MODEL_MD5 entry — silently
+        // failing every background reload (vanilla hand / missing model after idle).
+        ResourceLocation baseId = ModelIdUtil.getModelIdFromSubId(geoId);
+        ResourceLocation mainId = ModelIdUtil.getMainId(baseId);
         ModelData data = loadLegacyModelData(mainId);
         if (data == null) return null;
         Map<String, byte[]> modelBytes = data.getModel();
         if (modelBytes == null || modelBytes.isEmpty()) return null;
-        ResourceLocation baseId = ModelIdUtil.getModelIdFromMainId(mainId);
         for (Map.Entry<String, byte[]> entry : modelBytes.entrySet()) {
             ResourceLocation subId = ModelIdUtil.getSubModelId(baseId, entry.getKey());
             if (geoId.equals(subId)) {
@@ -1132,7 +1137,7 @@ public class ClientModelManager {
         try {
             ModelData data = loadLegacyModelData(mainModelId);
             if (data == null) {
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
                     ysmu.LOG.info("[YSMU-MODEL] Texture restore skipped for {} (model {}): no cache data", texId, mainModelId);
                 }
                 return;
@@ -1143,7 +1148,7 @@ public class ClientModelManager {
             byte[] texBytes = texName != null ? texMap.get(texName) : null;
             if (texBytes != null) {
                 tex.setData(texBytes);
-            } else if (Config.DEBUG_MODEL_LOAD) {
+            } else if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
                 ysmu.LOG.info("[YSMU-MODEL] Texture restore MISS for {} (model {}): key '{}' not in cache", texId, mainModelId, texName);
             }
         } catch (Exception e) {
@@ -1183,7 +1188,7 @@ public class ClientModelManager {
                 OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
                 if (tex != null && tex.isUploaded()) {
                     tex.freeGlTexture();
-                    if (Config.DEBUG_MODEL_LOAD) {
+                    if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
                         ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, mainId);
                     }
                 }

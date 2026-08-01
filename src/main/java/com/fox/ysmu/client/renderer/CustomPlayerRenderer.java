@@ -37,6 +37,25 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
     private final Set<String> missingGeoModelLogged = Collections.synchronizedSet(new HashSet<>());
     /** Tracks the last main model per player to detect model switches. */
     private final Map<UUID, ResourceLocation> lastPlayerModel = new ConcurrentHashMap<>();
+
+    /**
+     * Suppressed in-world render errors, keyed by tag|exceptionClass|message.
+     * A model that fails to render (molang error, bone NPE, GeoModelException from
+     * a geo evicted mid-frame) must skip the frame, not throw into Minecraft's
+     * crash handler — that rebuilt the crash report every tick, spamming "Negative
+     * index in crash report handler" and stuttering. Each unique error is logged
+     * once (with stack) for diagnosis.
+     */
+    private static final Set<String> SUPPRESSED_RENDER_ERRORS = ConcurrentHashMap.newKeySet();
+
+    private static void suppressRenderError(String tag, Exception e) {
+        String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
+        if (SUPPRESSED_RENDER_ERRORS.add(key)) {
+            com.fox.ysmu.ysmu.LOG.warn("[YSMU-RENDER] {} suppressed ({}): {}",
+                tag, e.getClass().getSimpleName(), String.valueOf(e.getMessage()), e);
+        }
+    }
+
     @SuppressWarnings("all")
     public CustomPlayerRenderer() {
         super(new CustomPlayerModel(), new CustomPlayerEntity());
@@ -114,12 +133,16 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 com.fox.ysmu.client.asset.AssetManager.anim(mainModelId).get();
                 com.fox.ysmu.client.ClientModelManager.ensureTexturesLoaded(mainModelId);
             }
-            super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
-            // 渲染 AdventureBackpack2 背部可穿戴物品（直升机背包等）
-            if (entityObj instanceof EntityPlayer player
-                && com.fox.ysmu.Config.RENDER_WEARABLE) {
-                com.fox.ysmu.compat.AdventureBackpackCompat.renderWearable(
-                    player, x, y, z, partialTicks);
+            try {
+                super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
+                // 渲染 AdventureBackpack2 背部可穿戴物品（直升机背包等）
+                if (entityObj instanceof EntityPlayer player
+                    && com.fox.ysmu.Config.RENDER_WEARABLE) {
+                    com.fox.ysmu.compat.AdventureBackpackCompat.renderWearable(
+                        player, x, y, z, partialTicks);
+                }
+            } catch (Exception e) {
+                suppressRenderError("doRender[" + location + "]", e);
             }
         } else if (mainModelId == null
             || !com.fox.ysmu.client.asset.AssetManager.geo(mainModelId).isPending()) {

@@ -28,6 +28,21 @@ public final class ModelIdUtil {
         return getSubModelId(id, "arm");
     }
 
+    /**
+     * Strips the last "/sub" segment of a sub-model id: "ysmu:model/arm" → "ysmu:model",
+     * "ysmu:model/main" → "ysmu:model". Returns the input unchanged when there is no
+     * sub-segment (already a base id). Unlike {@link #getModelIdFromMainId}, this works
+     * for any sub-model id, not just "…/main".
+     */
+    public static ResourceLocation getModelIdFromSubId(ResourceLocation subId) {
+        String path = subId.getResourcePath();
+        int separator = path.lastIndexOf('/');
+        if (separator > 0) {
+            return new ResourceLocation(subId.getResourceDomain(), path.substring(0, separator));
+        }
+        return subId;
+    }
+
     public static ResourceLocation getModelIdFromMainId(ResourceLocation mainId) {
         String newPath = mainId.getResourcePath()
             .substring(

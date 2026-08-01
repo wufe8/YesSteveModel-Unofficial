@@ -110,7 +110,7 @@ public final class ServerModelManager {
     }
 
     public static void reloadPacks() {
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] ===== Starting model reload =====");
             ysmu.LOG.info("[YSMU-MODEL] CUSTOM dir: {} (exists={})", CUSTOM, Files.isDirectory(CUSTOM));
             ysmu.LOG.info("[YSMU-MODEL] BUILT dir: {} (exists={})", BUILT, Files.isDirectory(BUILT));
@@ -131,7 +131,7 @@ public final class ServerModelManager {
         rebuildModelCaches();
         com.fox.ysmu.model.format.FolderFormat.setSkipCache(false);
 
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] ===== Model reload complete =====");
             ysmu.LOG.info("[YSMU-MODEL] CACHE_NAME_INFO size: {}", CACHE_NAME_INFO.size());
             ysmu.LOG.info("[YSMU-MODEL] RAW_MODEL_INFO size: {}", RAW_MODEL_INFO.size());
@@ -175,7 +175,7 @@ public final class ServerModelManager {
 
         if (tasks.isEmpty()) return;
 
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] Submitting {} model tasks to thread pool (max {} threads)",
                 tasks.size(), 10);
         }
@@ -187,7 +187,7 @@ public final class ServerModelManager {
                 .toArray(CompletableFuture[]::new))
             .join();
 
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] All {} model tasks completed. "
                 + "CACHE_NAME_INFO={}, RAW_MODEL_INFO={}, OPEN_YSM_SYNC_INFO={}",
                 tasks.size(), CACHE_NAME_INFO.size(), RAW_MODEL_INFO.size(), OPEN_YSM_SYNC_INFO.size());

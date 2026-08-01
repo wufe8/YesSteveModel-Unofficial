@@ -52,7 +52,7 @@ public final class OpenYsmAnimationControllerRegistry {
             return;
         }
         CONTROLLERS.put(animationId, set);
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info(
                 "YSM client registered OpenYSM controllers for {}: files={}, controllers={}, names={}",
                 animationId,

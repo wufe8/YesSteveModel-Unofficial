@@ -31,6 +31,10 @@ public final class GeoModelProvider implements AssetProvider<ResourceLocation, G
     public void release(ResourceLocation geoId, GeoModel geo, ReleaseMode mode) {
         if (mode != ReleaseMode.GPU_ONLY) {
             GeckoLibCache.getInstance().getGeoModels().remove(geoId);
+            // The next getModel() builds a fresh AnimationProcessor bone list from the
+            // reloaded GeoModel (dropping previously injected VirtualBones); forget the
+            // injection flag so they are re-injected from the (reloaded) animation.
+            com.fox.ysmu.client.model.CustomPlayerModel.clearInjectedCache(geoId);
         }
     }
 

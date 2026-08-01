@@ -49,7 +49,7 @@ public abstract class MixinEntityArrow implements IProjectileModelArrow {
             ExtendedModelInfo eep = ExtendedModelInfo.get(player);
             if (eep != null && eep.getModelId() != null) {
                 ((Entity) (Object) this).getDataWatcher().updateObject(ysmu$DW_MODEL_ID, eep.getModelId().toString());
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_RENDER) {
                     ysmu.LOG.info("[YSMU-ARROW] Set model ID {} on arrow entity", eep.getModelId());
                 }
             }

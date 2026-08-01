@@ -63,7 +63,7 @@ public class ArrowProjectileRenderer {
 
         if (modelId == null || entity == null) return false;
 
-        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] render start: modelId={}, entity={}", modelId, entity.getEntityId());
         }
 
@@ -73,7 +73,7 @@ public class ArrowProjectileRenderer {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] no PROJECTILE_MODEL_IDS for {}", modelId);
             return false;
         }
-        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] projTypes={}", projTypes);
         }
 
@@ -91,7 +91,7 @@ public class ArrowProjectileRenderer {
 
         // Get the projectile GeoModel
         ResourceLocation projGeoId = ModelIdUtil.getSubModelId(modelId, "projectile_" + arrowType);
-        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] looking for geo: {}", projGeoId);
         }
         GeoModel projModel = GeckoLibCache.getInstance().getGeoModels().get(projGeoId);
@@ -99,7 +99,7 @@ public class ArrowProjectileRenderer {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] GeoModel not found: {}", projGeoId);
             return false;
         }
-        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] GeoModel found: topLevelBones={}",
                 projModel.topLevelBones != null ? projModel.topLevelBones.size() : 0);
             if (projModel.topLevelBones != null) {
@@ -129,12 +129,12 @@ public class ArrowProjectileRenderer {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] no texture found for {}", modelId);
             return false;
         }
-        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] texture: {}", projTexId);
         }
 
         // === Do a quick sanity check: dump bone tree once per model in debug mode ===
-        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && DUMPED_TREES.add(projGeoId)) {
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER && DUMPED_TREES.add(projGeoId)) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] === Full bone tree dump for {} ===", projGeoId);
             dumpBoneTree(projModel.topLevelBones, 0);
         }

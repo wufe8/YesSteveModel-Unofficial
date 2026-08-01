@@ -76,14 +76,9 @@ public final class AssetManager {
         // 每次回收前 touch 刷新其活跃时间，evict 便不会释放它。
         GEO.touch(com.fox.ysmu.client.model.CustomPlayerModel.DEFAULT_MAIN_MODEL);
         ANIM.touch(com.fox.ysmu.client.model.CustomPlayerModel.DEFAULT_MAIN_MODEL);
-        // ── [TEST] 卸载/重加载优化已禁用 ────────────────────────────────
-        // 排查「挂机后第一人称手变回原版手」/「首载 UV 错乱」是否由
-        // 「空闲卸载 → 后台重加载」链路引起。禁用后 geo/anim 注册后保持
-        // READY 常驻，GPU 纹理不主动释放——永不触发卸载与重加载。
-        // 若需恢复：取消下面三行注释即可。
-        // GEO.evict(now, IDLE_UNLOAD_MS, MAX_WEIGHT);
-        // ANIM.evict(now, IDLE_UNLOAD_MS, MAX_WEIGHT);
-        // ClientModelManager.unloadIdleTextures(now);
+        GEO.evict(now, IDLE_UNLOAD_MS, MAX_WEIGHT);
+        ANIM.evict(now, IDLE_UNLOAD_MS, MAX_WEIGHT);
+        ClientModelManager.unloadIdleTextures(now);
     }
 
     /** 释放全部资源并清空状态（断线 / /ysm reload 时调用）。 */

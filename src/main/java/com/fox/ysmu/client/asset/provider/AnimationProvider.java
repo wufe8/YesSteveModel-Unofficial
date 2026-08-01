@@ -26,6 +26,11 @@ public final class AnimationProvider implements AssetProvider<ResourceLocation, 
     @Override
     public void apply(ResourceLocation mainId, AnimationFile anim) {
         GeckoLibCache.getInstance().getAnimations().put(mainId, anim);
+        // Virtual bones are injected from the animation when the geo is (re)built.
+        // If the animation reloaded after the geo, the previous injection ran with a
+        // null animation; forget the flag so it re-runs now that the anim is present.
+        // injectVirtualBones is idempotent, so this is safe for already-injected models.
+        com.fox.ysmu.client.model.CustomPlayerModel.clearInjectedCache(mainId);
     }
 
     @Override

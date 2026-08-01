@@ -161,7 +161,7 @@ public final class OpenYsmModelSyncClient {
         ClientModelManager.SYNC_LOADED = 0;
         ClientModelManager.SYNC_IN_PROGRESS = true;
         syncStartTimeMs = System.currentTimeMillis();
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
             ysmu.LOG.info("[YSMU-MODEL] OpenYSM client received sync index: models={}", serverModelCount);
             ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
                 serverModelCount, localCacheMap.size());
@@ -182,15 +182,8 @@ public final class OpenYsmModelSyncClient {
                 try {
                     byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
                     byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
-                    if (Config.DEBUG_MODEL_LOAD) {
-                        ysmu.LOG.info("[YSMU-MODEL] Client cache HIT for {} ({}), cachedFile={}",
-                            modelId, context.uuid, cachedFile);
-                    }
                     if (parseAndRegisterModel(clearBytes, context)) {
                         loadedModelsCount++;
-                    }
-                    if (Config.DEBUG_MODEL_LOAD) {
-                        ysmu.LOG.info("[YSMU-MODEL] OpenYSM client cache hit for {} ({})", modelId, context.uuid);
                     }
                 } catch (Exception e) {
                     // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
@@ -201,11 +194,10 @@ public final class OpenYsmModelSyncClient {
                 }
             } else {
                 modelsToRequest.add(new ModelHash(hash1, hash2));
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                     ysmu.LOG.info("[YSMU-MODEL] Client cache MISS for {} ({}), cachedFile={}",
                         modelId, context.uuid,
                         cachedFile != null ? cachedFile : "(no local cache)");
-                    ysmu.LOG.info("[YSMU-MODEL] OpenYSM client cache miss for {} ({})", modelId, context.uuid);
                 }
             }
         }
@@ -254,7 +246,7 @@ public final class OpenYsmModelSyncClient {
                 downloadedModelsCount++;
             }
             pendingModelsCount--;
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                 ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
             }
             if (pendingModelsCount <= 0) {
@@ -291,17 +283,18 @@ public final class OpenYsmModelSyncClient {
             raw.modelId = context.modelId;
             ResourceLocation modelId = ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, context.modelId));
 
-            if (Config.DEBUG_MODEL_LOAD) {
-                int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
-                int animCount = raw.mainEntity != null ? raw.mainEntity.animationFiles.size() : 0;
-                ysmu.LOG.info("[YSMU-MODEL] Client parseAndRegisterModel: {} (uuid={}), "
-                    + "formatVersion={}, textures={}, animations={}",
-                    context.modelId, context.uuid, raw.formatVersion, texCount, animCount);
-            }
-
-            // Always register extra wheel data, even for non-bridgeable models
+            // Always register extra wheel data, even for non-bridgeable models.
+            // Must not throw on the main thread: this runs via func_152344_a for
+            // EVERY synced model, and an exception here would propagate to
+            // Minecraft's crash handler (repeated "Negative index in crash report
+            // handler" spam while the model library syncs).
             Minecraft.getMinecraft().func_152344_a(() -> {
-                ClientModelManager.registerExtraWheel(modelId, raw);
+                try {
+                    ClientModelManager.registerExtraWheel(modelId, raw);
+                } catch (Exception e) {
+                    ysmu.LOG.warn("Failed to register extra wheel data for {}: {}",
+                        context.modelId, e.getMessage());
+                }
             });
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
                 // Even when the model can't be bridged to legacy ModelData, we still
@@ -313,28 +306,21 @@ public final class OpenYsmModelSyncClient {
                         try {
                             ResourceLocation baseModelId = ModelIdUtil.getModelIdFromMainId(modelId);
                             registerProjectilesFromRaw(raw, baseModelId);
-                            if (Config.DEBUG_MODEL_LOAD) {
-                                ysmu.LOG.info("[YSMU-MODEL] Registered projectile models from non-bridgeable model {}",
-                                    context.modelId);
-                            }
                         } catch (Exception e) {
                             ysmu.LOG.warn("Failed to register projectile models for non-bridgeable model {}",
                                 context.modelId, e);
                         }
                     });
                 }
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                     ysmu.LOG.info("[YSMU-MODEL] OpenYSM synced model {} is not bridgeable, but projectiles registered",
                         context.modelId);
                 }
                 return false;
             }
-            if (Config.DEBUG_MODEL_LOAD) {
-                ysmu.LOG.info("[YSMU-MODEL] Client bridgeable OK, converting to legacy ModelData...");
-            }
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, context.modelId);
 
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                 ysmu.LOG.info("[YSMU-MODEL] Client registering model {}: models={}, textures={}, animations={}",
                     context.modelId, data.getModel().keySet(), data.getTexture().keySet(), data.getAnimation().keySet());
             }
@@ -443,7 +429,7 @@ public final class OpenYsmModelSyncClient {
                                     : parsedAnim.animations.entrySet()) {
                                     existing.putAnimation(ae.getKey(), ae.getValue());
                                 }
-                                if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+                                if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_SYNC) {
                                     ysmu.LOG.info("[YSMU-MODEL] Registered projectile animation for {}: {} anims from {}",
                                         projAnimId, parsedAnim.animations.size(), animFile.fileHash);
                                 }
@@ -464,7 +450,7 @@ public final class OpenYsmModelSyncClient {
                                 : com.fox.ysmu.model.resource.RawYsmModelAdapter.createControllerJson(ctrlFile);
                             OpenYsmAnimationControllerRegistry.register(projAnimId,
                                 java.util.Collections.singleton(ctrlBytes));
-                            if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+                            if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_SYNC) {
                                 ysmu.LOG.info("[YSMU-MODEL] Registered projectile controller for {}: '{}' ({} states)",
                                     projAnimId, ctrlFile.name,
                                     ctrlFile.controllers.size());
@@ -480,7 +466,7 @@ public final class OpenYsmModelSyncClient {
                 }
             }
         }
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
             ysmu.LOG.info("[YSMU-MODEL] Inline-registered projectile models for {}: {}",
                 baseModelId, ClientModelManager.PROJECTILE_MODEL_IDS.get(baseModelId));
         }

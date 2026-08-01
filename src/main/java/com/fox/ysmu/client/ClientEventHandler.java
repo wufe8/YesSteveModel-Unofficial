@@ -47,6 +47,25 @@ public class ClientEventHandler {
     /** Cached HUD player preview – avoids re-rendering the full GeckoLib pipeline every frame. */
     private static final HudPreviewCache hudPreviewCache = new HudPreviewCache();
 
+    /**
+     * Suppressed render-event-handler errors. Render event subscribers are invoked from
+     * vanilla's per-frame render try-block (EntityRenderer.updateCameraAndRender); an
+     * exception here propagates to its catch, which rebuilds the "Rendering screen"
+     * crash report EVERY FRAME — logging "Negative index in crash report handler" at a
+     * rate proportional to FPS. Handlers must therefore never throw; each unique error
+     * is logged once (with stack) for diagnosis.
+     */
+    private static final java.util.Set<String> SUPPRESSED_HANDLER_ERRORS =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static void suppressHandlerError(String tag, Exception e) {
+        String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
+        if (SUPPRESSED_HANDLER_ERRORS.add(key)) {
+            com.fox.ysmu.ysmu.LOG.warn("[YSMU-RENDER] {} handler suppressed ({}): {}",
+                tag, e.getClass().getSimpleName(), String.valueOf(e.getMessage()), e);
+        }
+    }
+
     @SubscribeEvent
     public static void onTextureStitchEventPost(TextureStitchEvent.Post event) {
         if (event.map.getTextureType() == 0) {
@@ -121,43 +140,51 @@ public class ClientEventHandler {
 
     @SubscribeEvent
     public static void onRenderPlayer(SpecialPlayerRenderEvent event) {
-        EntityPlayer player = event.getPlayer();
-        CustomPlayerEntity animatable = event.getCustomPlayer();
-        if (isVanillaPlayer(event.getModelId()) && player instanceof AbstractClientPlayer clientPlayer) {
-            animatable.setPlayer(player);
-            animatable.setMainModel(ModelIdUtil.getMainId(event.getModelId()));
-            ResourceLocation location = clientPlayer.getLocationSkin();
-            animatable.setTexture(location);
+        try {
+            EntityPlayer player = event.getPlayer();
+            CustomPlayerEntity animatable = event.getCustomPlayer();
+            if (isVanillaPlayer(event.getModelId()) && player instanceof AbstractClientPlayer clientPlayer) {
+                animatable.setPlayer(player);
+                animatable.setMainModel(ModelIdUtil.getMainId(event.getModelId()));
+                ResourceLocation location = clientPlayer.getLocationSkin();
+                animatable.setTexture(location);
+            }
+        } catch (Exception e) {
+            suppressHandlerError("onRenderPlayer", e);
         }
     }
 
     @SubscribeEvent
     public static void onRender(RenderPlayerEvent.Pre event) {
-        EntityPlayer player = event.entityPlayer;
-        Minecraft mc = Minecraft.getMinecraft();
-        EntityClientPlayerMP playerSelf = mc.thePlayer;
-        if (player.equals(playerSelf) && Config.DISABLE_SELF_MODEL) {
-            return;
-        }
-        if (!player.equals(playerSelf) && Config.DISABLE_OTHER_MODEL) {
-            return;
-        }
-        event.setCanceled(true);
-        CustomPlayerRenderer renderer = ClientProxy.getInstance();
-        if ((mc.currentScreen != null || EXTRA_PLAYER) && player.equals(playerSelf)) {
-            renderSelfGuiPlayer(renderer, player, event.partialRenderTick);
-        } else {
-            float partialTicks = event.partialRenderTick;
-            double ix = player.lastTickPosX + (player.posX - player.lastTickPosX) * partialTicks;
-            double iy = player.lastTickPosY + (player.posY - player.lastTickPosY) * partialTicks;
-            double iz = player.lastTickPosZ + (player.posZ - player.lastTickPosZ) * partialTicks;
-            renderer.doRender(
-                player,
-                ix - RenderManager.renderPosX,
-                iy - RenderManager.renderPosY - player.yOffset,
-                iz - RenderManager.renderPosZ,
-                player.rotationYaw,
-                partialTicks);
+        try {
+            EntityPlayer player = event.entityPlayer;
+            Minecraft mc = Minecraft.getMinecraft();
+            EntityClientPlayerMP playerSelf = mc.thePlayer;
+            if (player.equals(playerSelf) && Config.DISABLE_SELF_MODEL) {
+                return;
+            }
+            if (!player.equals(playerSelf) && Config.DISABLE_OTHER_MODEL) {
+                return;
+            }
+            event.setCanceled(true);
+            CustomPlayerRenderer renderer = ClientProxy.getInstance();
+            if ((mc.currentScreen != null || EXTRA_PLAYER) && player.equals(playerSelf)) {
+                renderSelfGuiPlayer(renderer, player, event.partialRenderTick);
+            } else {
+                float partialTicks = event.partialRenderTick;
+                double ix = player.lastTickPosX + (player.posX - player.lastTickPosX) * partialTicks;
+                double iy = player.lastTickPosY + (player.posY - player.lastTickPosY) * partialTicks;
+                double iz = player.lastTickPosZ + (player.posZ - player.lastTickPosZ) * partialTicks;
+                renderer.doRender(
+                    player,
+                    ix - RenderManager.renderPosX,
+                    iy - RenderManager.renderPosY - player.yOffset,
+                    iz - RenderManager.renderPosZ,
+                    player.rotationYaw,
+                    partialTicks);
+            }
+        } catch (Exception e) {
+            suppressHandlerError("onRender", e);
         }
     }
 
@@ -178,88 +205,100 @@ public class ClientEventHandler {
 
     @SubscribeEvent
     public static void onRenderHand(RenderHandEvent event) {
-        Minecraft mc = Minecraft.getMinecraft();
-        EntityPlayer player = mc.thePlayer;
-        ItemRenderer itemRenderer = mc.entityRenderer.itemRenderer;
-        if (AngelicaCompat.usesShaderHandRenderer()) {
-            return;
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            EntityPlayer player = mc.thePlayer;
+            ItemRenderer itemRenderer = mc.entityRenderer.itemRenderer;
+            if (AngelicaCompat.usesShaderHandRenderer()) {
+                return;
+            }
+            FirstPersonHandRenderer.tryRender(event, mc, player, itemRenderer);
+        } catch (Exception e) {
+            suppressHandlerError("onRenderHand", e);
         }
-        FirstPersonHandRenderer.tryRender(event, mc, player, itemRenderer);
     }
 
     @SubscribeEvent
     public static void onRenderOverlay(RenderGameOverlayEvent.Post event) {
-        if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
+        try {
+            if (event.type != RenderGameOverlayEvent.ElementType.ALL) return;
 
-        // Debug overlay 优先渲染（在所有其他 overlay 之上）
-        if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
-            com.fox.ysmu.client.gui.debug.DebugOverlay.render(event.resolution);
-            return;
+            // Debug overlay 优先渲染（在所有其他 overlay 之上）
+            if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
+                com.fox.ysmu.client.gui.debug.DebugOverlay.render(event.resolution);
+                return;
+            }
+
+            if (!Config.SHOW_LOADING_PROGRESS) return;
+            if (!ClientModelManager.SYNC_IN_PROGRESS) return;
+
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc.theWorld == null || mc.fontRenderer == null) return;
+
+            int total = ClientModelManager.SYNC_TOTAL;
+            int loaded = ClientModelManager.SYNC_LOADED;
+            String currentModel = ClientModelManager.SYNC_CURRENT_MODEL;
+
+            int screenWidth = event.resolution.getScaledWidth();
+            int screenHeight = event.resolution.getScaledHeight();
+
+            // Model name text (top line)
+            if (!currentModel.isEmpty()) {
+                String label = net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_model");
+                String modelText = label + currentModel;
+                int mx = (screenWidth - mc.fontRenderer.getStringWidth(modelText)) / 2;
+                int my = screenHeight - 60;
+                mc.fontRenderer.drawStringWithShadow(modelText, mx, my, 0xFFFFFF);
+            }
+
+            // Progress bar (determinate when total known, indeterminate otherwise)
+            int barWidth = 150;
+            int barHeight = 8;
+            int barX = (screenWidth - barWidth) / 2;
+            int barY = screenHeight - 40;
+
+            net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + barWidth, barY + barHeight, 0xAA222222);
+            if (total > 0) {
+                int fillWidth = loaded >= total ? barWidth : (int) (barWidth * ((float) loaded / total));
+                net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + fillWidth, barY + barHeight, 0xFF44AA44);
+            } else {
+                // Indeterminate: pulsing highlight (first quarter)
+                int pulse = (int) ((System.currentTimeMillis() % 2000L) / 2000.0f * barWidth);
+                net.minecraft.client.gui.Gui.drawRect(barX + pulse, barY,
+                    Math.min(barX + pulse + barWidth / 4, barX + barWidth), barY + barHeight, 0xFF44AA44);
+            }
+
+            // Progress text
+            String text = total > 0 ? (loaded + " / " + total)
+                : net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_waiting");
+            int textX = (screenWidth - mc.fontRenderer.getStringWidth(text)) / 2;
+            int textY = barY - mc.fontRenderer.FONT_HEIGHT - 2;
+            mc.fontRenderer.drawStringWithShadow(text, textX, textY, 0xFFFFFF);
+        } catch (Exception e) {
+            suppressHandlerError("onRenderOverlay", e);
         }
-
-        if (!Config.SHOW_LOADING_PROGRESS) return;
-        if (!ClientModelManager.SYNC_IN_PROGRESS) return;
-
-        Minecraft mc = Minecraft.getMinecraft();
-        if (mc.theWorld == null || mc.fontRenderer == null) return;
-
-        int total = ClientModelManager.SYNC_TOTAL;
-        int loaded = ClientModelManager.SYNC_LOADED;
-        String currentModel = ClientModelManager.SYNC_CURRENT_MODEL;
-
-        int screenWidth = event.resolution.getScaledWidth();
-        int screenHeight = event.resolution.getScaledHeight();
-
-        // Model name text (top line)
-        if (!currentModel.isEmpty()) {
-            String label = net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_model");
-            String modelText = label + currentModel;
-            int mx = (screenWidth - mc.fontRenderer.getStringWidth(modelText)) / 2;
-            int my = screenHeight - 60;
-            mc.fontRenderer.drawStringWithShadow(modelText, mx, my, 0xFFFFFF);
-        }
-
-        // Progress bar (determinate when total known, indeterminate otherwise)
-        int barWidth = 150;
-        int barHeight = 8;
-        int barX = (screenWidth - barWidth) / 2;
-        int barY = screenHeight - 40;
-
-        net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + barWidth, barY + barHeight, 0xAA222222);
-        if (total > 0) {
-            int fillWidth = loaded >= total ? barWidth : (int) (barWidth * ((float) loaded / total));
-            net.minecraft.client.gui.Gui.drawRect(barX, barY, barX + fillWidth, barY + barHeight, 0xFF44AA44);
-        } else {
-            // Indeterminate: pulsing highlight (first quarter)
-            int pulse = (int) ((System.currentTimeMillis() % 2000L) / 2000.0f * barWidth);
-            net.minecraft.client.gui.Gui.drawRect(barX + pulse, barY,
-                Math.min(barX + pulse + barWidth / 4, barX + barWidth), barY + barHeight, 0xFF44AA44);
-        }
-
-        // Progress text
-        String text = total > 0 ? (loaded + " / " + total)
-            : net.minecraft.util.StatCollector.translateToLocal("gui.yes_steve_model.sync_waiting");
-        int textX = (screenWidth - mc.fontRenderer.getStringWidth(text)) / 2;
-        int textY = barY - mc.fontRenderer.FONT_HEIGHT - 2;
-        mc.fontRenderer.drawStringWithShadow(text, textX, textY, 0xFFFFFF);
     }
 
     @SubscribeEvent
     public static void onRenderScreen(RenderGameOverlayEvent.Pre event) {
-        if (event.type != RenderGameOverlayEvent.ElementType.HOTBAR) return;
-        if (Config.DISABLE_PLAYER_RENDER) return;
-        Minecraft mc = Minecraft.getMinecraft();
-        EntityPlayer player = mc.thePlayer;
-        if (player == null) return;
-        if (mc.currentScreen instanceof ExtraPlayerConfigScreen) return;
-        double posX = Config.PLAYER_POS_X;
-        double posY = Config.PLAYER_POS_Y;
-        float scale = (float) Config.PLAYER_SCALE;
-        float yawOffset = (float) Config.PLAYER_YAW_OFFSET;
-        EXTRA_PLAYER = true;
-        // Use the cached HUD preview instead of rendering the full pipeline every frame.
-        hudPreviewCache.render(player, posX, posY, scale, yawOffset, event.partialTicks);
-        EXTRA_PLAYER = false;
+        try {
+            if (event.type != RenderGameOverlayEvent.ElementType.HOTBAR) return;
+            if (Config.DISABLE_PLAYER_RENDER) return;
+            Minecraft mc = Minecraft.getMinecraft();
+            EntityPlayer player = mc.thePlayer;
+            if (player == null) return;
+            if (mc.currentScreen instanceof ExtraPlayerConfigScreen) return;
+            double posX = Config.PLAYER_POS_X;
+            double posY = Config.PLAYER_POS_Y;
+            float scale = (float) Config.PLAYER_SCALE;
+            float yawOffset = (float) Config.PLAYER_YAW_OFFSET;
+            EXTRA_PLAYER = true;
+            // Use the cached HUD preview instead of rendering the full pipeline every frame.
+            hudPreviewCache.render(player, posX, posY, scale, yawOffset, event.partialTicks);
+            EXTRA_PLAYER = false;
+        } catch (Exception e) {
+            suppressHandlerError("onRenderScreen", e);
+        }
     }
 
     @SubscribeEvent

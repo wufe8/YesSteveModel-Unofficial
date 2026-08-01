@@ -37,7 +37,7 @@ public final class OpenYsmFormat {
             return;
         }
 
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] Scanning OpenYSM models under {}", rootPath);
         }
 
@@ -78,7 +78,7 @@ public final class OpenYsmFormat {
             RawYsmModel raw = deserializer.deserialize();
             raw.modelId = modelId;
 
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                 int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
                 ysmu.LOG.info("[YSMU-MODEL] Folder model {} ({}): textures={}", dir.getFileName(), modelId, texCount);
             }
@@ -93,7 +93,7 @@ public final class OpenYsmFormat {
             ServerModelInfo info = ModelCacheWriter.write(data);
             if (info != null) {
                 CACHE_NAME_INFO.put(modelId, info);
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] Folder model {} cached to CACHE_NAME_INFO", modelId);
                 }
             }
@@ -120,13 +120,13 @@ public final class OpenYsmFormat {
                 return;
             }
 
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                 ysmu.LOG.info("[YSMU-MODEL] Found OpenYSM .ysm file: {} (size={})", fileName, fileSize);
             }
 
             byte[] rawBytes = YsmCrypt.decryptYsmFile(encrypted);
 
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                 ysmu.LOG.info("[YSMU-MODEL] Decrypted .ysm file {}: decompressed size={}", fileName, rawBytes.length);
             }
 
@@ -136,7 +136,7 @@ public final class OpenYsmFormat {
                 String modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
                 raw.modelId = modelId;
 
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
                     int animCount = raw.mainEntity != null ? raw.mainEntity.animationFiles.size() : 0;
                     boolean hasMainModel = raw.mainEntity != null && raw.mainEntity.mainModel != null;
@@ -161,7 +161,7 @@ public final class OpenYsmFormat {
                 // parseYSMJson/parseYSMFooter 之前已解析完成。
                 boolean bridgeable = RawYsmModelAdapter.isBridgeable(raw);
 
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] isBridgeable({}) = {}", modelId, bridgeable);
                 }
 
@@ -172,11 +172,11 @@ public final class OpenYsmFormat {
                     ServerModelInfo info = ModelCacheWriter.write(data);
                     if (info != null) {
                         CACHE_NAME_INFO.put(modelId, info);
-                        if (Config.DEBUG_MODEL_LOAD) {
+                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                             ysmu.LOG.info("[YSMU-MODEL] Successfully cached model {} to CACHE_NAME_INFO", modelId);
                         }
                     }
-                } else if (Config.DEBUG_MODEL_LOAD) {
+                } else if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] Model {} not bridgeable, skipped legacy cache but OpenYSM sync info written", modelId);
                 }
                 // RawYsmModel 在缓存构建完成后不再需要，释放内存
@@ -188,7 +188,7 @@ public final class OpenYsmFormat {
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load OpenYSM binary model {} (size={}): {}: {}",
                 file, file.toFile().length(), e.getClass().getSimpleName(), e.getMessage());
-            if (Config.DEBUG_MODEL_LOAD || ysmu.LOG.isDebugEnabled()) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN || ysmu.LOG.isDebugEnabled()) {
                 ysmu.LOG.warn("[YSMU-MODEL] OpenYSM binary model {} load failure detail", file, e);
             }
         }

@@ -262,8 +262,28 @@ public final class RenderUtil {
                     RenderHelper.disableStandardItemLighting();
                 }
             }
-        } catch (ExecutionException e) {
-            e.printStackTrace();
+        } catch (Exception e) {
+            suppressRenderError("renderTextureScreenEntity", e);
+        }
+    }
+
+    /**
+     * Suppressed render errors, keyed by tag|exceptionClass|message. A GUI preview
+     * or GUI model render must never crash the game: before this, an exception from
+     * GeckoLib rendering (molang error, bone NPE, GeoModelException from a geo that
+     * disappeared mid-frame) propagated to Minecraft's crash handler, which rebuilt
+     * the crash report every frame — logging "Negative index in crash report
+     * handler" repeatedly and adding lag. We swallow it here and log each unique
+     * error once (with its stack) so the real bug stays diagnosable.
+     */
+    private static final java.util.Set<String> SUPPRESSED_RENDER_ERRORS =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static void suppressRenderError(String tag, Exception e) {
+        String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
+        if (SUPPRESSED_RENDER_ERRORS.add(key)) {
+            ysmu.LOG.warn("[YSMU-RENDER] {} suppressed ({}): {}",
+                tag, e.getClass().getSimpleName(), String.valueOf(e.getMessage()), e);
         }
     }
 
@@ -322,8 +342,8 @@ public final class RenderUtil {
                 consumer.accept(entity);
                 renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity);
             }
-        } catch (ExecutionException e) {
-            e.printStackTrace();
+        } catch (Exception e) {
+            suppressRenderError("renderEntityInInventory[" + modelId + "]", e);
         } finally {
             RENDERING_IN_INVENTORY = false;
         }
@@ -374,7 +394,15 @@ public final class RenderUtil {
                 // and NPE. Trigger background reload as well so a freshly shown
                 // model animates as soon as it is ready.
                 ResourceLocation previewMainId = ModelIdUtil.getMainId(modelId);
-                com.fox.ysmu.client.asset.AssetManager.geo(previewMainId).touch();
+                // Trigger geo reload when the previewed model was idle-evicted:
+                // get() reloads in the background on ABSENT, and on READY it
+                // refreshes the idle timestamp exactly like touch(). Using only
+                // touch() here was a bug — it is a no-op on an evicted entry, so a
+                // previewed model's geo was never reloaded and its preview stayed
+                // invisible forever after idle unload. (Textures need no warm-up
+                // here: selecting the model makes CustomPlayerRenderer call
+                // ensureTexturesLoaded before its first in-world render.)
+                com.fox.ysmu.client.asset.AssetManager.geo(previewMainId).get();
                 com.fox.ysmu.client.asset.AssetManager.anim(previewMainId).get();
                 // If the previewed model's geo is still absent (idle-evicted and
                 // reloading in the background, or genuinely missing), skip this
@@ -389,8 +417,8 @@ public final class RenderUtil {
                 }
                 renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity, disablePreviewRotation);
             }
-        } catch (ExecutionException e) {
-            e.printStackTrace();
+        } catch (Exception e) {
+            suppressRenderError("renderEntityInInventory(" + modelId + ",disablePreviewRotation)", e);
         } finally {
             RENDERING_IN_INVENTORY = false;
         }

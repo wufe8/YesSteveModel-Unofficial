@@ -108,7 +108,7 @@ public class SyncModelFiles implements IMessage {
                     return;
                 }
 
-                if (Config.DEBUG_MODEL_LOAD) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                     ysmu.LOG.info(
                         "Sending large YSM legacy model cache {} in chunks: size={} bytes, chunk={} bytes",
                         md5,

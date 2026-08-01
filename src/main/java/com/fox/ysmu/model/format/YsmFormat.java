@@ -26,19 +26,19 @@ public final class YsmFormat {
 
     public static void cacheAllModels(Path rootPath) {
         Collection<File> ysmFiles = FileUtils.listFiles(rootPath.toFile(), new String[] { "ysm" }, false);
-        if (Config.DEBUG_MODEL_LOAD) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat scanning {}: found {} .ysm files", rootPath, ysmFiles.size());
         }
         for (File ysmFile : ysmFiles) {
             String modelId = ModelIdUtil.getInternalModelId(removeExtension(ysmFile.getName()));
-            if (Config.DEBUG_MODEL_LOAD) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                 ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat processing: {} -> modelId={}, size={}",
                     ysmFile.getName(), modelId, ysmFile.length());
             }
             try {
                 Map<String, byte[]> data = YesModelUtils.input(ysmFile);
                 if (data.isEmpty()) {
-                    if (Config.DEBUG_MODEL_LOAD) {
+                    if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                         ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: YesModelUtils.input returned empty (not legacy format or corrupt)", ysmFile.getName());
                     }
                     continue;
@@ -52,7 +52,7 @@ public final class YsmFormat {
                 if (data.keySet()
                     .stream()
                     .noneMatch(fileName -> fileName.endsWith(".png"))) {
-                    if (Config.DEBUG_MODEL_LOAD) {
+                    if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                         ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: no .png texture found, files={}",
                             ysmFile.getName(), data.keySet());
                     }
@@ -62,11 +62,11 @@ public final class YsmFormat {
                 ServerModelInfo info = cacheModel(data, modelId);
                 if (info != null) {
                     CACHE_NAME_INFO.put(modelId, info);
-                    if (Config.DEBUG_MODEL_LOAD) {
+                    if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                         ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: cached to CACHE_NAME_INFO as {}",
                             ysmFile.getName(), modelId);
                     }
-                } else if (Config.DEBUG_MODEL_LOAD) {
+                } else if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] Legacy YsmFormat {}: cacheModel returned null", ysmFile.getName());
                 }
             } catch (IOException e) {

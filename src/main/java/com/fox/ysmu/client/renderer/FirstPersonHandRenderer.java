@@ -48,6 +48,18 @@ public final class FirstPersonHandRenderer {
     private static final float GECKO_ARM_ROLL_DEGREES = 180.0F;
     private static final ArmRollPivot DEFAULT_ARM_ROLL_PIVOT = new ArmRollPivot(2.0F / 16.0F, 0.0F);
 
+    /** Suppressed hand-render errors, keyed by tag|exceptionClass|message. */
+    private static final java.util.Set<String> SUPPRESSED_HAND_ERRORS =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static void suppressHandError(String tag, Exception e) {
+        String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
+        if (SUPPRESSED_HAND_ERRORS.add(key)) {
+            com.fox.ysmu.ysmu.LOG.warn("[YSMU-RENDER] {} suppressed ({}): {}",
+                tag, e.getClass().getSimpleName(), String.valueOf(e.getMessage()), e);
+        }
+    }
+
     private FirstPersonHandRenderer() {}
 
     public static boolean shouldRenderCustomHand(Minecraft mc, EntityPlayer player, ItemRenderer itemRenderer) {
@@ -77,34 +89,44 @@ public final class FirstPersonHandRenderer {
 
     public static boolean tryRender(RenderHandEvent event, Minecraft mc, EntityPlayer player,
         ItemRenderer itemRenderer) {
-        CustomHandRenderContext context = getCustomHandRenderContext(mc, player, itemRenderer);
-        if (context == null) {
+        try {
+            CustomHandRenderContext context = getCustomHandRenderContext(mc, player, itemRenderer);
+            if (context == null) {
+                return false;
+            }
+
+            event.setCanceled(true);
+            render(event, mc, player, itemRenderer, context.renderer, context.geoModel, context.customPlayer);
+            return true;
+        } catch (Exception e) {
+            suppressHandError("tryRender", e);
             return false;
         }
-
-        event.setCanceled(true);
-        render(event, mc, player, itemRenderer, context.renderer, context.geoModel, context.customPlayer);
-        return true;
     }
 
     public static boolean tryRenderInActiveFirstPersonPass(Minecraft mc, ItemRenderer itemRenderer, float partialTicks,
         boolean renderOffhand) {
-        EntityPlayer player = mc == null ? null : mc.thePlayer;
-        CustomHandRenderContext context = getCustomHandRenderContext(mc, player, itemRenderer);
-        if (context == null) {
+        try {
+            EntityPlayer player = mc == null ? null : mc.thePlayer;
+            CustomHandRenderContext context = getCustomHandRenderContext(mc, player, itemRenderer);
+            if (context == null) {
+                return false;
+            }
+
+            renderFirstPersonItems(
+                mc,
+                player,
+                itemRenderer,
+                context.renderer,
+                context.geoModel,
+                context.customPlayer,
+                partialTicks,
+                renderOffhand);
+            return true;
+        } catch (Exception e) {
+            suppressHandError("tryRenderInActiveFirstPersonPass", e);
             return false;
         }
-
-        renderFirstPersonItems(
-            mc,
-            player,
-            itemRenderer,
-            context.renderer,
-            context.geoModel,
-            context.customPlayer,
-            partialTicks,
-            renderOffhand);
-        return true;
     }
 
     public static void render(RenderHandEvent event, Minecraft mc, EntityPlayer player, ItemRenderer itemRenderer,
@@ -407,6 +429,11 @@ public final class FirstPersonHandRenderer {
             com.fox.ysmu.client.asset.AssetManager.geo(armId).get();
             return null;
         }
+        // Keep the arm geo warm while it is actually rendered: this path reads
+        // GeckoLibCache directly and would otherwise never refresh the asset
+        // lifecycle's idle timestamp, letting the arm geo be evicted every 30s
+        // even during continuous first-person play (periodic vanilla-hand flicker).
+        com.fox.ysmu.client.asset.AssetManager.geo(armId).touch();
         if (!hasRenderableRightArm(geoModel)) {
             return null;
         }

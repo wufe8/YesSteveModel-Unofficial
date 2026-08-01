@@ -45,6 +45,12 @@ public class Config {
     public static boolean DEBUG_CONTROLLER = false;
     public static boolean DEBUG_WHEEL = false;
     public static boolean DEBUG_MODEL_LOAD = false;
+    /** 子开关：细分 DEBUG_MODEL_LOAD 的日志域，避免大型模型库初始化时刷爆日志。
+     *  每个子开关只有在 DEBUG_MODEL_LOAD 为 true 时才生效。 */
+    public static boolean DEBUG_MODEL_SCAN = false;
+    public static boolean DEBUG_MODEL_SYNC = false;
+    public static boolean DEBUG_MODEL_PARSE = false;
+    public static boolean DEBUG_MODEL_RENDER = false;
     public static boolean DEBUG_ANIMATION = false;
     public static boolean DEBUG_SOUND = false;
     public static boolean DEBUG_MERGED_ANIMATIONS = false;
@@ -123,7 +129,11 @@ public class Config {
         // Debug config values
         DEBUG_CONTROLLER = syncBoolean("DebugController", "debug", DEBUG_CONTROLLER, "Enable controller transition/roaming debug logging ([YSMU-CTRL])", load);
         DEBUG_WHEEL = syncBoolean("DebugWheel", "debug", DEBUG_WHEEL, "Enable wheel GUI debug logging ([YSMU-WHEEL], [YSMU-ROAM])", load);
-        DEBUG_MODEL_LOAD = syncBoolean("DebugModelLoad", "debug", DEBUG_MODEL_LOAD, "Enable model loading/debug logging ([YSMU-MODEL])", load);
+        DEBUG_MODEL_LOAD = syncBoolean("DebugModelLoad", "debug", DEBUG_MODEL_LOAD, "Enable model loading/debug logging ([YSMU-MODEL]). Master switch; sub-areas are gated by DebugModelScan/Sync/Parse/Render", load);
+        DEBUG_MODEL_SCAN = syncBoolean("DebugModelScan", "debug", DEBUG_MODEL_SCAN, "Server-side model discovery/cache build logging (needs DebugModelLoad)", load);
+        DEBUG_MODEL_SYNC = syncBoolean("DebugModelSync", "debug", DEBUG_MODEL_SYNC, "Client model sync protocol logging (needs DebugModelLoad)", load);
+        DEBUG_MODEL_PARSE = syncBoolean("DebugModelParse", "debug", DEBUG_MODEL_PARSE, "Model binary/JSON parse & registration logging (needs DebugModelLoad)", load);
+        DEBUG_MODEL_RENDER = syncBoolean("DebugModelRender", "debug", DEBUG_MODEL_RENDER, "Model render/arrow/bone-dump logging (needs DebugModelLoad)", load);
         DEBUG_ANIMATION = syncBoolean("DebugAnimation", "debug", DEBUG_ANIMATION, "Enable animation playback debug logging ([YSMU-ANIM])", load);
         DEBUG_SOUND = syncBoolean("DebugSound", "debug", DEBUG_SOUND, "Enable sound cache/playback debug logging ([YSM Sound])", load);
         DEBUG_MERGED_ANIMATIONS = syncBoolean("DebugMergedAnimations", "debug", DEBUG_MERGED_ANIMATIONS, "Show __ysm_merged__ animations in the preview GUI for debugging", load);

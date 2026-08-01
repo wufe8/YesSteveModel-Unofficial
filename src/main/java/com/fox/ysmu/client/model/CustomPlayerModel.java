@@ -260,7 +260,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             }
         }
         // Diagnostic: log visibility stats once per model switch (throttled per animId, gated)
-        if (Config.DEBUG_MODEL_LOAD && (hiddenCount > 0 || totalBones > 0)) {
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_RENDER && (hiddenCount > 0 || totalBones > 0)) {
             String throttleKey = animId.toString();
             if (VISIBILITY_LOG_THROTTLE.add(throttleKey)) {
                 com.fox.ysmu.ysmu.LOG.info(
@@ -392,6 +392,18 @@ public class CustomPlayerModel extends AnimatedGeoModel {
     /** Clears the virtual-bone injection cache — call when models are reloaded. */
     public static void clearInjectedCache() {
         INJECTED_LOCATIONS.clear();
+    }
+
+    /**
+     * Forgets the injection flag for one model location so {@link #injectVirtualBones}
+     * re-runs on its next {@link #getModel}. Called when a geo is evicted (its
+     * AnimationProcessor bone list is rebuilt from the fresh GeoModel, dropping any
+     * previously registered VirtualBone) and when an animation is re-applied (so the
+     * injection runs with the reloaded animation present). Injection is idempotent,
+     * so re-running after an already-injected model is a cheap no-op.
+     */
+    public static void clearInjectedCache(ResourceLocation location) {
+        INJECTED_LOCATIONS.remove(location);
     }
 
     private void injectVirtualBones(ResourceLocation location) {
