@@ -552,12 +552,25 @@ public final class AnimationManager {
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
             : GeckoLibCache.getInstance().getAnimations().get(animId);
+        // OpenYSM 模型：潜行动画由 player.pre_main 控制器负责
+        // （移动潜行→行走/后退1，站立潜行→sneaking_Control）。
+        // main_controller 的 legacy 潜行（sneak/sneaking）会与 pre_main 同时
+        // 播放并覆盖其 Root 位移（sneaking 的 Root [0,-7.625,0] 覆盖行走的
+        // [0,3,0]），导致移动潜行显示成站立潜行蹲姿。OpenYSM 模型时跳过
+        // legacy 的 sneak/sneaking 状态。
+        boolean openYsmModel = animId != null && OpenYsmPlayerControllerRuntime.hasAnyController(animId);
         for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
             if (!data.containsKey(i)) {
                 continue;
             }
             LinkedList<AnimationState> states = data.get(i);
             for (AnimationState state : states) {
+                if (openYsmModel) {
+                    String legacyAnimName = state.getAnimationName();
+                    if ("sneak".equals(legacyAnimName) || "sneaking".equals(legacyAnimName)) {
+                        continue;
+                    }
+                }
                 if (state.getPredicate().test(player, event)) {
                     String animationName = state.getAnimationName();
                     // 优先检查 molang 映射：当模型提供了 .molang 函数文件时，

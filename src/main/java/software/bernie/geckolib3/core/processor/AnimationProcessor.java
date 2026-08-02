@@ -216,7 +216,23 @@ public class AnimationProcessor<T extends IAnimatable> {
             }
             if (!tracker.getValue().hasPositionChanged) {
                 if (saveSnapshot.isCurrentlyRunningPositionAnimation) {
-                    saveSnapshot.mostRecentResetPositionTick = (float) seekTime;
+                    // YSMU fix: start the reset timer at 0 (matching the rotation
+                    // reset above) so a bone whose position animation stops
+                    // lerps back to its bind-pose offset. Previously this was
+                    // set to (float) seekTime, making percentageReset always 0 —
+                    // the bone kept its last animated position forever. That
+                    // caused pose bleed: e.g. after sneaking_Control (Root
+                    // lowered to [0,-7.625,0]) the moving-sneak 行走 pose never
+                    // returned the body to standing height.
+                    //
+                    // YSM 语义依据: YSM 中未被当前动画覆盖的骨骼应回到绑定姿势
+                    // (bind pose), 而非停留在上一个动画的最后一帧 position。
+                    // 该修复与此语义一致, 且与 rotation reset 逻辑对称。
+                    // 注意: 本修复不是"移动潜行显示站立潜行"问题的根因——
+                    // 那个根因是 main_controller legacy 潜行动画覆盖了 pre_main
+                    // (见 AnimationManager.predicateMain 的 OpenYSM 潜行跳过),
+                    // 但 position reset 仍是防御性的正确修复, 防止类似姿势残留。
+                    saveSnapshot.mostRecentResetPositionTick = 0;
                     saveSnapshot.isCurrentlyRunningPositionAnimation = false;
                 }
 
