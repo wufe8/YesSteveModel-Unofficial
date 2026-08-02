@@ -98,15 +98,18 @@ public class RequestLoadModel implements IMessage {
                             bundle = ClientModelManager.preParseModel(data, true);
                         } catch (Exception e) {
                             ysmu.LOG.warn("Failed to pre-parse model {}: {}", fileName, e.getMessage());
+                            ClientModelManager.SYNC_FAILED++;
                             return;
                         }
                         ClientModelManager.scheduleApply(bundle);
                     } else {
                         ysmu.LOG.warn("Failed to decrypt YSM model cache file {}", fileName);
+                        ClientModelManager.SYNC_FAILED++;
                     }
                 }
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to load YSM model cache file " + fileName, e);
+                ClientModelManager.SYNC_FAILED++;
             }
         });
     }

@@ -53,11 +53,46 @@ public final class OpenYsmModelSyncClient {
     private static byte[] serverKey;
     private static byte[] clientKey;
     private static String currentCacheFolderName;
+    /** Reassembly buffer for the (encrypted, possibly chunked) sync index. */
+    private static byte[] syncIndexChunks;
+    private static int syncIndexTotal;
+    private static int syncIndexReceived;
 
     private OpenYsmModelSyncClient() {}
 
     public static void handlePayload(byte[] data) {
         ThreadTools.THREAD_POOL.submit(() -> processServerData(data));
+    }
+
+    /**
+     * Receives a chunk of the (encrypted) sync index from the server and, once the
+     * final chunk arrives, hands the reassembled blob to {@link #handlePayload} for
+     * the normal decrypt + packet03 parse. Only used for oversized indexes that the
+     * server chunks to stay under the ~32 KB custom-payload limit.
+     */
+    public static synchronized void handleSyncIndexChunk(int totalLength, int offset, byte[] chunk, boolean last) {
+        if (chunk == null || chunk.length == 0) {
+            return;
+        }
+        if (syncIndexChunks == null || syncIndexTotal != totalLength) {
+            syncIndexChunks = new byte[totalLength];
+            syncIndexTotal = totalLength;
+            syncIndexReceived = 0;
+        }
+        if (offset < 0 || offset + chunk.length > syncIndexChunks.length) {
+            ysmu.LOG.warn("OpenYSM client sync index chunk out of range: offset={}, len={}, total={}",
+                offset, chunk.length, totalLength);
+            return;
+        }
+        System.arraycopy(chunk, 0, syncIndexChunks, offset, chunk.length);
+        syncIndexReceived += chunk.length;
+        if (last) {
+            byte[] full = syncIndexChunks;
+            syncIndexChunks = null;
+            syncIndexTotal = 0;
+            syncIndexReceived = 0;
+            handlePayload(full);
+        }
     }
 
     public static synchronized void resetConnectionState() {
@@ -70,6 +105,9 @@ public final class OpenYsmModelSyncClient {
         lastKey = null;
         serverKey = null;
         currentCacheFolderName = null;
+        syncIndexChunks = null;
+        syncIndexTotal = 0;
+        syncIndexReceived = 0;
         SERVER_MODELS.clear();
         // NOTE: clientKey is intentionally KEPT — lazy geo/anim/texture reload
         // re-decrypts the client cache files with it after an idle unload, and
@@ -156,8 +194,11 @@ public final class OpenYsmModelSyncClient {
 
         Map<UUID, File> localCacheMap = YSMClientCache.buildCacheIndex(cacheDir, clientKey);
         List<ModelHash> modelsToRequest = new ArrayList<>();
+        // packet03 头部：progressTotal（OpenYSM+legacy 并集）供进度条/完成统计使用；
+        // serverModelCount 仍是本索引的条目数（仅 OpenYSM 集合）。
+        int progressTotal = buf.readVarInt();
         int serverModelCount = buf.readVarInt();
-        ClientModelManager.SYNC_TOTAL = serverModelCount;
+        ClientModelManager.SYNC_TOTAL = progressTotal;
         ClientModelManager.SYNC_LOADED = 0;
         ClientModelManager.SYNC_IN_PROGRESS = true;
         syncStartTimeMs = System.currentTimeMillis();
@@ -182,9 +223,17 @@ public final class OpenYsmModelSyncClient {
                 try {
                     byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
                     byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
-                    if (parseAndRegisterModel(clearBytes, context)) {
-                        loadedModelsCount++;
-                    }
+                    // Pre-parsing hundreds of cache hits inline blocks the single
+                    // synchronized index loop for minutes on large libraries (progress
+                    // bar looks frozen). Defer the heavy parse/registration to the
+                    // background pool so it runs in parallel with the download path;
+                    // the cheap read+decrypt stay inline so a corrupt cache file still
+                    // falls back to download before packet04 is sent.
+                    ThreadTools.THREAD_POOL.submit(() -> {
+                        if (parseAndRegisterModel(clearBytes, context)) {
+                            loadedModelsCount++;
+                        }
+                    });
                 } catch (Exception e) {
                     // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
                     // 避免整个同步流程因此崩溃，导致加载进度条无法显示。
@@ -234,21 +283,31 @@ public final class OpenYsmModelSyncClient {
         context.bytesReceived += chunkLength;
 
         if (context.bytesReceived >= context.totalSize) {
-            byte[] clientCacheBytes = YsmCrypt
-                .transcodeServerDataToClientCache(context.fileBuffer, serverKey, clientKey, hash1, hash2);
-            File outFile = new File(getCacheDir(), YSMClientCache.generateCacheFileName(hash1, hash2, clientKey));
-            FileUtils.writeByteArrayToFile(outFile, clientCacheBytes);
+            byte[] fileBuffer = context.fileBuffer;
             context.fileBuffer = null;
+            try {
+                byte[] clientCacheBytes = YsmCrypt
+                    .transcodeServerDataToClientCache(fileBuffer, serverKey, clientKey, hash1, hash2);
+                File outFile = new File(getCacheDir(), YSMClientCache.generateCacheFileName(hash1, hash2, clientKey));
+                FileUtils.writeByteArrayToFile(outFile, clientCacheBytes);
 
-            byte[] clearBytes = YsmCrypt.read(clientCacheBytes, clientKey);
-            if (parseAndRegisterModel(clearBytes, context)) {
-                loadedModelsCount++;
-                downloadedModelsCount++;
+                byte[] clearBytes = YsmCrypt.read(clientCacheBytes, clientKey);
+                if (parseAndRegisterModel(clearBytes, context)) {
+                    loadedModelsCount++;
+                    downloadedModelsCount++;
+                }
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                    ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
+                }
+            } catch (Exception e) {
+                // A single corrupt/truncated model cache file must not abort the whole
+                // sync (which previously failed the progress bar and left the library
+                // unloaded). Log it, skip the model, and keep going.
+                ysmu.LOG.warn("OpenYSM client failed to process downloaded model {} ({}): {}",
+                    context.modelId, uuid, e.getMessage());
+                ClientModelManager.SYNC_FAILED++;
             }
             pendingModelsCount--;
-            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-                ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
-            }
             if (pendingModelsCount <= 0) {
                 sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
             }
@@ -376,6 +435,7 @@ public final class OpenYsmModelSyncClient {
             bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
+                ClientModelManager.SYNC_FAILED++;
                 return false;
             }
             // Fold extra-wheel registration into the single apply task (previously a
@@ -642,12 +702,18 @@ public final class OpenYsmModelSyncClient {
             ysmu.LOG.info(
                 "OpenYSM client sync complete: loaded={}, downloaded={}, cacheHits={}, time={}ms",
                 loadedModelsCount, downloadedModelsCount, cacheHitCount, elapsed);
-            // 在聊天栏输出客户端完成信息
+            // 在聊天栏输出客户端完成信息（含成功/失败/总数统计；总数=OpenYSM+legacy 并集）
+            int registered = ClientModelManager.MODELS.size();
+            int failed = ClientModelManager.SYNC_FAILED;
+            int total = ClientModelManager.SYNC_TOTAL;
             net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
             if (mc.thePlayer != null) {
                 mc.thePlayer.addChatMessage(
                     new net.minecraft.util.ChatComponentTranslation(
                         "message.yes_steve_model.sync.complete", elapsed));
+                mc.thePlayer.addChatMessage(
+                    new net.minecraft.util.ChatComponentTranslation(
+                        "message.yes_steve_model.sync.complete_models", registered, failed, total));
             }
         }
         ClientModelManager.SYNC_IN_PROGRESS = false;

@@ -41,6 +41,7 @@ public final class NetworkHandler {
     private static final int CLIENTBOUND_SET_WELCOME_CONFIG = 21;
     private static final int CLIENTBOUND_SHOW_BUFFER_INFO = 22;
     private static final int CLIENTBOUND_QUERY_MOLANG_VAR = 23;
+    private static final int CLIENTBOUND_OPENYSM_SYNC_INDEX_CHUNK_17 = 24;
 
     public static final int OPEN_NPC_MODEL_GUI = 93;
     public static final int SET_NPC_MODEL_ID = 94;
@@ -141,6 +142,11 @@ public final class NetworkHandler {
             S2CModelSyncPayload17.Handler.class,
             S2CModelSyncPayload17.class,
             CLIENTBOUND_OPENYSM_MODEL_SYNC_PAYLOAD_17,
+            Side.CLIENT);
+        CHANNEL.registerMessage(
+            S2CSyncIndexChunk17.Handler.class,
+            S2CSyncIndexChunk17.class,
+            CLIENTBOUND_OPENYSM_SYNC_INDEX_CHUNK_17,
             Side.CLIENT);
         CHANNEL.registerMessage(
             S2CVersionCheck17.Handler.class,

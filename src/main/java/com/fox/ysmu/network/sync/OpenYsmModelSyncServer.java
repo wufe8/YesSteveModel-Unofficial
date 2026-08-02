@@ -19,6 +19,7 @@ import com.fox.ysmu.model.format.OpenYsmSyncInfo;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.C2SCompleteFeedback17;
 import com.fox.ysmu.network.message.S2CModelSyncPayload17;
+import com.fox.ysmu.network.message.S2CSyncIndexChunk17;
 import com.fox.ysmu.util.ThreadTools;
 import com.fox.ysmu.ysmu;
 import com.google.common.collect.Maps;
@@ -30,8 +31,16 @@ import rip.ysm.security.YsmCrypt;
 public final class OpenYsmModelSyncServer {
 
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final int DEFAULT_CHUNK_SIZE = 32000;
+    private static final int DEFAULT_CHUNK_SIZE = 24000;
     private static final int LOW_BANDWIDTH_CHUNK_SIZE = 8192;
+    /**
+     * Largest single-packet (encrypted) sync index. Over this the index is sent in
+     * chunks: 1.7.10 custom-payload packets have a ~32 KB limit that the transport
+     * splits into separate messages, corrupting large model-library indexes.
+     */
+    private static final int SYNC_INDEX_SINGLE_MAX = 30000;
+    /** Encrypted sync-index chunk size, safely under the ~32 KB custom-payload limit. */
+    private static final int SYNC_INDEX_CHUNK_SIZE = 20000;
     private static final Map<UUID, PlayerSyncState> SYNC_STATES = Maps.newConcurrentMap();
 
     private OpenYsmModelSyncServer() {}
@@ -111,6 +120,18 @@ public final class OpenYsmModelSyncServer {
             key[i] ^= (byte) (0x5A + i * 31);
         }
         return key;
+    }
+
+    /**
+     * 客户端最终将注册的模型总数 = OpenYSM 同步集合 + legacy 同步集合的并集。
+     * legacy 路径（RequestLoadModel/SendModelFile）走 CACHE_NAME_INFO，与 OpenYSM
+     * 高度重叠（桥接模型同时写入两张表），但裸 YSGP 的旧格式模型只在 CACHE_NAME_INFO，
+     * 故并集能覆盖全部模型。仅供进度条/完成统计，取近似即可。
+     */
+    private static int totalModelCount() {
+        java.util.Set<String> all = new java.util.HashSet<>(ServerModelManager.OPEN_YSM_SYNC_INFO.keySet());
+        all.addAll(ServerModelManager.CACHE_NAME_INFO.keySet());
+        return all.size();
     }
 
     private static void handlePayloadAsync(UUID playerId, byte[] packetBytes) {
@@ -209,6 +230,10 @@ public final class OpenYsmModelSyncServer {
                 out.getRawBuf().writeBytes(ServerModelManager.OPEN_YSM_SERVER_KEY);
                 out.getRawBuf().writeBytes(state.clientCacheKey);
 
+                // 进度条总模型数 = OpenYSM + legacy 并集（legacy 模型走旧版同步路径，
+                // 不在此索引中，但客户端最终会注册它们）。与下方索引条目数分离：
+                // 条目数仍只遍历 OpenYSM 集合。
+                out.writeVarInt(totalModelCount());
                 out.writeVarInt(state.allowedModels.size());
                 for (OpenYsmSyncInfo model : state.allowedModels) {
                     out.writeVarLong(model.getHash1());
@@ -255,11 +280,47 @@ public final class OpenYsmModelSyncServer {
                 out.writeVarInt(0);
 
                 YsmCrypt.EncryptedPacket encrypted = YsmCrypt.encrypt(out.toArray(), state.clientNextKey, false);
-                sendPayload(playerId, state, encrypted.data());
+                byte[] payload = encrypted.data();
+                // The sync index can exceed the ~32 KB custom-payload limit on large
+                // model libraries (e.g. 976 models); the transport splits it into
+                // separate messages and the client can't parse them. Chunk it so the
+                // client reassembles the single logical packet03 before decrypting.
+                if (payload.length <= SYNC_INDEX_SINGLE_MAX) {
+                    sendPayload(playerId, state, payload);
+                } else {
+                    sendSyncIndexChunked(playerId, state, payload);
+                }
             }
         } catch (Exception e) {
             clear(playerId);
             ysmu.LOG.warn("Failed to send OpenYSM packet 03 to " + state.playerName, e);
+        }
+    }
+
+    /**
+     * Sends the (already encrypted) sync index in chunks, each well under the ~32 KB
+     * custom-payload limit, so large model libraries don't get the index truncated or
+     * split mid-packet. The client reassembles the chunks before decrypting.
+     */
+    private static void sendSyncIndexChunked(UUID playerId, PlayerSyncState state, byte[] payload) {
+        int total = payload.length;
+        int offset = 0;
+        int count = 0;
+        while (offset < total) {
+            int length = Math.min(SYNC_INDEX_CHUNK_SIZE, total - offset);
+            byte[] chunk = Arrays.copyOfRange(payload, offset, offset + length);
+            NetworkHandler.sendToClientPlayer(
+                new S2CSyncIndexChunk17(total, offset, chunk, offset + length >= total),
+                state.player);
+            offset += length;
+            count++;
+        }
+        if (count > 1) {
+            ysmu.LOG.info(
+                "OpenYSM server sent sync index to {} in {} chunks ({} bytes)",
+                state.playerName,
+                count,
+                total);
         }
     }
 

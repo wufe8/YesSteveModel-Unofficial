@@ -313,3 +313,4 @@ gui.yes_steve_model.texture.paused=[⏸ 已暂停]
 gui.yes_steve_model.texture.resume=继续
 gui.yes_steve_model.model_count=%d 个模型
 message.yes_steve_model.sync.complete=§6§l【§aYSM§6§l】§a客户端同步完成，耗时 %d ms
+message.yes_steve_model.sync.complete_models=§6§l【§aYSM§6§l】§a模型加载完成：成功 §e%d§a 个，失败 §e%d§a 个（共 §e%d§a）

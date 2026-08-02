@@ -83,6 +83,8 @@ public class ClientModelManager {
     public static volatile int SYNC_TOTAL = -1;
     /** Models loaded so far. */
     public static volatile int SYNC_LOADED = 0;
+    /** Models that failed to load/apply during the sync (diagnostic). */
+    public static volatile int SYNC_FAILED = 0;
     /** True while a model sync is in progress. */
     public static volatile boolean SYNC_IN_PROGRESS = false;
     /** Display name of the model currently being registered (for progress overlay). */
@@ -317,6 +319,7 @@ public class ClientModelManager {
                 applyPreParsed(bundle);
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", bundle.modelId, e.getMessage());
+                SYNC_FAILED++;
             }
             APPLY_SLOTS.release();
         }
@@ -1125,6 +1128,7 @@ public class ClientModelManager {
         clearCachedModelMd5();
         SYNC_TOTAL = -1;
         SYNC_LOADED = 0;
+        SYNC_FAILED = 0;
         SYNC_IN_PROGRESS = true;
         // Drop any bundles still queued from a previous sync (both the normal and
         // the default-priority queue) so a fresh sync starts from an empty apply
@@ -1580,6 +1584,7 @@ public class ClientModelManager {
         MolangInstructionExecutor.clearWarnings();
         SYNC_TOTAL = -1;
         SYNC_LOADED = 0;
+        SYNC_FAILED = 0;
         SYNC_IN_PROGRESS = false;
         SYNC_CURRENT_MODEL = "";
         ysmu.LOG.info("YSM client runtime model caches cleared");

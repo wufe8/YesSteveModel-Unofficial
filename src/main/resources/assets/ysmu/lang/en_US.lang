@@ -376,3 +376,4 @@ gui.yes_steve_model.texture.paused=[⏸ PAUSED]
 gui.yes_steve_model.texture.resume=Resume
 gui.yes_steve_model.model_count=%d models
 message.yes_steve_model.sync.complete=§6§l[§aYSM§6§l] §aClient sync complete in %d ms
+message.yes_steve_model.sync.complete_models=§6§l[§aYSM§6§l] §aModel load finished: §e%d§a loaded, §e%d§a failed (total §e%d§a)
