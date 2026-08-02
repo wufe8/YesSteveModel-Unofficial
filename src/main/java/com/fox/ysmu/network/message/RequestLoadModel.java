@@ -81,7 +81,7 @@ public class RequestLoadModel implements IMessage {
                         .toFile();
                     byte[] fileBytes = FileUtils.readFileToByteArray(modelFile);
                     ModelData data = EncryptTools
-                        .decryptModel(UuidUtils.asBytes(passwordUuid), password, fileBytes);
+                        .decryptModel(UuidUtils.asBytes(passwordUuid), password, fileBytes, fileName);
                     if (data != null) {
                         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                             ysmu.LOG.info("[YSMU-MODEL] Decrypted model {} (id={}), registering...",

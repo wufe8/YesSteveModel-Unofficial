@@ -199,6 +199,17 @@ public final class EncryptTools {
 
     @Nullable
     public static ModelData decryptModel(byte[] uuid, byte[] password, byte[] modelRawData) {
+        return decryptModel(uuid, password, modelRawData, null);
+    }
+
+    /**
+     * @param sourceName optional model id / cache file name, appended to the MD5
+     *     integrity warning so a mismatching model can be located directly. Pass
+     *     null when the caller has no context (falls back to the old message).
+     */
+    @Nullable
+    public static ModelData decryptModel(byte[] uuid, byte[] password, byte[] modelRawData,
+        @Nullable String sourceName) {
         try {
             byte[] rawPassword = decryptPassword(uuid, password);
             if (rawPassword.length == 0) {
@@ -216,7 +227,12 @@ public final class EncryptTools {
             String dataMd5 = Md5Utils.md5Hex(encryptModelData);
             if (!md5.equals(dataMd5)) {
                 // TODO: 2023/7/11 很奇怪，这一块会出现不一致的问题
-                ysmu.LOG.warn("Check values are not equal {} / {}", md5, dataMd5);
+                // 附带上模型/缓存文件名，便于在本地单机（内置服务器）直接定位出问题的模型。
+                if (sourceName != null) {
+                    ysmu.LOG.warn("Check values are not equal for {}: {} / {}", sourceName, md5, dataMd5);
+                } else {
+                    ysmu.LOG.warn("Check values are not equal {} / {}", md5, dataMd5);
+                }
             }
 
             byte[] passwordBytes = ByteArrays.copy(rawPassword, 8, 16);

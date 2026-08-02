@@ -1093,7 +1093,8 @@ public class ClientModelManager {
                 }
             }
             return com.fox.ysmu.data.EncryptTools.decryptModel(
-                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes);
+                com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes,
+                mainModelId + " (" + path + ")");
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load model data for {}: {}", mainModelId, e.getMessage());
             return null;

@@ -23,6 +23,7 @@ import java.util.zip.ZipFile;
 import net.minecraft.entity.player.EntityPlayer;
 
 import org.apache.commons.io.FileUtils;
+import org.apache.commons.lang3.time.StopWatch;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.data.EncryptTools;
@@ -83,6 +84,16 @@ public final class ServerModelManager {
     public static volatile byte[] OPEN_YSM_SERVER_KEY;
 
     /**
+     * Duration (ms) of the most recent server-side model cache rebuild
+     * ({@link #reloadPacks()}). Reported to players on world join using the same
+     * localized message as {@code /ysm reload}
+     * ({@code message.yes_steve_model.model.reload.info}). Set at server start
+     * (preInit) and refreshed by every /ysm reload; {@code 0} means no rebuild has
+     * completed yet.
+     */
+    public static volatile long LAST_LOAD_TIME_MS;
+
+    /**
      * 模型包数据：pack文件夹路径（相对 custom/） → ServerPackData。
      */
     public static final Map<String, ServerPackData> PACKS = new Object2ObjectOpenHashMap<>();
@@ -110,6 +121,8 @@ public final class ServerModelManager {
     }
 
     public static void reloadPacks() {
+        StopWatch watch = new StopWatch();
+        watch.start();
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] ===== Starting model reload =====");
             ysmu.LOG.info("[YSMU-MODEL] CUSTOM dir: {} (exists={})", CUSTOM, Files.isDirectory(CUSTOM));
@@ -144,6 +157,8 @@ public final class ServerModelManager {
                 ysmu.LOG.info("[YSMU-MODEL] Raw model IDs: {}", RAW_MODEL_INFO.keySet());
             }
         }
+        watch.stop();
+        LAST_LOAD_TIME_MS = watch.getTime();
     }
 
     private static void clearModelCaches() {
