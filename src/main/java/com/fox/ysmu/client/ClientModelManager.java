@@ -79,7 +79,7 @@ public class ClientModelManager {
     public static final Map<ResourceLocation, int[]> MODEL_STATS = Maps.newHashMap();
 
     // ── Sync progress tracking ──────────────────────────────────────────
-    /** Total models to load (-1 = unknown, used by legacy sync). */
+    /** 需加载的模型总数 (-1 = 未知，legacy 模式使用)。由统一模型同步（packet03 的 progressTotal）设置。 */
     public static volatile int SYNC_TOTAL = -1;
     /** Models loaded so far. */
     public static volatile int SYNC_LOADED = 0;

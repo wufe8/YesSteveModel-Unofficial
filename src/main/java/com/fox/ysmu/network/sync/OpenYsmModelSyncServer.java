@@ -45,14 +45,18 @@ public final class OpenYsmModelSyncServer {
 
     private OpenYsmModelSyncServer() {}
 
-    public static void startSync(EntityPlayerMP player) {
+    /**
+     * 启动统一模型同步。返回 {@code false} 表示无法启动（参数/开关/服务器索引密钥
+     * 缺失），调用方应回退到 legacy 同步，保证模型仍能加载。
+     */
+    public static boolean startSync(EntityPlayerMP player) {
         if (player == null || !Config.ENABLE_SYNC_PROTOCOL) {
-            return;
+            return false;
         }
         byte[] serverKey = ServerModelManager.OPEN_YSM_SERVER_KEY;
         if (serverKey == null || serverKey.length != 56) {
             ysmu.LOG.warn("Skipping OpenYSM model sync because server_index key is not initialized");
-            return;
+            return false;
         }
 
         UUID playerId = player.getUniqueID();
@@ -72,6 +76,7 @@ public final class OpenYsmModelSyncServer {
             player.getCommandSenderName(),
             state.allowedModels.size());
         ThreadTools.THREAD_POOL.submit(() -> sendPacket01(playerId, state));
+        return true;
     }
 
     public static void handlePayload(UUID playerId, byte[] data) {
@@ -123,15 +128,12 @@ public final class OpenYsmModelSyncServer {
     }
 
     /**
-     * 客户端最终将注册的模型总数 = OpenYSM 同步集合 + legacy 同步集合的并集。
-     * legacy 路径（RequestLoadModel/SendModelFile）走 CACHE_NAME_INFO，与 OpenYSM
-     * 高度重叠（桥接模型同时写入两张表），但裸 YSGP 的旧格式模型只在 CACHE_NAME_INFO，
-     * 故并集能覆盖全部模型。仅供进度条/完成统计，取近似即可。
+     * 统一模型加载后的模型总数：OpenYSM 同步索引已覆盖全部模型（文件夹 +
+     * BOM+YSGP .ysm + 经转换的 legacy 裸 YSGP .ysm），进度条/完成统计直接以
+     * 索引大小为准，无需再与 legacy 表求并集。
      */
     private static int totalModelCount() {
-        java.util.Set<String> all = new java.util.HashSet<>(ServerModelManager.OPEN_YSM_SYNC_INFO.keySet());
-        all.addAll(ServerModelManager.CACHE_NAME_INFO.keySet());
-        return all.size();
+        return ServerModelManager.OPEN_YSM_SYNC_INFO.size();
     }
 
     private static void handlePayloadAsync(UUID playerId, byte[] packetBytes) {

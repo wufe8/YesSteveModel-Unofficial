@@ -168,7 +168,7 @@ public class Config {
         WEARABLE_RENDER_SCALE = syncDouble("WearableRenderScale", "compatibility", WEARABLE_RENDER_SCALE, "Scale factor for wearable model rendering (1.0 = default)", 0.1, 5.0, load);
         ENABLE_DIRECT_BUFFER_WATCHDOG = syncBoolean("EnableDirectBufferWatchdog", "watchdog", ENABLE_DIRECT_BUFFER_WATCHDOG, "Safety-net: periodically check Direct Buffer usage and trigger GC when over threshold", load);
         DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB = syncInt("DirectBufferWatchdogThreshold", "watchdog", DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB, "Direct Buffer GC trigger threshold in MB", 128, 8192, load);
-        ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Whether to use the appended hash/cache/chunk sync path before legacy fallback", load);
+        ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Use the unified model sync protocol (covers all model formats: folders, BOM+YSGP and legacy bare-YSGP .ysm). When disabled or version-mismatched, falls back to the legacy MD5/AES sync", load);
         THREAD_COUNT = syncInt("ThreadCount", "ysm_sync", THREAD_COUNT, "Target worker count for YSM model sync tasks", 1, 32, load);
         BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
         PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);

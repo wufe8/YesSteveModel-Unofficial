@@ -115,7 +115,12 @@ public final class ServerModelManager {
 
     public static void sendRequestSyncModelMessage(EntityPlayer player) {
         if (Config.ENABLE_SYNC_PROTOCOL) {
+            // 统一模型加载：启用同步协议时，OpenYSM 索引已覆盖全部模型（文件夹 + 各
+            // 版本 .ysm，统一转成 OpenYSM 二进制格式），只走这一条路径，不再触发
+            // legacy MD5/AES 同步（避免同一批模型双传+双解析）。版本不匹配时由
+            // C2SVersionCheck17 处理回退到 legacy 同步。
             NetworkHandler.sendToClientPlayer(new S2CVersionCheck17(NetworkHandler.PROTOCOL_VERSION), player);
+            return;
         }
         NetworkHandler.sendToClientPlayer(new RequestSyncModel(), player);
     }
@@ -309,11 +314,6 @@ public final class ServerModelManager {
             MAIN_ANIMATION_FILE_NAME);
     }
     ====== end ======*/
-
-    private static void cacheAllModels(Path rootPath) {
-        YsmFormat.cacheAllModels(rootPath);
-        FolderFormat.cacheAllModels(rootPath);
-    }
 
     private static void initPassword() {
         try {

@@ -44,6 +44,8 @@ public class YSMFolderDeserializer implements AutoCloseable {
 
     private final Map<String, String> readFilesMd5Map = new TreeMap<>();
     private final Path rootPath;
+    /** 内存文件源（legacy 裸 YSGP .ysm 解包结果）；磁盘文件夹模式为 null。 */
+    private final Map<String, byte[]> virtualFiles;
     private final RawYsmModel model = new RawYsmModel();
     private String finalFolderHash = "";
 
@@ -55,8 +57,24 @@ public class YSMFolderDeserializer implements AutoCloseable {
             throw new IllegalArgumentException("Expected an OpenYSM model directory: " + sourcePath);
         }
         this.rootPath = sourcePath.toAbsolutePath().normalize();
+        this.virtualFiles = null;
         this.model.formatVersion = 65535;
         this.model.modelId = sourcePath.getFileName() == null ? "" : sourcePath.getFileName().toString();
+    }
+
+    /**
+     * 从内存文件映射构建模型（不落盘）。用于把旧版裸 YSGP 的 .ysm 解包出的文件集
+     * （main.json/arm.json/动画/贴图）直接解析为 RawYsmModel，从而可统一写入
+     * OpenYSM 同步缓存——这是合并旧/新两条加载路径的关键一步。
+     */
+    public YSMFolderDeserializer(Map<String, byte[]> files, String modelId) throws IOException {
+        if (files == null || files.isEmpty()) {
+            throw new IllegalArgumentException("Expected non-empty virtual model files");
+        }
+        this.rootPath = null;
+        this.virtualFiles = files;
+        this.model.formatVersion = 65535;
+        this.model.modelId = modelId == null ? "" : modelId;
     }
 
     public RawYsmModel deserialize() throws IOException {
@@ -90,6 +108,16 @@ public class YSMFolderDeserializer implements AutoCloseable {
             return null;
         }
         String normalizedRelative = normalizeResourcePath(relativePath);
+        if (virtualFiles != null) {
+            byte[] data = virtualFiles.get(normalizedRelative);
+            if (data == null) {
+                return null;
+            }
+            if (!this.readFilesMd5Map.containsKey(normalizedRelative)) {
+                this.readFilesMd5Map.put(normalizedRelative, md5Hex(data));
+            }
+            return data;
+        }
         Path target = this.rootPath.resolve(normalizedRelative).normalize();
         if (!target.startsWith(this.rootPath) || !Files.isRegularFile(target)) {
             return null;
@@ -966,6 +994,22 @@ public class YSMFolderDeserializer implements AutoCloseable {
     }
 
     private void parseGlobalResources() throws IOException {
+        if (virtualFiles != null) {
+            // 虚拟模式：legacy .ysm 通常没有 sounds/functions/lang 子目录，跳过即可。
+            for (Map.Entry<String, byte[]> entry : virtualFiles.entrySet()) {
+                String relative = normalizeResourcePath(entry.getKey());
+                if (relative.startsWith("sounds/") || relative.endsWith(".ogg")) {
+                    this.model.soundFiles.put(extractFileName(relative),
+                        new RawYsmModel.RawDataFile(sha256Hex(entry.getValue()), entry.getValue()));
+                } else if (relative.startsWith("functions/") && relative.endsWith(".molang")) {
+                    this.model.functionFiles.put(extractFileName(relative),
+                        new RawYsmModel.RawDataFile(sha256Hex(entry.getValue()), entry.getValue()));
+                } else if (relative.startsWith("lang/") && relative.endsWith(".json")) {
+                    this.model.languageFiles.put(parseLocale(relative), parseLanguageFile(entry.getValue()));
+                }
+            }
+            return;
+        }
         try (Stream<Path> stream = Files.walk(this.rootPath)) {
             for (Path path : iterable(stream)) {
                 if (!Files.isRegularFile(path)) {
@@ -1012,17 +1056,33 @@ public class YSMFolderDeserializer implements AutoCloseable {
         this.model.mainEntity.armModel = parseGeometry(armData, 2, ARM_JSON);
 
         boolean hasTexture = false;
-        try (Stream<Path> stream = Files.list(this.rootPath)) {
-            for (Path path : iterable(stream)) {
-                if (!Files.isRegularFile(path)) {
-                    continue;
-                }
-                String fileName = path.getFileName().toString();
+        if (virtualFiles != null) {
+            // 虚拟模式：legacy .ysm 解包文件可能把贴图放在任意路径，遍历所有 .png。
+            for (Map.Entry<String, byte[]> entry : virtualFiles.entrySet()) {
+                String fileName = entry.getKey();
                 if (fileName.endsWith(".png")) {
+                    // 经 readResource 读取以同时记录 md5，保证 folderHash 覆盖贴图。
                     byte[] textureData = readResource(fileName);
-                    RawYsmModel.RawTexture texture = parseTexture(fileName, textureData);
-                    this.model.mainEntity.textures.put(texture.name, texture);
-                    hasTexture = true;
+                    if (textureData != null) {
+                        RawYsmModel.RawTexture texture = parseTexture(fileName, textureData);
+                        this.model.mainEntity.textures.put(texture.name, texture);
+                        hasTexture = true;
+                    }
+                }
+            }
+        } else {
+            try (Stream<Path> stream = Files.list(this.rootPath)) {
+                for (Path path : iterable(stream)) {
+                    if (!Files.isRegularFile(path)) {
+                        continue;
+                    }
+                    String fileName = path.getFileName().toString();
+                    if (fileName.endsWith(".png")) {
+                        byte[] textureData = readResource(fileName);
+                        RawYsmModel.RawTexture texture = parseTexture(fileName, textureData);
+                        this.model.mainEntity.textures.put(texture.name, texture);
+                        hasTexture = true;
+                    }
                 }
             }
         }

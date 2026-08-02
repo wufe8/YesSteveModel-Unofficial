@@ -702,7 +702,7 @@ public final class OpenYsmModelSyncClient {
             ysmu.LOG.info(
                 "OpenYSM client sync complete: loaded={}, downloaded={}, cacheHits={}, time={}ms",
                 loadedModelsCount, downloadedModelsCount, cacheHitCount, elapsed);
-            // 在聊天栏输出客户端完成信息（含成功/失败/总数统计；总数=OpenYSM+legacy 并集）
+            // 在聊天栏输出客户端完成信息（成功/失败/总数统计；总数=统一索引大小）
             int registered = ClientModelManager.MODELS.size();
             int failed = ClientModelManager.SYNC_FAILED;
             int total = ClientModelManager.SYNC_TOTAL;
