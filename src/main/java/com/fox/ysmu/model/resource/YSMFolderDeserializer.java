@@ -1473,6 +1473,37 @@ public class YSMFolderDeserializer implements AutoCloseable {
         }
     }
 
+    /**
+     * 计算文件夹模型的「内容指纹」：遍历目录内全部文件，按（相对路径, 文件 md5）
+     * 聚合为一个 MD5。用于服务端重建在反序列化之前判定模型是否变化
+     * （见 {@code ModelIndexCache}）。与 {@link #calculateFinalFolderHash} 同算法，
+     * 但覆盖全部文件（更保守：任何文件变化都会触发重建）。
+     */
+    public static String computeFolderHash(Path dir) {
+        try {
+            Map<String, String> md5s = new TreeMap<>();
+            if (dir != null && Files.isDirectory(dir)) {
+                try (Stream<Path> stream = Files.walk(dir)) {
+                    for (Path path : iterable(stream)) {
+                        if (!Files.isRegularFile(path)) {
+                            continue;
+                        }
+                        String rel = normalizeResourcePath(dir.relativize(path).toString());
+                        md5s.put(rel, md5Hex(Files.readAllBytes(path)));
+                    }
+                }
+            }
+            MessageDigest digest = MessageDigest.getInstance("MD5");
+            for (Map.Entry<String, String> entry : md5s.entrySet()) {
+                digest.update(entry.getKey().getBytes(StandardCharsets.UTF_8));
+                digest.update(entry.getValue().getBytes(StandardCharsets.UTF_8));
+            }
+            return toHex(digest.digest());
+        } catch (Exception e) {
+            return "";
+        }
+    }
+
     private static String md5Hex(byte[] data) {
         return digestHex("MD5", data);
     }

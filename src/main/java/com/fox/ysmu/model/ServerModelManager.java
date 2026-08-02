@@ -28,6 +28,7 @@ import org.apache.commons.lang3.time.StopWatch;
 import com.fox.ysmu.Config;
 import com.fox.ysmu.data.EncryptTools;
 import com.fox.ysmu.model.format.FolderFormat;
+import com.fox.ysmu.model.format.ModelIndexCache;
 import com.fox.ysmu.model.format.OpenYsmFormat;
 import com.fox.ysmu.model.format.OpenYsmSyncInfo;
 import com.fox.ysmu.model.format.ServerModelInfo;
@@ -188,29 +189,33 @@ public final class ServerModelManager {
         // 统一模型加载：唯一的服务端扫描器 OpenYsmFormat 负责把文件夹与全部
         // .ysm（BOM+YSGP 新版 / 裸 YSGP 旧版）统一转成 OpenYSM 同步缓存。
         // 旧版 YsmFormat/FolderFormat 扫描器已并入其中，不再单独运行。
+        // ModelIndexCache 侧车让未变化的模型在解密/反序列化前直接命中，跳过重建。
+        ModelIndexCache.init();
         List<Runnable> tasks = new ArrayList<>();
         OpenYsmFormat.collectTasks(BUILT, tasks);
         OpenYsmFormat.collectTasks(CUSTOM, tasks);
 
-        if (tasks.isEmpty()) return;
+        if (!tasks.isEmpty()) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                ysmu.LOG.info("[YSMU-MODEL] Submitting {} model tasks to thread pool (max {} threads)",
+                    tasks.size(), 10);
+            }
 
-        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-            ysmu.LOG.info("[YSMU-MODEL] Submitting {} model tasks to thread pool (max {} threads)",
-                tasks.size(), 10);
+            // 并行执行所有任务，等待全部完成
+            CompletableFuture.allOf(
+                tasks.stream()
+                    .map(t -> CompletableFuture.runAsync(t, ThreadTools.THREAD_POOL))
+                    .toArray(CompletableFuture[]::new))
+                .join();
+
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                ysmu.LOG.info("[YSMU-MODEL] All {} model tasks completed. "
+                    + "CACHE_NAME_INFO={}, RAW_MODEL_INFO={}, OPEN_YSM_SYNC_INFO={}",
+                    tasks.size(), CACHE_NAME_INFO.size(), RAW_MODEL_INFO.size(), OPEN_YSM_SYNC_INFO.size());
+            }
         }
-
-        // 并行执行所有任务，等待全部完成
-        CompletableFuture.allOf(
-            tasks.stream()
-                .map(t -> CompletableFuture.runAsync(t, ThreadTools.THREAD_POOL))
-                .toArray(CompletableFuture[]::new))
-            .join();
-
-        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-            ysmu.LOG.info("[YSMU-MODEL] All {} model tasks completed. "
-                + "CACHE_NAME_INFO={}, RAW_MODEL_INFO={}, OPEN_YSM_SYNC_INFO={}",
-                tasks.size(), CACHE_NAME_INFO.size(), RAW_MODEL_INFO.size(), OPEN_YSM_SYNC_INFO.size());
-        }
+        // 统一落盘侧车（含清理已删除的模型）。
+        ModelIndexCache.commit();
     }
 
     /*====== 以下方法已废弃：模型已迁移到 builtin/ ======

@@ -43,7 +43,10 @@ public final class OpenYsmModelSyncClient {
     private static final Map<UUID, ServerModelContext> SERVER_MODELS = Maps.newConcurrentMap();
 
     private static volatile int syncStep = 1;
-    private static volatile int pendingModelsCount;
+    /** 剩余待解析模型数（缓存命中 + 下载）。全部为 0 时才允许发送完成信号。 */
+    private static final java.util.concurrent.atomic.AtomicInteger remainingTasks = new java.util.concurrent.atomic.AtomicInteger(0);
+    /** 完成等待是否已启动（防止多线程重复触发）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean completionScheduled = new java.util.concurrent.atomic.AtomicBoolean(false);
     private static volatile int loadedModelsCount;
     private static volatile int downloadedModelsCount;
     private static volatile int cacheHitCount;
@@ -97,7 +100,8 @@ public final class OpenYsmModelSyncClient {
 
     public static synchronized void resetConnectionState() {
         syncStep = 1;
-        pendingModelsCount = 0;
+        remainingTasks.set(0);
+        completionScheduled.set(false);
         loadedModelsCount = 0;
         downloadedModelsCount = 0;
         cacheHitCount = 0;
@@ -118,6 +122,7 @@ public final class OpenYsmModelSyncClient {
     public static synchronized void clearConnectionState() {
         resetConnectionState();
         clientKey = null;
+        ClientModelManager.SYNC_IN_PROGRESS = false;
     }
 
     private static synchronized void processServerData(byte[] packetBytes) {
@@ -200,7 +205,10 @@ public final class OpenYsmModelSyncClient {
         int serverModelCount = buf.readVarInt();
         ClientModelManager.SYNC_TOTAL = progressTotal;
         ClientModelManager.SYNC_LOADED = 0;
+        ClientModelManager.SYNC_FAILED = 0;
         ClientModelManager.SYNC_IN_PROGRESS = true;
+        // 完成信号等待全部模型（缓存命中 + 下载）解析并应用完成。
+        remainingTasks.set(serverModelCount);
         syncStartTimeMs = System.currentTimeMillis();
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
             ysmu.LOG.info("[YSMU-MODEL] OpenYSM client received sync index: models={}", serverModelCount);
@@ -230,8 +238,12 @@ public final class OpenYsmModelSyncClient {
                     // the cheap read+decrypt stay inline so a corrupt cache file still
                     // falls back to download before packet04 is sent.
                     ThreadTools.THREAD_POOL.submit(() -> {
-                        if (parseAndRegisterModel(clearBytes, context)) {
-                            loadedModelsCount++;
+                        try {
+                            if (parseAndRegisterModel(clearBytes, context)) {
+                                loadedModelsCount++;
+                            }
+                        } finally {
+                            taskFinished();
                         }
                     });
                 } catch (Exception e) {
@@ -253,6 +265,11 @@ public final class OpenYsmModelSyncClient {
 
         parsePackData(buf);
         sendPacket04(modelsToRequest);
+        // 全缓存命中/零模型时完成信号由后台解析驱动；此处兜底极端情况
+        // （serverModelCount==0 或全部解析已在发送 packet04 前完成）。
+        if (remainingTasks.get() <= 0) {
+            maybeSendComplete();
+        }
     }
 
     private static void handlePacket05(YSMByteBuf buf) throws Exception {
@@ -306,17 +323,15 @@ public final class OpenYsmModelSyncClient {
                 ysmu.LOG.warn("OpenYSM client failed to process downloaded model {} ({}): {}",
                     context.modelId, uuid, e.getMessage());
                 ClientModelManager.SYNC_FAILED++;
-            }
-            pendingModelsCount--;
-            if (pendingModelsCount <= 0) {
-                sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+            } finally {
+                // 该模型解析已完成（成功或失败），计入总任务数；全部完成后触发完成信号。
+                taskFinished();
             }
         }
     }
 
     private static void sendPacket04(List<ModelHash> modelsToRequest) throws Exception {
         syncStep = 3;
-        pendingModelsCount = modelsToRequest.size();
 
         byte[] garbage = randomGarbage();
         try (YSMByteBuf out = new YSMByteBuf(Unpooled.buffer())) {
@@ -329,10 +344,8 @@ public final class OpenYsmModelSyncClient {
             }
             sendPayload(YsmCrypt.encrypt(out.toArray(), key1, false).data());
         }
-
-        if (pendingModelsCount == 0) {
-            sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-        }
+        // 完成信号不再由「下载数==0」触发（全缓存命中时会提前结束），改由
+        // taskFinished() → remainingTasks 全部完成 + 应用管线排空后触发。
     }
 
     private static boolean parseAndRegisterModel(byte[] clearBytes, ServerModelContext context) {
@@ -693,6 +706,52 @@ public final class OpenYsmModelSyncClient {
     private static void sendPayload(byte[] payload) {
         NetworkHandler.CHANNEL.sendToServer(new C2SModelSyncPayload17(payload));
     }
+
+    /**
+     * 一个模型（缓存命中或下载）的解析已完成。全部模型解析完成后，等待主线程
+     * apply 管线排空（进度/统计准确），再发送完成信号。
+     */
+    private static void taskFinished() {
+        if (remainingTasks.decrementAndGet() <= 0) {
+            maybeSendComplete();
+        }
+    }
+
+    /**
+     * 启动完成等待：所有模型解析已提交，但主线程的 applyPreParsed 可能仍在逐帧
+     * 消费队列——全缓存命中（下载数 0）时若立即发完成，成功数会远小于总数
+     * （如 343/681）。轮询 {@link ClientModelManager#isApplyPipelineDrained()}，
+     * 排空后发送完成；超时或同步被重置则兜底退出，不挂死。
+     */
+    private static void maybeSendComplete() {
+        if (syncStep < 3 || !completionScheduled.compareAndSet(false, true)) {
+            return;
+        }
+        ThreadTools.THREAD_POOL.submit(() -> {
+            long deadline = System.currentTimeMillis() + COMPLETION_APPLY_DRAIN_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                if (!ClientModelManager.SYNC_IN_PROGRESS) {
+                    return; // 同步已被重置/断开，不再补发完成。
+                }
+                if (ClientModelManager.isApplyPipelineDrained()) {
+                    sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+                    return;
+                }
+                try {
+                    Thread.sleep(50L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+                    return;
+                }
+            }
+            // 超时兜底：应用仍未排空（如主线程长时间阻塞），按当前状态发送完成。
+            sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+        });
+    }
+
+    /** 完成等待的上限：应用管线在正常游戏内排空很快，此值仅作极端情况的兜底。 */
+    private static final long COMPLETION_APPLY_DRAIN_TIMEOUT_MS = 2 * 60_000L;
 
     private static void sendComplete(int status, String message) {
         NetworkHandler.CHANNEL.sendToServer(

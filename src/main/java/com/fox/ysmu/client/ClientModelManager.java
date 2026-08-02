@@ -330,6 +330,16 @@ public class ClientModelManager {
     }
 
     /**
+     * 应用管线是否已排空：两个 apply 队列为空且所有背压信号量已释放。
+     * 统一模型同步的完成信号据此判定「全部模型已注册」（下载/缓存命中的解析
+     * 完成后，主线程逐帧消费队列）。
+     */
+    public static boolean isApplyPipelineDrained() {
+        return PENDING_APPLY.isEmpty() && PENDING_APPLY_DEFAULT.isEmpty()
+            && APPLY_SLOTS.availablePermits() == MAX_PENDING_APPLY;
+    }
+
+    /**
      * Caches content hashes of registered textures across reloads.
      * Survives {@link #clearRuntimeModelCaches()} so that unchanged textures
      * (same ResourceLocation, same byte content) are not re-decoded and

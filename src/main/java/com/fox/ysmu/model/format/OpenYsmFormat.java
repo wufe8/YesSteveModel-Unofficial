@@ -10,6 +10,7 @@ import static com.fox.ysmu.model.ServerModelManager.removeExtension;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 import java.util.Map;
 
 import com.fox.ysmu.Config;
@@ -40,41 +41,81 @@ import rip.ysm.security.YsmCrypt;
 public final class OpenYsmFormat {
 
     private static final byte[] OPEN_YSM_PREFIX = new byte[] { (byte) 0xEF, (byte) 0xBB, (byte) 0xBF, 'Y', 'S', 'G', 'P' };
+    /** OpenYSM 同步缓存二进制格式号（与 {@link ModelCacheWriter} 一致）。 */
+    private static final int OPEN_YSM_SYNC_FORMAT = 32;
 
     private OpenYsmFormat() {}
 
     private static void cacheFolderModel(Path dir, String modelId) {
-        try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(dir)) {
-            RawYsmModel raw = deserializer.deserialize();
-            raw.modelId = modelId;
-
-            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
-                ysmu.LOG.info("[YSMU-MODEL] Folder model {} ({}): textures={}", dir.getFileName(), modelId, texCount);
-            }
-
-            RAW_MODEL_INFO.put(modelId, raw);
-            boolean bridgeable = RawYsmModelAdapter.isBridgeable(raw);
-            if (!bridgeable && Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                ysmu.LOG.warn("OpenYSM folder model {} parsed but cannot be bridged to legacy ModelData", dir);
-            }
-            // 无论是否可桥接都写入 OpenYSM 同步缓存（与 .ysm 一致）：非桥接模型
-            // 仍可注册 extra wheel / projectile 子实体。桥接模型同时写 legacy 缓存，
-            // 保证版本不匹配/关闭新协议时 legacy 同步仍可用。
-            OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
-            OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
-            if (bridgeable) {
-                ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
-                ServerModelInfo info = ModelCacheWriter.write(data);
-                if (info != null) {
-                    CACHE_NAME_INFO.put(modelId, info);
-                    if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                        ysmu.LOG.info("[YSMU-MODEL] Folder model {} cached to CACHE_NAME_INFO", modelId);
+        String fp = null;
+        try {
+            // 先查侧车：仅当存在条目时才计算文件夹指纹（内容 md5 聚合，避免首启白算）。
+            ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
+            if (cached != null) {
+                fp = YSMFolderDeserializer.computeFolderHash(dir);
+                if (fp.equals(cached.srcFp)) {
+                    if (!cached.ok) {
+                        ModelIndexCache.mark(modelId, cached);
+                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                            ysmu.LOG.info("[YSMU-MODEL] Folder model {} previously failed, skipped rebuild", modelId);
+                        }
+                        return;
+                    }
+                    if (ModelIndexCache.isCacheUsable(cached)) {
+                        OPEN_YSM_SYNC_INFO.put(modelId, toSyncInfo(modelId, cached));
+                        ModelIndexCache.mark(modelId, cached);
+                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                            ysmu.LOG.info("[YSMU-MODEL] Folder model {} cache hit, skipped rebuild", modelId);
+                        }
+                        return;
                     }
                 }
             }
+
+            try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(dir)) {
+                RawYsmModel raw = deserializer.deserialize();
+                raw.modelId = modelId;
+
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                    int texCount = raw.mainEntity != null ? raw.mainEntity.textures.size() : 0;
+                    ysmu.LOG.info("[YSMU-MODEL] Folder model {} ({}): textures={}", dir.getFileName(), modelId, texCount);
+                }
+
+                RAW_MODEL_INFO.put(modelId, raw);
+                boolean bridgeable = RawYsmModelAdapter.isBridgeable(raw);
+                if (!bridgeable && Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                    ysmu.LOG.warn("OpenYSM folder model {} parsed but cannot be bridged to legacy ModelData", dir);
+                }
+                // 无论是否可桥接都写入 OpenYSM 同步缓存（与 .ysm 一致）：非桥接模型
+                // 仍可注册 extra wheel / projectile 子实体。桥接模型同时写 legacy 缓存，
+                // 保证版本不匹配/关闭新协议时 legacy 同步仍可用。
+                OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
+                OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
+                if (bridgeable) {
+                    ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
+                    ServerModelInfo info = ModelCacheWriter.write(data);
+                    if (info != null) {
+                        CACHE_NAME_INFO.put(modelId, info);
+                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                            ysmu.LOG.info("[YSMU-MODEL] Folder model {} cached to CACHE_NAME_INFO", modelId);
+                        }
+                    }
+                }
+                if (fp == null) {
+                    fp = YSMFolderDeserializer.computeFolderHash(dir);
+                }
+                ModelIndexCache.mark(modelId, entryOf("folder", fp, syncInfo, true));
+            }
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load OpenYSM folder model {}", dir, e);
+            if (fp == null) {
+                try {
+                    fp = YSMFolderDeserializer.computeFolderHash(dir);
+                } catch (Exception ignore) {
+                    fp = "";
+                }
+            }
+            ModelIndexCache.mark(modelId, entryOf("folder", fp, null, false));
         } finally {
             // 无论成功/失败都释放 raw：原先异常路径会把 RawYsmModel（含全部纹理
             // 字节）泄漏在 RAW_MODEL_INFO，多个失败模型累积会显著抬高预初始化峰值。
@@ -83,20 +124,49 @@ public final class OpenYsmFormat {
     }
 
     private static void cacheBinaryModel(Path rootPath, Path file) {
-        String modelId = null;
+        byte[] encrypted;
         try {
-            byte[] encrypted = Files.readAllBytes(file);
-            String fileName = file.getFileName().toString();
-            long fileSize = encrypted.length;
+            encrypted = Files.readAllBytes(file);
+        } catch (IOException e) {
+            ysmu.LOG.warn("Failed to read YSM binary model {}", file, e);
+            return;
+        }
+        String modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
+        String fileName = file.getFileName().toString();
+        long fileSize = encrypted.length;
 
-            if (!isOpenYsmBinary(encrypted)) {
-                // 旧版裸 YSGP（无 BOM 前缀）→ 解包后统一转成 OpenYSM 同步缓存。
-                // 合并旧/新两条加载路径的核心：所有 .ysm（无论版本）都进入同一个
-                // OPEN_YSM_SYNC_INFO 索引，客户端只用一条协议加载。
-                cacheLegacyBinaryModel(rootPath, file);
+        if (!isOpenYsmBinary(encrypted)) {
+            // 旧版裸 YSGP（无 BOM 前缀）→ 解包后统一转成 OpenYSM 同步缓存。
+            // 合并旧/新两条加载路径的核心：所有 .ysm（无论版本）都进入同一个
+            // OPEN_YSM_SYNC_INFO 索引，客户端只用一条协议加载。
+            cacheLegacyBinaryModel(rootPath, file, modelId, encrypted);
+            return;
+        }
+
+        // ── 新版 BOM+YSGP：先用「长度 + 文件尾部 8 字节 CityHash」指纹查侧车 ──
+        // 尾部哈希 = 整个加密文件内容的 CityHash（decryptYsmFile 也用同一校验），
+        // 内容变化必然导致指纹变化 → 命中时无需解密/反序列化即可复用缓存。
+        String fp = ysmFileFingerprint(encrypted);
+        ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
+        if (cached != null && fp.equals(cached.srcFp)) {
+            if (!cached.ok) {
+                ModelIndexCache.mark(modelId, cached);
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                    ysmu.LOG.info("[YSMU-MODEL] .ysm {} previously failed, skipped rebuild", modelId);
+                }
                 return;
             }
+            if (ModelIndexCache.isCacheUsable(cached)) {
+                OPEN_YSM_SYNC_INFO.put(modelId, toSyncInfo(modelId, cached));
+                ModelIndexCache.mark(modelId, cached);
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                    ysmu.LOG.info("[YSMU-MODEL] .ysm {} cache hit, skipped rebuild", modelId);
+                }
+                return;
+            }
+        }
 
+        try {
             if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                 ysmu.LOG.info("[YSMU-MODEL] Found OpenYSM .ysm file: {} (size={})", fileName, fileSize);
             }
@@ -110,7 +180,6 @@ public final class OpenYsmFormat {
             try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(rawBytes)) {
                 RawYsmModel raw = deserializer.deserializeKeepOpen();
                 deserializer.parseYSMFooter(raw);
-                modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
                 raw.modelId = modelId;
 
                 if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
@@ -156,22 +225,23 @@ public final class OpenYsmFormat {
                 } else if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
                     ysmu.LOG.info("[YSMU-MODEL] Model {} not bridgeable, skipped legacy cache but OpenYSM sync info written", modelId);
                 }
+                ModelIndexCache.mark(modelId, entryOf("ysm", fp, syncInfo, true));
             }
         } catch (UnsupportedOperationException e) {
             ysmu.LOG.warn("Unsupported OpenYSM binary model {} (size={}): {}",
                 file, file.toFile().length(), e.getMessage());
+            ModelIndexCache.mark(modelId, entryOf("ysm", fp, null, false));
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load OpenYSM binary model {} (size={}): {}: {}",
                 file, file.toFile().length(), e.getClass().getSimpleName(), e.getMessage());
             if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN || ysmu.LOG.isDebugEnabled()) {
                 ysmu.LOG.warn("[YSMU-MODEL] OpenYSM binary model {} load failure detail", file, e);
             }
+            ModelIndexCache.mark(modelId, entryOf("ysm", fp, null, false));
         } finally {
             // 无论成功/失败都释放 raw，避免异常路径把 RawYsmModel（含全部纹理字节）
             // 泄漏在 RAW_MODEL_INFO，多个失败模型累积会抬高预初始化内存峰值。
-            if (modelId != null) {
-                RAW_MODEL_INFO.remove(modelId);
-            }
+            RAW_MODEL_INFO.remove(modelId);
         }
     }
 
@@ -194,32 +264,55 @@ public final class OpenYsmFormat {
      * 复用 {@link YSMFolderDeserializer} 的虚拟文件源解析为 RawYsmModel，再经
      * {@link ModelCacheWriter#writeOpenYsm} 序列化为 OpenYSM 二进制缓存。
      */
-    private static void cacheLegacyBinaryModel(Path rootPath, Path file) {
-        byte[] encrypted;
-        try {
-            encrypted = Files.readAllBytes(file);
-        } catch (IOException e) {
-            ysmu.LOG.warn("Failed to read legacy YSM binary model {}", file, e);
+    private static void cacheLegacyBinaryModel(Path rootPath, Path file, String modelId, byte[] encrypted) {
+        if (encrypted == null || encrypted.length < 24) {
+            String hexPrefix = encrypted == null ? "(empty)"
+                : bytesToHex(encrypted, Math.min(encrypted.length, 24));
+            ysmu.LOG.warn("YSM binary model {} skipped: not a recognized YSGP format "
+                + "(size={}, firstBytes={})", file, encrypted == null ? 0 : encrypted.length, hexPrefix);
             return;
         }
+        // 便宜指纹：长度 + 头部 body MD5（offset 8..24，整个 body 的内容哈希）。
+        String fp = encrypted.length + ":" + toHexCompact(Arrays.copyOfRange(encrypted, 8, 24));
+        ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
+        if (cached != null && fp.equals(cached.srcFp)) {
+            if (!cached.ok) {
+                ModelIndexCache.mark(modelId, cached);
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                    ysmu.LOG.info("[YSMU-MODEL] Legacy .ysm {} previously failed, skipped rebuild", modelId);
+                }
+                return;
+            }
+            if (ModelIndexCache.isCacheUsable(cached)) {
+                OPEN_YSM_SYNC_INFO.put(modelId, toSyncInfo(modelId, cached));
+                ModelIndexCache.mark(modelId, cached);
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                    ysmu.LOG.info("[YSMU-MODEL] Legacy .ysm {} cache hit, skipped rebuild", modelId);
+                }
+                return;
+            }
+        }
+
         try {
             Map<String, byte[]> files = YesModelUtils.input(file.toFile());
             if (files.isEmpty()) {
                 String hexPrefix = bytesToHex(encrypted, Math.min(encrypted.length, 24));
                 ysmu.LOG.warn("YSM binary model {} skipped: not a recognized YSGP format "
                     + "(size={}, firstBytes={})", file, encrypted.length, hexPrefix);
+                ModelIndexCache.mark(modelId, entryOf("ysm", fp, null, false));
                 return;
             }
             if (!files.containsKey(MAIN_MODEL_FILE_NAME) || !files.containsKey(ARM_MODEL_FILE_NAME)) {
                 ysmu.LOG.warn("YSM binary model {} skipped: legacy format missing main.json/arm.json", file);
+                ModelIndexCache.mark(modelId, entryOf("ysm", fp, null, false));
                 return;
             }
             if (files.keySet().stream().noneMatch(name -> name.endsWith(".png"))) {
                 ysmu.LOG.warn("YSM binary model {} skipped: no .png texture found", file);
+                ModelIndexCache.mark(modelId, entryOf("ysm", fp, null, false));
                 return;
             }
 
-            String modelId = ModelIdUtil.getInternalModelId(removeExtension(toModelName(rootPath, file)));
             try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(files, modelId)) {
                 RawYsmModel raw = deserializer.deserialize();
                 raw.modelId = modelId;
@@ -243,11 +336,52 @@ public final class OpenYsmFormat {
                         CACHE_NAME_INFO.put(modelId, info);
                     }
                 }
+                ModelIndexCache.mark(modelId, entryOf("ysm", fp, syncInfo, true));
             }
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to convert legacy YSM binary model {} (size={}): {}: {}",
                 file, encrypted.length, e.getClass().getSimpleName(), e.getMessage());
+            ModelIndexCache.mark(modelId, entryOf("ysm", fp, null, false));
         }
+    }
+
+    /** 紧凑 hex（无空格）。 */
+    private static String toHexCompact(byte[] data) {
+        StringBuilder sb = new StringBuilder(data.length * 2);
+        for (byte b : data) {
+            sb.append(String.format("%02X", b & 0xFF));
+        }
+        return sb.toString();
+    }
+
+    /** OpenYSM .ysm 的内容指纹：长度 + 文件尾部 8 字节 CityHash（覆盖整个文件内容）。 */
+    private static String ysmFileFingerprint(byte[] encrypted) {
+        if (encrypted == null || encrypted.length < 8) {
+            return "0:";
+        }
+        return encrypted.length + ":" + toHexCompact(
+            Arrays.copyOfRange(encrypted, encrypted.length - 8, encrypted.length));
+    }
+
+    /** 用侧车里的内容寻址信息重建 OpenYsmSyncInfo（命中时不再反序列化）。 */
+    private static OpenYsmSyncInfo toSyncInfo(String modelId, ModelIndexCache.Entry e) {
+        return new OpenYsmSyncInfo(modelId, e.cacheFile,
+            Long.parseUnsignedLong(e.hash1, 16), Long.parseUnsignedLong(e.hash2, 16),
+            OPEN_YSM_SYNC_FORMAT, false);
+    }
+
+    /** 构造侧车条目。 */
+    private static ModelIndexCache.Entry entryOf(String kind, String fp, OpenYsmSyncInfo syncInfo, boolean ok) {
+        ModelIndexCache.Entry e = new ModelIndexCache.Entry();
+        e.kind = kind;
+        e.srcFp = fp == null ? "" : fp;
+        e.ok = ok;
+        if (syncInfo != null) {
+            e.hash1 = String.format("%016x", syncInfo.getHash1());
+            e.hash2 = String.format("%016x", syncInfo.getHash2());
+            e.cacheFile = syncInfo.getCacheFileName();
+        }
+        return e;
     }
 
     /**
