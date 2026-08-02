@@ -4,6 +4,7 @@ import java.io.File;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -47,7 +48,15 @@ public final class OpenYsmModelSyncServer {
 
         UUID playerId = player.getUniqueID();
         PlayerSyncState state = new PlayerSyncState(player, createClientCacheKey(serverKey));
+        // Order the sync list so the default model is sent first. The client
+        // processes cache hits sequentially in this order, so this makes the
+        // default model's scheduleApply() run before every other model — the
+        // client-side priority queue then applies it first. Nearly every model
+        // falls back to the default model's animation file / bones, so it must
+        // be ready before the rest of the sync.
         state.allowedModels.addAll(ServerModelManager.OPEN_YSM_SYNC_INFO.values());
+        state.allowedModels.sort(Comparator.comparingInt(
+            (OpenYsmSyncInfo info) -> Config.DEFAULT_MODEL_ID.equals(info.getModelId()) ? 0 : 1));
         SYNC_STATES.put(playerId, state);
         ysmu.LOG.info(
             "Starting OpenYSM model sync for {}: models={}",

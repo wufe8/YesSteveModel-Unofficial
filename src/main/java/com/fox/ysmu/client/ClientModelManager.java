@@ -188,6 +188,28 @@ public class ClientModelManager {
         new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /**
+     * High-priority queue for the default model. It must be applied before the
+     * rest of the sync because nearly every model falls back to the default
+     * model's animation file / bones (see AnimationManager fallback) — if the
+     * default model is still queued, those fallbacks hit a missing geo/anims.
+     * Kept separate from {@link #PENDING_APPLY} and drained first by
+     * {@link #processNextApply}.
+     */
+    private static final java.util.Queue<PreParsedModelBundle> PENDING_APPLY_DEFAULT =
+        new java.util.concurrent.ConcurrentLinkedQueue<>();
+
+    /** True when a bundle's base model id is the configured default model
+     *  (e.g. "default" → ysmu:default/main). */
+    private static boolean isDefaultModelBundle(ResourceLocation modelId) {
+        if (modelId == null) {
+            return false;
+        }
+        ResourceLocation base = ModelIdUtil.getModelIdFromMainId(modelId);
+        return ysmu.MODID.equals(base.getResourceDomain())
+            && Config.DEFAULT_MODEL_ID.equals(base.getResourcePath());
+    }
+
+    /**
      * Backpressure cap: how many fully-parsed bundles may wait in
      * {@link #PENDING_APPLY} for the main thread to apply them.
      *
@@ -222,7 +244,11 @@ public class ClientModelManager {
             // Rare; don't drop the model — enqueue anyway (backpressure is a
             // best-effort cap, not a correctness requirement).
         }
-        PENDING_APPLY.add(bundle);
+        if (isDefaultModelBundle(bundle.modelId)) {
+            PENDING_APPLY_DEFAULT.add(bundle);
+        } else {
+            PENDING_APPLY.add(bundle);
+        }
         // Ensure at least one processor is queued on the main thread.
         Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
     }
@@ -233,9 +259,16 @@ public class ClientModelManager {
         // faster. Each polled bundle releases a backpressure slot. If the queue
         // empties early we stop — the semaphore cap stays the memory bound, so
         // this never increases peak heap.
+        //
+        // The default model is drained first: it must be applied before the rest
+        // of the sync so fallbacks to default animations/bones never hit a still
+        // queued default model. Mixing it into the batch keeps the frame budget.
         int applied = 0;
         while (applied < APPLY_BATCH_PER_FRAME) {
-            PreParsedModelBundle bundle = PENDING_APPLY.poll();
+            PreParsedModelBundle bundle = PENDING_APPLY_DEFAULT.poll();
+            if (bundle == null) {
+                bundle = PENDING_APPLY.poll();
+            }
             if (bundle == null) {
                 // Redundant wake-up (another processNextApply consumed the head);
                 // don't release a slot we never took a bundle for.
@@ -250,7 +283,7 @@ public class ClientModelManager {
             APPLY_SLOTS.release();
         }
         // Schedule the next one if more are pending.
-        if (!PENDING_APPLY.isEmpty()) {
+        if (!PENDING_APPLY_DEFAULT.isEmpty() || !PENDING_APPLY.isEmpty()) {
             Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
         }
     }
@@ -1055,6 +1088,17 @@ public class ClientModelManager {
         SYNC_TOTAL = -1;
         SYNC_LOADED = 0;
         SYNC_IN_PROGRESS = true;
+        // Drop any bundles still queued from a previous sync (both the normal and
+        // the default-priority queue) so a fresh sync starts from an empty apply
+        // pipeline. Permits for dropped bundles are released so the semaphore
+        // cap doesn't leak across worlds.
+        PreParsedModelBundle dropped;
+        while ((dropped = PENDING_APPLY.poll()) != null) {
+            APPLY_SLOTS.release();
+        }
+        while ((dropped = PENDING_APPLY_DEFAULT.poll()) != null) {
+            APPLY_SLOTS.release();
+        }
         Minecraft.getMinecraft()
             .func_152344_a(ClientModelManager::clearRuntimeModelCaches);
         String[] md5Info = getMd5Info();
