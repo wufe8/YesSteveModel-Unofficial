@@ -30,6 +30,12 @@ gui.yes_steve_model.config.texture_target_size.256=贴图目标尺寸：256（�
 gui.yes_steve_model.config.texture_target_size.512=贴图目标尺寸：512
 gui.yes_steve_model.config.texture_target_size.1024=贴图目标尺寸：1024
 gui.yes_steve_model.config.texture_target_size.2048=贴图目标尺寸：2048（近原分辨率）
+gui.yes_steve_model.config.texture_vram_budget.0=贴图显存预算：不限（关闭）
+gui.yes_steve_model.config.texture_vram_budget.128=贴图显存预算：128 MB（紧凑）
+gui.yes_steve_model.config.texture_vram_budget.256=贴图显存预算：256 MB（默认）
+gui.yes_steve_model.config.texture_vram_budget.512=贴图显存预算：512 MB
+gui.yes_steve_model.config.texture_vram_budget.1024=贴图显存预算：1024 MB
+gui.yes_steve_model.config.texture_vram_budget.2048=贴图显存预算：2048 MB（宽松）
 gui.yes_steve_model.config.page=第 %d 页
 gui.yes_steve_model.config.gui_model_preview_refresh=预览刷新间隔（0=静态 1-4=每N帧）
 gui.yes_steve_model.config.gui_model_preview_refresh.0=预览刷新：静态（无定时更新）

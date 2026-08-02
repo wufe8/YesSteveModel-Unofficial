@@ -12,6 +12,7 @@ import net.minecraft.client.resources.IResourceManager;
 import net.minecraft.util.ResourceLocation;
 
 import com.fox.ysmu.Config;
+import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.ysmu;
 
 public class OuterFileTexture extends AbstractTexture {
@@ -36,6 +37,13 @@ public class OuterFileTexture extends AbstractTexture {
      * texture look "valid" — skipping the re-upload and rendering white.
      */
     private volatile boolean uploaded;
+
+    /**
+     * VRAM footprint (bytes) of the currently uploaded GPU texture (post-downscale
+     * dimensions x 4). 0 when not uploaded. Kept in sync with
+     * {@link ClientModelManager}'s running budget counter.
+     */
+    private volatile long gpuBytes;
 
     /** True after a decode/upload failed; suppresses repeated retries. */
     private boolean failed;
@@ -70,6 +78,11 @@ public class OuterFileTexture extends AbstractTexture {
      * via {@link #setData}, e.g. ClientModelManager#restoreTextureData).
      */
     public void upload() {
+        // Touch LRU on every access (bind or ensure) so actively-rendered textures
+        // stay fresh: the VRAM-budget eviction skips anything used within the last
+        // TEXTURE_PROTECT_MS, which prevents freeing a texture that will be bound
+        // again next frame (upload -> evict -> re-upload thrash).
+        ClientModelManager.touchTextureUsed(this.id);
         if (this.uploaded) {
             return;
         }
@@ -99,6 +112,13 @@ public class OuterFileTexture extends AbstractTexture {
             TextureUtil.uploadTextureImageAllocate(super.getGlTextureId(), toUpload, false, false);
             this.uploaded = true;
             this.failed = false;
+            // Track the actual VRAM footprint (post-downscale dims) and enforce the
+            // budget right after a real upload. Bytes stay in RAM, so eviction just
+            // frees the GPU copy — re-upload is cheap and never white.
+            long bytes = (long) toUpload.getWidth() * toUpload.getHeight() * 4L;
+            ClientModelManager.onTextureGpuBytesChanged(bytes - this.gpuBytes);
+            this.gpuBytes = bytes;
+            ClientModelManager.enforceVramBudget();
         } catch (Exception e) {
             // Covers IOException (decode) and any GL/RuntimeException (upload).
             // Marked failed to avoid retrying a broken texture on every bind.
@@ -220,6 +240,10 @@ public class OuterFileTexture extends AbstractTexture {
     public void freeGlTexture() {
         this.deleteGlTexture();
         this.uploaded = false;
+        if (this.gpuBytes > 0) {
+            ClientModelManager.onTextureGpuBytesChanged(-this.gpuBytes);
+            this.gpuBytes = 0;
+        }
     }
 
     /** Drops the in-memory byte[] copy; the encrypted client cache allows re-decrypt restore. */
@@ -237,6 +261,11 @@ public class OuterFileTexture extends AbstractTexture {
     /** Whether pixel data is currently uploaded to a valid GPU texture. */
     public boolean isUploaded() {
         return this.uploaded;
+    }
+
+    /** VRAM footprint (bytes) of the currently uploaded GPU texture; 0 if not uploaded. */
+    public long getGpuBytes() {
+        return this.gpuBytes;
     }
 
     /** Whether raw bytes are currently held in the heap. */

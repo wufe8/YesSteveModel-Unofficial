@@ -80,6 +80,15 @@ public class Config {
      *  downscale strategy lands. */
     public static int TEXTURE_TARGET_SIZE = 0;
 
+    /** GPU VRAM budget for YSM model textures in MB; 0 = disabled.
+     *  When the total VRAM footprint of uploaded YSM textures exceeds this budget,
+     *  least-recently-used models' GPU textures are freed (raw bytes stay in RAM, so
+     *  re-upload is a cheap GPU upload — never a white model). Bounds the VRAM peak
+     *  on large model libraries instead of per-texture downscaling, which still has
+     *  visual artifacts (e.g. GUMI2.6.2). Roughly 24-36 typical models fit in
+     *  128-256 MB; raise it if on-screen demand regularly exceeds the budget. */
+    public static int TEXTURE_VRAM_BUDGET_MB = 256;
+
     // Model sync config
     public static boolean ENABLE_SYNC_PROTOCOL = true;
     public static int THREAD_COUNT = 4;
@@ -166,6 +175,7 @@ public class Config {
         LOW_BANDWIDTH_USAGE = syncBoolean("LowBandwidthUsage", "ysm_sync", LOW_BANDWIDTH_USAGE, "Whether sync should use smaller chunks and conservative throttling", load);
         ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "ysm_sync", ACCEPT_SOUND_FX, "Whether sync should accept model sound effect resources", load);
         TEXTURE_TARGET_SIZE = syncInt("TextureTargetSize", "ysm_sync", TEXTURE_TARGET_SIZE, "Target texture dimension (px) uploaded to VRAM. 0 = full resolution. Larger textures are downscaled by a power of two (result in [target, 2*target)).", 0, 8192, load);
+        TEXTURE_VRAM_BUDGET_MB = syncInt("TextureVramBudget", "ysm_sync", TEXTURE_VRAM_BUDGET_MB, "YSM model texture VRAM budget in MB. 0 = unlimited. When uploaded texture VRAM exceeds this, least-recently-used models' GPU textures are freed (raw bytes stay in RAM, so re-upload is cheap and never white).", 0, 8192, load);
 
         // 检查配置是否已更改，如果已更改，则保存
         if (configuration.hasChanged()) {

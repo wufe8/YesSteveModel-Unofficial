@@ -30,6 +30,12 @@ gui.yes_steve_model.config.texture_target_size.256=Texture target size: 256 (max
 gui.yes_steve_model.config.texture_target_size.512=Texture target size: 512
 gui.yes_steve_model.config.texture_target_size.1024=Texture target size: 1024
 gui.yes_steve_model.config.texture_target_size.2048=Texture target size: 2048 (near-full res)
+gui.yes_steve_model.config.texture_vram_budget.0=Texture VRAM budget: Unlimited (off)
+gui.yes_steve_model.config.texture_vram_budget.128=Texture VRAM budget: 128 MB (tight)
+gui.yes_steve_model.config.texture_vram_budget.256=Texture VRAM budget: 256 MB (default)
+gui.yes_steve_model.config.texture_vram_budget.512=Texture VRAM budget: 512 MB
+gui.yes_steve_model.config.texture_vram_budget.1024=Texture VRAM budget: 1024 MB
+gui.yes_steve_model.config.texture_vram_budget.2048=Texture VRAM budget: 2048 MB (loose)
 gui.yes_steve_model.config.page=Page %d
 gui.yes_steve_model.config.gui_model_preview_refresh=Preview refresh (0=static 1-4=every N frames)
 gui.yes_steve_model.config.gui_model_preview_refresh.0=Preview refresh: Static (no periodic update)

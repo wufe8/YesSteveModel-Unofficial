@@ -46,6 +46,8 @@ public class ConfigScreen extends GuiScreen {
                 I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE)));
             this.buttonList.add(new FlatColorButton(11, x + 5, y + 25 + i++ * 22, 400, 20,
                 I18n.format("gui.yes_steve_model.config.texture_target_size." + Config.TEXTURE_TARGET_SIZE)));
+            this.buttonList.add(new FlatColorButton(12, x + 5, y + 25 + i++ * 22, 400, 20,
+                I18n.format("gui.yes_steve_model.config.texture_vram_budget." + Config.TEXTURE_VRAM_BUDGET_MB)));
         }
     }
 
@@ -66,7 +68,7 @@ public class ConfigScreen extends GuiScreen {
             case 1: case 2: case 4: case 5: case 6: case 8: case 9:
                 actionPage0(button);
                 break;
-            case 3: case 7: case 10: case 11:
+            case 3: case 7: case 10: case 11: case 12:
                 actionPage1(button);
                 break;
         }
@@ -124,6 +126,10 @@ public class ConfigScreen extends GuiScreen {
                 Config.TEXTURE_TARGET_SIZE = nextTextureTargetSize(Config.TEXTURE_TARGET_SIZE);
                 button.displayString = I18n.format("gui.yes_steve_model.config.texture_target_size." + Config.TEXTURE_TARGET_SIZE);
                 break;
+            case 12:
+                Config.TEXTURE_VRAM_BUDGET_MB = nextVramBudget(Config.TEXTURE_VRAM_BUDGET_MB);
+                button.displayString = I18n.format("gui.yes_steve_model.config.texture_vram_budget." + Config.TEXTURE_VRAM_BUDGET_MB);
+                break;
         }
     }
 
@@ -134,6 +140,18 @@ public class ConfigScreen extends GuiScreen {
             case 2048: return 1024;
             case 1024: return 512;
             case 512: return 256;
+            default: return 0;
+        }
+    }
+
+    /** Cycles the texture VRAM budget (MB): 0 (off) -> 128 -> 256 -> 512 -> 1024 -> 2048 -> 0. */
+    private static int nextVramBudget(int current) {
+        switch (current) {
+            case 0: return 128;
+            case 128: return 256;
+            case 256: return 512;
+            case 512: return 1024;
+            case 1024: return 2048;
             default: return 0;
         }
     }

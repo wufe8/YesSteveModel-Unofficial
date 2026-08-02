@@ -152,10 +152,30 @@ public class ClientModelManager {
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // ── Texture GPU memory management ─────────────────────────────────────
-    /** Timestamp (System.currentTimeMillis) of last texture usage, for auto-unloading. */
+    /**
+     * Timestamp (System.currentTimeMillis) of the last access to a texture.
+     * Keyed by texture id (e.g. "ysmu:model_id/main"), refreshed on every bind or
+     * upload (see {@link #touchTextureUsed}). Drives both the idle 30s unload and
+     * the active VRAM-budget LRU eviction.
+     */
     private static final Map<ResourceLocation, Long> TEXTURE_LAST_USED = new HashMap<>();
     /** How long (ms) since last use before textures are freed from the GPU (raw bytes stay in RAM). */
     private static final long TEXTURE_UNLOAD_MS = 30_000L;
+    /**
+     * How long (ms) a texture's last use stays "recent". Budget eviction skips any
+     * texture accessed within this window, so textures currently being rendered
+     * (players in view, GUI preview page) are never freed mid-frame — prevents the
+     * upload→evict→re-upload thrash loop in crowded multiplayer even when on-screen
+     * demand exceeds the budget (peak temporarily grows instead of churning).
+     */
+    private static final long TEXTURE_PROTECT_MS = 5_000L;
+    /**
+     * Current total VRAM footprint (bytes) of uploaded YSM model textures.
+     * Maintained by {@link OuterFileTexture} upload/free callbacks; used to enforce
+     * {@link Config#TEXTURE_VRAM_BUDGET_MB} with hysteresis (evict to 75% so a
+     * single new upload doesn't immediately re-trigger eviction).
+     */
+    private static long TEXTURE_GPU_BYTES = 0L;
     /** OuterFileTexture references kept across GPU unload/reload cycles.
      *  Raw bytes live inside each OuterFileTexture and stay in RAM across idle
      *  unloads (only the GPU copy is freed), so re-upload never needs to restore
@@ -1312,7 +1332,8 @@ public class ClientModelManager {
             }
             tex.upload();
         }
-        TEXTURE_LAST_USED.put(modelId, System.currentTimeMillis());
+        // upload() refreshes TEXTURE_LAST_USED per texId on every access, so the
+        // model's textures are kept fresh here too (LRU + idle-unload inputs).
     }
 
     /**
@@ -1365,22 +1386,138 @@ public class ClientModelManager {
      * bytes matches the pre-optimization baseline and keeps rendering robust.
      */
     public static void unloadIdleTextures(long now) {
-        // TEXTURE_LAST_USED keys are mainIds (e.g. "ysmu:model_id/main").
-        // MODELS keys are base IDs (e.g. "ysmu:model_id").
+        // TEXTURE_LAST_USED keys are texture ids (e.g. "ysmu:model_id/main").
+        // MODELS keys are base model ids (e.g. "ysmu:model_id").
         for (Map.Entry<ResourceLocation, List<ResourceLocation>> entry : MODELS.entrySet()) {
             ResourceLocation modelBaseId = entry.getKey();
-            ResourceLocation mainId = ModelIdUtil.getMainId(modelBaseId);
-            Long lastUsed = TEXTURE_LAST_USED.get(mainId);
-            boolean shouldUnload = lastUsed != null && (now - lastUsed) > TEXTURE_UNLOAD_MS;
-            if (!shouldUnload) continue;
+            long lastUsed = 0L;
+            boolean anyUploaded = false;
+            for (ResourceLocation texId : entry.getValue()) {
+                Long t = TEXTURE_LAST_USED.get(texId);
+                if (t != null && t > lastUsed) {
+                    lastUsed = t;
+                }
+                OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
+                if (tex != null && tex.isUploaded()) {
+                    anyUploaded = true;
+                }
+            }
+            // Only unload whole models whose textures are uploaded and all idle.
+            if (!anyUploaded) continue;
+            if (lastUsed == 0L || (now - lastUsed) <= TEXTURE_UNLOAD_MS) continue;
             for (ResourceLocation texId : entry.getValue()) {
                 OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
                 if (tex != null && tex.isUploaded()) {
                     tex.freeGlTexture();
                     if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
-                        ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, mainId);
+                        ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, modelBaseId);
                     }
                 }
+            }
+        }
+    }
+
+    // ── VRAM budget (TEXTURE_VRAM_BUDGET_MB) ──────────────────────────────
+
+    /**
+     * Records a texture access (bind or upload) so LRU eviction and idle unload
+     * know it's still in use. Called by {@link OuterFileTexture} on every
+     * {@code getGlTextureId()}/{@code upload()} — i.e. every frame the texture is
+     * bound. Cheap: one HashMap put per bound texture per frame.
+     */
+    public static void touchTextureUsed(ResourceLocation texId) {
+        TEXTURE_LAST_USED.put(texId, System.currentTimeMillis());
+    }
+
+    /**
+     * Adjusts the running VRAM footprint counter (bytes). Called by
+     * {@link OuterFileTexture} on upload (positive delta) and free (negative).
+     * Only touched from the main thread, so a plain long is safe.
+     */
+    public static void onTextureGpuBytesChanged(long delta) {
+        TEXTURE_GPU_BYTES += delta;
+        if (TEXTURE_GPU_BYTES < 0L) {
+            TEXTURE_GPU_BYTES = 0L;
+        }
+    }
+
+    /**
+     * Enforces {@link Config#TEXTURE_VRAM_BUDGET_MB} (0 = disabled), called right
+     * after a real GPU upload. If the uploaded-texture footprint exceeds the budget,
+     * evicts the least-recently-used <em>whole models</em> from the GPU — skipping
+     * any model used within {@link #TEXTURE_PROTECT_MS} — until the footprint drops
+     * to 75% of the budget (hysteresis so a single new upload doesn't re-trigger).
+     *
+     * <p>Raw bytes stay in RAM inside each {@link OuterFileTexture}, so eviction is
+     * only freeing the GPU copy; re-upload on next use is a cheap synchronous upload
+     * and can never produce a white model. This bounds the VRAM <em>peak</em> on
+     * large model libraries without the artifacts of per-texture downscaling.
+     *
+     * <p>Anti-thrash: any texture used within {@link #TEXTURE_PROTECT_MS} is never
+     * evicted. If on-screen demand genuinely exceeds the budget (many players in
+     * view, GUI preview page), the peak is allowed to grow temporarily instead of
+     * churning upload/evict/re-upload every frame.
+     */
+    public static void enforceVramBudget() {
+        long budget = (long) Config.TEXTURE_VRAM_BUDGET_MB * 1024L * 1024L;
+        if (budget <= 0L || TEXTURE_GPU_BYTES <= budget) {
+            return;
+        }
+        long target = budget * 3L / 4L; // hysteresis floor
+        long now = System.currentTimeMillis();
+
+        // Candidate models: has uploaded textures and wasn't used within the protect
+        // window. Kept in parallel lists; lastUsed == 0 means never touched.
+        List<ResourceLocation> candBaseIds = new ArrayList<>();
+        List<Long> candLastUsed = new ArrayList<>();
+        for (Map.Entry<ResourceLocation, List<ResourceLocation>> entry : MODELS.entrySet()) {
+            ResourceLocation baseId = entry.getKey();
+            long lastUsed = 0L;
+            long modelGpu = 0L;
+            for (ResourceLocation texId : entry.getValue()) {
+                Long t = TEXTURE_LAST_USED.get(texId);
+                if (t != null && t > lastUsed) {
+                    lastUsed = t;
+                }
+                OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
+                if (tex != null && tex.isUploaded()) {
+                    modelGpu += tex.getGpuBytes();
+                }
+            }
+            if (modelGpu == 0L) {
+                continue; // nothing uploaded for this model
+            }
+            if (lastUsed != 0L && now - lastUsed < TEXTURE_PROTECT_MS) {
+                continue; // still active — protect from thrash
+            }
+            candBaseIds.add(baseId);
+            candLastUsed.add(lastUsed);
+        }
+        // Least-recently-used first; never-touched (0) always sorts first.
+        Integer[] order = new Integer[candBaseIds.size()];
+        for (int i = 0; i < order.length; i++) {
+            order[i] = i;
+        }
+        java.util.Arrays.sort(order, (a, b) -> Long.compare(candLastUsed.get(a), candLastUsed.get(b)));
+
+        for (int i = 0; i < order.length && TEXTURE_GPU_BYTES > target; i++) {
+            int idx = order[i];
+            ResourceLocation baseId = candBaseIds.get(idx);
+            List<ResourceLocation> texIds = MODELS.get(baseId);
+            if (texIds == null) {
+                continue;
+            }
+            long freed = 0L;
+            for (ResourceLocation texId : texIds) {
+                OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
+                if (tex != null && tex.isUploaded()) {
+                    freed += tex.getGpuBytes();
+                    tex.freeGlTexture();
+                }
+            }
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
+                ysmu.LOG.info("[YSMU-MODEL] VRAM budget: evicted GPU textures for {} ({} MB, last used {} ms ago); now {} MB / {} MB budget",
+                    baseId, freed / 1048576L, now - candLastUsed.get(idx), TEXTURE_GPU_BYTES / 1048576L, Config.TEXTURE_VRAM_BUDGET_MB);
             }
         }
     }
@@ -1432,6 +1569,7 @@ public class ClientModelManager {
             }
         }
         YSM_TEXTURE_OBJECTS.clear();
+        TEXTURE_GPU_BYTES = 0L; // freeGlTexture above already decremented; reset defensively
         TEXTURE_CONTENT_HASH.clear();
         com.fox.ysmu.client.model.CustomPlayerModel.clearPreviewBoneCache();
         com.fox.ysmu.client.audio.YSMSoundManager.clear();
