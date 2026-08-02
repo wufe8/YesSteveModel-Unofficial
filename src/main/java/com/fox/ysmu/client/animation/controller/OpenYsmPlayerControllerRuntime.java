@@ -4,6 +4,7 @@ import static com.fox.ysmu.util.ControllerUtils.CAP_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_MAINHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_OFFHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.MAIN_CONTROLLER;
+import static com.fox.ysmu.util.ControllerUtils.OPENYSM_PRE_MAIN_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
 
@@ -242,23 +243,28 @@ public final class OpenYsmPlayerControllerRuntime {
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
-        // [路线C] 临时注释跳过逻辑——让所有控制器全走默认值，
-        // 观察无 TacZ 时各控制器的实际行为（哪些能正常工作，
-        // 哪些空转/循环音效）。
-        // if (!match.controller.modDependencies.isEmpty()
-        //     && ModDependencyRegistry.hasUnmetDependencies(match.controller.modDependencies)) {
-        //     String ctrlName = geckoControllerName;
-        //     boolean isParallel = ctrlName != null
-        //         && (ctrlName.startsWith("parallel_") || ctrlName.startsWith("pre_parallel_"));
-        //     if (isParallel) {
-        //         runtimeState.currentState = "";
-        //         runtimeState.lastSelectedAnimationState = "";
-        //         runtimeState.lastSelectedAnimation = "";
-        //         com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
-        //         event.getController().currentAnimationBuilder = new AnimationBuilder();
-        //         return null;
-        //     }
-        // }
+        // 跳过依赖未加载模组的并行控制器（如 player.parallel_3）。
+        // 没有 TacZ 时并行控制器的 transition 条件永远无法满足，
+        // 导致卡在 default 状态循环播放带有音效关键帧的动画。
+        //
+        // 主控制器（post_main/main/base/move）不跳过——它们的非模组
+        // 相关状态（如 idle/walk/run/jump）可以正常运行，模组相关条件
+        // 自然返回 false。
+        if (!match.controller.modDependencies.isEmpty()
+            && ModDependencyRegistry.hasUnmetDependencies(match.controller.modDependencies)) {
+            // 仅跳过并行控制器，不跳过主身体控制器
+            String ctrlName = geckoControllerName;
+            boolean isParallel = ctrlName != null
+                && (ctrlName.startsWith("parallel_") || ctrlName.startsWith("pre_parallel_"));
+            if (isParallel) {
+                runtimeState.currentState = "";
+                runtimeState.lastSelectedAnimationState = "";
+                runtimeState.lastSelectedAnimation = "";
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+                event.getController().currentAnimationBuilder = new AnimationBuilder();
+                return null;
+            }
+        }
         // Inject roaming variables scoped to the current model only.
         // Using getRoamingVarsForModel() instead of directly iterating
         // PENDING_ROAMING prevents cross-model variable contamination.
@@ -319,19 +325,33 @@ public final class OpenYsmPlayerControllerRuntime {
                     sb.append(" | ").append(t.targetState).append("=").append(condMet).append("[").append(condStr).append("]");
                 }
             }
+            // 附加实际输入/移动值：方便定位潜行状态机（乐魂 Sneak/Sneaking 依赖
+            // ctrl.sneak/ctrl.sneaking + ysm.input_vertical）。
+            if (player != null) {
+                sb.append(" | input_vertical=").append(String.format(java.util.Locale.ROOT, "%.3f", player.moveForward))
+                  .append(" ground_speed=").append(String.format(java.util.Locale.ROOT, "%.3f",
+                      Math.sqrt(Math.pow(player.posX - player.prevPosX, 2) + Math.pow(player.posZ - player.prevPosZ, 2)) * 20.0d));
+            }
             ysmu.LOG.info(sb.toString());
         }
         int preTransCount = 0;
+        // Wiki 2.6.3 空状态连续跳转的循环检测：
+        // 记录本次跳转链访问过的状态，若某状态想跳回已访问状态（A->B->A 循环），
+        // 则停在构成循环前的状态，不再跳转回去。避免 Check<->Start_Sneak 等
+        // 空状态之间的帧内振荡导致潜行动画永远无法播放。
+        java.util.Set<String> visitedStates = new java.util.HashSet<>();
+        visitedStates.add(state.name);
         for (int i = 0; i < 4; i++) {
             String prevStateName = state.name;
-            State nextState = applyTransition(event, match.controller, state, runtimeState, context);
-            // Log state transitions (rate-limited to 1s per controller)
-            if (Config.DEBUG_CONTROLLER && nextState != state && allowDebugLog("CTRL-TRANS-" + geckoControllerName)) {
-                ysmu.LOG.info("[YSMU-CTRL-TRANS] iter={}: {} -> {} [{}]",
-                    i, prevStateName, nextState.name, geckoControllerName);
-            }
+            State nextState = applyTransition(event, match.controller, state, runtimeState, context, visitedStates);
             if (nextState == state) {
                 break;
+            }
+            visitedStates.add(nextState.name);
+            // Log state transitions (rate-limited to 1s per controller)
+            if (Config.DEBUG_CONTROLLER && allowDebugLog("CTRL-TRANS-" + geckoControllerName)) {
+                ysmu.LOG.info("[YSMU-CTRL-TRANS] iter={}: {} -> {} [{}]",
+                    i, prevStateName, nextState.name, geckoControllerName);
             }
             preTransCount++;
             state = nextState;
@@ -368,7 +388,10 @@ public final class OpenYsmPlayerControllerRuntime {
         // only returns the first match for historical code that expects one.
         List<String> activeAnimations = collectActiveAnimations(state, animationId, context);
         if (activeAnimations.isEmpty()) {
-            if (Config.DEBUG_CONTROLLER) {
+            // 限流到每秒一次：无 TacZ 时 post_main/post_swing 等主控制器
+            // 卡在空状态（空闲/default）会每帧走到这里，DEBUG 下刷屏淹没
+            // 其他调试日志。
+            if (Config.DEBUG_CONTROLLER && allowDebugLog("NO-ACTIVE-ANIM-" + geckoControllerName)) {
                 ysmu.LOG.info("[YSMU-CTRL] {}: no active animations, state='{}'",
                     geckoControllerName, runtimeState.currentState);
             }
@@ -461,7 +484,8 @@ public final class OpenYsmPlayerControllerRuntime {
     }
 
     private static State applyTransition(AnimationEvent<CustomPlayerEntity> event, Controller controller, State state,
-        RuntimeState runtimeState, OpenYsmControllerExpressionEvaluator.Context context) {
+        RuntimeState runtimeState, OpenYsmControllerExpressionEvaluator.Context context,
+        java.util.Set<String> visitedStates) {
         for (Transition transition : state.transitions) {
             State target = controller.states.get(transition.targetState);
             if (target == null) {
@@ -476,6 +500,12 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             if (!conditionMet) {
                 continue;
+            }
+            // Wiki 2.6.3 空状态连续跳转的循环检测：
+            // 若第一个满足条件的跳转目标已在本次跳转链中访问过（构成循环），
+            // 则停止在当前状态，不执行该跳转（也不执行 onExit/onEntry）。
+            if (visitedStates != null && visitedStates.contains(target.name)) {
+                return state;
             }
             // Delay start→sky so sneaking_start is visible for at least 5
             // ticks before transitioning to the stationary crouch pose.
@@ -555,9 +585,14 @@ public final class OpenYsmPlayerControllerRuntime {
         // Parallel controllers ARE allowed to animate Root since they are
         // designed for blended parallel animation (e.g. attack combos that
         // need full-body movement).
+        // player.pre_main is the PRIMARY body controller in modern YSM models
+        // (smx/乐魂 have no player.main) — it plays idle/walk/run/sneak and must
+        // keep Root so sneaking_Control's crouch lowering [0,-7.625,0] and the
+        // walk body bob are not silently stripped.
         String ctrlName = event.getController().getName();
         boolean excludeRoot = ctrlName != null
             && !MAIN_CONTROLLER.equals(ctrlName)
+            && !OPENYSM_PRE_MAIN_CONTROLLER.equals(ctrlName)
             && !ctrlName.startsWith("parallel_")
             && !ctrlName.startsWith("pre_parallel_");
         // Build merged bone animations. For single-animation states or when
@@ -786,6 +821,10 @@ public final class OpenYsmPlayerControllerRuntime {
         // Full restarts (state transitions, e.g. default→attack1) use
         // setAnimation to reset tick to 0 as expected.
         AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
+        if (Config.DEBUG_CONTROLLER && allowDebugLog("CTRL-PLAY-" + ctrlName)) {
+            ysmu.LOG.info("[YSMU-CTRL-PLAY] {} state='{}' playing='{}' animations={} sameState={}",
+                ctrlName, state.name, finalName, animationNames, sameState);
+        }
         if (sameState) {
             // Preserve playback position: the animation continues from where it
             // left off, just with updated bone keyframes for the new variant.

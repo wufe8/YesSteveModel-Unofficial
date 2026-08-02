@@ -799,6 +799,21 @@ public class YSMFolderDeserializer implements AutoCloseable {
             channel.add(kf);
             return;
         }
+        if (element.isJsonArray()) {
+            // Single keyframe at time 0 with [x, y, z] vector:
+            // "position": [0, -20, 0], "rotation": [-15, 10, 0], "scale": [1, 1, 1]
+            // Previously dropped — folder models exported through the OpenYSM
+            // binary cache lost every direct-array channel (mouth zui2-7 position,
+            // fly/sit Root/body transforms), causing bones to render at their
+            // bind-pose position (e.g. mouth floating above the head).
+            RawYsmModel.RawKeyframe kf = new RawYsmModel.RawKeyframe();
+            kf.timestamp = 0f;
+            kf.interpolationMode = 0;
+            kf.hasPreData = false;
+            kf.postData = readMolangArray(element.getAsJsonArray());
+            channel.add(kf);
+            return;
+        }
         if (!element.isJsonObject()) return;
         JsonObject obj = element.getAsJsonObject();
         // Check if this is a Molang array (has "vector") — currently not used in animations

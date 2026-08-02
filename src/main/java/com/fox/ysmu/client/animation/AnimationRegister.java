@@ -283,6 +283,10 @@ public class AnimationRegister {
         EntityModelData data, EntityPlayer player, Minecraft mc, RemotePlayerAnimationQueries.QueryValues queryValues) {
         parser.setValue("ysm.head_yaw", queryValues.headYaw());
         parser.setValue("ysm.head_pitch", () -> data.headPitch);
+        parser.setValue("ysm.input_vertical", () -> player.moveForward);
+        parser.setValue("ysm.input_horizontal", () -> player.moveStrafing);
+        parser.setValue("ysm.xxa", () -> player.moveStrafing);
+        parser.setValue("ysm.zza", () -> player.moveForward);
         parser.setValue("ysm.has_helmet", () -> getSlotValue(player, 4));
         parser.setValue("ysm.has_chest_plate", () -> getSlotValue(player, 3));
         parser.setValue("ysm.has_leggings", () -> getSlotValue(player, 2));

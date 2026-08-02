@@ -472,13 +472,26 @@ public final class OpenYsmControllerExpressionEvaluator {
             if (evalIsFlying(player) || player.isRiding() || evalIsOnGround(player) || player.isInWater()) return FALSE;
             return evalMotionY(player, 0.0) != 0 ? TRUE : FALSE;
         }
-        if ("sneak".equals(name) || "sneaking".equals(name)) {
-            return (evalIsOnGround(player) && player.isSneaking()) ? TRUE : FALSE;
+        if ("sneak".equals(name)) {
+            // 与 Context.isControllerStateDirect 一致：用实际水平位移判断移动，
+            // 不用 limbSwingAmount（1.7.10 潜行时会在 0.05 阈值下震荡）。
+            boolean moving = evalHorizontalMoving(player);
+            return (evalIsOnGround(player) && player.isSneaking() && moving) ? TRUE : FALSE;
         }
-        if ("run".equals(name)) return (evalIsOnGround(player) && player.isSprinting()) ? TRUE : FALSE;
+        if ("sneaking".equals(name)) {
+            boolean moving = evalHorizontalMoving(player);
+            return (evalIsOnGround(player) && player.isSneaking() && !moving) ? TRUE : FALSE;
+        }
+        if ("run".equals(name)) {
+            return (evalIsOnGround(player) && player.isSprinting() && !player.isSneaking()) ? TRUE : FALSE;
+        }
         if ("walk".equals(name)) {
             boolean moving = Math.abs(player.motionX) > 0.001 || Math.abs(player.motionZ) > 0.001;
-            return (evalIsOnGround(player) && !player.isSprinting() && moving) ? TRUE : FALSE;
+            // 潜行时 walk/run 应返回 false（sneak 与 walk/run 互斥），
+            // 否则步行中按下潜行时 N_walk 等移动状态的 End_Move 条件
+            // (!ctrl.walk&&!ctrl.run||ctrl.idle) 永不满足，控制器卡在
+            // 慢跑/疾跑状态继续播放 walk/run 动画。
+            return (evalIsOnGround(player) && !player.isSprinting() && !player.isSneaking() && moving) ? TRUE : FALSE;
         }
         if ("idle".equals(name)) {
             if (player.isDead || player.isPlayerSleeping() || player.isInWater()
@@ -502,6 +515,16 @@ public final class OpenYsmControllerExpressionEvaluator {
             return player.onGround;
         }
         return com.fox.ysmu.client.animation.RemotePlayerMotionStates.isOnGround(player);
+    }
+
+    /** 用实际水平位移（每 tick 位移 ×20 米/秒）判断玩家是否在水平移动。
+     *  与 Context.horizontalSpeed()/query.ground_speed 一致；不用 limbSwingAmount，
+     *  因为 1.7.10 潜行速度只有正常走的 0.3 倍，平滑后的 limbSwingAmount 在小步
+     *  移动/转向时会在 0.05 阈值附近震荡，导致 sneak/sneaking 判定不稳定。 */
+    private static boolean evalHorizontalMoving(EntityPlayer player) {
+        double dx = player.posX - player.prevPosX;
+        double dz = player.posZ - player.prevPosZ;
+        return Math.sqrt(dx * dx + dz * dz) * 20.0d > 0.05d;
     }
 
     private static int evalMotionY(EntityPlayer player, double threshold) {
@@ -1102,16 +1125,25 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return isJumping();
             }
             if ("sneak".equals(name)) {
-                return isOnGround() && player.isSneaking() && Math.abs(event.getLimbSwingAmount()) > 0.05f;
+                // wiki: ctrl.sneak = 潜行移动中。移动判定用实际水平位移
+                // (horizontalSpeed, 与 query.ground_speed 一致)，不用
+                // limbSwingAmount——1.7.10 潜行速度只有正常走的 0.3 倍，
+                // limbSwingAmount 平滑值在小步移动/转向时会在 0.05 阈值下
+                // 震荡，导致 Sneak<->Sneaking 反复横跳（移动潜行显示站立
+                // 潜行动画）。
+                return isOnGround() && player.isSneaking() && horizontalSpeed() > 0.05d;
             }
             if ("sneaking".equals(name)) {
-                return isOnGround() && player.isSneaking() && !(Math.abs(event.getLimbSwingAmount()) > 0.05f);
+                return isOnGround() && player.isSneaking() && horizontalSpeed() <= 0.05d;
             }
             if ("run".equals(name)) {
-                return isOnGround() && player.isSprinting();
+                // 潜行时 run/walk 应返回 false：sneak 与 walk/run 互斥（wiki 语义）。
+                // 否则步行中按下潜行时，移动状态的 End_Move(!ctrl.walk&&!ctrl.run||ctrl.idle)
+                // 永不满足，控制器卡在慢跑/疾跑继续播放 walk/run 动画。
+                return isOnGround() && player.isSprinting() && !player.isSneaking();
             }
             if ("walk".equals(name)) {
-                return isOnGround() && event.getLimbSwingAmount() > 0.05f;
+                return isOnGround() && event.getLimbSwingAmount() > 0.05f && !player.isSneaking();
             }
             return false;
         }
