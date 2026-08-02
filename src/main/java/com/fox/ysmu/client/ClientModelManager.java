@@ -63,7 +63,10 @@ import software.bernie.geckolib3.geo.raw.pojo.RawGeoModel;
 import software.bernie.geckolib3.geo.raw.tree.RawGeometryTree;
 import software.bernie.geckolib3.geo.render.GeoBuilder;
 import software.bernie.geckolib3.geo.render.built.GeoBone;
+import software.bernie.geckolib3.geo.render.built.GeoCube;
 import software.bernie.geckolib3.geo.render.built.GeoModel;
+import software.bernie.geckolib3.geo.render.built.GeoQuad;
+import software.bernie.geckolib3.geo.render.built.GeoVertex;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 import software.bernie.geckolib3.util.json.JsonAnimationUtils;
 
@@ -339,6 +342,14 @@ public class ClientModelManager {
         }
         if (!projTexIdList.isEmpty()) {
             bundle.projectileTextureIds.put(modelId, projTexIdList);
+        }
+
+        // Debug: audit how much of each texture's UV space is actually used, to
+        // spot models with huge textures that only sample a small corner (candidates
+        // for UV-aware cropping / tighter downscaling). Requires DebugModelLoad +
+        // DebugModelParse.
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
+            logTextureUvAudit(modelId, bundle.geoModels, mainTexMap);
         }
 
         // Count stats from parsed geometries
@@ -1495,6 +1506,86 @@ public class ClientModelManager {
             count += countCubesInBone(child);
         }
         return count;
+    }
+
+    /**
+     * Debug-only: reports how much of each sub-model's texture UV space is actually
+     * referenced by its cubes, versus the texture's real PNG dimensions. Helps spot
+     * models with huge textures that only sample a small corner — candidates for
+     * UV-aware cropping. UVs are normalized [0,1] by GeoCube against the model's
+     * declared texture_width/height, so usedPixels = bbox * declared size.
+     */
+    private static void logTextureUvAudit(ResourceLocation modelId,
+        Map<ResourceLocation, GeoModel> geoModels,
+        Map<String, byte[]> mainTexMap) {
+        for (Map.Entry<ResourceLocation, GeoModel> entry : geoModels.entrySet()) {
+            GeoModel geo = entry.getValue();
+            if (geo == null || geo.topLevelBones == null || geo.properties == null) {
+                continue;
+            }
+            float[] bbox = new float[] { 1f, 1f, 0f, 0f }; // minU, minV, maxU, maxV
+            for (GeoBone bone : geo.topLevelBones) {
+                scanUvBbox(bone, bbox);
+            }
+            if (bbox[2] <= bbox[0] || bbox[3] <= bbox[1]) {
+                continue; // no UVs
+            }
+            float declaredW = geo.properties.getTextureWidth() != null
+                ? geo.properties.getTextureWidth().floatValue() : 64f;
+            float declaredH = geo.properties.getTextureHeight() != null
+                ? geo.properties.getTextureHeight().floatValue() : 64f;
+            int usedPxW = (int) Math.ceil(bbox[2] * declaredW) - (int) Math.floor(bbox[0] * declaredW);
+            int usedPxH = (int) Math.ceil(bbox[3] * declaredH) - (int) Math.floor(bbox[1] * declaredH);
+            String subName = ModelIdUtil.getSubNameFromId(entry.getKey());
+            byte[] texData = subName != null ? mainTexMap.get(subName) : null;
+            int pngW = readPngWidth(texData);
+            int pngH = readPngHeight(texData);
+            float areaPct = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) * 100f;
+            String pngDim = (pngW > 0 && pngH > 0) ? (pngW + "x" + pngH) : "?";
+            ysmu.LOG.info(
+                "[YSMU-TEX] UV audit {} ({}) declared={}x{} uv=[{:.3f},{:.3f}]x[{:.3f},{:.3f}] used~{}x{}px png={} area={:.1f}%",
+                modelId, entry.getKey(), (int) declaredW, (int) declaredH,
+                bbox[0], bbox[2], bbox[1], bbox[3], usedPxW, usedPxH, pngDim, areaPct);
+        }
+    }
+
+    /** Recursively expands bbox with every cube quad's normalized UV. */
+    private static void scanUvBbox(GeoBone bone, float[] bbox) {
+        if (bone.childCubes != null) {
+            for (GeoCube cube : bone.childCubes) {
+                if (cube.quads == null) {
+                    continue;
+                }
+                for (GeoQuad quad : cube.quads) {
+                    if (quad.vertices == null) {
+                        continue;
+                    }
+                    for (GeoVertex v : quad.vertices) {
+                        if (v.textureU < bbox[0]) bbox[0] = v.textureU;
+                        if (v.textureV < bbox[1]) bbox[1] = v.textureV;
+                        if (v.textureU > bbox[2]) bbox[2] = v.textureU;
+                        if (v.textureV > bbox[3]) bbox[3] = v.textureV;
+                    }
+                }
+            }
+        }
+        if (bone.childBones != null) {
+            for (GeoBone child : bone.childBones) {
+                scanUvBbox(child, bbox);
+            }
+        }
+    }
+
+    private static int readPngWidth(byte[] data) {
+        if (data == null || data.length < 24) return 0;
+        return ((data[16] & 0xFF) << 24) | ((data[17] & 0xFF) << 16)
+             | ((data[18] & 0xFF) << 8)  | (data[19] & 0xFF);
+    }
+
+    private static int readPngHeight(byte[] data) {
+        if (data == null || data.length < 24) return 0;
+        return ((data[20] & 0xFF) << 24) | ((data[21] & 0xFF) << 16)
+             | ((data[22] & 0xFF) << 8)  | (data[23] & 0xFF);
     }
 
     public static void rememberCachedModel(String md5) {

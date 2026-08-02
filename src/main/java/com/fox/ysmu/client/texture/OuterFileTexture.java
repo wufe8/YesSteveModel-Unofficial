@@ -111,11 +111,11 @@ public class OuterFileTexture extends AbstractTexture {
     }
 
     /**
-     * Optionally downscales a decoded texture to Config.TEXTURE_MAX_SIZE (0 = off)
-     * to bound VRAM on large model libraries.
+     * Optionally downscales a decoded texture to Config.TEXTURE_TARGET_SIZE
+     * (0 = off) to bound VRAM on large model libraries.
      *
      * <p>The downscale factor is always a power of two (1/2, 1/4, ...), so the
-     * result lands in [maxSize, 2*maxSize) — e.g. target 512: 1024x1024 ->
+     * result lands in [target, 2*target) — e.g. target 512: 1024x1024 ->
      * 512x512, 768x768 stays, 1280x1280 -> 640x640. YSM textures are uploaded
      * with GL_NEAREST filtering, so a non-integer ratio would let bilinear
      * resampling bleed neighbor faces' pixels across face edges, which is very
@@ -131,18 +131,18 @@ public class OuterFileTexture extends AbstractTexture {
      * the actual PNG dimensions; we only change resolution, never the mapping.
      */
     private BufferedImage downscale(BufferedImage src) {
-        int maxSize = Config.TEXTURE_MAX_SIZE;
-        if (maxSize <= 0) {
+        int target = Config.TEXTURE_TARGET_SIZE;
+        if (target <= 0) {
             return src;
         }
         int w = src.getWidth();
         int h = src.getHeight();
         int maxDim = Math.max(w, h);
-        if (maxDim <= maxSize) {
+        if (maxDim <= target) {
             return src;
         }
         int divisor = 1;
-        while (maxDim / divisor >= 2 * maxSize) {
+        while (maxDim / divisor >= 2 * target) {
             divisor <<= 1;
         }
         int newW = Math.max(1, w / divisor);
@@ -159,8 +159,8 @@ public class OuterFileTexture extends AbstractTexture {
             g.dispose();
         }
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
-            ysmu.LOG.info("[YSMU-TEX] upload({}): downscaled {}x{} -> {}x{} (max {}, divisor {})",
-                this.id, w, h, newW, newH, maxSize, divisor);
+            ysmu.LOG.info("[YSMU-TEX] upload({}): downscaled {}x{} -> {}x{} (target {}, divisor {})",
+                this.id, w, h, newW, newH, target, divisor);
         }
         return scaled;
     }

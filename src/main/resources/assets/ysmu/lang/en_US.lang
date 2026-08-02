@@ -25,11 +25,11 @@ gui.yes_steve_model.config.swap_config_sides=Swap config panel and preview sides
 gui.yes_steve_model.config.gui_enhancements=Enable GUI enhancements (foreground/background textures, GUI animations)
 gui.yes_steve_model.config.render_wearable=Render external wearable models (backpack/copter/jetpack)
 gui.yes_steve_model.config.wearable_render_scale=Wearable scale: %.2f
-gui.yes_steve_model.config.texture_max_size.0=Texture max size: Full resolution
-gui.yes_steve_model.config.texture_max_size.256=Texture max size: 256 (max VRAM saving)
-gui.yes_steve_model.config.texture_max_size.512=Texture max size: 512 (recommended)
-gui.yes_steve_model.config.texture_max_size.1024=Texture max size: 1024 (default)
-gui.yes_steve_model.config.texture_max_size.2048=Texture max size: 2048 (near-full res)
+gui.yes_steve_model.config.texture_target_size.0=Texture target size: Full resolution
+gui.yes_steve_model.config.texture_target_size.256=Texture target size: 256 (max VRAM saving)
+gui.yes_steve_model.config.texture_target_size.512=Texture target size: 512 (recommended)
+gui.yes_steve_model.config.texture_target_size.1024=Texture target size: 1024 (default)
+gui.yes_steve_model.config.texture_target_size.2048=Texture target size: 2048 (near-full res)
 gui.yes_steve_model.config.page=Page %d
 gui.yes_steve_model.config.gui_model_preview_refresh=Preview refresh (0=static 1-4=every N frames)
 gui.yes_steve_model.config.gui_model_preview_refresh.0=Preview refresh: Static (no periodic update)

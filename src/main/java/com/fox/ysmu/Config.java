@@ -67,11 +67,13 @@ public class Config {
     public static int DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB = 1024;
 
     // Texture VRAM config
-    /** Max texture dimension (px) uploaded to VRAM; 0 = disabled (full resolution).
-     *  Larger textures are uniformly downscaled (aspect preserved) on upload to
-     *  bound VRAM on large model libraries. GeckoLib samples with normalized UVs,
-     *  so an aspect-preserving resize never shifts the mapped content. */
-    public static int TEXTURE_MAX_SIZE = 1024;
+    /** Target texture dimension (px) uploaded to VRAM; 0 = disabled (full resolution).
+     *  Textures larger than the target are uniformly downscaled by a power of two
+     *  so the result lands in [target, 2*target) — e.g. target 1024 keeps 2048->1024,
+     *  and anything under 2048 passes through. Bound VRAM on large model libraries;
+     *  GeckoLib samples with normalized UVs, so an aspect-preserving resize never
+     *  shifts the mapped content. */
+    public static int TEXTURE_TARGET_SIZE = 1024;
 
     // Model sync config
     public static boolean ENABLE_SYNC_PROTOCOL = true;
@@ -157,7 +159,7 @@ public class Config {
         PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);
         LOW_BANDWIDTH_USAGE = syncBoolean("LowBandwidthUsage", "ysm_sync", LOW_BANDWIDTH_USAGE, "Whether sync should use smaller chunks and conservative throttling", load);
         ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "ysm_sync", ACCEPT_SOUND_FX, "Whether sync should accept model sound effect resources", load);
-        TEXTURE_MAX_SIZE = syncInt("TextureMaxSize", "ysm_sync", TEXTURE_MAX_SIZE, "Max texture dimension (px) uploaded to VRAM. 0 = full resolution. Larger textures are uniformly downscaled on upload to bound VRAM on large model libraries.", 0, 8192, load);
+        TEXTURE_TARGET_SIZE = syncInt("TextureTargetSize", "ysm_sync", TEXTURE_TARGET_SIZE, "Target texture dimension (px) uploaded to VRAM. 0 = full resolution. Larger textures are downscaled by a power of two (result in [target, 2*target)).", 0, 8192, load);
 
         // 检查配置是否已更改，如果已更改，则保存
         if (configuration.hasChanged()) {
