@@ -36,6 +36,10 @@ public class PreParsedModelBundle {
      *  registered at sync; the first AssetManager.anim(mainId).get() triggers a
      *  background decrypt+parse that restores it (same path as idle reload). */
     public boolean lazyAnimation;
+    /** True when geometry is lazy: sync only extracts light metadata (scale/extra/
+     *  bone+cube stats); the heavy GeoModel object graph is built on first use via
+     *  AssetManager.geo(geoId).get() → GeoModelProvider (same path as idle reload). */
+    public boolean lazyGeometry;
     /** Optional raw model (OpenYSM sync path) whose extra-wheel / display / GUI-image
      *  data is registered inside {@code applyPreParsed} so each synced model consumes a
      *  single main-thread task instead of a separate scheduled frame per model. Null for

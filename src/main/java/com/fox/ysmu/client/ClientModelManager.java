@@ -56,9 +56,12 @@ import it.unimi.dsi.fastutil.Pair;
 import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.molang.MolangParser;
 import software.bernie.geckolib3.file.AnimationFile;
+import software.bernie.geckolib3.geo.raw.pojo.Bone;
 import software.bernie.geckolib3.geo.raw.pojo.Converter;
 import software.bernie.geckolib3.geo.raw.pojo.ExtraInfo;
 import software.bernie.geckolib3.geo.raw.pojo.FormatVersion;
+import software.bernie.geckolib3.geo.raw.pojo.MinecraftGeometry;
+import software.bernie.geckolib3.geo.raw.pojo.ModelProperties;
 import software.bernie.geckolib3.geo.raw.pojo.RawGeoModel;
 import software.bernie.geckolib3.geo.raw.tree.RawGeometryTree;
 import software.bernie.geckolib3.geo.render.GeoBuilder;
@@ -360,16 +363,19 @@ public class ClientModelManager {
      * Parses model geometries/animations on the calling thread (should be a background thread).
      * Returns a bundle that {@link #applyPreParsed(PreParsedModelBundle)} applies on the main thread.
      *
-     * @param lazyAnimation when true, the heavy AnimationFile (KeyFrame graph) is NOT built
-     *     here — only animation NAMES are extracted (conditions, stats, GUI list). The full
-     *     file is restored on first use by the asset lifecycle framework
-     *     ({@code AssetManager.anim().get()} → {@code AnimationProvider}). Sync paths pass
-     *     true; the built-in default model stays eager.
+     * @param lazy when true, heavy per-model resources are deferred to first use: the
+     *     AnimationFile (KeyFrame graph) is NOT built and the GeoModel object graph is
+     *     NOT constructed. Sync only extracts light metadata (animation names + geometry
+     *     scale/extra/stats); the full resources are restored on first use by the asset
+     *     lifecycle framework ({@code AssetManager.anim().get()} /
+     *     {@code AssetManager.geo().get()}). Sync paths pass true; the built-in default
+     *     model stays eager.
      */
-    public static PreParsedModelBundle preParseModel(ModelData data, boolean lazyAnimation) {
+    public static PreParsedModelBundle preParseModel(ModelData data, boolean lazy) {
         ResourceLocation modelId = getModelId(data);
         PreParsedModelBundle bundle = new PreParsedModelBundle(modelId);
-        bundle.lazyAnimation = lazyAnimation;
+        bundle.lazyAnimation = lazy;
+        bundle.lazyGeometry = lazy;
 
         // Separate projectile sub-entity data from main model data
         Map<String, byte[]> mainModelMap = new LinkedHashMap<>();
@@ -391,9 +397,18 @@ public class ClientModelManager {
             }
         }
 
-        // HEAVY: Parse geometries on background thread
+        // HEAVY: Parse geometries on background thread. In lazy mode the heavy GeoModel
+        // object graph (GeoVertex/Vector3f/GeoQuad) is deferred to first use — sync only
+        // extracts scale/extra/stats from the JSON so SCALE_INFO/EXTRA_INFO/MODEL_STATS
+        // stay accurate without the ~1GB object graph. Projectile sub-geo stays eager
+        // (not AssetManager-managed, so it cannot be restored lazily).
         for (Map.Entry<String, byte[]> entry : mainModelMap.entrySet()) {
-            parseGeoToBundle(bundle, ModelIdUtil.getSubModelId(modelId, entry.getKey()), entry.getValue());
+            ResourceLocation geoId = ModelIdUtil.getSubModelId(modelId, entry.getKey());
+            if (bundle.lazyGeometry) {
+                parseGeoMetaToBundle(bundle, geoId, entry.getValue());
+            } else {
+                parseGeoToBundle(bundle, geoId, entry.getValue());
+            }
         }
         // HEAVY: Parse projectile geometries on background thread
         for (Map.Entry<String, byte[]> entry : projModelMap.entrySet()) {
@@ -407,7 +422,7 @@ public class ClientModelManager {
         // In lazy mode only names are extracted; the full KeyFrame graph is
         // deferred to first use (see AnimationProvider/parseAnimationFromCache).
         try {
-            parseAnimationsToBundle(bundle, modelId, data, lazyAnimation);
+            parseAnimationsToBundle(bundle, modelId, data, lazy);
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to parse animations for model {}: {}", modelId, e.getMessage());
         }
@@ -758,6 +773,58 @@ public class ClientModelManager {
             }
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to parse geometry " + geoId, e);
+        }
+    }
+
+    /**
+     * Background thread: light metadata pass for lazy geometry mode. Extracts scale,
+     * extra-info and bone/cube counts from the geometry JSON WITHOUT building the heavy
+     * GeoModel object graph (deferred to first use via AssetManager.geo(geoId).get() →
+     * GeoModelProvider, the same path as idle reload).
+     */
+    private static void parseGeoMetaToBundle(PreParsedModelBundle bundle, ResourceLocation geoId, byte[] data) {
+        try {
+            String modelJson = new String(data, StandardCharsets.UTF_8);
+            RawGeoModel rawModel = Converter.fromJsonString(modelJson);
+            if (rawModel.getFormatVersion() != FormatVersion.VERSION_1_12_0
+                && rawModel.getFormatVersion() != FormatVersion.VERSION_1_14_0
+                && rawModel.getFormatVersion() != FormatVersion.VERSION_1_21_0) {
+                ysmu.LOG.warn("YSM geometry {} has unsupported format version: {}",
+                    geoId, rawModel.getFormatVersion());
+                return;
+            }
+            MinecraftGeometry[] geometries = rawModel.getMinecraftGeometry();
+            MinecraftGeometry geometry = geometries != null && geometries.length > 0 ? geometries[0] : null;
+            if (geometry != null) {
+                ModelProperties props = geometry.getProperties();
+                if (props != null) {
+                    // 渲染缩放与 GUI 额外信息在同步期就绪，避免首用回退默认缩放/空白。
+                    bundle.scaleInfo.put(geoId,
+                        it.unimi.dsi.fastutil.Pair.of(props.getHeightScale(), props.getWidthScale()));
+                    ExtraInfo extra = props.getExtraInfo();
+                    if (extra != null) {
+                        bundle.extraInfo.put(geoId, extra);
+                        if (extra.getExtraAnimationNames() != null && extra.getExtraAnimationNames().length > 0) {
+                            bundle.extraAnimationNames.put(geoId, extra.getExtraAnimationNames());
+                        }
+                    }
+                }
+                // 统计：从扁平 DTO 数组计数，不构建对象图。
+                Bone[] bones = geometry.getBones();
+                int boneCount = bones == null ? 0 : bones.length;
+                int cubeCount = 0;
+                if (bones != null) {
+                    for (Bone bone : bones) {
+                        if (bone.getCubes() != null) {
+                            cubeCount += bone.getCubes().length;
+                        }
+                    }
+                }
+                bundle.totalBones += boneCount;
+                bundle.totalCubes += cubeCount;
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to extract geometry meta " + geoId, e);
         }
     }
 
