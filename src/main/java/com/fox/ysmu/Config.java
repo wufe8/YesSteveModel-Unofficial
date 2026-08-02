@@ -50,6 +50,9 @@ public class Config {
     public static boolean DEBUG_MODEL_SCAN = false;
     public static boolean DEBUG_MODEL_SYNC = false;
     public static boolean DEBUG_MODEL_PARSE = false;
+    /** 二进制 .ysm 解析细节（偏移地址/HEXDUMP/逐动画逐骨骼日志），默认关，避免刷屏。
+     *  仅在 DEBUG_MODEL_LOAD 为 true 时生效，独立于 DEBUG_MODEL_PARSE。 */
+    public static boolean DEBUG_MODEL_BINARY = false;
     public static boolean DEBUG_MODEL_RENDER = false;
     public static boolean DEBUG_ANIMATION = false;
     public static boolean DEBUG_SOUND = false;
@@ -141,7 +144,8 @@ public class Config {
         DEBUG_MODEL_LOAD = syncBoolean("DebugModelLoad", "debug", DEBUG_MODEL_LOAD, "Enable model loading/debug logging ([YSMU-MODEL]). Master switch; sub-areas are gated by DebugModelScan/Sync/Parse/Render", load);
         DEBUG_MODEL_SCAN = syncBoolean("DebugModelScan", "debug", DEBUG_MODEL_SCAN, "Server-side model discovery/cache build logging (needs DebugModelLoad)", load);
         DEBUG_MODEL_SYNC = syncBoolean("DebugModelSync", "debug", DEBUG_MODEL_SYNC, "Client model sync protocol logging (needs DebugModelLoad)", load);
-        DEBUG_MODEL_PARSE = syncBoolean("DebugModelParse", "debug", DEBUG_MODEL_PARSE, "Model binary/JSON parse & registration logging (needs DebugModelLoad)", load);
+        DEBUG_MODEL_PARSE = syncBoolean("DebugModelParse", "debug", DEBUG_MODEL_PARSE, "Model JSON parse & registration logging (needs DebugModelLoad)", load);
+        DEBUG_MODEL_BINARY = syncBoolean("DebugModelBinary", "debug", DEBUG_MODEL_BINARY, "Binary .ysm parse detail logging: offsets/HEXDUMP/per-anim/per-bone (needs DebugModelLoad). Default off to avoid log spam on large libraries.", load);
         DEBUG_MODEL_RENDER = syncBoolean("DebugModelRender", "debug", DEBUG_MODEL_RENDER, "Model render/arrow/bone-dump logging (needs DebugModelLoad)", load);
         DEBUG_ANIMATION = syncBoolean("DebugAnimation", "debug", DEBUG_ANIMATION, "Enable animation playback debug logging ([YSMU-ANIM])", load);
         DEBUG_SOUND = syncBoolean("DebugSound", "debug", DEBUG_SOUND, "Enable sound cache/playback debug logging ([YSM Sound])", load);

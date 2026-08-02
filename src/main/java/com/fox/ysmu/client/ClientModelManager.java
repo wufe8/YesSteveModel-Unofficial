@@ -1542,10 +1542,11 @@ public class ClientModelManager {
             int pngH = readPngHeight(texData);
             float areaPct = (bbox[2] - bbox[0]) * (bbox[3] - bbox[1]) * 100f;
             String pngDim = (pngW > 0 && pngH > 0) ? (pngW + "x" + pngH) : "?";
-            ysmu.LOG.info(
-                "[YSMU-TEX] UV audit {} ({}) declared={}x{} uv=[{:.3f},{:.3f}]x[{:.3f},{:.3f}] used~{}x{}px png={} area={:.1f}%",
+            // Use String.format — log4j2 {} placeholders do not support {:.3f}.
+            ysmu.LOG.info(String.format(
+                "[YSMU-TEX] UV audit %s (%s) declared=%dx%d uv=[%.3f,%.3f]x[%.3f,%.3f] used~%dx%dpx png=%s area=%.1f%%",
                 modelId, entry.getKey(), (int) declaredW, (int) declaredH,
-                bbox[0], bbox[2], bbox[1], bbox[3], usedPxW, usedPxH, pngDim, areaPct);
+                bbox[0], bbox[2], bbox[1], bbox[3], usedPxW, usedPxH, pngDim, areaPct));
         }
     }
 

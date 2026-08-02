@@ -283,6 +283,50 @@ public final class OpenYsmModelSyncClient {
             raw.modelId = context.modelId;
             ResourceLocation modelId = ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, context.modelId));
 
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_BINARY) {
+                // Diagnose the "no mainModel geometry after OpenYSM deserialization" bug:
+                // service side parses the folder model fine (isBridgeable passes), but the
+                // client-side YSMBinaryDeserializer often leaves mainModel null for the
+                // built-in legacy folder models. Print what actually came out of the binary.
+                RawYsmModel.RawMainEntity me = raw.mainEntity;
+                String geoTypes = "";
+                if (me != null) {
+                    StringBuilder sb = new StringBuilder();
+                    for (RawYsmModel.RawGeometry g : new RawYsmModel.RawGeometry[] { me.mainModel, me.armModel }) {
+                        if (g == null) {
+                            sb.append("null,");
+                        } else {
+                            int cubes = 0, faces = 0;
+                            for (RawYsmModel.RawBone b : g.bones) {
+                                cubes += b.cubes != null ? b.cubes.size() : 0;
+                                for (RawYsmModel.RawCube c : b.cubes) {
+                                    faces += c.faces != null ? c.faces.size() : 0;
+                                }
+                            }
+                            sb.append("type=").append(g.modelType)
+                                .append(",bones=").append(g.bones != null ? g.bones.size() : 0)
+                                .append(",cubes=").append(cubes)
+                                .append(",faces=").append(faces)
+                                .append(",hasSrcJson=").append(g.sourceJson != null)
+                                .append(",sha=").append(g.sha256 != null ? g.sha256.substring(0, Math.min(8, g.sha256.length())) : "null")
+                                .append(',');
+                        }
+                    }
+                    geoTypes = sb.toString();
+                }
+                int geoCount = 0;
+                if (me != null) {
+                    geoCount = (me.mainModel != null ? 1 : 0) + (me.armModel != null ? 1 : 0);
+                }
+                ysmu.LOG.info("[YSMU-MODEL] OpenYSM deser check {}: main={}, arm={}, geoCount={}, types=[{}], subCount={}",
+                    context.modelId,
+                    me != null && me.mainModel != null,
+                    me != null && me.armModel != null,
+                    geoCount,
+                    geoTypes,
+                    raw.projectiles != null ? raw.projectiles.size() : 0);
+            }
+
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
                 // Even when the model can't be bridged to legacy ModelData, we still
                 // register its extra wheel data and projectile sub-entity models (so
