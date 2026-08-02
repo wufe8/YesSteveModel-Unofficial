@@ -1263,29 +1263,60 @@ public class ClientModelManager {
      */
     @Nullable
     public static ModelData loadLegacyModelData(ResourceLocation mainModelId) {
+        if (OPENYSM_CACHE_FORMAT.contains(mainModelId)) {
+            RawYsmModel raw = loadRawModelFromCache(mainModelId);
+            if (raw == null) return null;
+            try {
+                return com.fox.ysmu.model.resource.RawYsmModelAdapter.toLegacyModelData(raw, raw.modelId);
+            } catch (Exception e) {
+                ysmu.LOG.warn("Failed to bridge model data for {}: {}", mainModelId, e.getMessage());
+                return null;
+            }
+        }
         String path = CACHED_MODEL_MD5.get(mainModelId);
         if (path == null || path.isEmpty()) return null;
         try {
             java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(path).toFile();
             if (!cacheFile.isFile()) return null;
             byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
-            if (OPENYSM_CACHE_FORMAT.contains(mainModelId)) {
-                byte[] clearBytes = com.fox.ysmu.client.sync.OpenYsmModelSyncClient.readClientCacheToClearBytes(fileBytes);
-                if (clearBytes == null) return null;
-                try (com.fox.ysmu.model.resource.YSMBinaryDeserializer deserializer =
-                         new com.fox.ysmu.model.resource.YSMBinaryDeserializer(clearBytes, 32)) {
-                    com.fox.ysmu.model.resource.pojo.RawYsmModel raw = deserializer.deserializeKeepOpen();
-                    deserializer.parseYSMFooter(raw);
-                    String modelId = com.fox.ysmu.util.ModelIdUtil.getModelIdFromMainId(mainModelId).getResourcePath();
-                    raw.modelId = modelId;
-                    return com.fox.ysmu.model.resource.RawYsmModelAdapter.toLegacyModelData(raw, modelId);
-                }
-            }
             return com.fox.ysmu.data.EncryptTools.decryptModel(
                 com.fox.ysmu.util.UuidUtils.asBytes(PASSWORD_UUID), PASSWORD, fileBytes,
                 mainModelId + " (" + path + ")");
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load model data for {}: {}", mainModelId, e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 后台线程：从加密客户端缓存解密并反序列化模型（RawYsmModel）。
+     * 供按需懒加载使用（geo/anim/sound 首次使用）；返回 null 表示缺失/损坏。
+     * legacy 格式（EncryptTools）不携带 soundFiles，返回 null。
+     *
+     * @param mainModelId 主模型 id（如 "ysmu:model_id/main"）
+     */
+    @Nullable
+    public static RawYsmModel loadRawModelFromCache(ResourceLocation mainModelId) {
+        if (!OPENYSM_CACHE_FORMAT.contains(mainModelId)) {
+            return null;
+        }
+        String path = CACHED_MODEL_MD5.get(mainModelId);
+        if (path == null || path.isEmpty()) return null;
+        try {
+            java.io.File cacheFile = ServerModelManager.CACHE_CLIENT.resolve(path).toFile();
+            if (!cacheFile.isFile()) return null;
+            byte[] fileBytes = org.apache.commons.io.FileUtils.readFileToByteArray(cacheFile);
+            byte[] clearBytes = com.fox.ysmu.client.sync.OpenYsmModelSyncClient.readClientCacheToClearBytes(fileBytes);
+            if (clearBytes == null) return null;
+            try (com.fox.ysmu.model.resource.YSMBinaryDeserializer deserializer =
+                     new com.fox.ysmu.model.resource.YSMBinaryDeserializer(clearBytes, 32)) {
+                com.fox.ysmu.model.resource.pojo.RawYsmModel raw = deserializer.deserializeKeepOpen();
+                deserializer.parseYSMFooter(raw);
+                raw.modelId = com.fox.ysmu.util.ModelIdUtil.getModelIdFromMainId(mainModelId).getResourcePath();
+                return raw;
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to load raw model from cache for {}: {}", mainModelId, e.getMessage());
             return null;
         }
     }

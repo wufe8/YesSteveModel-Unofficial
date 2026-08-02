@@ -30,7 +30,10 @@ import com.fox.ysmu.ysmu;
 public final class YSMSoundManager {
 
     private static final Path SOUND_CACHE = ServerModelManager.CACHE.resolve("sounds");
-    private static final Map<String, Path> SOUND_FILES = new ConcurrentHashMap<>();
+    /** 模型自定义音效注册表：modelKey::name → 主模型 id（按需解密的来源）。 */
+    private static final Map<String, ResourceLocation> SOUND_SOURCES = new ConcurrentHashMap<>();
+    /** 已按需解密的模型音效字节：modelKey::name → OGG bytes（内存驻留，不落盘明文）。 */
+    private static final Map<String, byte[]> SOUND_FILES = new ConcurrentHashMap<>();
     /** soundName → SoundSystem source name */
     private static final Map<String, String> ACTIVE_SOURCES = new ConcurrentHashMap<>();
     /** GeckoLib controller name → last sound name triggered by its keyframe */
@@ -66,26 +69,17 @@ public final class YSMSoundManager {
 
     public static void registerModelSounds(ResourceLocation modelId, RawYsmModel raw) {
         if (raw.soundFiles == null || raw.soundFiles.isEmpty()) return;
-        try { Files.createDirectories(SOUND_CACHE); } catch (IOException e) {
-            ysmu.LOG.warn("Failed to create sound cache", e);
-            return;
-        }
-        String modelKey = modelId.toString();
+        String modelKey = modelId.toString(); // modelId 为 main id
         for (Map.Entry<String, RawYsmModel.RawDataFile> e : raw.soundFiles.entrySet()) {
             String name = e.getKey();
             RawYsmModel.RawDataFile sf = e.getValue();
             if (sf == null || sf.data == null || sf.data.length == 0) continue;
-            String hash = sf.hash.length() > 8 ? sf.hash.substring(0, 8) : sf.hash;
-            String file = sanitize(name) + "_" + hash + ".ogg";
-            Path path = SOUND_CACHE.resolve(file);
-            try {
-                if (!Files.exists(path)) Files.write(path, sf.data);
-                // Use modelKey + "::" + name as the key to prevent sound name
-                // collisions between different models (e.g. both having "kk2" or "使用").
-                SOUND_FILES.put(modelKey + "::" + name, path);
-                if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] cached '{}'::'{}' → {} ({} bytes)", modelKey, name, file, sf.data.length);
-            } catch (IOException ex) {
-                ysmu.LOG.warn("Failed to cache sound {}: {}", name, ex.getMessage());
+            // 不再写明文 .ogg 到磁盘（防私有模型音效泄漏）：只记录「音效名 → 主模型」，
+            // 首次播放时从加密客户端缓存按需解密（getSoundBytes → loadRawModelFromCache），
+            // 之后字节驻留内存。磁盘上只保留加密缓存。
+            SOUND_SOURCES.put(modelKey + "::" + name, modelId);
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND] registered '{}'::'{}' (lazy, {} bytes)", modelKey, name, sf.data.length);
             }
         }
     }
@@ -137,38 +131,41 @@ public final class YSMSoundManager {
             ysmu.LOG.info("[YSMU-SOUND] playSound: '{}' vol={} pitch={} model={}", soundName, volume, pitch, modelId);
         }
 
-        // Step 1 — 模型自定义音效（按 modelId::name 隔离，避免跨模型同名冲突）
+        // Step 1 — 模型自定义音效（按 modelId::name 隔离，避免跨模型同名冲突；
+        // 首次播放时从加密客户端缓存按需解密）
         String modelKey = modelId != null ? modelId.toString() : null;
-        Path file = modelKey != null ? SOUND_FILES.get(modelKey + "::" + soundName) : null;
-        if (file == null && modelKey != null) {
-            for (Map.Entry<String, Path> e : SOUND_FILES.entrySet()) {
-                String key = e.getKey();
-                // Only match sounds belonging to this model
-                if (key.startsWith(modelKey + "::")) {
-                    String fileName = e.getValue().getFileName().toString();
-                    if (fileName.equals(soundName) || fileName.equalsIgnoreCase(soundName)) {
-                        file = e.getValue();
-                        break;
+        byte[] sound = null;
+        if (modelKey != null) {
+            sound = getSoundBytes(modelKey + "::" + soundName);
+            if (sound == null) {
+                for (Map.Entry<String, ResourceLocation> e : SOUND_SOURCES.entrySet()) {
+                    String key = e.getKey();
+                    // Only match sounds belonging to this model
+                    if (key.startsWith(modelKey + "::")) {
+                        String snd = namePartOf(key);
+                        if (snd.equals(soundName) || snd.equalsIgnoreCase(soundName)) {
+                            sound = getSoundBytes(key);
+                            break;
+                        }
                     }
                 }
             }
-        }
-        if (file == null && modelKey == null) {
+        } else {
             // Legacy path (no modelId, e.g. debug command)
-            file = SOUND_FILES.get(soundName);
-            if (file == null) {
-                for (Map.Entry<String, Path> e : SOUND_FILES.entrySet()) {
-                    if (e.getValue().getFileName().toString().equals(soundName)
-                        || e.getValue().getFileName().toString().equalsIgnoreCase(soundName)) {
-                        file = e.getValue();
+            sound = getSoundBytes(soundName);
+            if (sound == null) {
+                for (String key : SOUND_SOURCES.keySet()) {
+                    String snd = namePartOf(key);
+                    if (snd.equals(soundName) || snd.equalsIgnoreCase(soundName)) {
+                        sound = getSoundBytes(key);
                         break;
                     }
                 }
             }
         }
-        if (file != null) {
+        if (sound != null) {
             stopSound(soundName);
-            playOggDirect(file, volume, pitch);
+            playOggDirect(sound, soundName, volume, pitch);
             return;
         }
 
@@ -302,14 +299,41 @@ public final class YSMSoundManager {
         CONTROLLER_SOUNDS.clear();
     }
 
-    /** Returns an unmodifiable view of all registered sound files (name → path). */
-    public static Map<String, Path> getSoundFiles() {
+    /** Returns an unmodifiable view of all registered sounds (name → in-memory OGG bytes). */
+    public static Map<String, byte[]> getSoundFiles() {
         return java.util.Collections.unmodifiableMap(SOUND_FILES);
     }
 
-    /** 清理注册的音效文件并停止播放 */
+    /** 从 "modelKey::name" 键中取音效名（无 "::" 时返回整串）。 */
+    private static String namePartOf(String key) {
+        int idx = key.indexOf("::");
+        return idx >= 0 ? key.substring(idx + 2) : key;
+    }
+
+    /**
+     * 取音效字节：先查内存缓存；未加载则从加密客户端缓存按需解密该模型并提取
+     * 全部音效（一次解密，多音效共用），与 geo/anim 懒加载同源（loadRawModelFromCache）。
+     */
+    private static byte[] getSoundBytes(String key) {
+        byte[] bytes = SOUND_FILES.get(key);
+        if (bytes != null) return bytes;
+        ResourceLocation mainId = SOUND_SOURCES.get(key);
+        if (mainId == null) return null;
+        RawYsmModel raw = com.fox.ysmu.client.ClientModelManager.loadRawModelFromCache(mainId);
+        if (raw == null || raw.soundFiles == null || raw.soundFiles.isEmpty()) return null;
+        String prefix = key.contains("::") ? key.substring(0, key.indexOf("::") + 2) : key;
+        for (Map.Entry<String, RawYsmModel.RawDataFile> e : raw.soundFiles.entrySet()) {
+            RawYsmModel.RawDataFile sf = e.getValue();
+            if (sf == null || sf.data == null || sf.data.length == 0) continue;
+            SOUND_FILES.put(prefix + e.getKey(), sf.data);
+        }
+        return SOUND_FILES.get(key);
+    }
+
+    /** 清理注册的音效并停止播放 */
     public static void clear() {
         stopAll();
+        SOUND_SOURCES.clear();
         SOUND_FILES.clear();
         sndSystem = null;
         sndSystemSearched = false;
@@ -384,28 +408,44 @@ public final class YSMSoundManager {
      *  Vorbis data (e.g. OGG FLAC/Opus) will crash CodecJOrbis. */
     private static boolean isValidOgg(Path path) {
         try (java.io.InputStream is = java.nio.file.Files.newInputStream(path)) {
-            byte[] hdr = new byte[4];
-            if (is.read(hdr) != 4 || hdr[0] != 'O' || hdr[1] != 'g' || hdr[2] != 'g' || hdr[3] != 'S')
-                return false;
-            // Skip stream_structure_version (1), header_type_flag (1), granule_position (8),
-            // bitstream_serial_number (4), page_sequence_number (4), page_checksum (4) = 22 bytes
-            long skipped = is.skip(22);
-            if (skipped < 22) return false;
-            int pageSegments = is.read();
-            if (pageSegments < 0) return false;
-            // Skip segment table (pageSegments bytes)
-            skipped = is.skip(pageSegments);
-            if (skipped < pageSegments) return false;
-            // First packet should be Vorbis identification header: packet_type=1, "vorbis"
-            int packetType = is.read();
-            if (packetType != 1) return false;
-            byte[] vorbis = new byte[6];
-            return is.read(vorbis) == 6
-                && vorbis[0] == 'v' && vorbis[1] == 'o' && vorbis[2] == 'r'
-                && vorbis[3] == 'b' && vorbis[4] == 'i' && vorbis[5] == 's';
+            return isValidOggStream(is);
         } catch (IOException e) {
             return false;
         }
+    }
+
+    private static boolean isValidOgg(byte[] data) {
+        try (java.io.InputStream is = new java.io.ByteArrayInputStream(data)) {
+            return isValidOggStream(is);
+        } catch (IOException e) {
+            return false;
+        }
+    }
+
+    /** Check that the stream is an OGG container with Vorbis audio.
+     *  Reads the OGG page header + segment table, then looks for "vorbis"
+     *  at the start of the first packet. Files that pass OggS check but lack
+     *  Vorbis data (e.g. OGG FLAC/Opus) will crash CodecJOrbis. */
+    private static boolean isValidOggStream(java.io.InputStream is) throws IOException {
+        byte[] hdr = new byte[4];
+        if (is.read(hdr) != 4 || hdr[0] != 'O' || hdr[1] != 'g' || hdr[2] != 'g' || hdr[3] != 'S')
+            return false;
+        // Skip stream_structure_version (1), header_type_flag (1), granule_position (8),
+        // bitstream_serial_number (4), page_sequence_number (4), page_checksum (4) = 22 bytes
+        long skipped = is.skip(22);
+        if (skipped < 22) return false;
+        int pageSegments = is.read();
+        if (pageSegments < 0) return false;
+        // Skip segment table (pageSegments bytes)
+        skipped = is.skip(pageSegments);
+        if (skipped < pageSegments) return false;
+        // First packet should be Vorbis identification header: packet_type=1, "vorbis"
+        int packetType = is.read();
+        if (packetType != 1) return false;
+        byte[] vorbis = new byte[6];
+        return is.read(vorbis) == 6
+            && vorbis[0] == 'v' && vorbis[1] == 'o' && vorbis[2] == 'r'
+            && vorbis[3] == 'b' && vorbis[4] == 'i' && vorbis[5] == 's';
     }
 
     /** 通过 SoundSystem 直接播放 OGG */
@@ -477,22 +517,68 @@ public final class YSMSoundManager {
             try { ss.getClass().getMethod("setPitch", String.class, float.class).invoke(ss, srcName, pitch); } catch (NoSuchMethodException ignored) {}
             try { ss.getClass().getMethod("setVolume", String.class, float.class).invoke(ss, srcName, volume); } catch (NoSuchMethodException ignored) {}
             ss.getClass().getMethod("play", String.class).invoke(ss, srcName);
-
-            // Track source (if we can get the sound name from the oggPath)
-            String soundName = findSoundNameByPath(oggPath);
-            if (soundName != null) {
-                ACTIVE_SOURCES.put(soundName, srcName);
-            }
             if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] playing '{}' as {}", oggPath.getFileName(), srcName);
         } catch (Exception e) {
             ysmu.LOG.warn("[YSMU-SOUND] Failed to play: {}", e.getMessage());
         }
     }
 
-    private static String findSoundNameByPath(Path oggPath) {
-        return SOUND_FILES.entrySet().stream()
-            .filter(e -> e.getValue().equals(oggPath))
-            .map(Map.Entry::getKey)
-            .findFirst().orElse(null);
+    /**
+     * 通过 SoundSystem 播放内存中的 OGG 字节（模型音效专用，不落盘明文）。
+     * 用自定义 URLStreamHandler 构造一个带 ".ogg" 路径的 "file:" URL，
+     * openStream() 返回内存字节流——下游（CodecJOrbis 按扩展名选择、OGG 头校验）
+     * 与文件播放路径完全一致。
+     */
+    private static void playOggDirect(byte[] data, String soundName, float volume, float pitch) {
+        if (data == null || data.length == 0) return;
+        Object ss = resolveSndSystem();
+        if (ss == null) return;
+        // Skip invalid OGG data – passing them to CodecJOrbis can freeze the
+        // SoundSystem background thread.
+        if (!isValidOgg(data)) {
+            ysmu.LOG.warn("[YSMU-SOUND] skipping invalid in-memory OGG '{}' ({} bytes)", soundName, data.length);
+            return;
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc.thePlayer == null) return; // world not fully loaded yet
+        try {
+            String srcName = "ysm_" + sourceCounter.incrementAndGet();
+            float px = (float) mc.thePlayer.posX;
+            float py = (float) mc.thePlayer.posY;
+            float pz = (float) mc.thePlayer.posZ;
+            final byte[] payload = data;
+            java.net.URL url = new java.net.URL("file", "", -1,
+                "/ysmu_sounds/" + sanitize(soundName) + "_" + Integer.toHexString(data.length) + ".ogg",
+                new java.net.URLStreamHandler() {
+                    @Override
+                    protected java.net.URLConnection openConnection(java.net.URL u) {
+                        return new java.net.URLConnection(u) {
+                            @Override public void connect() {}
+                            @Override public int getContentLength() { return payload.length; }
+                            @Override public java.io.InputStream getInputStream() {
+                                return new java.io.ByteArrayInputStream(payload);
+                            }
+                        };
+                    }
+                });
+            try {
+                // boolean参数: priority=false, toLoop=false → 不循环播放
+                ss.getClass().getMethod("newSource", boolean.class, String.class,
+                    java.net.URL.class, String.class, boolean.class, float.class,
+                    float.class, float.class, int.class, float.class)
+                    .invoke(ss, false, srcName, url, url.toString(), false, px, py, pz, 0, 16f);
+            } catch (NoSuchMethodException e) {
+                ysmu.LOG.warn("[YSMU-SOUND] newSource(URL) not available");
+                return;
+            }
+            // Set pitch/volume before play (Minecraft's order)
+            try { ss.getClass().getMethod("setPitch", String.class, float.class).invoke(ss, srcName, pitch); } catch (NoSuchMethodException ignored) {}
+            try { ss.getClass().getMethod("setVolume", String.class, float.class).invoke(ss, srcName, volume); } catch (NoSuchMethodException ignored) {}
+            ss.getClass().getMethod("play", String.class).invoke(ss, srcName);
+            ACTIVE_SOURCES.put(soundName, srcName);
+            if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] playing in-memory '{}' as {}", soundName, srcName);
+        } catch (Exception e) {
+            ysmu.LOG.warn("[YSMU-SOUND] Failed to play: {}", e.getMessage());
+        }
     }
 }

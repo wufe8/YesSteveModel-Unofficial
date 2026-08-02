@@ -188,14 +188,13 @@ public class YsmCommand extends CommandBase {
         }
         if (StringUtils.isBlank(soundName)) {
             // List all cached sounds
-            Map<String, java.nio.file.Path> sounds = com.fox.ysmu.client.audio.YSMSoundManager.getSoundFiles();
+            Map<String, byte[]> sounds = com.fox.ysmu.client.audio.YSMSoundManager.getSoundFiles();
             if (sounds.isEmpty()) {
                 player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r No cached sounds."));
             } else {
-                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cached sounds:"));
-                for (Map.Entry<String, java.nio.file.Path> e : sounds.entrySet()) {
-                    String fn = e.getValue().getFileName().toString();
-                    player.addChatMessage(new ChatComponentText("  §e" + e.getKey() + "§r → §7" + fn));
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cached sounds (in-memory):"));
+                for (Map.Entry<String, byte[]> e : sounds.entrySet()) {
+                    player.addChatMessage(new ChatComponentText("  §e" + e.getKey() + "§r → §7" + e.getValue().length + " bytes"));
                 }
                 player.addChatMessage(new ChatComponentText("§6Use §e/ysm playsound <name>§6 to play one."));
             }
