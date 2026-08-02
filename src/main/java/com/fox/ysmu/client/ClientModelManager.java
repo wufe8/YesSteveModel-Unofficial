@@ -1313,6 +1313,9 @@ public class ClientModelManager {
                 com.fox.ysmu.model.resource.pojo.RawYsmModel raw = deserializer.deserializeKeepOpen();
                 deserializer.parseYSMFooter(raw);
                 raw.modelId = com.fox.ysmu.util.ModelIdUtil.getModelIdFromMainId(mainModelId).getResourcePath();
+                // 后台线程预暖音效：模型首次使用（geo/anim 懒加载）时顺带把音效字节
+                // 填入内存缓存，使首播不再在主线程解密（消除 ~0.5s 卡顿）。
+                com.fox.ysmu.client.audio.YSMSoundManager.cacheModelSounds(mainModelId, raw);
                 return raw;
             }
         } catch (Exception e) {

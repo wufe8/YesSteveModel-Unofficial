@@ -311,8 +311,26 @@ public final class YSMSoundManager {
     }
 
     /**
+     * 后台线程预暖（geo/anim 懒加载同源解密时调用）：把从加密客户端缓存解出的
+     * 模型音效字节填入内存缓存，首次播放不再走主线程解密（消除 ~0.5s 首播卡顿）。
+     */
+    public static void cacheModelSounds(ResourceLocation mainId, RawYsmModel raw) {
+        if (raw == null || raw.soundFiles == null || raw.soundFiles.isEmpty()) return;
+        String modelKey = mainId.toString();
+        for (Map.Entry<String, RawYsmModel.RawDataFile> e : raw.soundFiles.entrySet()) {
+            RawYsmModel.RawDataFile sf = e.getValue();
+            if (sf == null || sf.data == null || sf.data.length == 0) continue;
+            String key = modelKey + "::" + e.getKey();
+            SOUND_FILES.put(key, sf.data);
+            SOUND_SOURCES.put(key, mainId);
+        }
+    }
+
+    /**
      * 取音效字节：先查内存缓存；未加载则从加密客户端缓存按需解密该模型并提取
-     * 全部音效（一次解密，多音效共用），与 geo/anim 懒加载同源（loadRawModelFromCache）。
+     * 全部音效（一次解密，多音效共用）。正常路径下该模型首次使用时 geo/anim 懒加载
+     * 已预暖（cacheModelSounds），此处仅在边缘场景（如 /ysm playsound 直接播放
+     * 从未使用过的模型）触发。
      */
     private static byte[] getSoundBytes(String key) {
         byte[] bytes = SOUND_FILES.get(key);
