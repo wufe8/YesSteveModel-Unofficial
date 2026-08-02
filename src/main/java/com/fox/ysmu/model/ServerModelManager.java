@@ -31,7 +31,6 @@ import com.fox.ysmu.model.format.FolderFormat;
 import com.fox.ysmu.model.format.OpenYsmFormat;
 import com.fox.ysmu.model.format.OpenYsmSyncInfo;
 import com.fox.ysmu.model.format.ServerModelInfo;
-import com.fox.ysmu.model.format.YsmFormat;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.RequestSyncModel;
@@ -186,12 +185,12 @@ public final class ServerModelManager {
     }
 
     private static void rebuildModelCaches() {
-        // 收集所有模型处理任务
+        // 统一模型加载：唯一的服务端扫描器 OpenYsmFormat 负责把文件夹与全部
+        // .ysm（BOM+YSGP 新版 / 裸 YSGP 旧版）统一转成 OpenYSM 同步缓存。
+        // 旧版 YsmFormat/FolderFormat 扫描器已并入其中，不再单独运行。
         List<Runnable> tasks = new ArrayList<>();
         OpenYsmFormat.collectTasks(BUILT, tasks);
         OpenYsmFormat.collectTasks(CUSTOM, tasks);
-        collectLegacyTasks(BUILT, tasks);
-        collectLegacyTasks(CUSTOM, tasks);
 
         if (tasks.isEmpty()) return;
 
@@ -212,11 +211,6 @@ public final class ServerModelManager {
                 + "CACHE_NAME_INFO={}, RAW_MODEL_INFO={}, OPEN_YSM_SYNC_INFO={}",
                 tasks.size(), CACHE_NAME_INFO.size(), RAW_MODEL_INFO.size(), OPEN_YSM_SYNC_INFO.size());
         }
-    }
-
-    private static void collectLegacyTasks(Path rootPath, List<Runnable> tasks) {
-        YsmFormat.collectTasks(rootPath, tasks);
-        FolderFormat.collectTasks(rootPath, tasks);
     }
 
     /*====== 以下方法已废弃：模型已迁移到 builtin/ ======

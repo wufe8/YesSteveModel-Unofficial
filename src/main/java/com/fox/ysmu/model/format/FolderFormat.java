@@ -10,11 +10,8 @@ import java.util.Collection;
 import java.util.Map;
 
 import org.apache.commons.io.FileUtils;
-import org.apache.commons.io.filefilter.FileFileFilter;
-import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
-import com.fox.ysmu.Config;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.util.ModelIdUtil;
 import com.fox.ysmu.ysmu;
@@ -26,6 +23,11 @@ import com.google.gson.JsonParser;
 import software.bernie.geckolib3.geo.raw.pojo.Converter;
 import software.bernie.geckolib3.geo.raw.pojo.RawGeoModel;
 
+/**
+ * 文件夹格式模型的读取辅助（ModelData 视图），供客户端加载默认模型等场景使用。
+ * <p>服务端模型扫描已统一到 {@link OpenYsmFormat}（唯一加载器）；本类不再承担
+ * 扫描/缓存职责，只保留文件夹 → ModelData 的读取与 reload 缓存开关。
+ */
 public final class FolderFormat {
 
     /** Cache entry: file bytes + last-modified timestamp for staleness check. */
@@ -56,105 +58,6 @@ public final class FolderFormat {
 
     public static void clearFileCache() {
         FILE_CACHE.clear();
-    }
-
-    public static void cacheAllModels(Path rootPath) {
-        File root = rootPath.toFile();
-        File[] dirs = root.listFiles(file -> file.isDirectory());
-        if (dirs == null) {
-            return;
-        }
-        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-            ysmu.LOG.info("[YSMU-MODEL] FolderFormat scanning {}: found {} subdirectories", rootPath, dirs.length);
-        }
-        for (File dir : dirs) {
-            String dirName = dir.getName();
-            boolean noMainModelFile = true;
-            boolean noArmModelFile = true;
-            boolean noTextureFile = true;
-            Collection<File> files = FileUtils.listFiles(
-                dir,
-                FileFileFilter.FILE,
-                null);
-            for (File file : files) {
-                String fileName = file.getName();
-                if (MAIN_MODEL_FILE_NAME.equals(fileName) && isNotBlankFile(file)) {
-                    noMainModelFile = false;
-                }
-                if (ARM_MODEL_FILE_NAME.equals(fileName) && isNotBlankFile(file)) {
-                    noArmModelFile = false;
-                }
-                if (fileName.endsWith(".png")) {
-                    noTextureFile = false;
-                }
-            }
-            if (noMainModelFile) {
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] FolderFormat: {} skipped (no main.json)", dirName);
-                }
-                continue;
-            }
-            if (noArmModelFile) {
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] FolderFormat: {} skipped (no arm.json)", dirName);
-                }
-                continue;
-            }
-            if (noTextureFile) {
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] FolderFormat: {} skipped (no .png texture)", dirName);
-                }
-                continue;
-            }
-            String modelId = ModelIdUtil.getInternalModelId(dirName);
-            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                ysmu.LOG.info("[YSMU-MODEL] FolderFormat caching: {} -> modelId={}", dirName, modelId);
-            }
-            ServerModelInfo info = cacheModel(dir.toPath(), modelId);
-            if (info != null) {
-                CACHE_NAME_INFO.put(modelId, info);
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] FolderFormat {}: cached to CACHE_NAME_INFO", modelId);
-                }
-            }
-        }
-    }
-
-    /**
-     * Collect legacy folder model-processing Runnable tasks for parallel execution.
-     */
-    public static void collectTasks(Path rootPath, java.util.List<java.lang.Runnable> tasks) {
-        java.io.File root = rootPath.toFile();
-        java.io.File[] dirs = root.listFiles(java.io.File::isDirectory);
-        if (dirs == null) return;
-        for (java.io.File dir : dirs) {
-            String dirName = dir.getName();
-            boolean noMain = true, noArm = true, noTex = true;
-            java.util.Collection<java.io.File> files = org.apache.commons.io.FileUtils.listFiles(dir, org.apache.commons.io.filefilter.FileFileFilter.FILE, null);
-            for (java.io.File f : files) {
-                String fn = f.getName();
-                if (MAIN_MODEL_FILE_NAME.equals(fn) && f.length() > 0) noMain = false;
-                if (ARM_MODEL_FILE_NAME.equals(fn) && f.length() > 0) noArm = false;
-                if (fn.endsWith(".png")) noTex = false;
-            }
-            if (noMain || noArm || noTex) continue;
-            String modelId = ModelIdUtil.getInternalModelId(dirName);
-            java.nio.file.Path dirPath = dir.toPath();
-            tasks.add(() -> {
-                ServerModelInfo info = cacheModel(dirPath, modelId);
-                if (info != null) CACHE_NAME_INFO.put(modelId, info);
-            });
-        }
-    }
-
-    private static ServerModelInfo cacheModel(Path modelPath, String modelId) {
-        try {
-            ModelData data = getModelDataFromPath(modelPath, modelId);
-            return ModelCacheWriter.write(data);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-        return null;
     }
 
     @NotNull
@@ -331,15 +234,5 @@ public final class FolderFormat {
 
         FILE_CACHE.put(filePath, new CacheEntry(result, currentLastMod));
         return result;
-    }
-
-    private static boolean isNotBlankFile(File file) {
-        try {
-            String fileText = FileUtils.readFileToString(file, StandardCharsets.UTF_8);
-            return StringUtils.isNoneBlank(fileText);
-        } catch (IOException e) {
-            e.printStackTrace();
-        }
-        return false;
     }
 }
