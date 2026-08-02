@@ -199,12 +199,15 @@ public class ClientModelManager {
         new java.util.concurrent.ConcurrentLinkedQueue<>();
 
     /** True when a bundle's base model id is the configured default model
-     *  (e.g. "default" → ysmu:default/main). */
+     *  (e.g. "default" → ysmu:default/main). Uses {@link
+     *  ModelIdUtil#getModelIdFromSubId} which strips any trailing "/sub"
+     *  segment safely — {@link ModelIdUtil#getModelIdFromMainId} assumes a
+     *  "/main" suffix and throws on ids like ysmu:default (no sub-segment). */
     private static boolean isDefaultModelBundle(ResourceLocation modelId) {
         if (modelId == null) {
             return false;
         }
-        ResourceLocation base = ModelIdUtil.getModelIdFromMainId(modelId);
+        ResourceLocation base = ModelIdUtil.getModelIdFromSubId(modelId);
         return ysmu.MODID.equals(base.getResourceDomain())
             && Config.DEFAULT_MODEL_ID.equals(base.getResourcePath());
     }
@@ -237,6 +240,13 @@ public class ClientModelManager {
      * calling background thread when too many bundles are already queued.
      */
     public static void scheduleApply(PreParsedModelBundle bundle) {
+        // Classify BEFORE acquiring a permit: if the classification or enqueue
+        // ever threw after acquire(), the permit would leak and the sync would
+        // stall forever on APPLY_SLOTS.acquire() (progress bar stuck). With the
+        // classification hoisted, the acquire→enqueue window only touches the
+        // two queues and the main-thread wake-up, and finally releases the
+        // permit if anything still goes wrong.
+        boolean isDefault = bundle != null && isDefaultModelBundle(bundle.modelId);
         try {
             APPLY_SLOTS.acquire();
         } catch (InterruptedException e) {
@@ -244,13 +254,21 @@ public class ClientModelManager {
             // Rare; don't drop the model — enqueue anyway (backpressure is a
             // best-effort cap, not a correctness requirement).
         }
-        if (isDefaultModelBundle(bundle.modelId)) {
-            PENDING_APPLY_DEFAULT.add(bundle);
-        } else {
-            PENDING_APPLY.add(bundle);
+        try {
+            if (isDefault) {
+                PENDING_APPLY_DEFAULT.add(bundle);
+            } else {
+                PENDING_APPLY.add(bundle);
+            }
+            // Ensure at least one processor is queued on the main thread.
+            Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
+        } catch (RuntimeException e) {
+            // Never leak the permit: an exception here (e.g. a malformed model id
+            // breaking the default classification) would otherwise block every
+            // later scheduleApply and freeze the sync.
+            ysmu.LOG.warn("Failed to enqueue model {} for apply, dropping: {}", bundle.modelId, e.getMessage());
+            APPLY_SLOTS.release();
         }
-        // Ensure at least one processor is queued on the main thread.
-        Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
     }
 
     private static void processNextApply() {

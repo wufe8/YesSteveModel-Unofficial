@@ -75,8 +75,10 @@ public class Config {
      *  so the result lands in [target, 2*target) — e.g. target 1024 keeps 2048->1024,
      *  and anything under 2048 passes through. Bound VRAM on large model libraries;
      *  GeckoLib samples with normalized UVs, so an aspect-preserving resize never
-     *  shifts the mapped content. */
-    public static int TEXTURE_TARGET_SIZE = 1024;
+     *  shifts the mapped content. Default 0 (off): downscaling still has visual
+     *  artifacts on some models (e.g. GUMI2.6.2), so it is opt-in until a better
+     *  downscale strategy lands. */
+    public static int TEXTURE_TARGET_SIZE = 0;
 
     // Model sync config
     public static boolean ENABLE_SYNC_PROTOCOL = true;

@@ -1,7 +1,5 @@
 package com.fox.ysmu.client.texture;
 
-import java.awt.Graphics2D;
-import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -129,6 +127,16 @@ public class OuterFileTexture extends AbstractTexture {
      * [0,1] coordinates pointing at the same content — only the resolution drops.
      * This holds even for non-standard models whose declared size differs from
      * the actual PNG dimensions; we only change resolution, never the mapping.
+     *
+     * <p>Downscale uses an exact box average (each output texel is the mean of
+     * its divisor×divisor source block) instead of Graphics2D bilinear resizing.
+     * Graphics2D.drawImage with BILINEAR applies pixel-center sampling, which
+     * introduces a half-texel offset: the downscaled texel grid is no longer
+     * aligned with the source, so GL_NEAREST sampling of the reduced texture
+     * lands on neighbor pixels. That shows up as random "white/off-color"
+     * patches on models with many small UV faces (e.g. GUMI2.6.2's 3×2-px faces)
+     * while other models look fine. The box average keeps every output texel
+     * exactly aligned to its source block, so nearest sampling is 1:1 correct.
      */
     private BufferedImage downscale(BufferedImage src) {
         int target = Config.TEXTURE_TARGET_SIZE;
@@ -151,13 +159,56 @@ public class OuterFileTexture extends AbstractTexture {
             return src;
         }
         BufferedImage scaled = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
-        Graphics2D g = scaled.createGraphics();
-        try {
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
-            g.drawImage(src, 0, 0, newW, newH, null);
-        } finally {
-            g.dispose();
+        // Exact box average: output[ox,oy] = mean of src[ox*div..(ox+1)*div-1, oy*div..(oy+1)*div-1].
+        // Accumulates in long/int to avoid precision drift, handles the partial
+        // source block at the right/bottom edge (w or h not a multiple of divisor).
+        //
+        // Transparent pixels carry garbage RGB (blockbench textures typically use
+        // (0,0,0,0)); naively averaging them into a block makes edge texels both
+        // semi-transparent AND dark/muddy, which shows up as white/off-color
+        // splotches on models with many small UV faces under GL_NEAREST. So RGB
+        // is averaged only over OPAQUE source pixels (their real color), while
+        // alpha is the opaque coverage ratio — edge texels stay the right color
+        // and merely fade by coverage.
+        int[] srcPixels = src.getRGB(0, 0, w, h, null, 0, w);
+        int[] outPixels = new int[newW * newH];
+        for (int oy = 0; oy < newH; oy++) {
+            int y0 = oy * divisor;
+            int y1 = Math.min(y0 + divisor, h);
+            for (int ox = 0; ox < newW; ox++) {
+                int x0 = ox * divisor;
+                int x1 = Math.min(x0 + divisor, w);
+                long r = 0, g = 0, b = 0, a = 0;
+                int opaqueCount = 0;
+                int totalCount = 0;
+                for (int y = y0; y < y1; y++) {
+                    int rowBase = y * w;
+                    for (int x = x0; x < x1; x++) {
+                        int argb = srcPixels[rowBase + x];
+                        int alpha = (argb >>> 24) & 0xFF;
+                        a += alpha;
+                        if (alpha > 0) {
+                            r += (argb >>> 16) & 0xFF;
+                            g += (argb >>> 8) & 0xFF;
+                            b += argb & 0xFF;
+                            opaqueCount++;
+                        }
+                        totalCount++;
+                    }
+                }
+                int outA = (int) (a / totalCount);
+                int outR, outG, outB;
+                if (opaqueCount > 0) {
+                    outR = (int) (r / opaqueCount);
+                    outG = (int) (g / opaqueCount);
+                    outB = (int) (b / opaqueCount);
+                } else {
+                    outR = outG = outB = 0;
+                }
+                outPixels[oy * newW + ox] = (outA << 24) | (outR << 16) | (outG << 8) | outB;
+            }
         }
+        scaled.setRGB(0, 0, newW, newH, outPixels, 0, newW);
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("[YSMU-TEX] upload({}): downscaled {}x{} -> {}x{} (target {}, divisor {})",
                 this.id, w, h, newW, newH, target, divisor);

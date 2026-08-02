@@ -25,10 +25,10 @@ gui.yes_steve_model.config.swap_config_sides=交换配置面版和预览框位�
 gui.yes_steve_model.config.gui_enhancements=启用选择界面增强（前景/背景纹理、选择界面动画）
 gui.yes_steve_model.config.render_wearable=渲染其他模组背部模型（背包/直升机/喷气背包）
 gui.yes_steve_model.config.wearable_render_scale=可穿戴模型缩放：%.2f
-gui.yes_steve_model.config.texture_target_size.0=贴图目标尺寸：原始分辨率
+gui.yes_steve_model.config.texture_target_size.0=贴图目标尺寸：原始分辨率（默认）
 gui.yes_steve_model.config.texture_target_size.256=贴图目标尺寸：256（显存最省）
-gui.yes_steve_model.config.texture_target_size.512=贴图目标尺寸：512（推荐）
-gui.yes_steve_model.config.texture_target_size.1024=贴图目标尺寸：1024（默认）
+gui.yes_steve_model.config.texture_target_size.512=贴图目标尺寸：512
+gui.yes_steve_model.config.texture_target_size.1024=贴图目标尺寸：1024
 gui.yes_steve_model.config.texture_target_size.2048=贴图目标尺寸：2048（近原分辨率）
 gui.yes_steve_model.config.page=第 %d 页
 gui.yes_steve_model.config.gui_model_preview_refresh=预览刷新间隔（0=静态 1-4=每N帧）
