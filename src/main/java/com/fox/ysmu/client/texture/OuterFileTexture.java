@@ -1,5 +1,7 @@
 package com.fox.ysmu.client.texture;
 
+import java.awt.Graphics2D;
+import java.awt.RenderingHints;
 import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
@@ -11,6 +13,7 @@ import net.minecraft.client.renderer.texture.TextureUtil;
 import net.minecraft.client.resources.IResourceManager;
 import net.minecraft.util.ResourceLocation;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
 
 public class OuterFileTexture extends AbstractTexture {
@@ -94,7 +97,8 @@ public class OuterFileTexture extends AbstractTexture {
                 this.failedAt = System.currentTimeMillis();
                 return;
             }
-            TextureUtil.uploadTextureImageAllocate(super.getGlTextureId(), bufferedImage, false, false);
+            BufferedImage toUpload = downscale(bufferedImage);
+            TextureUtil.uploadTextureImageAllocate(super.getGlTextureId(), toUpload, false, false);
             this.uploaded = true;
             this.failed = false;
         } catch (Exception e) {
@@ -104,6 +108,61 @@ public class OuterFileTexture extends AbstractTexture {
             this.failed = true;
             this.failedAt = System.currentTimeMillis();
         }
+    }
+
+    /**
+     * Optionally downscales a decoded texture to Config.TEXTURE_MAX_SIZE (0 = off)
+     * to bound VRAM on large model libraries.
+     *
+     * <p>The downscale factor is always a power of two (1/2, 1/4, ...), so the
+     * result lands in [maxSize, 2*maxSize) — e.g. target 512: 1024x1024 ->
+     * 512x512, 768x768 stays, 1280x1280 -> 640x640. YSM textures are uploaded
+     * with GL_NEAREST filtering, so a non-integer ratio would let bilinear
+     * resampling bleed neighbor faces' pixels across face edges, which is very
+     * visible in a pixel-art game. A power-of-two ratio maps each output pixel
+     * 1:1 to a 2x2/4x4 source block, so edges stay clean under nearest sampling.
+     * Never upscales small textures.
+     *
+     * <p>Why this is safe for UV mapping: GeckoLib normalizes UVs by the model's
+     * declared texture_width/height, so every quad samples the image with [0,1]
+     * relative coordinates. A uniform (aspect-preserving) resize keeps those
+     * [0,1] coordinates pointing at the same content — only the resolution drops.
+     * This holds even for non-standard models whose declared size differs from
+     * the actual PNG dimensions; we only change resolution, never the mapping.
+     */
+    private BufferedImage downscale(BufferedImage src) {
+        int maxSize = Config.TEXTURE_MAX_SIZE;
+        if (maxSize <= 0) {
+            return src;
+        }
+        int w = src.getWidth();
+        int h = src.getHeight();
+        int maxDim = Math.max(w, h);
+        if (maxDim <= maxSize) {
+            return src;
+        }
+        int divisor = 1;
+        while (maxDim / divisor >= 2 * maxSize) {
+            divisor <<= 1;
+        }
+        int newW = Math.max(1, w / divisor);
+        int newH = Math.max(1, h / divisor);
+        if (newW == w && newH == h) {
+            return src;
+        }
+        BufferedImage scaled = new BufferedImage(newW, newH, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D g = scaled.createGraphics();
+        try {
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(src, 0, 0, newW, newH, null);
+        } finally {
+            g.dispose();
+        }
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
+            ysmu.LOG.info("[YSMU-TEX] upload({}): downscaled {}x{} -> {}x{} (max {}, divisor {})",
+                this.id, w, h, newW, newH, maxSize, divisor);
+        }
+        return scaled;
     }
 
     /** Frees the GPU texture and marks this object as needing a re-upload. */

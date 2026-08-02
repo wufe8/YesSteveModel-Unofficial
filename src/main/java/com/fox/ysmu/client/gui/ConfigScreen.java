@@ -44,6 +44,8 @@ public class ConfigScreen extends GuiScreen {
             addCheckbox(7,  x + 5, y + 25 + i++ * 22, "render_wearable",         Config.RENDER_WEARABLE);
             this.buttonList.add(new FlatColorButton(10, x + 5, y + 25 + i++ * 22, 400, 20,
                 I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE)));
+            this.buttonList.add(new FlatColorButton(11, x + 5, y + 25 + i++ * 22, 400, 20,
+                I18n.format("gui.yes_steve_model.config.texture_max_size." + Config.TEXTURE_MAX_SIZE)));
         }
     }
 
@@ -64,7 +66,7 @@ public class ConfigScreen extends GuiScreen {
             case 1: case 2: case 4: case 5: case 6: case 8: case 9:
                 actionPage0(button);
                 break;
-            case 3: case 7: case 10:
+            case 3: case 7: case 10: case 11:
                 actionPage1(button);
                 break;
         }
@@ -118,6 +120,21 @@ public class ConfigScreen extends GuiScreen {
                 if (Config.WEARABLE_RENDER_SCALE > 1.5) Config.WEARABLE_RENDER_SCALE = 0.5;
                 button.displayString = I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE);
                 break;
+            case 11:
+                Config.TEXTURE_MAX_SIZE = nextTextureMaxSize(Config.TEXTURE_MAX_SIZE);
+                button.displayString = I18n.format("gui.yes_steve_model.config.texture_max_size." + Config.TEXTURE_MAX_SIZE);
+                break;
+        }
+    }
+
+    /** Cycles the VRAM texture-size cap: 0 (off) -> 2048 -> 1024 -> 512 -> 256 -> 0. */
+    private static int nextTextureMaxSize(int current) {
+        switch (current) {
+            case 0: return 2048;
+            case 2048: return 1024;
+            case 1024: return 512;
+            case 512: return 256;
+            default: return 0;
         }
     }
 
