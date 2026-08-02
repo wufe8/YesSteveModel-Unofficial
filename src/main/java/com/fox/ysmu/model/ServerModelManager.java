@@ -13,6 +13,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Base64;
 import java.util.Enumeration;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
@@ -122,7 +123,10 @@ public final class ServerModelManager {
             NetworkHandler.sendToClientPlayer(new S2CVersionCheck17(NetworkHandler.PROTOCOL_VERSION), player);
             return;
         }
-        NetworkHandler.sendToClientPlayer(new RequestSyncModel(), player);
+        // 协议关闭（纯 legacy 模式）：确保 legacy 缓存已从 OpenYSM 缓存懒构建完成
+        // （重建阶段已同步构建，此处兜底并发到达的 legacy 客户端），再发同步请求。
+        OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) ->
+            NetworkHandler.sendToClientPlayer(new RequestSyncModel(), player));
     }
 
     public static void reloadPacks() {
@@ -214,8 +218,50 @@ public final class ServerModelManager {
                     tasks.size(), CACHE_NAME_INFO.size(), RAW_MODEL_INFO.size(), OPEN_YSM_SYNC_INFO.size());
             }
         }
+        // 内容寻址去重：重复内容的 .ysm（相同 properties.sha256 → 同一缓存文件）只保留
+        // 一个同步索引条目，避免客户端双传/双解析、统计偏差与并行写同一缓存文件。
+        deduplicateOpenYsmIndex();
+        // legacy 缓存懒构建：协议开启时不预写（省 cache 空间/首建时间），按需构建；
+        // 协议关闭（纯 legacy 模式）时在重建阶段同步构建，首个 legacy 客户端到达即就绪。
+        OpenYsmFormat.resetLegacyCacheState();
+        if (!Config.ENABLE_SYNC_PROTOCOL) {
+            try {
+                OpenYsmFormat.ensureLegacyCacheBuilt().join();
+            } catch (Exception e) {
+                ysmu.LOG.warn("Failed to eagerly build legacy model cache: {}", e.getMessage());
+            }
+        }
         // 统一落盘侧车（含清理已删除的模型）。
         ModelIndexCache.commit();
+    }
+
+    /**
+     * 内容寻址去重：同一缓存文件（相同模型内容）在同步索引里只保留一个条目。
+     * 保留 modelId 字典序较小者，结果确定。
+     */
+    private static void deduplicateOpenYsmIndex() {
+        Map<String, String> winnerByCacheFile = new HashMap<>();
+        List<String> losers = new ArrayList<>();
+        for (Map.Entry<String, OpenYsmSyncInfo> entry : OPEN_YSM_SYNC_INFO.entrySet()) {
+            String winner = winnerByCacheFile.get(entry.getValue().getCacheFileName());
+            if (winner == null) {
+                winnerByCacheFile.put(entry.getValue().getCacheFileName(), entry.getKey());
+            } else if (entry.getKey().compareTo(winner) < 0) {
+                winnerByCacheFile.put(entry.getValue().getCacheFileName(), entry.getKey());
+                losers.add(winner);
+            } else {
+                losers.add(entry.getKey());
+            }
+        }
+        if (!losers.isEmpty()) {
+            for (String id : losers) {
+                OPEN_YSM_SYNC_INFO.remove(id);
+            }
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                ysmu.LOG.info("[YSMU-MODEL] Deduplicated {} content-identical model(s); sync index size={}",
+                    losers.size(), OPEN_YSM_SYNC_INFO.size());
+            }
+        }
     }
 
     /*====== 以下方法已废弃：模型已迁移到 builtin/ ======

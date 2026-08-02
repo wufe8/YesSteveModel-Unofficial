@@ -56,6 +56,8 @@ public final class ModelIndexCache {
         public String cacheFile;
         /** false = 上次构建失败（文件未变则跳过重试）。 */
         public boolean ok;
+        /** 构建完成时缓存文件的字节数（0 = 未知/旧侧车）。命中时用 stat 快速判定。 */
+        public long fileSize;
     }
 
     private ModelIndexCache() {}
@@ -92,6 +94,7 @@ public final class ModelIndexCache {
                 e.hash2 = jo.get("hash2").getAsString();
                 e.cacheFile = jo.get("cacheFile").getAsString();
                 e.ok = jo.get("ok").getAsBoolean();
+                e.fileSize = jo.has("fileSize") ? jo.get("fileSize").getAsLong() : 0L;
                 INDEX.put(me.getKey(), e);
             }
         } catch (Exception e) {
@@ -139,6 +142,7 @@ public final class ModelIndexCache {
                 jo.addProperty("hash2", e.hash2 == null ? "" : e.hash2);
                 jo.addProperty("cacheFile", e.cacheFile == null ? "" : e.cacheFile);
                 jo.addProperty("ok", e.ok);
+                jo.addProperty("fileSize", e.fileSize);
                 models.add(me.getKey(), jo);
             }
             root.add("models", models);
@@ -153,7 +157,11 @@ public final class ModelIndexCache {
         }
     }
 
-    /** 缓存文件是否可用：存在、非空、且内容通过 verifyServerCache 校验。 */
+    /**
+     * 缓存文件是否可用。侧车记录了写入时的文件大小：stat 一致即视为可用（缓存文件由
+     * 本进程原子写入、内容不会被外部改动，跳过整文件哈希校验把二次启动重建从全读降到
+     * stat）；大小缺失（旧侧车）或不符时才退回完整 verifyServerCache 校验。
+     */
     public static boolean isCacheUsable(Entry e) {
         if (e == null || e.cacheFile == null || e.cacheFile.isEmpty()
             || e.hash1 == null || e.hash2 == null || e.hash1.isEmpty() || e.hash2.isEmpty()) {
@@ -162,6 +170,9 @@ public final class ModelIndexCache {
         File f = CACHE_SERVER.resolve(e.cacheFile).toFile();
         if (!f.isFile() || f.length() == 0) {
             return false;
+        }
+        if (e.fileSize > 0L) {
+            return f.length() == e.fileSize;
         }
         try {
             long h1 = Long.parseUnsignedLong(e.hash1, 16);

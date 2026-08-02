@@ -18,6 +18,7 @@ import org.apache.commons.io.filefilter.FileFileFilter;
 import org.jetbrains.annotations.NotNull;
 
 import com.fox.ysmu.model.ServerModelManager;
+import com.fox.ysmu.ysmu;
 import com.google.common.collect.Maps;
 
 import it.unimi.dsi.fastutil.Pair;
@@ -73,7 +74,10 @@ public final class YesModelUtils {
                 }
                 outputs.put(ysmFileData.left(), ysmFileData.right());
             } catch (GeneralSecurityException | DataFormatException e) {
-                e.printStackTrace();
+                // 单个内嵌文件解密/解压失败时跳过该文件继续解包，其余文件仍可正常解析。
+                // 用单行日志代替 printStackTrace，避免坏文件在每次启动时刷 20+ 行堆栈。
+                ysmu.LOG.warn("Skipping corrupt embedded file in legacy .ysm {}: {} ({})",
+                    ysmFile.getName(), e.getClass().getSimpleName(), e.getMessage());
             }
         }
         return outputs;
@@ -185,7 +189,8 @@ public final class YesModelUtils {
             try {
                 output.write(fileToBytes(file));
             } catch (IOException | GeneralSecurityException e) {
-                e.printStackTrace();
+                ysmu.LOG.warn("Failed to pack model file {} into .ysm: {} ({})",
+                    file.getName(), e.getClass().getSimpleName(), e.getMessage());
             }
         });
         return output.toByteArray();

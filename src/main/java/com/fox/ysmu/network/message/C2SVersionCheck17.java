@@ -3,6 +3,7 @@ package com.fox.ysmu.network.message;
 import net.minecraft.entity.player.EntityPlayerMP;
 
 import com.fox.ysmu.Config;
+import com.fox.ysmu.model.format.OpenYsmFormat;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.RequestSyncModel;
 import com.fox.ysmu.network.sync.OpenYsmModelSyncServer;
@@ -53,12 +54,15 @@ public class C2SVersionCheck17 implements IMessage {
                     message.version,
                     NetworkHandler.PROTOCOL_VERSION);
                 // 版本不匹配：回退到 legacy MD5/AES 同步，保证模型仍能加载。
-                NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender);
+                // legacy 缓存按需懒构建，就绪后再发请求（whenComplete 成功/失败都会执行）。
+                OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) ->
+                    NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender));
                 return null;
             }
             if (!OpenYsmModelSyncServer.startSync(sender)) {
                 // OpenYSM 索引/服务器密钥不可用：回退 legacy 同步，保证模型仍能加载。
-                NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender);
+                OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) ->
+                    NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender));
             }
             return null;
         }

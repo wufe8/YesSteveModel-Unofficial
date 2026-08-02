@@ -2,7 +2,9 @@ package com.fox.ysmu.model.format;
 
 import static com.fox.ysmu.model.ServerModelManager.ARM_MODEL_FILE_NAME;
 import static com.fox.ysmu.model.ServerModelManager.CACHE_NAME_INFO;
+import static com.fox.ysmu.model.ServerModelManager.CACHE_SERVER;
 import static com.fox.ysmu.model.ServerModelManager.MAIN_MODEL_FILE_NAME;
+import static com.fox.ysmu.model.ServerModelManager.OPEN_YSM_SERVER_KEY;
 import static com.fox.ysmu.model.ServerModelManager.OPEN_YSM_SYNC_INFO;
 import static com.fox.ysmu.model.ServerModelManager.RAW_MODEL_INFO;
 import static com.fox.ysmu.model.ServerModelManager.removeExtension;
@@ -10,8 +12,11 @@ import static com.fox.ysmu.model.ServerModelManager.removeExtension;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.CompletableFuture;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.data.ModelData;
@@ -20,6 +25,7 @@ import com.fox.ysmu.model.resource.YSMBinaryDeserializer;
 import com.fox.ysmu.model.resource.YSMFolderDeserializer;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.util.ModelIdUtil;
+import com.fox.ysmu.util.ThreadTools;
 import com.fox.ysmu.util.YesModelUtils;
 import com.fox.ysmu.ysmu;
 
@@ -37,6 +43,10 @@ import rip.ysm.security.YsmCrypt;
  *   <li>旧版裸 YSGP 的 {@code .ysm}——解包后经虚拟文件源 {@link YSMFolderDeserializer} 转换</li>
  * </ul>
  * 由此客户端只需一条同步协议（OpenYSM）即可加载全部模型，不再有新旧双路径。
+ *
+ * <p>legacy 缓存（CACHE_NAME_INFO + md5 加密文件）不再在此构建：协议开启时只写
+ * OpenYSM 缓存（省一半 cache 空间与首建耗时），需要 legacy 同步（版本不匹配/协议
+ * 关闭）时由 {@link #ensureLegacyCacheBuilt()} 从 OpenYSM 缓存反解析按需补建。
  */
 public final class OpenYsmFormat {
 
@@ -87,20 +97,11 @@ public final class OpenYsmFormat {
                     ysmu.LOG.warn("OpenYSM folder model {} parsed but cannot be bridged to legacy ModelData", dir);
                 }
                 // 无论是否可桥接都写入 OpenYSM 同步缓存（与 .ysm 一致）：非桥接模型
-                // 仍可注册 extra wheel / projectile 子实体。桥接模型同时写 legacy 缓存，
-                // 保证版本不匹配/关闭新协议时 legacy 同步仍可用。
+                // 仍可注册 extra wheel / projectile 子实体。legacy 缓存（CACHE_NAME_INFO）
+                // 不再在此构建——按需懒构建（ensureLegacyCacheBuilt）从 OpenYSM 缓存
+                // 反解析生成，避免 cache 目录双份存储与首建双倍耗时。
                 OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
                 OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
-                if (bridgeable) {
-                    ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
-                    ServerModelInfo info = ModelCacheWriter.write(data);
-                    if (info != null) {
-                        CACHE_NAME_INFO.put(modelId, info);
-                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                            ysmu.LOG.info("[YSMU-MODEL] Folder model {} cached to CACHE_NAME_INFO", modelId);
-                        }
-                    }
-                }
                 if (fp == null) {
                     fp = YSMFolderDeserializer.computeFolderHash(dir);
                 }
@@ -213,18 +214,6 @@ public final class OpenYsmFormat {
 
                 OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
                 OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
-                if (bridgeable) {
-                    ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
-                    ServerModelInfo info = ModelCacheWriter.write(data);
-                    if (info != null) {
-                        CACHE_NAME_INFO.put(modelId, info);
-                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                            ysmu.LOG.info("[YSMU-MODEL] Successfully cached model {} to CACHE_NAME_INFO", modelId);
-                        }
-                    }
-                } else if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] Model {} not bridgeable, skipped legacy cache but OpenYSM sync info written", modelId);
-                }
                 ModelIndexCache.mark(modelId, entryOf("ysm", fp, syncInfo, true));
             }
         } catch (UnsupportedOperationException e) {
@@ -328,14 +317,6 @@ public final class OpenYsmFormat {
 
                 OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
                 OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
-                // 桥接模型同时写 legacy 缓存，保证版本不匹配/关闭新协议时 legacy 同步仍可用。
-                if (RawYsmModelAdapter.isBridgeable(raw)) {
-                    ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, modelId);
-                    ServerModelInfo info = ModelCacheWriter.write(data);
-                    if (info != null) {
-                        CACHE_NAME_INFO.put(modelId, info);
-                    }
-                }
                 ModelIndexCache.mark(modelId, entryOf("ysm", fp, syncInfo, true));
             }
         } catch (Exception e) {
@@ -380,8 +361,90 @@ public final class OpenYsmFormat {
             e.hash1 = String.format("%016x", syncInfo.getHash1());
             e.hash2 = String.format("%016x", syncInfo.getHash2());
             e.cacheFile = syncInfo.getCacheFileName();
+            // 记录缓存文件大小，让侧车命中时用 stat 替代整文件哈希校验（二次启动提速）。
+            try {
+                e.fileSize = Files.size(CACHE_SERVER.resolve(e.cacheFile));
+            } catch (IOException ignore) {
+                e.fileSize = 0L;
+            }
         }
         return e;
+    }
+
+    // ── legacy 缓存懒构建 ──────────────────────────────────────────────────
+    // legacy（CACHE_NAME_INFO + md5 加密文件）只在真的需要 legacy 同步时才构建：
+    // 构建源是已写好的 OpenYSM 同步缓存（格式 32），反解析回 RawYsmModel 再桥接成
+    // legacy ModelData。协议开启时 cache 目录只有 OpenYSM 文件（省一半空间、省首建
+    // 一半耗时）；版本不匹配/协议关闭时才按需补建 legacy。
+
+    private static volatile CompletableFuture<Void> legacyCacheBuildFuture;
+
+    /** 重建/重载后重置懒构建状态，强制下一次 legacy 同步按新索引重建。 */
+    public static synchronized void resetLegacyCacheState() {
+        legacyCacheBuildFuture = null;
+    }
+
+    /** 确保 legacy 缓存已构建（懒构建；并发调用共享同一个任务）。返回完成 future。 */
+    public static synchronized CompletableFuture<Void> ensureLegacyCacheBuilt() {
+        if (legacyCacheBuildFuture != null) {
+            return legacyCacheBuildFuture;
+        }
+        CompletableFuture<Void> future = new CompletableFuture<>();
+        legacyCacheBuildFuture = future;
+        ThreadTools.THREAD_POOL.submit(() -> {
+            try {
+                buildLegacyCacheFromOpenYsm();
+                future.complete(null);
+            } catch (Throwable t) {
+                ysmu.LOG.warn("Failed to build legacy model cache from OpenYSM cache", t);
+                synchronized (OpenYsmFormat.class) {
+                    if (legacyCacheBuildFuture == future) {
+                        legacyCacheBuildFuture = null; // 失败允许后续重试
+                    }
+                }
+                future.completeExceptionally(t);
+            }
+        });
+        return future;
+    }
+
+    private static void buildLegacyCacheFromOpenYsm() {
+        List<OpenYsmSyncInfo> infos = new ArrayList<>(OPEN_YSM_SYNC_INFO.values());
+        if (infos.isEmpty()) {
+            return;
+        }
+        CompletableFuture.allOf(infos.stream()
+            .map(info -> CompletableFuture.runAsync(() -> buildOneLegacyFromOpenYsm(info), ThreadTools.THREAD_POOL))
+            .toArray(CompletableFuture[]::new))
+            .join();
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+            ysmu.LOG.info("[YSMU-MODEL] Legacy model cache built from OpenYSM cache: {} models",
+                CACHE_NAME_INFO.size());
+        }
+    }
+
+    private static void buildOneLegacyFromOpenYsm(OpenYsmSyncInfo info) {
+        try {
+            byte[] cacheBytes = Files.readAllBytes(CACHE_SERVER.resolve(info.getCacheFileName()));
+            byte[] clearBytes = YsmCrypt.read(cacheBytes, OPEN_YSM_SERVER_KEY);
+            RawYsmModel raw;
+            try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(clearBytes, OPEN_YSM_SYNC_FORMAT)) {
+                raw = deserializer.deserializeKeepOpen();
+                deserializer.parseYSMFooter(raw);
+            }
+            raw.modelId = info.getModelId();
+            if (!RawYsmModelAdapter.isBridgeable(raw)) {
+                return;
+            }
+            ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, info.getModelId());
+            ServerModelInfo modelInfo = ModelCacheWriter.write(data);
+            if (modelInfo != null) {
+                CACHE_NAME_INFO.put(info.getModelId(), modelInfo);
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to build legacy cache for {}: {}: {}",
+                info.getModelId(), e.getClass().getSimpleName(), e.getMessage());
+        }
     }
 
     /**

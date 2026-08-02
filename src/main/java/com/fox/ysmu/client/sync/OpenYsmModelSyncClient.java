@@ -47,6 +47,8 @@ public final class OpenYsmModelSyncClient {
     private static final java.util.concurrent.atomic.AtomicInteger remainingTasks = new java.util.concurrent.atomic.AtomicInteger(0);
     /** 完成等待是否已启动（防止多线程重复触发）。 */
     private static final java.util.concurrent.atomic.AtomicBoolean completionScheduled = new java.util.concurrent.atomic.AtomicBoolean(false);
+    /** 完成信号是否已发送（防止看门狗/错误路径/正常路径重复发送）。 */
+    private static final java.util.concurrent.atomic.AtomicBoolean completionSent = new java.util.concurrent.atomic.AtomicBoolean(false);
     private static volatile int loadedModelsCount;
     private static volatile int downloadedModelsCount;
     private static volatile int cacheHitCount;
@@ -102,6 +104,7 @@ public final class OpenYsmModelSyncClient {
         syncStep = 1;
         remainingTasks.set(0);
         completionScheduled.set(false);
+        completionSent.set(false);
         loadedModelsCount = 0;
         downloadedModelsCount = 0;
         cacheHitCount = 0;
@@ -210,6 +213,7 @@ public final class OpenYsmModelSyncClient {
         // 完成信号等待全部模型（缓存命中 + 下载）解析并应用完成。
         remainingTasks.set(serverModelCount);
         syncStartTimeMs = System.currentTimeMillis();
+        startSyncWatchdog();
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
             ysmu.LOG.info("[YSMU-MODEL] OpenYSM client received sync index: models={}", serverModelCount);
             ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
@@ -753,7 +757,38 @@ public final class OpenYsmModelSyncClient {
     /** 完成等待的上限：应用管线在正常游戏内排空很快，此值仅作极端情况的兜底。 */
     private static final long COMPLETION_APPLY_DRAIN_TIMEOUT_MS = 2 * 60_000L;
 
+    /** 同步总超时：若某些模型被请求但服务端从未下发（如缓存文件缺失/损坏），
+     *  remainingTasks 永不归零、完成信号永不触发、进度条卡死。看门狗超时兜底强制完成。 */
+    private static final long SYNC_WATCHDOG_TIMEOUT_MS = 5 * 60_000L;
+
+    /** 同步开始时启动；所有任务正常完成或同步被重置即退出，否则超时强制发送完成。 */
+    private static void startSyncWatchdog() {
+        ThreadTools.THREAD_POOL.submit(() -> {
+            long deadline = System.currentTimeMillis() + SYNC_WATCHDOG_TIMEOUT_MS;
+            while (System.currentTimeMillis() < deadline) {
+                if (!ClientModelManager.SYNC_IN_PROGRESS || remainingTasks.get() <= 0) {
+                    return;
+                }
+                try {
+                    Thread.sleep(1000L);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+            }
+            if (ClientModelManager.SYNC_IN_PROGRESS && remainingTasks.get() > 0) {
+                ysmu.LOG.warn("OpenYSM client sync watchdog: {} model task(s) never completed, forcing completion",
+                    remainingTasks.get());
+                sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+            }
+        });
+    }
+
     private static void sendComplete(int status, String message) {
+        // 防止看门狗/错误路径/正常路径重复发送完成信号。
+        if (!completionSent.compareAndSet(false, true)) {
+            return;
+        }
         NetworkHandler.CHANNEL.sendToServer(
             new C2SCompleteFeedback17(status, loadedModelsCount, downloadedModelsCount, cacheHitCount, message));
         if (status == C2SCompleteFeedback17.STATUS_SUCCESS) {
