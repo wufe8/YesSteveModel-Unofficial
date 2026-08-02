@@ -18,7 +18,6 @@ import software.bernie.geckolib3.core.easing.EasingType;
 public class KeyFrame<T> implements Serializable {
 
     private static final long serialVersionUID = 42L;
-    private Double length;
     /** Primitive inline of length, avoids boxing overhead. */
     private double primitiveLength;
     /** Primitive inline of startValue when it was a ConstantValue (~99% of cases). */
@@ -57,7 +56,6 @@ public class KeyFrame<T> implements Serializable {
 
     public KeyFrame(Double length, T startValue, T endValue) {
         this.primitiveLength = length;
-        this.length = length;
         this.easingType = EasingType.Linear;
         this.easingArgs = EMPTY_EASING_ARGS;
         initPrimitives(startValue, endValue);
@@ -65,7 +63,6 @@ public class KeyFrame<T> implements Serializable {
 
     public KeyFrame(Double length, T startValue, T endValue, EasingType easingType) {
         this.primitiveLength = length;
-        this.length = length;
         this.easingType = EasingType.Linear;
         this.easingArgs = EMPTY_EASING_ARGS;
         initPrimitives(startValue, endValue);
@@ -74,7 +71,6 @@ public class KeyFrame<T> implements Serializable {
 
     public KeyFrame(Double length, T startValue, T endValue, EasingType easingType, List<Double> easingArgs) {
         this.primitiveLength = length;
-        this.length = length;
         this.easingType = EasingType.Linear;
         initPrimitives(startValue, endValue);
         this.easingType = easingType;
@@ -111,12 +107,11 @@ public class KeyFrame<T> implements Serializable {
     // ── Legacy accessors (kept for binary compat; may return null when inlined) ──
 
     public Double getLength() {
-        return this.length;
+        return this.primitiveLength;
     }
 
     public void setLength(Double length) {
         this.primitiveLength = length;
-        this.length = length;
     }
 
     public T getStartValue() {
@@ -136,7 +131,7 @@ public class KeyFrame<T> implements Serializable {
     }
 
     public int hashCode() {
-        return Objects.hash(new Object[] { this.length, this.startValue, this.endValue });
+        return Objects.hash(new Object[] { this.primitiveLength, this.startValue, this.endValue });
     }
 
     public boolean equals(Object obj) {

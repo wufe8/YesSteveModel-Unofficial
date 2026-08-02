@@ -965,7 +965,7 @@ public class AnimationController<T extends IAnimatable> {
             }
         }
 
-        return AnimationPoint.obtain(currentFrame, location.currentTick, currentFrame.getLength(), startValue, endValue);
+        return AnimationPoint.obtain(currentFrame, location.currentTick, currentFrame.getLengthPrimitive(), startValue, endValue);
     }
 
     /** Cache entry for {@link #getCurrentKeyFrameLocation} — remembers the last
@@ -1006,7 +1006,7 @@ public class AnimationController<T extends IAnimatable> {
                 } else if (ageInTicks < cached.cumulativeTime) {
                     // Same keyframe as last call — return immediately
                     KeyFrame<IValue> frame = frames.get(cached.index);
-                    double prevTotal = cached.cumulativeTime - frame.getLength();
+                    double prevTotal = cached.cumulativeTime - frame.getLengthPrimitive();
                     double tick = ageInTicks - prevTotal;
                     kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(cached.index, cached.cumulativeTime, ageInTicks);
                     return new KeyFrameLocation<>(frame, tick);
@@ -1015,7 +1015,7 @@ public class AnimationController<T extends IAnimatable> {
                     double totalTimeTracker = cached.cumulativeTime;
                     for (int i = cached.index + 1; i < frames.size(); i++) {
                         KeyFrame<IValue> frame = frames.get(i);
-                        double newTotal = totalTimeTracker + frame.getLength();
+                        double newTotal = totalTimeTracker + frame.getLengthPrimitive();
                         if (newTotal > ageInTicks) {
                             double tick = ageInTicks - totalTimeTracker;
                             kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(i, newTotal, ageInTicks);
@@ -1035,9 +1035,9 @@ public class AnimationController<T extends IAnimatable> {
         double totalTimeTracker = 0;
         for (int i = 0; i < frames.size(); i++) {
             KeyFrame<IValue> frame = frames.get(i);
-            totalTimeTracker += frame.getLength();
+            totalTimeTracker += frame.getLengthPrimitive();
             if (totalTimeTracker > ageInTicks) {
-                double tick = ageInTicks - (totalTimeTracker - frame.getLength());
+                double tick = ageInTicks - (totalTimeTracker - frame.getLengthPrimitive());
                 if (kfCache == null) {
                     kfCache = new java.util.IdentityHashMap<>();
                 }

@@ -33,19 +33,19 @@ public class VectorKeyFrameList<T extends KeyFrame> implements Serializable {
         double xTime = 0.0;
 
         KeyFrame frame;
-        for (Iterator var3 = this.xKeyFrames.iterator(); var3.hasNext(); xTime += frame.getLength()) {
+        for (Iterator var3 = this.xKeyFrames.iterator(); var3.hasNext(); xTime += frame.getLengthPrimitive()) {
             frame = (KeyFrame) var3.next();
         }
 
         double yTime = 0.0;
 
-        for (Iterator var5 = this.yKeyFrames.iterator(); var5.hasNext(); yTime += frame.getLength()) {
+        for (Iterator var5 = this.yKeyFrames.iterator(); var5.hasNext(); yTime += frame.getLengthPrimitive()) {
             frame = (KeyFrame) var5.next();
         }
 
         double zTime = 0.0;
 
-        for (Iterator var7 = this.zKeyFrames.iterator(); var7.hasNext(); zTime += frame.getLength()) {
+        for (Iterator var7 = this.zKeyFrames.iterator(); var7.hasNext(); zTime += frame.getLengthPrimitive()) {
             frame = (KeyFrame) var7.next();
         }
 

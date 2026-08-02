@@ -177,9 +177,9 @@ public class ClientModelManager {
     public static volatile UUID PASSWORD_UUID;
 
     // ── Tick‑based applyPreParsed queue ────────────────────────────────
-    // Process at most ONE model per render tick so the main thread stays
-    // responsive (handles window messages, rendering, etc.) even when 40+
-    // models arrive from background parsing simultaneously.
+    // Drains a small batch (thread-count / 2) of models per render frame so the
+    // main thread stays responsive (handles window messages, rendering, etc.)
+    // while the apply phase still finishes faster than one model per frame.
 
     private static final java.util.Queue<PreParsedModelBundle> PENDING_APPLY =
         new java.util.concurrent.ConcurrentLinkedQueue<>();
@@ -197,6 +197,12 @@ public class ClientModelManager {
      * thread catches up instead of queueing unboundedly.
      */
     private static final int MAX_PENDING_APPLY = Math.max(2, Config.THREAD_COUNT);
+    /** Models applied per render frame when many are queued — half the sync
+     *  thread count, so the main-thread consumer keeps pace with the background
+     *  producers. The in-flight cap (MAX_PENDING_APPLY = THREAD_COUNT) is 2x this,
+     *  so the queue always holds a full batch for the consumer without raising
+     *  peak memory. THREAD_COUNT=1 degrades to 1/frame (no batching). */
+    private static final int APPLY_BATCH_PER_FRAME = Math.max(1, Config.THREAD_COUNT / 2);
     private static final java.util.concurrent.Semaphore APPLY_SLOTS =
         new java.util.concurrent.Semaphore(MAX_PENDING_APPLY);
 
@@ -219,18 +225,27 @@ public class ClientModelManager {
     }
 
     private static void processNextApply() {
-        PreParsedModelBundle bundle = PENDING_APPLY.poll();
-        if (bundle == null) {
-            // Redundant wake-up (another processNextApply consumed the head);
-            // don't release a slot we never took a bundle for.
-            return;
+        // Best-effort batch: drain up to APPLY_BATCH_PER_FRAME bundles in this one
+        // frame instead of one, so the apply phase (and thus the sync) finishes
+        // faster. Each polled bundle releases a backpressure slot. If the queue
+        // empties early we stop — the semaphore cap stays the memory bound, so
+        // this never increases peak heap.
+        int applied = 0;
+        while (applied < APPLY_BATCH_PER_FRAME) {
+            PreParsedModelBundle bundle = PENDING_APPLY.poll();
+            if (bundle == null) {
+                // Redundant wake-up (another processNextApply consumed the head);
+                // don't release a slot we never took a bundle for.
+                break;
+            }
+            applied++;
+            try {
+                applyPreParsed(bundle);
+            } catch (Exception e) {
+                ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", bundle.modelId, e.getMessage());
+            }
+            APPLY_SLOTS.release();
         }
-        try {
-            applyPreParsed(bundle);
-        } catch (Exception e) {
-            ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", bundle.modelId, e.getMessage());
-        }
-        APPLY_SLOTS.release();
         // Schedule the next one if more are pending.
         if (!PENDING_APPLY.isEmpty()) {
             Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
