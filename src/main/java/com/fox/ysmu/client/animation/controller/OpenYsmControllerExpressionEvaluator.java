@@ -34,6 +34,37 @@ public final class OpenYsmControllerExpressionEvaluator {
     private static final java.util.concurrent.ConcurrentHashMap<String, CompiledExpr> COMPILED_CACHE =
         new java.util.concurrent.ConcurrentHashMap<>();
 
+    /**
+     * 各控制器最近一次在条件求值中评估 any/all_animations_finished 的真实结果。
+     * key = "<geckoControllerName>|<querySuffix>"，
+     * querySuffix ∈ {any_animation_finished, all_animations_finished}。
+     *
+     * MolangParser.VARIABLES 里注册的 query.any/all_animations_finished 是静态 0
+     * （注册时的默认值），并不反映控制器条件里动态计算的结果，因此这里单独缓存
+     * 真实值，供 debug overlay / /ysm query 读取。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Double> LAST_ANIMATION_FINISHED =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 全局"最后评估"结果（跨所有控制器），供 query.any/all_animation_finished 的 overlay 显示。 */
+    private static volatile double lastAnyAnimationFinished = FALSE;
+    private static volatile double lastAllAnimationsFinished = FALSE;
+
+    /** 读取各控制器真实动画完成状态缓存（key 见 LAST_ANIMATION_FINISHED 注释）。 */
+    public static java.util.Map<String, Double> getLastAnimationFinished() {
+        return LAST_ANIMATION_FINISHED;
+    }
+
+    /** 全局最后评估的 query.any_animation_finished 值。 */
+    public static double getLastAnyAnimationFinished() {
+        return lastAnyAnimationFinished;
+    }
+
+    /** 全局最后评估的 query.all_animations_finished 值。 */
+    public static double getLastAllAnimationsFinished() {
+        return lastAllAnimationsFinished;
+    }
+
     @FunctionalInterface
     interface CompiledExpr {
         double eval(Context ctx);
@@ -726,7 +757,18 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return event.getAnimationTick() / 20.0d;
             }
             if ("all_animations_finished".equals(name) || "any_animation_finished".equals(name)) {
-                return allAnimationsFinished() ? TRUE : FALSE;
+                // 动态计算结果缓存下来，供 debug overlay / /ysm query 读取
+                // （MolangParser.VARIABLES 里的静态注册值恒为 0）。
+                double finished = allAnimationsFinished() ? TRUE : FALSE;
+                String ctrlName = event.getController() == null ? "?" : event.getController().getName();
+                if ("any_animation_finished".equals(name)) {
+                    lastAnyAnimationFinished = finished;
+                    LAST_ANIMATION_FINISHED.put(ctrlName + "|any_animation_finished", finished);
+                } else {
+                    lastAllAnimationsFinished = finished;
+                    LAST_ANIMATION_FINISHED.put(ctrlName + "|all_animations_finished", finished);
+                }
+                return finished;
             }
             if ("ground_speed".equals(name)) {
                 return horizontalSpeed();

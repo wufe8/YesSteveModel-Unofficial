@@ -8,6 +8,7 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ChatComponentText;
 
+import com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 
 import software.bernie.geckolib3.core.molang.LazyVariable;
@@ -25,19 +26,42 @@ public final class MolangDebugSnapshot {
     public static final String CHAT_PREFIX = "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r";
 
     /**
+     * 搜索别名展开：把开头的 "q."（不区分大小写）当作 "query." 处理，
+     * 供 debug overlay 过滤框和 /ysm query 命令共用。
+     * 例："q.any_animation_finished" → "query.any_animation_finished"。
+     */
+    public static String expandSearchAlias(String text) {
+        if (text == null || text.length() < 2) return text;
+        if ((text.charAt(0) == 'q' || text.charAt(0) == 'Q') && text.charAt(1) == '.') {
+            return "query." + text.substring(2);
+        }
+        return text;
+    }
+
+    /**
      * 读取单个变量的当前值。
      *
      * @param name 变量名，如 {@code "ysm.person_view"}、{@code "query.health"}、{@code "v.roaming.bq_eye"}
      * @return 变量值，如果未知则返回 {@code NaN}
      */
     public static double queryVariable(String name) {
+        // 语法糖：q. → query.，/ysm query 可直接输 q.xxx
+        name = expandSearchAlias(name);
         // ctrl.* 必须最先检查 —— MolangParser.VARIABLES 中可能有
         // computeIfAbsent 残留的默认值 0.0 条目，会覆盖动态评估结果。
         if (name.startsWith("ctrl.")) {
             EntityPlayer p = Minecraft.getMinecraft().thePlayer;
             if (p == null) return Double.NaN;
-            return com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
+            return OpenYsmControllerExpressionEvaluator
                 .evaluateCtrlState(name.substring("ctrl.".length()), p);
+        }
+        // 动画完成查询是控制器条件里动态计算的，MolangParser.VARIABLES 里的
+        // 静态注册值恒为 0，这里返回控制器求值缓存的最新真实值。
+        if ("query.any_animation_finished".equals(name)) {
+            return OpenYsmControllerExpressionEvaluator.getLastAnyAnimationFinished();
+        }
+        if ("query.all_animations_finished".equals(name)) {
+            return OpenYsmControllerExpressionEvaluator.getLastAllAnimationsFinished();
         }
         // 1. 静态注册变量 (query.* / ysm.* / math.*)
         software.bernie.geckolib3.core.molang.LazyVariable var =
@@ -78,6 +102,7 @@ public final class MolangDebugSnapshot {
      * 支持: {@code "ysm.*"}, {@code "query.is_*"}, {@code "v.roaming.*"}
      */
     public static Map<String, Double> queryWildcard(String pattern) {
+        pattern = expandSearchAlias(pattern);
         Map<String, Double> result = new LinkedHashMap<>();
         if (!pattern.endsWith("*")) {
             double v = queryVariable(pattern);
@@ -100,7 +125,30 @@ public final class MolangDebugSnapshot {
                 result.put(roamingPrefix + entry.getKey(), entry.getValue());
             }
         }
+        // query.* 通配符 — 补充动画完成查询的真实动态值
+        if (prefix.startsWith("query.")) {
+            addAnimationFinishedEntries(result);
+        }
         return result;
+    }
+
+    /**
+     * 把动画完成查询的真实动态值写入 result：覆盖全局 query.any/all_animation_finished
+     * （MolangParser.VARIABLES 里的静态注册值恒为 0），并补充各控制器单独的结果
+     * （query.<q>@<geckoControllerName>）。
+     */
+    private static void addAnimationFinishedEntries(Map<String, Double> result) {
+        result.put("query.any_animation_finished",
+            OpenYsmControllerExpressionEvaluator.getLastAnyAnimationFinished());
+        result.put("query.all_animations_finished",
+            OpenYsmControllerExpressionEvaluator.getLastAllAnimationsFinished());
+        for (Map.Entry<String, Double> e : OpenYsmControllerExpressionEvaluator.getLastAnimationFinished().entrySet()) {
+            int sep = e.getKey().indexOf('|');
+            if (sep > 0) {
+                result.put("query." + e.getKey().substring(sep + 1) + "@" + e.getKey().substring(0, sep),
+                    e.getValue());
+            }
+        }
     }
 
     // ---- 聊天输出 ----
@@ -129,10 +177,12 @@ public final class MolangDebugSnapshot {
                 "attacked", "jump", "sneak", "sneaking", "run", "walk"};
             for (String s : ctrlStates) {
                 result.put("ctrl." + s,
-                    com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
-                        .evaluateCtrlState(s, p));
+                    OpenYsmControllerExpressionEvaluator.evaluateCtrlState(s, p));
             }
         }
+        // 覆盖静态注册的动画完成查询，显示控制器条件求值出的真实动态值，
+        // 并补充各控制器单独的结果（query.<q>@<geckoControllerName>）。
+        addAnimationFinishedEntries(result);
         return result;
     }
 
@@ -162,6 +212,8 @@ public final class MolangDebugSnapshot {
      * @return 匹配的变量名 → 值的映射
      */
     public static Map<String, Double> resolveVariables(String pattern) {
+        // 语法糖：q. → query.，/ysm query 可直接输 q.xxx
+        pattern = expandSearchAlias(pattern);
         // 1. 精确匹配
         double exact = queryVariable(pattern);
         if (!Double.isNaN(exact)) {
@@ -191,6 +243,10 @@ public final class MolangDebugSnapshot {
             if (prefix.equals("ctrl.")) {
                 addDynamicCtrlStates(result);
             }
+            // query.* 通配符 — 补充动画完成查询的真实动态值
+            if (prefix.startsWith("query.")) {
+                addAnimationFinishedEntries(result);
+            }
             if (!result.isEmpty()) return result;
         }
         // 3. 模糊子串匹配（不包含通配符但也不是精确匹配）
@@ -215,6 +271,10 @@ public final class MolangDebugSnapshot {
         // ctrl.* 模糊匹配 — 使用动态评估
         if (lower.startsWith("ctrl.")) {
             addDynamicCtrlStates(result);
+        }
+        // 模糊匹配动画完成查询 — 用真实动态值覆盖静态 0
+        if (lower.contains("animation_finished")) {
+            addAnimationFinishedEntries(result);
         }
         return result;
     }

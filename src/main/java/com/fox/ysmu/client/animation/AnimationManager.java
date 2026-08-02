@@ -23,6 +23,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
+import com.fox.ysmu.util.ControllerUtils;
 
 import com.google.common.collect.Lists;
 
@@ -552,20 +553,28 @@ public final class AnimationManager {
         ResourceLocation animId = getAnimationId(event);
         AnimationFile animFile = animId == null ? null
             : GeckoLibCache.getInstance().getAnimations().get(animId);
-        // OpenYSM 模型：潜行动画由 player.pre_main 控制器负责
-        // （移动潜行→行走/后退1，站立潜行→sneaking_Control）。
+        // OpenYSM 模型：潜行动画可能由 player.pre_main 控制器负责
+        // （乐魂：移动潜行→行走/后退1，站立潜行→sneaking_Control）。
         // main_controller 的 legacy 潜行（sneak/sneaking）会与 pre_main 同时
         // 播放并覆盖其 Root 位移（sneaking 的 Root [0,-7.625,0] 覆盖行走的
-        // [0,3,0]），导致移动潜行显示成站立潜行蹲姿。OpenYSM 模型时跳过
-        // legacy 的 sneak/sneaking 状态。
-        boolean openYsmModel = animId != null && OpenYsmPlayerControllerRuntime.hasAnyController(animId);
+        // [0,3,0]），导致移动潜行显示成站立潜行蹲姿。
+        // 因此仅当模型自身提供了身体控制器（player.pre_main / player.main /
+        // player.base / player.move）时才跳过 legacy 的 sneak/sneaking 状态；
+        // 只有 post_main/post_swing 等非身体控制器的 OpenYSM 模型（如
+        // Endfield Rossi）没有自带的潜行处理，必须依赖 legacy 状态机播放
+        // sneak/sneaking 动画，不能跳过。
+        boolean openYsmHandlesSneak = animId != null
+            && (OpenYsmAnimationControllerRegistry.hasController(animId, ControllerUtils.OPENYSM_PRE_MAIN_CONTROLLER)
+                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.main")
+                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.base")
+                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.move"));
         for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
             if (!data.containsKey(i)) {
                 continue;
             }
             LinkedList<AnimationState> states = data.get(i);
             for (AnimationState state : states) {
-                if (openYsmModel) {
+                if (openYsmHandlesSneak) {
                     String legacyAnimName = state.getAnimationName();
                     if ("sneak".equals(legacyAnimName) || "sneaking".equals(legacyAnimName)) {
                         continue;

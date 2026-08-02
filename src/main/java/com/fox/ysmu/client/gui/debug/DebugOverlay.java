@@ -258,14 +258,15 @@ public final class DebugOverlay {
 
             // 列：变量名
             String name = entry.getKey();
-            // 高亮过滤匹配部分
+            // 高亮过滤匹配部分（q. 别名展开为 query. 后再匹配）
             if (!filterText.isEmpty()) {
-                int matchIdx = name.toLowerCase(java.util.Locale.ROOT)
-                    .indexOf(filterText.toLowerCase(java.util.Locale.ROOT));
+                String lowerMatch = MolangDebugSnapshot.expandSearchAlias(
+                    filterText.toLowerCase(java.util.Locale.ROOT));
+                int matchIdx = name.toLowerCase(java.util.Locale.ROOT).indexOf(lowerMatch);
                 if (matchIdx >= 0) {
                     String before = name.substring(0, matchIdx);
-                    String match = name.substring(matchIdx, matchIdx + filterText.length());
-                    String after = name.substring(matchIdx + filterText.length());
+                    String match = name.substring(matchIdx, matchIdx + lowerMatch.length());
+                    String after = name.substring(matchIdx + lowerMatch.length());
                     font.drawStringWithShadow(before, COL_NAME_X, y, COLOR_NAME);
                     font.drawStringWithShadow(match,
                         COL_NAME_X + font.getStringWidth(before), y, 0xFFFFFFFF);
@@ -303,9 +304,11 @@ public final class DebugOverlay {
     private static void rebuildDisplayList() {
         displayEntries = new ArrayList<>();
         String lowerFilter = filterText.toLowerCase(java.util.Locale.ROOT);
+        // 语法糖：q. → query.，过滤框可直接输 q.xxx 匹配 query.xxx
+        String matchFilter = MolangDebugSnapshot.expandSearchAlias(lowerFilter);
         for (Map.Entry<String, Double> entry : currentSnapshot.entrySet()) {
-            if (filterText.isEmpty()
-                || entry.getKey().toLowerCase(java.util.Locale.ROOT).contains(lowerFilter)) {
+            if (matchFilter.isEmpty()
+                || entry.getKey().toLowerCase(java.util.Locale.ROOT).contains(matchFilter)) {
                 displayEntries.add(entry);
             }
         }
