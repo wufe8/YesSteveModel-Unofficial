@@ -26,6 +26,11 @@ import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import com.google.gson.JsonPrimitive;
 
+import org.joml.Matrix3f;
+import org.joml.Matrix4f;
+import org.joml.Vector3f;
+import org.joml.Vector4f;
+
 import software.bernie.geckolib3.geo.raw.pojo.Converter;
 
 public class YSMFolderDeserializer implements AutoCloseable {
@@ -478,12 +483,210 @@ public class YSMFolderDeserializer implements AutoCloseable {
                 RawYsmModel.RawBone bone = new RawYsmModel.RawBone();
                 bone.name = getStr(boneObj, "name", "");
                 bone.parentName = getStr(boneObj, "parent", "");
-                bone.pivot = getFloatArray(boneObj, "pivot", 3);
-                bone.rotation = getFloatArray(boneObj, "rotation", 3);
+
+                // RawYsmModel 内部约定与 .ysm 二进制一致：
+                // pivot.x 取负、rotation 为弧度制（x/y 取负、z 取正）。
+                // 客户端 createGeometryJson -> generatedPivotArray/generatedRotationArray
+                // 会再反转回 BlockBench JSON 的数值。如果这里存原始 JSON 值，
+                // 走 OpenYSM 二进制同步路径时骨骼旋转/轴心会整体出错。
+                if (hasArray(boneObj, "pivot")) {
+                    JsonArray pivot = boneObj.getAsJsonArray("pivot");
+                    bone.pivot = new float[] {
+                        -pivot.get(0).getAsFloat(),
+                        pivot.get(1).getAsFloat(),
+                        pivot.get(2).getAsFloat()
+                    };
+                }
+                if (hasArray(boneObj, "rotation")) {
+                    JsonArray rot = boneObj.getAsJsonArray("rotation");
+                    bone.rotation = new float[] {
+                        (float) -Math.toRadians(rot.get(0).getAsFloat()),
+                        (float) -Math.toRadians(rot.get(1).getAsFloat()),
+                        (float) Math.toRadians(rot.get(2).getAsFloat())
+                    };
+                }
+
+                // 关键修复：填充 bone.cubes。此前 parseGeometry 只填骨骼元数据，
+                // cubes 恒为空，导致 writeOpenYsm 序列化出空几何，客户端反序列化后
+                // isBridgeable 失败、文件夹模型（含内置模型）全部从列表消失。
+                float boneInflate = (float) getDouble(boneObj, "inflate", 0.0);
+                boolean boneMirror = getBool(boneObj, "mirror", false);
+                if (hasArray(boneObj, "cubes")) {
+                    for (JsonElement cElem : boneObj.getAsJsonArray("cubes")) {
+                        if (!cElem.isJsonObject()) {
+                            continue;
+                        }
+                        JsonObject cObj = cElem.getAsJsonObject();
+                        RawYsmModel.RawCube cube = new RawYsmModel.RawCube();
+
+                        float inflate = cObj.has("inflate")
+                            ? cObj.get("inflate").getAsFloat() : boneInflate;
+                        boolean mirror = cObj.has("mirror")
+                            ? cObj.get("mirror").getAsBoolean() : boneMirror;
+
+                        float[] origin = getFloatArray(cObj, "origin", 3);
+                        float[] size = getFloatArray(cObj, "size", 3);
+
+                        // OpenYSM 展开的立方体区域：x 镜像到负数侧
+                        float cx = -origin[0] - size[0] - inflate;
+                        float cy = origin[1] - inflate;
+                        float cz = origin[2] - inflate;
+                        float cw = size[0] + inflate * 2;
+                        float ch = size[1] + inflate * 2;
+                        float cd = size[2] + inflate * 2;
+
+                        Matrix4f cubeBakeMat = new Matrix4f();
+                        if (cObj.has("rotation") || cObj.has("pivot")) {
+                            float[] cpvt = getFloatArray(cObj, "pivot", 3);
+                            float[] crot = getFloatArray(cObj, "rotation", 3);
+                            cubeBakeMat.translate(-cpvt[0] / 16f, cpvt[1] / 16f, cpvt[2] / 16f);
+                            cubeBakeMat.rotateZ((float) Math.toRadians(crot[2]));
+                            cubeBakeMat.rotateY((float) -Math.toRadians(crot[1]));
+                            cubeBakeMat.rotateX((float) -Math.toRadians(crot[0]));
+                            cubeBakeMat.translate(cpvt[0] / 16f, -cpvt[1] / 16f, -cpvt[2] / 16f);
+                        }
+                        Matrix3f cubeNormalMat = new Matrix3f();
+                        cubeBakeMat.normal(cubeNormalMat);
+
+                        if (cObj.has("uv")) {
+                            JsonElement uvElem = cObj.get("uv");
+                            if (uvElem.isJsonObject()) {
+                                JsonObject uvObj = uvElem.getAsJsonObject();
+                                bakeFaceToRaw(cube, uvObj, "north", "north", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, 0, -1), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, uvObj, "south", "south", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, 0, 1), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, uvObj, "east", mirror ? "west" : "east", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(1, 0, 0), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, uvObj, "west", mirror ? "east" : "west", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(-1, 0, 0), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, uvObj, "up", "up", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, 1, 0), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, uvObj, "down", "down", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, -1, 0), cubeBakeMat, cubeNormalMat);
+                            } else if (uvElem.isJsonArray()) {
+                                // 旧版 BlockBench UV：单个 [u, v] 按尺寸自动展开六面
+                                JsonArray uvArr = uvElem.getAsJsonArray();
+                                float uvX = uvArr.get(0).getAsFloat();
+                                float uvY = uvArr.get(1).getAsFloat();
+                                float dx = (float) Math.floor(size[0]);
+                                float dy = (float) Math.floor(size[1]);
+                                float dz = (float) Math.floor(size[2]);
+
+                                JsonObject fakeUvObj = new JsonObject();
+                                fakeUvObj.add("north", createFaceUVNode(uvX + dz, uvY + dz, dx, dy));
+                                fakeUvObj.add("south", createFaceUVNode(uvX + dz + dx + dz, uvY + dz, dx, dy));
+                                fakeUvObj.add("east", createFaceUVNode(uvX, uvY + dz, dz, dy));
+                                fakeUvObj.add("west", createFaceUVNode(uvX + dz + dx, uvY + dz, dz, dy));
+                                fakeUvObj.add("up", createFaceUVNode(uvX + dz, uvY, dx, dz));
+                                fakeUvObj.add("down", createFaceUVNode(uvX + dz + dx, uvY + dz, dx, -dz));
+
+                                bakeFaceToRaw(cube, fakeUvObj, "north", "north", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, 0, -1), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, fakeUvObj, "south", "south", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, 0, 1), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, fakeUvObj, "east", mirror ? "west" : "east", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(1, 0, 0), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, fakeUvObj, "west", mirror ? "east" : "west", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(-1, 0, 0), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, fakeUvObj, "up", "up", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, 1, 0), cubeBakeMat, cubeNormalMat);
+                                bakeFaceToRaw(cube, fakeUvObj, "down", "down", mirror,
+                                    cx, cy, cz, cw, ch, cd, geometry.textureWidth, geometry.textureHeight,
+                                    new Vector3f(0, -1, 0), cubeBakeMat, cubeNormalMat);
+                            }
+                        }
+                        bone.cubes.add(cube);
+                    }
+                }
                 geometry.bones.add(bone);
             }
         }
         return geometry;
+    }
+
+    /** 将 BlockBench 六面 UV 展开为一个 RawFace（顶点、法线、UV），与 .ysm 二进制一致。 */
+    private static void bakeFaceToRaw(RawYsmModel.RawCube cube, JsonObject uvObj, String faceType,
+        String uvFaceName, boolean mirror, float x, float y, float z, float w, float h, float d,
+        float tw, float th, Vector3f rawNormal, Matrix4f cubeBakeMat, Matrix3f cubeNormalMat) {
+        if (!uvObj.has(uvFaceName)) {
+            return;
+        }
+        JsonObject faceData = uvObj.getAsJsonObject(uvFaceName);
+        float[] uv = getFloatArray(faceData, "uv", 2);
+        float[] uvSize = getFloatArray(faceData, "uv_size", 2);
+
+        float u0 = uv[0] / tw;
+        float v0 = uv[1] / th;
+        float u1 = (uv[0] + uvSize[0]) / tw;
+        float v1 = (uv[1] + uvSize[1]) / th;
+
+        if (!mirror) {
+            float temp = u0;
+            u0 = u1;
+            u1 = temp;
+        }
+
+        RawYsmModel.RawFace face = new RawYsmModel.RawFace();
+        Vector3f bakedNormal = new Vector3f(rawNormal).mul(cubeNormalMat).normalize();
+        face.normal = new float[] { bakedNormal.x, bakedNormal.y, bakedNormal.z };
+
+        float x1 = x / 16f, x2 = (x + w) / 16f;
+        float y1 = y / 16f, y2 = (y + h) / 16f;
+        float z1 = z / 16f, z2 = (z + d) / 16f;
+
+        Vector3f p1 = new Vector3f(x1, y1, z1);
+        Vector3f p2 = new Vector3f(x1, y1, z2);
+        Vector3f p3 = new Vector3f(x1, y2, z1);
+        Vector3f p4 = new Vector3f(x1, y2, z2);
+        Vector3f p5 = new Vector3f(x2, y1, z1);
+        Vector3f p6 = new Vector3f(x2, y1, z2);
+        Vector3f p7 = new Vector3f(x2, y2, z1);
+        Vector3f p8 = new Vector3f(x2, y2, z2);
+
+        Vector3f[] positions = switch (faceType) {
+            case "west" -> new Vector3f[] { p4, p3, p1, p2 };
+            case "east" -> new Vector3f[] { p7, p8, p6, p5 };
+            case "north" -> new Vector3f[] { p3, p7, p5, p1 };
+            case "south" -> new Vector3f[] { p8, p4, p2, p6 };
+            case "up" -> new Vector3f[] { p4, p8, p7, p3 };
+            case "down" -> new Vector3f[] { p1, p5, p6, p2 };
+            default -> null;
+        };
+
+        Vector4f tempPos = new Vector4f();
+        for (int i = 0; i < 4; i++) {
+            tempPos.set(positions[i].x(), positions[i].y(), positions[i].z(), 1.0f).mul(cubeBakeMat);
+            face.positions[i] = new float[] { tempPos.x(), tempPos.y(), tempPos.z() };
+        }
+
+        face.u = new float[] { u0, u1, u1, u0 };
+        face.v = new float[] { v0, v0, v1, v1 };
+        cube.faces.add(face);
+    }
+
+    private static JsonObject createFaceUVNode(float u, float v, float w, float h) {
+        JsonObject node = new JsonObject();
+        JsonArray uv = new JsonArray();
+        uv.add(new JsonPrimitive(u));
+        uv.add(new JsonPrimitive(v));
+        JsonArray size = new JsonArray();
+        size.add(new JsonPrimitive(w));
+        size.add(new JsonPrimitive(h));
+        node.add("uv", uv);
+        node.add("uv_size", size);
+        return node;
     }
 
     private RawYsmModel.RawAnimationFile parseAnimations(byte[] data) {
