@@ -5,6 +5,8 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.fox.ysmu.model.resource.pojo.RawYsmModel;
+
 import net.minecraft.util.ResourceLocation;
 
 import software.bernie.geckolib3.file.AnimationFile;
@@ -34,6 +36,11 @@ public class PreParsedModelBundle {
      *  registered at sync; the first AssetManager.anim(mainId).get() triggers a
      *  background decrypt+parse that restores it (same path as idle reload). */
     public boolean lazyAnimation;
+    /** Optional raw model (OpenYSM sync path) whose extra-wheel / display / GUI-image
+     *  data is registered inside {@code applyPreParsed} so each synced model consumes a
+     *  single main-thread task instead of a separate scheduled frame per model. Null for
+     *  the eager default-model path and legacy sync. */
+    public RawYsmModel extraWheelRaw;
     public final Map<String, byte[]> controllerFiles = new LinkedHashMap<>();
     public final Map<String, String> molangMapping = new LinkedHashMap<>();
     public final Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> molangConditional = new LinkedHashMap<>();

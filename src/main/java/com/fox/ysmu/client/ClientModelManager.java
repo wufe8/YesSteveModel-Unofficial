@@ -373,6 +373,17 @@ public class ClientModelManager {
         if (StringUtils.isNotBlank(bundle.previewAnimation)) {
             PREVIEW_ANIMATION.put(modelId, bundle.previewAnimation);
         }
+        // Extra-wheel / display / GUI-image data is folded into this same main-thread
+        // task (previously a separate func_152344_a per model, doubling sync frames).
+        // Set on the OpenYSM sync path; null for the default model / legacy sync.
+        if (bundle.extraWheelRaw != null) {
+            try {
+                registerExtraWheel(ModelIdUtil.getMainId(modelId), bundle.extraWheelRaw);
+            } catch (Exception ex) {
+                ysmu.LOG.warn("Failed to register extra wheel data for {}: {}", modelId, ex.getMessage());
+            }
+            bundle.extraWheelRaw = null;
+        }
 
         // Register textures (OpenGL — must be main thread)
         for (Map.Entry<ResourceLocation, byte[]> e : bundle.texturesToRegister.entrySet()) {
@@ -545,29 +556,47 @@ public class ClientModelManager {
     }
 
     /**
-     * Public convenience: parses geometry bytes and immediately applies to GeckoLib cache.
-     * Used by {@link com.fox.ysmu.client.sync.OpenYsmModelSyncClient#registerProjectilesFromRaw}.
-     * Call from a background thread; the main-thread part (texture/GL) is handled separately.
+     * Background thread: parses a single geometry JSON into a GeoModel plus its
+     * scale/extra info. No GeckoLibCache or GL writes. Returns a bundle holding the
+     * parsed geo, or null if the geometry is invalid. Apply on the main thread with
+     * {@link #applySingleGeo(PreParsedModelBundle, ResourceLocation)}.
      */
-    public static void registerGeo(ResourceLocation geoId, byte[] data) {
+    @Nullable
+    public static PreParsedModelBundle parseSingleGeoToBundle(ResourceLocation geoId, byte[] data) {
         PreParsedModelBundle bundle = new PreParsedModelBundle(ModelIdUtil.getMainId(geoId));
         parseGeoToBundle(bundle, geoId, data);
-        GeoModel parsed = bundle.geoModels.get(geoId);
-        if (parsed != null) {
-            GeckoLibCache.getInstance().getGeoModels().put(geoId, parsed);
-            if (!isProjectileKey(ModelIdUtil.getSubNameFromId(geoId))) {
-                AssetManager.registerGeo(geoId, parsed);
-            }
+        return bundle.geoModels.containsKey(geoId) ? bundle : null;
+    }
+
+    /**
+     * Main thread: applies a geometry parsed by {@link #parseSingleGeoToBundle} to
+     * GeckoLibCache and the scale/extra maps. Projectile sub-geo stays unmanaged by
+     * the asset framework (matches the legacy non-bridgeable registration path).
+     */
+    public static void applySingleGeo(PreParsedModelBundle bundle, ResourceLocation geoId) {
+        GeoModel geo = bundle.geoModels.get(geoId);
+        if (geo == null) return;
+        GeckoLibCache.getInstance().getGeoModels().put(geoId, geo);
+        it.unimi.dsi.fastutil.Pair<Double, Double> scale = bundle.scaleInfo.get(geoId);
+        if (scale != null) {
+            SCALE_INFO.put(geoId, scale);
         }
-        for (Map.Entry<ResourceLocation, it.unimi.dsi.fastutil.Pair<Double, Double>> e : bundle.scaleInfo.entrySet()) {
-            SCALE_INFO.put(e.getKey(), e.getValue());
-        }
-        for (Map.Entry<ResourceLocation, ExtraInfo> e : bundle.extraInfo.entrySet()) {
-            EXTRA_INFO.put(e.getKey(), handleExtraInfo(e.getKey(), e.getValue()));
+        ExtraInfo extra = bundle.extraInfo.get(geoId);
+        if (extra != null) {
+            EXTRA_INFO.put(geoId, handleExtraInfo(geoId, extra));
         }
         if (!bundle.extraAnimationNames.isEmpty()) {
             EXTRA_ANIMATION_NAME.putAll(bundle.extraAnimationNames);
         }
+    }
+
+    /**
+     * Background thread: parses an animation JSON string into an AnimationFile.
+     * No cache writes; the caller applies to GeckoLibCache on the main thread.
+     */
+    @Nullable
+    public static AnimationFile parseAnimationFileFromJson(String json) {
+        return getAnimationFile(json);
     }
 
     /**

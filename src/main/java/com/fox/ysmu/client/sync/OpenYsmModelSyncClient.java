@@ -283,34 +283,33 @@ public final class OpenYsmModelSyncClient {
             raw.modelId = context.modelId;
             ResourceLocation modelId = ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, context.modelId));
 
-            // Always register extra wheel data, even for non-bridgeable models.
-            // Must not throw on the main thread: this runs via func_152344_a for
-            // EVERY synced model, and an exception here would propagate to
-            // Minecraft's crash handler (repeated "Negative index in crash report
-            // handler" spam while the model library syncs).
-            Minecraft.getMinecraft().func_152344_a(() -> {
-                try {
-                    ClientModelManager.registerExtraWheel(modelId, raw);
-                } catch (Exception e) {
-                    ysmu.LOG.warn("Failed to register extra wheel data for {}: {}",
-                        context.modelId, e.getMessage());
-                }
-            });
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
                 // Even when the model can't be bridged to legacy ModelData, we still
-                // need to register projectile sub-entity models so arrow rendering works.
-                // Must run on the main render thread because registerProjectilesFromRaw
-                // calls OpenGL via registerTexture -> TextureManager -> glGenTextures.
+                // register its extra wheel data and projectile sub-entity models (so
+                // arrow rendering works). Extra wheel is cheap and scheduled here;
+                // projectile geo/anims are PARSED on the background thread (we are
+                // already on THREAD_POOL) and only applied on the main thread.
+                Minecraft.getMinecraft().func_152344_a(() -> {
+                    try {
+                        ClientModelManager.registerExtraWheel(modelId, raw);
+                    } catch (Exception e) {
+                        ysmu.LOG.warn("Failed to register extra wheel data for {}: {}",
+                            context.modelId, e.getMessage());
+                    }
+                });
                 if (raw.projectiles != null && !raw.projectiles.isEmpty()) {
-                    Minecraft.getMinecraft().func_152344_a(() -> {
-                        try {
-                            ResourceLocation baseModelId = ModelIdUtil.getModelIdFromMainId(modelId);
-                            registerProjectilesFromRaw(raw, baseModelId);
-                        } catch (Exception e) {
-                            ysmu.LOG.warn("Failed to register projectile models for non-bridgeable model {}",
-                                context.modelId, e);
-                        }
-                    });
+                    ResourceLocation baseModelId = ModelIdUtil.getModelIdFromMainId(modelId);
+                    java.util.List<ProjectileMatch> projectileMatches = parseProjectileResources(raw, baseModelId);
+                    if (!projectileMatches.isEmpty()) {
+                        Minecraft.getMinecraft().func_152344_a(() -> {
+                            try {
+                                applyProjectileResources(projectileMatches);
+                            } catch (Exception e) {
+                                ysmu.LOG.warn("Failed to register projectile models for non-bridgeable model {}",
+                                    context.modelId, e);
+                            }
+                        });
+                    }
                 }
                 if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                     ysmu.LOG.info("[YSMU-MODEL] OpenYSM synced model {} is not bridgeable, but projectiles registered",
@@ -335,6 +334,9 @@ public final class OpenYsmModelSyncClient {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
                 return false;
             }
+            // Fold extra-wheel registration into the single apply task (previously a
+            // separate func_152344_a per model, doubling the sync frame count).
+            bundle.extraWheelRaw = raw;
             // Record the encrypted client cache file (relative path under
             // CACHE_CLIENT, OpenYSM format) so lazy geo/anim/texture reload can
             // re-decrypt it on demand after an idle unload. Without this the
@@ -351,13 +353,35 @@ public final class OpenYsmModelSyncClient {
         }
     }
 
-    /**
-     * Register projectile sub-entity models/textures directly from a RawYsmModel,
-     * without requiring full legacy ModelData bridging.
-     * Used when isBridgeable() returns false but projectiles still need to render.
-     */
-    private static void registerProjectilesFromRaw(RawYsmModel raw, ResourceLocation baseModelId) {
-        if (raw.projectiles == null || raw.projectiles.isEmpty()) return;
+    /** Parsed projectile sub-entity resources for one matchId of a non-bridgeable
+     *  model. Populated on the background thread by {@link #parseProjectileResources},
+     *  applied on the main thread by {@link #applyProjectileResources}. Kept fully
+     *  decoupled from the main animation business logic. */
+    private static final class ProjectileMatch {
+
+        final ResourceLocation baseModelId;
+        final String matchId;
+        final List<ResourceLocation> geoIds = new ArrayList<>();
+        final List<com.fox.ysmu.client.model.PreParsedModelBundle> geoBundles = new ArrayList<>();
+        final List<ResourceLocation> animIds = new ArrayList<>();
+        final List<software.bernie.geckolib3.file.AnimationFile> anims = new ArrayList<>();
+        final List<ResourceLocation> ctrlIds = new ArrayList<>();
+        final List<byte[]> ctrlBytes = new ArrayList<>();
+        final List<ResourceLocation> texIds = new ArrayList<>();
+        final List<byte[]> texDatas = new ArrayList<>();
+
+        ProjectileMatch(ResourceLocation baseModelId, String matchId) {
+            this.baseModelId = baseModelId;
+            this.matchId = matchId;
+        }
+    }
+
+    /** Background thread: parses projectile sub-entity geo/anim/controller/texture
+     *  resources into plain objects (NO GeckoLibCache / GL writes — those are applied
+     *  on the main thread by {@link #applyProjectileResources}). Runs on THREAD_POOL. */
+    private static java.util.List<ProjectileMatch> parseProjectileResources(RawYsmModel raw, ResourceLocation baseModelId) {
+        java.util.List<ProjectileMatch> out = new java.util.ArrayList<>();
+        if (raw.projectiles == null || raw.projectiles.isEmpty()) return out;
         for (Map.Entry<String, RawYsmModel.RawSubEntity> entry : raw.projectiles.entrySet()) {
             RawYsmModel.RawSubEntity sub = entry.getValue();
             if (sub.model == null) continue;
@@ -365,29 +389,28 @@ public final class OpenYsmModelSyncClient {
                 ? sub.matchIds : new String[]{sub.identifier};
             for (String matchId : matchIds) {
                 if (matchId == null || matchId.isEmpty()) continue;
+                ProjectileMatch m = new ProjectileMatch(baseModelId, matchId);
                 try {
-                    // Register geometry
+                    // Geometry (heavy parse — background)
                     byte[] geoBytes = RawYsmModelAdapter.toGeometryJson(null, sub.model, false);
                     ResourceLocation geoId = ModelIdUtil.getSubModelId(baseModelId, "projectile_" + matchId);
-                    ClientModelManager.registerGeo(geoId, geoBytes);
-                    ClientModelManager.PROJECTILE_MODEL_IDS
-                        .computeIfAbsent(baseModelId, k -> new ArrayList<>())
-                        .add(matchId);
-                    // Register textures
+                    com.fox.ysmu.client.model.PreParsedModelBundle geoBundle =
+                        ClientModelManager.parseSingleGeoToBundle(geoId, geoBytes);
+                    if (geoBundle != null) {
+                        m.geoIds.add(geoId);
+                        m.geoBundles.add(geoBundle);
+                    }
+                    // Textures (bytes only; GL upload happens on the main thread)
                     for (RawYsmModel.RawTexture tex : sub.textures.values()) {
                         if (tex.data == null) continue;
                         byte[] texData = RawYsmModelAdapter.getLegacyTextureData(tex);
                         if (texData == null) continue;
                         String texKey = "projectile_" + matchId + "_" + tex.name;
                         if (!texKey.endsWith(".png")) texKey += ".png";
-                        ResourceLocation texId = ModelIdUtil.getSubModelId(baseModelId, texKey);
-                        ClientModelManager.registerTexture(texId, texData);
-                        ClientModelManager.PROJECTILE_TEXTURE_IDS
-                            .computeIfAbsent(baseModelId, k -> new ArrayList<>())
-                            .add(texId);
+                        m.texIds.add(ModelIdUtil.getSubModelId(baseModelId, texKey));
+                        m.texDatas.add(texData);
                     }
-
-                    // Register animation files under the projectile's GeoModel ID
+                    // Animations (heavy parse — background)
                     ResourceLocation projAnimId = ModelIdUtil.getSubModelId(baseModelId, "projectile_" + matchId);
                     for (RawYsmModel.RawAnimationFile animFile : sub.animationFiles.values()) {
                         if (animFile.animations == null || animFile.animations.isEmpty()) continue;
@@ -396,42 +419,14 @@ public final class OpenYsmModelSyncClient {
                             byte[] jsonBytes = animFile.sourceJson != null
                                 ? animFile.sourceJson
                                 : com.fox.ysmu.model.resource.RawYsmModelAdapter.createAnimationJson(animFile);
-                            String json = new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8);
-                            com.google.gson.JsonObject jsonObject = com.fox.ysmu.util.GsonHelper.fromJson(
-                                com.fox.ysmu.ysmu.GSON, json, com.google.gson.JsonObject.class);
-                            if (jsonObject == null) continue;
                             software.bernie.geckolib3.file.AnimationFile parsedAnim =
-                                new software.bernie.geckolib3.file.AnimationFile();
-                            software.bernie.geckolib3.core.molang.MolangParser parser =
-                                software.bernie.geckolib3.resource.GeckoLibCache.getInstance().parser;
-                            for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae
-                                : software.bernie.geckolib3.util.json.JsonAnimationUtils.getAnimations(jsonObject)) {
-                                try {
-                                    software.bernie.geckolib3.core.builder.Animation anim =
-                                        software.bernie.geckolib3.util.json.JsonAnimationUtils
-                                            .deserializeJsonToAnimation(ae, parser);
-                                    parsedAnim.putAnimation(ae.getKey(), anim);
-                                } catch (Exception ex) {
-                                    ysmu.LOG.warn("Failed to deserialize projectile animation '{}': {}",
-                                        ae.getKey(), ex.getMessage());
-                                }
-                            }
-                            if (!parsedAnim.animations.isEmpty()) {
-                                // Merge into a single AnimationFile per projectile
-                                software.bernie.geckolib3.file.AnimationFile existing =
-                                    software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations()
-                                        .get(projAnimId);
-                                if (existing == null) {
-                                    existing = new software.bernie.geckolib3.file.AnimationFile();
-                                    software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations()
-                                        .put(projAnimId, existing);
-                                }
-                                for (java.util.Map.Entry<String, software.bernie.geckolib3.core.builder.Animation> ae
-                                    : parsedAnim.animations.entrySet()) {
-                                    existing.putAnimation(ae.getKey(), ae.getValue());
-                                }
-                                if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_SYNC) {
-                                    ysmu.LOG.info("[YSMU-MODEL] Registered projectile animation for {}: {} anims from {}",
+                                ClientModelManager.parseAnimationFileFromJson(
+                                    new String(jsonBytes, java.nio.charset.StandardCharsets.UTF_8));
+                            if (parsedAnim != null && !parsedAnim.animations.isEmpty()) {
+                                m.animIds.add(projAnimId);
+                                m.anims.add(parsedAnim);
+                                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                                    ysmu.LOG.info("[YSMU-MODEL] Parsed projectile animation for {}: {} anims from {}",
                                         projAnimId, parsedAnim.animations.size(), animFile.fileHash);
                                 }
                             }
@@ -440,8 +435,7 @@ public final class OpenYsmModelSyncClient {
                                 projAnimId, e.getMessage());
                         }
                     }
-
-                    // Register controller files under the projectile's animation ID
+                    // Controllers (bytes kept; JSON parse happens on apply, main thread)
                     for (RawYsmModel.RawAnimationControllerFile ctrlFile : sub.animationControllerFiles) {
                         if (ctrlFile.controllers == null || ctrlFile.controllers.isEmpty()) continue;
                         try {
@@ -449,27 +443,73 @@ public final class OpenYsmModelSyncClient {
                             byte[] ctrlBytes = ctrlFile.sourceJson != null
                                 ? ctrlFile.sourceJson
                                 : com.fox.ysmu.model.resource.RawYsmModelAdapter.createControllerJson(ctrlFile);
-                            OpenYsmAnimationControllerRegistry.register(projAnimId,
-                                java.util.Collections.singleton(ctrlBytes));
-                            if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_SYNC) {
-                                ysmu.LOG.info("[YSMU-MODEL] Registered projectile controller for {}: '{}' ({} states)",
-                                    projAnimId, ctrlFile.name,
-                                    ctrlFile.controllers.size());
+                            m.ctrlIds.add(projAnimId);
+                            m.ctrlBytes.add(ctrlBytes);
+                            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                                ysmu.LOG.info("[YSMU-MODEL] Parsed projectile controller for {}: '{}' ({} states)",
+                                    projAnimId, ctrlFile.name, ctrlFile.controllers.size());
                             }
                         } catch (Exception e) {
-                            ysmu.LOG.warn("Failed to register projectile controller for {}: {}",
+                            ysmu.LOG.warn("Failed to parse projectile controller for {}: {}",
                                 projAnimId, e.getMessage());
                         }
                     }
+                    out.add(m);
                 } catch (Exception e) {
-                    ysmu.LOG.warn("Failed to register projectile {} for model {}",
-                        matchId, baseModelId, e);
+                    ysmu.LOG.warn("Failed to parse projectile {} for model {}", matchId, baseModelId, e);
                 }
             }
         }
+        return out;
+    }
+
+    /** Main thread: applies parsed projectile resources (GeckoLibCache writes, GL
+     *  texture upload, projectile id maps, controller registry). GeckoLibCache is a
+     *  plain HashMap and texture upload needs OpenGL, so this MUST run on the client
+     *  render thread. */
+    private static void applyProjectileResources(java.util.List<ProjectileMatch> matches) {
+        if (matches == null || matches.isEmpty()) return;
+        for (ProjectileMatch m : matches) {
+            try {
+                for (int i = 0; i < m.geoIds.size(); i++) {
+                    ClientModelManager.applySingleGeo(m.geoBundles.get(i), m.geoIds.get(i));
+                }
+                // Match id is registered regardless of geo success (matches legacy
+                // behavior — the renderer keys projectile entity types by this list).
+                ClientModelManager.PROJECTILE_MODEL_IDS
+                    .computeIfAbsent(m.baseModelId, k -> new ArrayList<>())
+                    .add(m.matchId);
+                for (int i = 0; i < m.texIds.size(); i++) {
+                    ClientModelManager.registerTexture(m.texIds.get(i), m.texDatas.get(i));
+                    ClientModelManager.PROJECTILE_TEXTURE_IDS
+                        .computeIfAbsent(m.baseModelId, k -> new ArrayList<>())
+                        .add(m.texIds.get(i));
+                }
+                for (int i = 0; i < m.animIds.size(); i++) {
+                    ResourceLocation animId = m.animIds.get(i);
+                    software.bernie.geckolib3.file.AnimationFile existing =
+                        software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
+                    if (existing == null) {
+                        existing = new software.bernie.geckolib3.file.AnimationFile();
+                        software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().put(animId, existing);
+                    }
+                    for (java.util.Map.Entry<String, software.bernie.geckolib3.core.builder.Animation> ae
+                        : m.anims.get(i).animations.entrySet()) {
+                        existing.putAnimation(ae.getKey(), ae.getValue());
+                    }
+                }
+                for (int i = 0; i < m.ctrlIds.size(); i++) {
+                    OpenYsmAnimationControllerRegistry.register(m.ctrlIds.get(i),
+                        java.util.Collections.singleton(m.ctrlBytes.get(i)));
+                }
+            } catch (Exception e) {
+                ysmu.LOG.warn("Failed to apply projectile {} for model {}", m.matchId, m.baseModelId, e);
+            }
+        }
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-            ysmu.LOG.info("[YSMU-MODEL] Inline-registered projectile models for {}: {}",
-                baseModelId, ClientModelManager.PROJECTILE_MODEL_IDS.get(baseModelId));
+            ysmu.LOG.info("[YSMU-MODEL] Applied projectile models for {}: {}",
+                matches.get(0).baseModelId,
+                ClientModelManager.PROJECTILE_MODEL_IDS.get(matches.get(0).baseModelId));
         }
     }
 
