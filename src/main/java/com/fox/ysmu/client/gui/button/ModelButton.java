@@ -59,6 +59,10 @@ public class ModelButton extends GuiButton {
     private boolean hasHoverFadeoutAnim;
     private boolean hasFocusAnim;
     private double hoverFadeoutDurationMs;
+    /** Lazy-animation state: whether we already (re)checked the model's AnimationFile
+     *  (loaded on first use) and how many draw attempts we've spent waiting for it. */
+    private boolean lazyAnimChecked;
+    private int lazyAnimAttempts;
 
     public ModelButton(int id, int pX, int pY, Pair<ResourceLocation, List<ResourceLocation>> modelInfo,
                        List<IChatComponent> tooltips, EntityPlayer player) {
@@ -87,6 +91,38 @@ public class ModelButton extends GuiButton {
         }
 
         this.displayString = ModelIdUtil.getModelDisplayName(modelInfo.getLeft());
+    }
+
+    /**
+     * Lazy-animation support: with lazy animation loading the model's AnimationFile
+     * may not be in GeckoLibCache when this button is constructed, so hover/focus
+     * detection would be cached as "absent" forever. Trigger the background load once
+     * and refresh the flags when the file arrives (equivalent to the brief wait users
+     * already accept for idle reloads).
+     */
+    private void refreshGuiAnimFlags() {
+        if (this.lazyAnimChecked) {
+            return;
+        }
+        if (++this.lazyAnimAttempts > 600) {
+            // Give up after ~10s: model has no (or unresolvable) main animation.
+            this.lazyAnimChecked = true;
+            return;
+        }
+        com.fox.ysmu.client.asset.AssetManager.anim(mainModelId).get();
+        AnimationFile animFile = GeckoLibCache.getInstance().getAnimations().get(mainModelId);
+        if (animFile == null) {
+            return;
+        }
+        this.lazyAnimChecked = true;
+        this.hasHoverAnim = animFile.getAnimation("hover") != null;
+        this.hasHoverFadeoutAnim = animFile.getAnimation("hover_fadeout") != null;
+        software.bernie.geckolib3.core.builder.Animation focusAnim = animFile.getAnimation("focus");
+        this.hasFocusAnim = focusAnim != null && focusAnim.boneAnimations != null && !focusAnim.boneAnimations.isEmpty();
+        if (this.hasHoverFadeoutAnim) {
+            software.bernie.geckolib3.core.builder.Animation fadeout = animFile.getAnimation("hover_fadeout");
+            this.hoverFadeoutDurationMs = fadeout != null ? fadeout.animationLength * 1000.0 : 0;
+        }
     }
 
     public void doPress() {
@@ -149,6 +185,7 @@ public class ModelButton extends GuiButton {
         if (!this.visible) {
             return;
         }
+        refreshGuiAnimFlags();
         FontRenderer font = mc.fontRenderer;
         // Hover状态
         this.field_146123_n = mouseX >= this.xPosition && mouseY >= this.yPosition

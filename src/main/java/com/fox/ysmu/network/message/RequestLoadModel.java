@@ -91,10 +91,11 @@ public class RequestLoadModel implements IMessage {
                         ClientModelManager.rememberModelMd5(
                             new net.minecraft.util.ResourceLocation(com.fox.ysmu.ysmu.MODID, data.getModelId()),
                             fileName);
-                        // Parse geometry/animation on background thread, only register on main thread.
+                        // Parse geometry on background thread, only register on main thread.
+                        // Lazy animation: the heavy AnimationFile is deferred to first use.
                         com.fox.ysmu.client.model.PreParsedModelBundle bundle;
                         try {
-                            bundle = ClientModelManager.preParseModel(data);
+                            bundle = ClientModelManager.preParseModel(data, true);
                         } catch (Exception e) {
                             ysmu.LOG.warn("Failed to pre-parse model {}: {}", fileName, e.getMessage());
                             return;

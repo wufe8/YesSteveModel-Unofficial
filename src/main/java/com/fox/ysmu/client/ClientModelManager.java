@@ -248,10 +248,26 @@ public class ClientModelManager {
     /**
      * Parses model geometries and animations on the calling thread (should be a background thread).
      * Returns a bundle that {@link #applyPreParsed(PreParsedModelBundle)} applies on the main thread.
+     * Eager mode: builds the full AnimationFile immediately (used by the default model).
      */
     public static PreParsedModelBundle preParseModel(ModelData data) {
+        return preParseModel(data, false);
+    }
+
+    /**
+     * Parses model geometries/animations on the calling thread (should be a background thread).
+     * Returns a bundle that {@link #applyPreParsed(PreParsedModelBundle)} applies on the main thread.
+     *
+     * @param lazyAnimation when true, the heavy AnimationFile (KeyFrame graph) is NOT built
+     *     here — only animation NAMES are extracted (conditions, stats, GUI list). The full
+     *     file is restored on first use by the asset lifecycle framework
+     *     ({@code AssetManager.anim().get()} → {@code AnimationProvider}). Sync paths pass
+     *     true; the built-in default model stays eager.
+     */
+    public static PreParsedModelBundle preParseModel(ModelData data, boolean lazyAnimation) {
         ResourceLocation modelId = getModelId(data);
         PreParsedModelBundle bundle = new PreParsedModelBundle(modelId);
+        bundle.lazyAnimation = lazyAnimation;
 
         // Separate projectile sub-entity data from main model data
         Map<String, byte[]> mainModelMap = new LinkedHashMap<>();
@@ -285,9 +301,11 @@ public class ClientModelManager {
             bundle.projectileModelIds.computeIfAbsent(modelId, k -> new ArrayList<>()).add(entityType);
         }
 
-        // HEAVY: Parse animation files on background thread
+        // HEAVY: Parse animation files on background thread.
+        // In lazy mode only names are extracted; the full KeyFrame graph is
+        // deferred to first use (see AnimationProvider/parseAnimationFromCache).
         try {
-            parseAnimationsToBundle(bundle, modelId, data);
+            parseAnimationsToBundle(bundle, modelId, data, lazyAnimation);
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to parse animations for model {}: {}", modelId, e.getMessage());
         }
@@ -313,9 +331,9 @@ public class ClientModelManager {
             bundle.totalBones += countTotalBones(geoModel);
             bundle.totalCubes += countTotalCubes(geoModel);
         }
-        if (bundle.animationFile.animations != null) {
-            bundle.totalAnims = bundle.animationFile.animations.size();
-        }
+        // Animation count comes from the light name list (works in both eager and
+        // lazy modes — in lazy mode the heavy AnimationFile is empty at sync).
+        bundle.totalAnims = bundle.animationNames.size();
 
         return bundle;
     }
@@ -366,8 +384,13 @@ public class ClientModelManager {
         }
         MODELS.put(modelId, bundle.textureIdList);
 
-        // Register animations to GeckoLib cache, and hand them to the asset framework
-        if (!bundle.animationFile.animations.isEmpty()) {
+        // Register animations to GeckoLib cache, and hand them to the asset framework.
+        // In lazy-animation mode the heavy AnimationFile (KeyFrame graph) is NOT
+        // registered here — the first AssetManager.anim(mainId).get() (render / preview /
+        // animation selection) triggers a background decrypt+parse that restores it.
+        // Molang maps, controllers and conditions below are light and stay eager, so
+        // animation selection works before the heavy file arrives.
+        if (!bundle.lazyAnimation && !bundle.animationFile.animations.isEmpty()) {
             GeckoLibCache.getInstance().getAnimations().put(ModelIdUtil.getMainId(modelId), bundle.animationFile);
             AssetManager.registerAnim(ModelIdUtil.getMainId(modelId), bundle.animationFile);
         }
@@ -415,15 +438,15 @@ public class ClientModelManager {
             OpenYsmAnimationControllerRegistry.scanAnimKeyframesForDeps(
                 ModelIdUtil.getMainId(modelId), bundle.animToModIds);
         }
-        // Register animation conditions (must be on main thread with GeckoLib state)
+        // Register animation conditions (must be on main thread with GeckoLib state).
+        // Classified by animation NAME; names are extracted eagerly even in lazy mode,
+        // so condition-based selection works before the heavy AnimationFile loads.
         ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
-        if (bundle.animationFile.animations != null) {
-            for (Map.Entry<String, software.bernie.geckolib3.core.builder.Animation> animEntry : bundle.animationFile.animations.entrySet()) {
-                try {
-                    com.fox.ysmu.client.animation.condition.ConditionManager.addTest(mainId, animEntry.getKey());
-                } catch (Exception ex) {
-                    ysmu.LOG.warn("Failed to register animation condition {} for model {}", animEntry.getKey(), modelId, ex);
-                }
+        for (String animName : bundle.animationNames) {
+            try {
+                com.fox.ysmu.client.animation.condition.ConditionManager.addTest(mainId, animName);
+            } catch (Exception ex) {
+                ysmu.LOG.warn("Failed to register animation condition {} for model {}", animName, modelId, ex);
             }
         }
 
@@ -603,7 +626,8 @@ public class ClientModelManager {
      * Parses animation files from ModelData on the background thread.
      * Stores AnimationFile, molang mappings, and controller files into the bundle.
      */
-    private static void parseAnimationsToBundle(PreParsedModelBundle bundle, ResourceLocation modelId, ModelData data) {
+    private static void parseAnimationsToBundle(PreParsedModelBundle bundle, ResourceLocation modelId, ModelData data,
+        boolean lazyAnimation) {
         ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
         Map<String, byte[]> mapData = data.getAnimation();
         if (mapData == null || mapData.isEmpty()) return;
@@ -682,13 +706,31 @@ public class ClientModelManager {
                     bundle.animToModIds.merge(e.getKey(), e.getValue(), (a, b) -> { a.addAll(b); return a; });
                 }
             }
+            // Light name extraction: needed for ConditionManager classification,
+            // MODEL_STATS and the GUI animation list. Performed in BOTH modes.
             try {
-                AnimationFile other = getAnimationFile(animJsonStr);
-                mergeAnimationFile(main, other);
-            } catch (Exception e) {
-                ysmu.LOG.warn("Failed to parse animation file {} for model {}: {}: {}",
-                    key, modelId, e.getClass().getSimpleName(),
-                    org.apache.commons.lang3.StringUtils.defaultString(e.getMessage()));
+                com.google.gson.JsonObject animRoot = new com.google.gson.JsonParser().parse(animJsonStr)
+                    .getAsJsonObject();
+                com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
+                if (anims != null) {
+                    for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae : anims.entrySet()) {
+                        bundle.animationNames.add(ae.getKey());
+                    }
+                }
+            } catch (Exception ignored) {
+                // Best-effort; malformed files are handled by the parse below.
+            }
+            if (!lazyAnimation) {
+                // Heavy: full AnimationFile (KeyFrame graph) — deferred to first use
+                // in lazy mode via AnimationProvider.parseAnimationFromCache.
+                try {
+                    AnimationFile other = getAnimationFile(animJsonStr);
+                    mergeAnimationFile(main, other);
+                } catch (Exception e) {
+                    ysmu.LOG.warn("Failed to parse animation file {} for model {}: {}: {}",
+                        key, modelId, e.getClass().getSimpleName(),
+                        org.apache.commons.lang3.StringUtils.defaultString(e.getMessage()));
+                }
             }
         }
         bundle.animationFile = main;

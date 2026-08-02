@@ -83,6 +83,10 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
     private int maxTexturePage;
     private int animPage;
     private int maxAnimPage;
+    /** Lazy-animation state: whether we already rebuilt the animation list and how many
+     *  draw attempts we've spent waiting for the model's AnimationFile to load. */
+    private boolean animationListResolved;
+    private int animationListRetries;
 
     private int guiLeft;
     private int guiTop;
@@ -133,6 +137,50 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
                 this.currentAnimation = animationNames.get(0);
             }
         }
+    }
+
+    /**
+     * Lazy-animation support: with lazy animation loading the model's AnimationFile
+     * may not be in GeckoLibCache when this screen opens, leaving the animation list
+     * empty. Trigger the background load and rebuild the list once it lands (equivalent
+     * to the brief wait users already accept for idle reloads).
+     */
+    private void refreshAnimationListIfNeeded() {
+        if (this.animationListResolved || !this.animationNames.isEmpty()) {
+            return;
+        }
+        if (++this.animationListRetries > 300) {
+            // Give up after ~5s: model has no (main) animations.
+            this.animationListResolved = true;
+            return;
+        }
+        ResourceLocation animId = ModelIdUtil.getMainId(modelId);
+        com.fox.ysmu.client.asset.AssetManager.anim(animId).get();
+        AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
+        if (file == null || file.animations == null) {
+            return;
+        }
+        for (String name : file.animations.keySet()) {
+            if (!name.startsWith(HIDDEN_PREFIX)
+                && (com.fox.ysmu.Config.DEBUG_MERGED_ANIMATIONS || !name.startsWith(MERGED_PREFIX))) {
+                this.animationNames.add(name);
+            }
+        }
+        this.animationNames.sort(String::compareTo);
+        this.maxAnimPage = animationNames.isEmpty() ? 0 : (animationNames.size() - 1) / ANIM_PER_PAGE;
+        if (this.currentAnimation == null || this.currentAnimation.isEmpty()) {
+            if (animationNames.contains("idle")) {
+                this.currentAnimation = "idle";
+            } else {
+                String previewAnim = ClientModelManager.PREVIEW_ANIMATION.get(ModelIdUtil.getMainId(modelId));
+                if (previewAnim != null && !previewAnim.isEmpty() && animationNames.contains(previewAnim)) {
+                    this.currentAnimation = previewAnim;
+                } else if (!animationNames.isEmpty()) {
+                    this.currentAnimation = animationNames.get(0);
+                }
+            }
+        }
+        this.animationListResolved = true;
     }
 
     // ============================================================
@@ -281,6 +329,7 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
 
     @Override
     public void drawScreen(int mouseX, int mouseY, float partialTick) {
+        refreshAnimationListIfNeeded();
         this.drawDefaultBackground();
 
         // 整体背景

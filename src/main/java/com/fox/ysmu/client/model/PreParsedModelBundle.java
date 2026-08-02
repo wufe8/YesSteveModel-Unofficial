@@ -26,6 +26,14 @@ public class PreParsedModelBundle {
 
     // Animation data (parsed on background thread)
     public AnimationFile animationFile = new AnimationFile();
+    /** Animation names (light, always extracted eagerly). Needed for condition
+     *  classification, model stats, and the GUI animation list even when the heavy
+     *  AnimationFile (KeyFrame graph) is deferred to first use (lazy animation). */
+    public final java.util.Set<String> animationNames = new java.util.LinkedHashSet<>();
+    /** True when this bundle is in lazy-animation mode: the AnimationFile is NOT
+     *  registered at sync; the first AssetManager.anim(mainId).get() triggers a
+     *  background decrypt+parse that restores it (same path as idle reload). */
+    public boolean lazyAnimation;
     public final Map<String, byte[]> controllerFiles = new LinkedHashMap<>();
     public final Map<String, String> molangMapping = new LinkedHashMap<>();
     public final Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> molangConditional = new LinkedHashMap<>();

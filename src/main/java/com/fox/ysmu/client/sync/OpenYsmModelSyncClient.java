@@ -325,10 +325,11 @@ public final class OpenYsmModelSyncClient {
                     context.modelId, data.getModel().keySet(), data.getTexture().keySet(), data.getAnimation().keySet());
             }
 
-            // Parse geometry/animation on background thread, only register on main thread.
+            // Parse geometry on background thread, only register on main thread.
+            // Lazy animation: the heavy AnimationFile is deferred to first use.
             com.fox.ysmu.client.model.PreParsedModelBundle bundle;
             try {
-                bundle = ClientModelManager.preParseModel(data);
+                bundle = ClientModelManager.preParseModel(data, true);
             bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
