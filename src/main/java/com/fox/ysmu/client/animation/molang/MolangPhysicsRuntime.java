@@ -234,6 +234,37 @@ public final class MolangPhysicsRuntime {
         }
     }
 
+    /**
+     * Removes a variable from the current frame's scope state. Used to make
+     * conditional animation pulses transient (e.g. clearing v.swing_sword right
+     * after the GUI-preview swing state machine consumes it, mimicking gameplay's
+     * one-frame pulse instead of a sticky value that re-triggers tick-0 sound
+     * keyframes every frame).
+     */
+    public static void clearVariable(String name) {
+        FrameContext context = currentFrameContext;
+        if (context == null) return;
+        context.state.variables.remove(name);
+    }
+
+    /**
+     * Clears swing/hold conditional animation variables from the GUI preview
+     * scope (player == null) for the given model. Does NOT touch the real
+     * player's scope, so in-game model state is unaffected.
+     */
+    public static void clearPreviewVariables(ResourceLocation modelId) {
+        if (modelId == null) return;
+        ScopeState state = STATES.get(new ScopeKey(null, modelId));
+        if (state == null) return;
+        state.variables.remove("v.swing_sword");
+        state.variables.remove("v.swing");
+        state.variables.remove("v.swing_end");
+        state.variables.remove("v.attack");
+        state.variables.remove("v.attacking");
+        state.variables.remove("v.hold_mainhand");
+        state.variables.remove("v.hold_offhand");
+    }
+
     public static double boneRotation(int nameId, char axis) {
         IBone bone = bone(nameId);
         if (bone == null) {

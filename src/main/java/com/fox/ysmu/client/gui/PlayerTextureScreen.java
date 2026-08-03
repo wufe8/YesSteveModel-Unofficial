@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.gui;
 
 import com.fox.ysmu.client.ClientModelManager;
+import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.gui.button.FlatColorButton;
 import com.fox.ysmu.client.gui.button.TextureButton;
 import com.fox.ysmu.eep.ExtendedModelInfo;
@@ -137,6 +138,9 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
                 this.currentAnimation = animationNames.get(0);
             }
         }
+        // 打开预览页时重置该模型的预览状态，避免上一次会话残留的条件动画状态
+        // （如 v.swing_sword=1 导致 swing/hold 动画与音效在预览里异常重复触发）。
+        OpenYsmPlayerControllerRuntime.resetPreviewState(ModelIdUtil.getMainId(modelId));
     }
 
     /**
@@ -295,6 +299,10 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
                 break;
             case 10: // 暂停/继续动画
                 this.paused = !this.paused;
+                if (this.paused) {
+                    // 暂停时同时清零 swing/hold 条件动画变量，让条件驱动的动画停止
+                    OpenYsmPlayerControllerRuntime.resetPreviewConditionalVariables(ModelIdUtil.getMainId(modelId));
+                }
                 break;
             case 11: // 复位视角
                 this.offsetX = 0.0f;
@@ -582,6 +590,9 @@ public class PlayerTextureScreen extends GuiScreen {    // =====================
     @Override
     public void onGuiClosed() {
         disposePreviewButtons();
+        // 关闭预览页时重置该模型的预览状态机与条件变量（不影响实际玩家模型），
+        // 防止 swing/hold 条件动画在页面切换后残留。
+        OpenYsmPlayerControllerRuntime.resetPreviewState(ModelIdUtil.getMainId(modelId));
         super.onGuiClosed();
     }
 

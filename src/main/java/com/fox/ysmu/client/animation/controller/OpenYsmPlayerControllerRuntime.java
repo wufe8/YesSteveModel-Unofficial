@@ -27,6 +27,7 @@ import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Con
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
 import com.fox.ysmu.client.animation.molang.MolangInstructionExecutor;
+import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 
 import software.bernie.geckolib3.core.PlayState;
@@ -219,6 +220,63 @@ public final class OpenYsmPlayerControllerRuntime {
     }
 
     /**
+     * 清零预览（player==null）上下文中指定模型的条件动画变量（swing/hold 类），
+     * 使条件驱动的动画立即停止。只影响 GUI 预览状态，不影响实际玩家模型。
+     * 由预览页面的 Stop 按钮调用。
+     */
+    public static void resetPreviewConditionalVariables(ResourceLocation modelId) {
+        if (modelId == null) return;
+        for (Map.Entry<StateKey, RuntimeState> e : STATES.entrySet()) {
+            StateKey key = e.getKey();
+            if (key.playerId != null || !modelId.equals(key.animationId)) {
+                continue;
+            }
+            RuntimeState rs = e.getValue();
+            rs.variables.remove("swing_sword");
+            rs.variables.remove("swing");
+            rs.variables.remove("swing_end");
+            rs.variables.remove("attack");
+            rs.variables.remove("attacking");
+            rs.variables.remove("hold_mainhand");
+            rs.variables.remove("hold_offhand");
+        }
+        MolangPhysicsRuntime.clearPreviewVariables(modelId);
+    }
+
+    /**
+     * 重置预览（player==null）上下文中指定模型的完整状态机与条件变量。
+     * 关闭/打开预览页面时调用，防止 swing/hold 等条件动画在页面切换后残留
+     * （如 v.swing_sword=1 导致 alt+Y 预览页里音效每帧重触发）。
+     * 不会影响实际玩家模型的状态。
+     */
+    public static void resetPreviewState(ResourceLocation modelId) {
+        if (modelId == null) return;
+        java.util.Iterator<Map.Entry<StateKey, RuntimeState>> it = STATES.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<StateKey, RuntimeState> e = it.next();
+            StateKey key = e.getKey();
+            if (key.playerId == null && modelId.equals(key.animationId)) {
+                it.remove();
+            }
+        }
+        MolangPhysicsRuntime.clearPreviewVariables(modelId);
+    }
+
+    /** 判断是否为挥动脉冲（v.swing_sword）的消费者控制器。
+     *  只有这些控制器才能消费预览中的 swing 脉冲并随后清零。 */
+    private static boolean isSwingPulseConsumer(String geckoControllerName, Controller controller) {
+        if (controller != null && controller.name != null) {
+            String name = controller.name;
+            if ("swing".equals(name) || "player.swing".equals(name)
+                || "post_swing".equals(name) || "player.post_swing".equals(name)
+                || "pre_swing".equals(name) || "player.pre_swing".equals(name)) {
+                return true;
+            }
+        }
+        return geckoControllerName != null && geckoControllerName.contains("swing");
+    }
+
+    /**
      * Returns true if the model at the given animation ID has any OpenYSM controllers registered.
      */
     public static boolean hasAnyController(ResourceLocation animationId) {
@@ -383,6 +441,27 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
 
+        // GUI 预览（player==null）上下文：模拟游戏内 v.swing_sword 的"一次性脉冲"。
+        // 游戏内该变量仅在挥动首帧为 1（prepareFrameVariables 随后清 0）；
+        // 预览中 swing:sword 的 timeline 每循环都重新置 1，若不消费后立即清零，
+        // post_swing 状态机会每帧在 attack1→2→3→1 间跳转，每次 setAnimation
+        // 都清空已执行关键帧并让动画回到 tick 0，使 tick 0.0 的三叉戟音效关键帧
+        // 每帧重触发（对应日志里 onSoundKeyframe 刷屏）。消费完本次脉冲后清零，
+        // 等效于游戏内的一次挥动：攻击动画正常播放、音效每次挥动只触发一次。
+        //
+        // 注意：必须只在"挥动脉冲的消费者"（swing 类控制器）里清零，不能在所有
+        // 预览控制器里清。控制器按注册顺序处理（LinkedHashMap），player.post_main
+        // 先于 player.post_swing 执行；若 post_main 提前清掉共享 scope 里的
+        // v.swing_sword，后处理的 post_swing 就永远看不到脉冲，挥剑动画完全不播。
+        if (player == null && isSwingPulseConsumer(geckoControllerName, match.controller)) {
+            runtimeState.variables.remove("swing_sword");
+            runtimeState.variables.remove("swing");
+            runtimeState.variables.remove("swing_end");
+            MolangPhysicsRuntime.clearVariable("v.swing_sword");
+            MolangPhysicsRuntime.clearVariable("v.swing");
+            MolangPhysicsRuntime.clearVariable("v.swing_end");
+        }
+
         // Collect all active animations from the state. In OpenYSM, a state's
         // "animations" list plays all entries simultaneously; selectAnimation
         // only returns the first match for historical code that expects one.
@@ -449,12 +528,12 @@ public final class OpenYsmPlayerControllerRuntime {
         return PlayState.CONTINUE;
     }
 
-    /** Sentinel UUID used as the player key when player is null (GUI preview). */
-    private static final UUID NULL_PLAYER_UUID = UUID.fromString("00000000-0000-0000-0000-000000000000");
-
     private static RuntimeState runtimeState(EntityPlayer player, ResourceLocation animationId,
         String geckoControllerName, String openYsmControllerName) {
-        UUID playerId = player != null ? player.getUniqueID() : NULL_PLAYER_UUID;
+        // 预览实体（player==null）用 null 作为键，与 MolangPhysicsRuntime 的
+        // ScopeKey 保持一致。不要用"全 0 UUID"哨兵：若某离线账号恰好使用
+        // 00000000-0000-0000-0000-000000000000，会把真实玩家状态与预览状态混在一起。
+        UUID playerId = player != null ? player.getUniqueID() : null;
         StateKey key = new StateKey(playerId, animationId, geckoControllerName, openYsmControllerName);
         RuntimeState state = STATES.get(key);
         if (state == null) {
@@ -1122,14 +1201,15 @@ public final class OpenYsmPlayerControllerRuntime {
                 return false;
             }
             StateKey other = (StateKey) obj;
-            return playerId.equals(other.playerId) && animationId.equals(other.animationId)
+            return (playerId == null ? other.playerId == null : playerId.equals(other.playerId))
+                && animationId.equals(other.animationId)
                 && geckoControllerName.equals(other.geckoControllerName)
                 && openYsmControllerName.equals(other.openYsmControllerName);
         }
 
         @Override
         public int hashCode() {
-            int result = playerId.hashCode();
+            int result = playerId == null ? 0 : playerId.hashCode();
             result = 31 * result + animationId.hashCode();
             result = 31 * result + geckoControllerName.hashCode();
             result = 31 * result + openYsmControllerName.hashCode();
