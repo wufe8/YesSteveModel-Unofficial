@@ -5,6 +5,8 @@ import com.gtnewhorizon.gtnhlib.eventbus.EventBusSubscriber;
 import cpw.mods.fml.common.eventhandler.SubscribeEvent;
 import cpw.mods.fml.common.gameevent.InputEvent;
 import cpw.mods.fml.relauncher.Side;
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.settings.KeyBinding;
 import org.lwjgl.input.Keyboard;
 
 /**
@@ -21,6 +23,20 @@ public class DebugOverlayKey {
 
     @SubscribeEvent
     public static void onKeyboardInput(InputEvent.KeyInputEvent event) {
+        // 搜索模式下：吞掉所有 KeyBinding 的按下计数（isPressed() 会递减 pressTime），
+        // 让 vanilla 在 runTick 里后续的 keyBindInventory / keyBindDrop / keyBindChat /
+        // 快捷栏等 isPressed() 检查全部落空，避免搜索打字时误触发物品栏/丢物品/聊天。
+        // InputEvent.KeyInputEvent 由 fireKeyInput() 在 vanilla 按键处理之前触发，
+        // 这里拦截正好来得及（与 GUI 打开时行为一致）。
+        if (DebugOverlay.isSearching()) {
+            KeyBinding[] keyBindings = Minecraft.getMinecraft().gameSettings.keyBindings;
+            if (keyBindings != null) {
+                for (KeyBinding keyBinding : keyBindings) {
+                    keyBinding.isPressed();
+                }
+            }
+        }
+
         // 如果 overlay 激活，优先交给 overlay 处理
         if (DebugOverlay.isActive()) {
             if (DebugOverlay.handleKeyInput()) {

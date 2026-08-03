@@ -43,6 +43,8 @@ public final class DebugOverlay {
 
     // ---- 布局常量 ----
     private static final int MARGIN = 10;
+    /** 标题变量数量的最大位数：用于计算 [search] 过滤框的固定位置 */
+    private static final int TITLE_COUNT_DIGITS = 5;
     private static final int HEADER_HEIGHT = 22;
     private static final int HELP_HEIGHT = 10;
     private static final int COL_NAME_X = 20;
@@ -89,6 +91,11 @@ public final class DebugOverlay {
 
     public static boolean isActive() {
         return active;
+    }
+
+    /** 是否处于搜索模式（输入焦点在过滤框，需拦截其他快捷键） */
+    public static boolean isSearching() {
+        return searchMode;
     }
 
     /** 设置过滤文本 */
@@ -139,9 +146,8 @@ public final class DebugOverlay {
             if (searchMode) {
                 searchMode = false; // 回车确认搜索
             } else {
-                // 回车进入搜索模式
+                // 回车进入搜索模式（保留已有过滤内容，不清空；清空用 Esc）
                 searchMode = true;
-                filterText = "";
                 scrollOffset = 0;
                 refreshSnapshot();
             }
@@ -209,11 +215,20 @@ public final class DebugOverlay {
 
         // 2. 标题栏
         Gui.drawRect(0, 0, w, HEADER_HEIGHT, HEADER_BG);
-        String title = String.format("\u00a7l[Molang Debug]  %d vars",
-            displayEntries.size());
+        // [search] 过滤框固定放在"最大位数参考标题"之后的固定位置，
+        // 不随实际变量数量位数变化而跳动。不用空格补齐数字：
+        // Minecraft 字体里空格与数字宽度不同，补空格仍会造成错位。
+        int varCount = displayEntries.size();
+        String countStr = Integer.toString(varCount);
+        String title = "\u00a7l[Molang Debug]  " + countStr + " vars";
         font.drawStringWithShadow(title, MARGIN, 6, COLOR_TITLE);
+        // 固定位置：以最大位数参考标题计算；若实际位数超过预留位数则退回实际宽度
+        String refTitle = countStr.length() > TITLE_COUNT_DIGITS
+            ? title
+            : "\u00a7l[Molang Debug]  " + repeatChar('9', TITLE_COUNT_DIGITS) + " vars";
+        int filterX = MARGIN + font.getStringWidth(refTitle) + 10;
 
-        // 过滤框 + 快捷键提示（标题栏右侧）
+        // 过滤框（紧随标题之后，随字体宽度自适应）
         String filterDisplay;
         if (searchMode) {
             filterDisplay = filterText.isEmpty()
@@ -224,17 +239,31 @@ public final class DebugOverlay {
                 ? "\u00a7e[Enter] \u00a77search"
                 : "\u00a7e[Enter] \u00a7f" + filterText;
         }
-        font.drawStringWithShadow(filterDisplay, 200, 6, COLOR_FILTER);
 
-        // 帮助信息（标题栏最右侧，过滤有内容时隐藏避免与搜索文字重叠）
-        if (filterText.isEmpty()) {
-            String helpBar = String.format(
-                "\u00a77[\u00a7f\u2191\u2193\u00a77 scroll]  "
-                + "[\u00a7f\u2190\u2192\u00a77/\u00a7fPgUp/PgDn\u00a77 page]  "
-                + "[\u00a7fEsc\u00a77 close]  "
-                + "(\u00a77%d\u00a77/\u00a77%d\u00a77)",
-                displayEntries.size(), currentSnapshot.size());
-            font.drawStringWithShadow(helpBar, w - font.getStringWidth(helpBar) - MARGIN, 6, COLOR_HELP);
+        // 帮助信息（标题栏最右侧，右对齐）。
+        // 去掉末尾 (已显示/总数) 括号：左上角标题已用紫色显示变量数量，避免重复。
+        String helpBar = "\u00a77[\u00a7f\u2191\u2193\u00a77 scroll]  "
+            + "[\u00a7f\u2190\u2192\u00a77 page]  "
+            + "\u00a77[\u00a7fEsc\u00a77 close]";
+        int helpX = w - font.getStringWidth(helpBar) - MARGIN;
+
+        // 宽度自适应：有搜索内容时过滤框始终显示（搜索中或退出搜索后都显示）；
+        // 无内容时 "[Enter] search" 提示可在空间不足时省略；
+        // 帮助说明只在不与左侧内容重叠时显示。
+        boolean hasFilter = !filterText.isEmpty();
+        boolean roomForBoth = filterX + font.getStringWidth(filterDisplay) < helpX - 8;
+        if (hasFilter) {
+            font.drawStringWithShadow(filterDisplay, filterX, 6, COLOR_FILTER);
+            if (roomForBoth) {
+                font.drawStringWithShadow(helpBar, helpX, 6, COLOR_HELP);
+            }
+        } else {
+            if (roomForBoth) {
+                font.drawStringWithShadow(filterDisplay, filterX, 6, COLOR_FILTER);
+            }
+            if (helpX > MARGIN + font.getStringWidth(title) + 6) {
+                font.drawStringWithShadow(helpBar, helpX, 6, COLOR_HELP);
+            }
         }
 
         // 3. 表头
@@ -284,7 +313,7 @@ public final class DebugOverlay {
             font.drawStringWithShadow(formatValue(value), COL_VALUE_X, y, getValueColor(value));
 
             // 列：简短类型提示
-            font.drawStringWithShadow(getTypeHint(name), w - 40, y, 0xFF666666);
+            font.drawStringWithShadow(getTypeHint(name), w - 50, y, 0xFF666666);
         }
 
         // 5. 底部提示（搜索模式时显示操作提示）
@@ -296,6 +325,14 @@ public final class DebugOverlay {
     }
 
     // ---- 内部 ----
+
+    /** 生成 n 个重复字符（JVM8 无 String.repeat） */
+    private static String repeatChar(char c, int n) {
+        if (n <= 0) return "";
+        char[] chars = new char[n];
+        java.util.Arrays.fill(chars, c);
+        return new String(chars);
+    }
 
     private static void refreshSnapshot() {
         currentSnapshot = MolangDebugSnapshot.getAllVariables();
@@ -337,10 +374,10 @@ public final class DebugOverlay {
     }
 
     private static String getTypeHint(String name) {
-        if (name.startsWith("v.")) return "v";
+        if (name.startsWith("v.")) return "variable";
         if (name.startsWith("ctrl.")) return "ctrl";
         if (name.startsWith("ysm.")) return "ysm";
-        if (name.startsWith("query.")) return "q";
+        if (name.startsWith("query.")) return "query";
         if (name.startsWith("math.")) return "math";
         return "";
     }
