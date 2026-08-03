@@ -8,6 +8,7 @@ import net.minecraft.util.ResourceLocation;
 import org.apache.commons.lang3.StringUtils;
 import org.jetbrains.annotations.NotNull;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.animation.AnimationManager;
 import com.fox.ysmu.client.animation.condition.ConditionArmor;
@@ -60,25 +61,28 @@ public class CustomPlayerEntity implements IAnimatable {
         }
         data.addAnimationController(
             new AnimationController(this, OPENYSM_PRE_MAIN_CONTROLLER, 0, manager::predicateOpenYsmSlot));
-        data.addAnimationController(new AnimationController(this, MAIN_CONTROLLER, 2, manager::predicateMain));
+        data.addAnimationController(
+            new AnimationController(this, MAIN_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateMain));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_POST_MAIN_CONTROLLER, 0, manager::predicateOpenYsmSlot));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_PRE_HOLD_CONTROLLER, 0, manager::predicateOpenYsmSlot));
         data.addAnimationController(
-            new AnimationController(this, HOLD_OFFHAND_CONTROLLER, 0, manager::predicateOffhandHold));
+            new AnimationController(this, HOLD_OFFHAND_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateOffhandHold));
         data.addAnimationController(
-            new AnimationController(this, HOLD_MAINHAND_CONTROLLER, 0, manager::predicateMainhandHold));
+            new AnimationController(this, HOLD_MAINHAND_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateMainhandHold));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_POST_HOLD_CONTROLLER, 0, manager::predicateOpenYsmSlot));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_PRE_SWING_CONTROLLER, 0, manager::predicateOpenYsmSlot));
-        data.addAnimationController(new AnimationController(this, SWING_CONTROLLER, 2, manager::predicateSwing));
+        data.addAnimationController(
+            new AnimationController(this, SWING_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateSwing));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_POST_SWING_CONTROLLER, 0, manager::predicateOpenYsmSlot));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_PRE_USE_CONTROLLER, 0, manager::predicateOpenYsmSlot));
-        data.addAnimationController(new AnimationController(this, USE_CONTROLLER, 2, manager::predicateUse));
+        data.addAnimationController(
+            new AnimationController(this, USE_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateUse));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_POST_USE_CONTROLLER, 0, manager::predicateOpenYsmSlot));
         for (int i = 0; i < 8; i++) {
@@ -94,7 +98,8 @@ public class CustomPlayerEntity implements IAnimatable {
             data.addAnimationController(
                 new AnimationController(this, controllerName, 0, e -> manager.predicateArmor(e, finalSlotIndex)));
         }
-        data.addAnimationController(new AnimationController(this, CAP_CONTROLLER, 2, manager::predicateCap));
+        data.addAnimationController(
+            new AnimationController(this, CAP_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateCap));
         data.getAnimationControllers()
             .values()
             .forEach(controller -> {

@@ -499,9 +499,23 @@ public class AnimationController<T extends IAnimatable> {
         }
 
         double actualTick = tick;
+        boolean tickWasReset = false;
+        double afterReset = adjustTick(tick);
+        if (afterReset == 0.0D && tick != 0.0D) {
+            tickWasReset = true;
+        }
+        tick = afterReset;
         // Transition period has ended, reset the tick and set the animation to running.
-        // Must check BEFORE adjustTick() because adjustTick may reset tick to 0
-        // (e.g. after first->third person switch where tick accumulated hugely).
+        // NOTE: this must compare the ADJUSTED tick (elapsed since the transition
+        // started), not the raw `tick` argument.  The raw value is a global seek
+        // counter (manager.tick + renderPartialTicks) that is almost always
+        // >= transitionLengthTicks after the first few ticks of play, so the old
+        // pre-adjustTick check fired on the very first transition frame and flipped
+        // straight to Running — the Transitioning blend branch never ran and no
+        // transition was ever visible.  adjustTick() resets tickOffset to the
+        // current raw tick on the first transition frame (shouldResetTick=true)
+        // and returns the elapsed time on later frames, which is exactly how long
+        // the current transition has been running.
         if (animationState == AnimationState.Transitioning && tick >= transitionLengthTicks) {
             this.shouldResetTick = true;
             animationState = AnimationState.Running;
@@ -510,12 +524,6 @@ public class AnimationController<T extends IAnimatable> {
                 this.currentAnimation = this.animationQueue.poll();
             }
         }
-        boolean tickWasReset = false;
-        double afterReset = adjustTick(tick);
-        if (afterReset == 0.0D && tick != 0.0D) {
-            tickWasReset = true;
-        }
-        tick = afterReset;
         if (animationState == AnimationState.Running) {
             tick = adjustTick(actualTick);
             // If the first adjustTick performed a reset (shouldResetTick was true),

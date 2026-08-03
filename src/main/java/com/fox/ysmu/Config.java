@@ -105,6 +105,12 @@ public class Config {
      *  默认隐藏 Extra Utilities 的除叶子斧（defoliage axe）。 */
     public static String[] HIDDEN_OFFHAND_ITEMS = new String[] { "ExtraUtilities:defoliageAxe" };
 
+    // Animation config
+    /** 全局 GeckoLib 动画过渡时长（单位 tick，20 tick = 1 秒）。
+     *  0 = 立即切换，2 = 100ms，4 = 200ms。
+     *  仅作为默认值：若模型控制器 JSON 定义了 blend_transition 会按状态覆盖此值。 */
+    public static int ANIMATION_TRANSITION_TICKS = 4;
+
     /**
      * 在 Mod preInit 阶段调用，用于初始化配置文件并进行首次加载。
      * @param configFile a suggested configuration file from the FMLPreInitializationEvent.
@@ -186,6 +192,7 @@ public class Config {
         TEXTURE_VRAM_BUDGET_MB = syncInt("TextureVramBudget", "ysm_sync", TEXTURE_VRAM_BUDGET_MB, "YSM model texture VRAM budget in MB. 0 = unlimited. When uploaded texture VRAM exceeds this, least-recently-used models' GPU textures are freed (raw bytes stay in RAM, so re-upload is cheap and never white).", 0, 8192, load);
         HIDE_OFFHAND_DEFOLIAGE_AXE = syncBoolean("HideOffhandDefoliageAxe", Configuration.CATEGORY_GENERAL, HIDE_OFFHAND_DEFOLIAGE_AXE, "Hide the Extra Utilities defoliage axe while held in the offhand (first-person hand, model in-hand layer, HUD selfie).", load);
         HIDDEN_OFFHAND_ITEMS = syncStringList("HiddenOffhandItems", Configuration.CATEGORY_GENERAL, HIDDEN_OFFHAND_ITEMS, "Offhand items (format modid:itemname) that are never rendered while held in the offhand (first-person hand, model in-hand layer, HUD selfie). Default: Extra Utilities defoliage axe.", load);
+        ANIMATION_TRANSITION_TICKS = syncInt("AnimationTransitionTicks", "animation", ANIMATION_TRANSITION_TICKS, "Global GeckoLib animation transition length in ticks (20 ticks = 1s). 0 = instant, 2 = 100ms, 4 = 200ms. Model-defined blend_transition overrides this per state.", 0, 40, load);
 
         // 检查配置是否已更改，如果已更改，则保存
         if (configuration.hasChanged()) {
