@@ -81,7 +81,9 @@ public class CustomPlayerItemInHandLayer<T extends EntityLivingBase & IAnimatabl
             String mainItemType = mainHandItem != null ? InnerClassify.getItemType(mainHandItem) : null;
             String offItemType = offhandItem != null ? InnerClassify.getItemType(offhandItem) : null;
             boolean suppressMain = hasWeaponBones && isWeaponType(mainItemType);
-            boolean suppressOff = hasWeaponBones && isWeaponType(offItemType);
+            // 配置隐藏的副手物品（如 Extra Utilities 除叶子斧）在模型手持层也不渲染
+            boolean suppressOff = (hasWeaponBones && isWeaponType(offItemType))
+                || BackhandCompat.isHiddenOffhandItem(offhandItem);
 
             if ((mainHandItem != null && !suppressMain) || (offhandItem != null && !suppressOff)) {
                 GlStateManager.pushMatrix();

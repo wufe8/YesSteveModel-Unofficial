@@ -97,6 +97,14 @@ public class Config {
     public static boolean LOW_BANDWIDTH_USAGE = false;
     public static boolean ACCEPT_SOUND_FX = true;
 
+    // Offhand item render hiding
+    /** 隐藏副手物品渲染的总开关（第二页 GUI 开关，默认开启）。 */
+    public static boolean HIDE_OFFHAND_DEFOLIAGE_AXE = true;
+    /** 在副手中时完全不渲染的物品（格式 modid:itemname，精确匹配不区分大小写）。
+     *  影响第一人称手持渲染、第三人称模型手持物品层与 HUD 自拍模型。
+     *  默认隐藏 Extra Utilities 的除叶子斧（defoliage axe）。 */
+    public static String[] HIDDEN_OFFHAND_ITEMS = new String[] { "ExtraUtilities:defoliageAxe" };
+
     /**
      * 在 Mod preInit 阶段调用，用于初始化配置文件并进行首次加载。
      * @param configFile a suggested configuration file from the FMLPreInitializationEvent.
@@ -176,10 +184,22 @@ public class Config {
         ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "ysm_sync", ACCEPT_SOUND_FX, "Whether sync should accept model sound effect resources", load);
         TEXTURE_TARGET_SIZE = syncInt("TextureTargetSize", "ysm_sync", TEXTURE_TARGET_SIZE, "Target texture dimension (px) uploaded to VRAM. 0 = full resolution. Larger textures are downscaled by a power of two (result in [target, 2*target)).", 0, 8192, load);
         TEXTURE_VRAM_BUDGET_MB = syncInt("TextureVramBudget", "ysm_sync", TEXTURE_VRAM_BUDGET_MB, "YSM model texture VRAM budget in MB. 0 = unlimited. When uploaded texture VRAM exceeds this, least-recently-used models' GPU textures are freed (raw bytes stay in RAM, so re-upload is cheap and never white).", 0, 8192, load);
+        HIDE_OFFHAND_DEFOLIAGE_AXE = syncBoolean("HideOffhandDefoliageAxe", Configuration.CATEGORY_GENERAL, HIDE_OFFHAND_DEFOLIAGE_AXE, "Hide the Extra Utilities defoliage axe while held in the offhand (first-person hand, model in-hand layer, HUD selfie).", load);
+        HIDDEN_OFFHAND_ITEMS = syncStringList("HiddenOffhandItems", Configuration.CATEGORY_GENERAL, HIDDEN_OFFHAND_ITEMS, "Offhand items (format modid:itemname) that are never rendered while held in the offhand (first-person hand, model in-hand layer, HUD selfie). Default: Extra Utilities defoliage axe.", load);
 
         // 检查配置是否已更改，如果已更改，则保存
         if (configuration.hasChanged()) {
             configuration.save();
+        }
+    }
+
+    private static String[] syncStringList(String name, String category, String[] currentValue, String comment, boolean load) {
+        Property prop = configuration.get(category, name, currentValue, comment);
+        if (load) {
+            return prop.getStringList();
+        } else {
+            prop.set(currentValue);
+            return currentValue;
         }
     }
 

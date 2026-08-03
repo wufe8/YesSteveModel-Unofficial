@@ -43,6 +43,7 @@ gui.yes_steve_model.config.gui_model_preview_refresh.1=Preview refresh: Every fr
 gui.yes_steve_model.config.gui_model_preview_refresh.2=Preview refresh: Every 2 frames (balanced)
 gui.yes_steve_model.config.gui_model_preview_refresh.3=Preview refresh: Every 3 frames
 gui.yes_steve_model.config.gui_model_preview_refresh.4=Preview refresh: Every 4 frames (FPS Priority)
+gui.yes_steve_model.config.hide_offhand_defoliage_axe=Hide the Healing Axe in offhand
 gui.yes_steve_model.disclaimer.text=Thank you for using the mod, please be sure to read the relevant terms carefully and agree to the terms:\n\n\n1. The download and use of the mod is completely free, and the confidentiality of the model is not guaranteed in any form\n\n2. The dev team does not participate in the relevant model transactions, please bear the responsibility for the transaction disputes arising\n\n3. The creator enjoys the copyright of the model created, and also bears corresponding responsibilities, which has nothing to do with the dev team
 gui.yes_steve_model.disclaimer.read=I have read and agree the terms of use
 gui.yes_steve_model.disclaimer.close=Close

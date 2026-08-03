@@ -36,12 +36,15 @@ public class ConfigScreen extends GuiScreen {
             addCheckbox(5,  x + 5, y + 25 + i++ * 22, "disable_player_render",   Config.DISABLE_PLAYER_RENDER);
             addCheckbox(6,  x + 5, y + 25 + i++ * 22, "swap_config_sides",       Config.SWAP_CONFIG_SIDES);
             addCheckbox(8,  x + 5, y + 25 + i++ * 22, "gui_enhancements",        Config.GUI_ENHANCEMENTS);
+            // 与上方 ConfigCheckBox 标签（x+28）对齐，避免混排时看似未居中
             this.buttonList.add(new FlatColorButton(9, x + 5, y + 25 + i++ * 22, 400, 20,
-                I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH)));
+                I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH))
+                .setLeftAligned(28));
         } else if (page == 1) {
             int i = 0;
             addCheckbox(3,  x + 5, y + 25 + i++ * 22, "print_animation_roulette_msg", Config.PRINT_ANIMATION_ROULETTE_MSG);
             addCheckbox(7,  x + 5, y + 25 + i++ * 22, "render_wearable",         Config.RENDER_WEARABLE);
+            addCheckbox(13, x + 5, y + 25 + i++ * 22, "hide_offhand_defoliage_axe", Config.HIDE_OFFHAND_DEFOLIAGE_AXE);
             this.buttonList.add(new FlatColorButton(10, x + 5, y + 25 + i++ * 22, 400, 20,
                 I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE)));
             this.buttonList.add(new FlatColorButton(11, x + 5, y + 25 + i++ * 22, 400, 20,
@@ -68,7 +71,7 @@ public class ConfigScreen extends GuiScreen {
             case 1: case 2: case 4: case 5: case 6: case 8: case 9:
                 actionPage0(button);
                 break;
-            case 3: case 7: case 10: case 11: case 12:
+            case 3: case 7: case 13: case 10: case 11: case 12:
                 actionPage1(button);
                 break;
         }
@@ -115,6 +118,10 @@ public class ConfigScreen extends GuiScreen {
                 break;
             case 7:
                 Config.RENDER_WEARABLE = !Config.RENDER_WEARABLE;
+                ((ConfigCheckBox) button).doPress();
+                break;
+            case 13:
+                Config.HIDE_OFFHAND_DEFOLIAGE_AXE = !Config.HIDE_OFFHAND_DEFOLIAGE_AXE;
                 ((ConfigCheckBox) button).doPress();
                 break;
             case 10:

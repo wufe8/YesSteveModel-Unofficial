@@ -202,7 +202,8 @@ public final class FirstPersonHandRenderer {
 
         try {
             renderCustomEmptyMainHand(mc, player, itemRenderer, renderer, geoModel, customPlayer, partialTicks);
-            if (renderOffhand) {
+            // 配置隐藏的副手物品（如 Extra Utilities 除叶子斧）在第一人称不渲染
+            if (renderOffhand && !BackhandCompat.isHiddenOffhandItem(BackhandCompat.getOffhandItem(player))) {
                 BackhandCompat.renderOffhand(partialTicks);
             }
         } finally {
