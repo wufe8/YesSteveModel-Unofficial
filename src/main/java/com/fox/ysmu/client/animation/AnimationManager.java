@@ -563,11 +563,13 @@ public final class AnimationManager {
         // 只有 post_main/post_swing 等非身体控制器的 OpenYSM 模型（如
         // Endfield Rossi）没有自带的潜行处理，必须依赖 legacy 状态机播放
         // sneak/sneaking 动画，不能跳过。
+        // 仅当模型身体控制器（pre_main/main/base/move）真正引用潜行逻辑
+        // （sneak/sneaking 动画名或 ctrl.sneaking/ctrl.sneak/q.is_sneaking 条件）
+        // 时才跳过 legacy 的 sneak/sneaking 状态。mingf 虽有 player.main 但只
+        // 处理待机（无潜行状态），潜行时必须由 legacy 状态机播放 sneak/sneaking。
         boolean openYsmHandlesSneak = animId != null
-            && (OpenYsmAnimationControllerRegistry.hasController(animId, ControllerUtils.OPENYSM_PRE_MAIN_CONTROLLER)
-                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.main")
-                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.base")
-                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.move"));
+            && OpenYsmAnimationControllerRegistry.hasControllerSneakHandling(animId,
+                ControllerUtils.OPENYSM_PRE_MAIN_CONTROLLER, "player.main", "player.base", "player.move");
         for (int i = Priority.HIGHEST; i <= Priority.LOWEST; i++) {
             if (!data.containsKey(i)) {
                 continue;

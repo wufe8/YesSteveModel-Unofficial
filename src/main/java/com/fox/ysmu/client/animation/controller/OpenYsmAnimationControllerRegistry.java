@@ -73,6 +73,56 @@ public final class OpenYsmAnimationControllerRegistry {
     }
 
     /**
+     * Returns true if any of the given OpenYSM controllers actually handles sneak,
+     * i.e. references sneak in its state animations, transition/animation
+     * conditions or entry/exit statements.  Used to decide whether the legacy
+     * sneak/sneaking states on the main_controller should be skipped: only models
+     * whose own body controller drives sneak (e.g. 乐魂's player.pre_main with
+     * Start_Sneak/Sneak/Sneaking states) should suppress the legacy fallback.
+     * A model may own a player.main controller that only handles idle (e.g. mingf)
+     * — in that case legacy sneak must keep playing.
+     */
+    public static boolean hasControllerSneakHandling(ResourceLocation animationId, String... controllerNames) {
+        ControllerSet set = CONTROLLERS.get(animationId);
+        if (set == null || controllerNames == null) {
+            return false;
+        }
+        for (String controllerName : controllerNames) {
+            Controller ctrl = set.controllers.get(controllerName);
+            if (ctrl == null) {
+                continue;
+            }
+            for (State s : ctrl.states.values()) {
+                for (AnimationEntry ae : s.animations) {
+                    if (containsSneak(ae.animationName) || containsSneak(ae.condition)) {
+                        return true;
+                    }
+                }
+                for (Transition t : s.transitions) {
+                    if (containsSneak(t.condition)) {
+                        return true;
+                    }
+                }
+                for (String stmt : s.onEntry) {
+                    if (containsSneak(stmt)) {
+                        return true;
+                    }
+                }
+                for (String stmt : s.onExit) {
+                    if (containsSneak(stmt)) {
+                        return true;
+                    }
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean containsSneak(String text) {
+        return text != null && text.toLowerCase(java.util.Locale.ROOT).contains("sneak");
+    }
+
+    /**
      * Post-registration scan: marks controllers as dependent on optional mods if
      * their state animations reference keyframe Molang expressions that contain
      * mod-specific variables. Catches cases where the controller's own conditions
