@@ -1267,7 +1267,17 @@ public final class OpenYsmControllerExpressionEvaluator {
 
         private boolean allAnimationsFinished() {
             Animation current = event.getController() == null ? null : event.getController().getCurrentAnimation();
+            // 若当前状态是"本帧刚进入"的（多级过渡循环里 applyAnimations 在循环之后
+            // 才执行，新动画尚未开始播），绝不能判定为"已播完"——否则 空闲→起跳 会在
+            // 同一帧内被 all_animations_finished=true 直接跳过到 下落（Endfield_Rossi
+            // 跳 1 格方块/原地跳总是播"落地翻滚"、永远播不出"落地小"的根因）。
+            boolean justEnteredThisFrame = event.getAnimationTick() - state.enteredTick <= 0.0d;
             if (current == null || current.animationLength == null || current.animationLength <= 0.0d) {
+                if (justEnteredThisFrame) {
+                    // 新状态声明了动画但还没被应用（currentAnimation 仍是上一状态
+                    // 残留的 null/旧动画）——动画即将开始，不算 finished。
+                    return false;
+                }
                 // No animation to play — trivially all finished.
                 return true;
             }
@@ -1276,6 +1286,9 @@ public final class OpenYsmControllerExpressionEvaluator {
             // from a previous state and should be treated as finished.
             if (event.getController().currentAnimationBuilder == null
                 || event.getController().currentAnimationBuilder.getRawAnimationList().isEmpty()) {
+                if (justEnteredThisFrame) {
+                    return false;
+                }
                 return true;
             }
             // event.getAnimationTick() 和 current.animationLength 都是 tick 数（20 TPS），

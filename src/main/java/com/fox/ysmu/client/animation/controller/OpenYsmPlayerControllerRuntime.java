@@ -625,7 +625,10 @@ public final class OpenYsmPlayerControllerRuntime {
 
     private static boolean animationExists(ResourceLocation animationId, String animationName) {
         AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animationId);
-        if (file == null || !file.animations.containsKey(animationName)) {
+        // 用 getAnimation() 判断存在性（而非直接查 map），使内置 "empty" 兜底也能命中：
+        // 否则 空闲 等引用 "empty" 的状态会被过滤为无动画，回到 all_animations_finished
+        // 误判的旧 bug 路径。
+        if (file == null || file.getAnimation(animationName) == null) {
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "missing-animation:" + animationId + ":" + animationName,
                 "OpenYSM controller selected missing animation " + animationName + " for " + animationId);
