@@ -111,6 +111,19 @@ public class Config {
      *  仅作为默认值：若模型控制器 JSON 定义了 blend_transition 会按状态覆盖此值。 */
     public static int ANIMATION_TRANSITION_TICKS = 4;
 
+    /** 移动动画防滑步（stride matching）总开关：
+     *  按真实水平速度缩放 walk/run/sneak 等移动类动画的播放倍速，
+     *  使步态周期与位移匹配，减少脚在地面滑动的观感。 */
+    public static boolean ANIMATION_SPEED_MATCH = true;
+    /** 防滑步基础倍率：整体缩放防滑步播放倍速（1.0 = 各步态规范步幅）。
+     *  唯一的外部调节旋钮——所有模型动画整体偏快/偏慢时在此微调；
+     *  各步态的规范步幅是内部常量（walk/run 4.317、sneak 1.295、swim 1.727），
+     *  最终的可视化逐模型校准页（方案 C）会覆盖此值。 */
+    public static double ANIMATION_SPEED_MATCH_BASE = 1.0;
+    /** 防滑步倍速平滑响应系数（0~1，每 tick 向目标倍速逼近的比例）。
+     *  越小越平滑但反应越慢；越大反应越快但急起急停可能可见。 */
+    public static double ANIMATION_SPEED_MATCH_RESPONSE = 0.5;
+
     /**
      * 在 Mod preInit 阶段调用，用于初始化配置文件并进行首次加载。
      * @param configFile a suggested configuration file from the FMLPreInitializationEvent.
@@ -193,6 +206,9 @@ public class Config {
         HIDE_OFFHAND_DEFOLIAGE_AXE = syncBoolean("HideOffhandDefoliageAxe", Configuration.CATEGORY_GENERAL, HIDE_OFFHAND_DEFOLIAGE_AXE, "Hide the Extra Utilities defoliage axe while held in the offhand (first-person hand, model in-hand layer, HUD selfie).", load);
         HIDDEN_OFFHAND_ITEMS = syncStringList("HiddenOffhandItems", Configuration.CATEGORY_GENERAL, HIDDEN_OFFHAND_ITEMS, "Offhand items (format modid:itemname) that are never rendered while held in the offhand (first-person hand, model in-hand layer, HUD selfie). Default: Extra Utilities defoliage axe.", load);
         ANIMATION_TRANSITION_TICKS = syncInt("AnimationTransitionTicks", "animation", ANIMATION_TRANSITION_TICKS, "Global GeckoLib animation transition length in ticks (20 ticks = 1s). 0 = instant, 2 = 100ms, 4 = 200ms. Model-defined blend_transition overrides this per state.", 0, 40, load);
+        ANIMATION_SPEED_MATCH = syncBoolean("AnimationSpeedMatch", "animation", ANIMATION_SPEED_MATCH, "Scale locomotion animation playback rate to actual movement speed to reduce foot sliding (stride matching).", load);
+        ANIMATION_SPEED_MATCH_BASE = syncDouble("AnimationSpeedMatchBase", "animation", ANIMATION_SPEED_MATCH_BASE, "Baseline rate for stride matching playback speed (1.0 = canonical per-gait strides). Playback = base x actualSpeed x cycleTime / gaitStride. Player speed is read live each frame so potion buffs/debuffs adapt automatically. Increase if animations play too slow, decrease if too fast.", 0.25, 4.0, load);
+        ANIMATION_SPEED_MATCH_RESPONSE = syncDouble("AnimationSpeedMatchResponse", "animation", ANIMATION_SPEED_MATCH_RESPONSE, "Smoothing response per tick for the stride-match speed multiplier (0.05-1.0). Lower = smoother but slower reaction.", 0.05, 1.0, load);
 
         // 检查配置是否已更改，如果已更改，则保存
         if (configuration.hasChanged()) {

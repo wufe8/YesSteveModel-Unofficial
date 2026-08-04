@@ -21,6 +21,7 @@ import org.apache.commons.lang3.StringUtils;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
+import com.fox.ysmu.client.animation.MovementSpeedMatcher;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.AnimationEntry;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Controller;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.ControllerSet;
@@ -521,11 +522,44 @@ public final class OpenYsmPlayerControllerRuntime {
         // controller's sound so it doesn't linger from the previous animation.
         String prevAnim = StringUtils.isBlank(runtimeState.lastSelectedAnimation)
             ? null : runtimeState.lastSelectedAnimation;
+        // 防滑步（stride matching）：按真实水平速度缩放移动类动画的播放倍速。
+        // 只作用于主身体控制器（main_controller / player.pre_main），
+        // player==null（GUI 预览实体）时跳过，避免覆盖预览页的暂停/冻结倍速。
+        applyPlaybackSpeed(event, player, geckoControllerName, existing);
         applyAnimations(event, runtimeState, state, existing, animationId);
         if (prevAnim == null || !prevAnim.equals(existing.get(0))) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
         }
         return PlayState.CONTINUE;
+    }
+
+    /** 防滑步（stride matching）：按真实水平速度缩放移动类动画的播放倍速。
+     *  仅对主身体控制器（main_controller / player.pre_main）生效，
+     *  post_*、arm、swing、use 等动作控制器不受影响。
+     *  player==null（GUI 预览实体）时跳过，避免覆盖预览页的暂停/冻结倍速。 */
+    private static void applyPlaybackSpeed(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
+        String geckoControllerName, List<String> existing) {
+        // GUI 预览（player==null）：不干预 animationSpeed（由预览页控制暂停/冻结）
+        if (player == null) {
+            return;
+        }
+        AnimationController<?> ctrl = event.getController();
+        boolean shouldMatch = Config.ANIMATION_SPEED_MATCH
+            && (MAIN_CONTROLLER.equals(geckoControllerName) || OPENYSM_PRE_MAIN_CONTROLLER.equals(geckoControllerName))
+            && existing != null && !existing.isEmpty();
+        if (!shouldMatch) {
+            ctrl.animationSpeed = 1.0d;
+            return;
+        }
+        // 读取当前动画的实际周期（秒），供设计速度 = 基准步幅 / 周期 计算
+        double cycleSeconds = -1.0d;
+        ResourceLocation animId = event.getAnimatable().getAnimation();
+        if (animId != null) {
+            AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
+            cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, existing.get(0));
+        }
+        ctrl.animationSpeed = MovementSpeedMatcher.computeMultiplier(
+            player, existing.get(0), MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds);
     }
 
     private static RuntimeState runtimeState(EntityPlayer player, ResourceLocation animationId,

@@ -33,6 +33,7 @@ import software.bernie.geckolib3.core.PlayState;
 import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.builder.AnimationBuilder;
 import software.bernie.geckolib3.core.builder.ILoopType;
+import software.bernie.geckolib3.core.controller.AnimationController;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.file.AnimationFile;
 import software.bernie.geckolib3.resource.GeckoLibCache;
@@ -221,6 +222,35 @@ public final class AnimationManager {
             val = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get("v." + roamingName);
         }
         return val != null ? val : 0;
+    }
+
+    /** 防滑步（stride matching）：legacy 主控制器路径。只对 main_controller 生效；
+     *  GUI 预览（player==null）不干预，避免覆盖预览页的暂停/冻结倍速。 */
+    private static void applyPlaybackSpeed(AnimationEvent<CustomPlayerEntity> event, String animationName) {
+        if (event == null || event.getController() == null) {
+            return;
+        }
+        CustomPlayerEntity animatable = event.getAnimatable() instanceof CustomPlayerEntity
+            ? (CustomPlayerEntity) event.getAnimatable() : null;
+        EntityPlayer player = animatable != null ? animatable.getPlayer() : null;
+        if (player == null) {
+            return;
+        }
+        boolean shouldMatch = Config.ANIMATION_SPEED_MATCH
+            && ControllerUtils.MAIN_CONTROLLER.equals(event.getController().getName())
+            && StringUtils.isNotBlank(animationName);
+        // 读取当前动画的实际周期（秒），供设计速度 = 基准步幅 / 周期 计算
+        double cycleSeconds = -1.0d;
+        if (shouldMatch) {
+            ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
+            if (animId != null) {
+                AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
+                cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, animationName);
+            }
+        }
+        event.getController().animationSpeed = shouldMatch
+            ? MovementSpeedMatcher.computeMultiplier(player, animationName, MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds)
+            : 1.0d;
     }
 
     @NotNull
@@ -512,6 +542,11 @@ public final class AnimationManager {
             }
             return PlayState.STOP;
         }
+        // 防滑步（stride matching）：每帧先把 main 控制器倍速重置为 1.0。
+        // 后续 legacy 状态循环选中 walk/run/sneak 等移动动画时会按真实速度
+        // 覆盖此值；idle/fallback/STOP 等其余路径保持 1.0，避免上一次移动的
+        // 倍速残留到待机动画上（如 idle 以 1.3x 播放）。
+        event.getController().animationSpeed = 1.0d;
         // When wheel lock is active and a wheel animation is playing, force idle
         // to keep legs in a natural pose instead of T-pose. The cap_controller's
         // wheel animation overrides upper body bones.
@@ -615,6 +650,8 @@ public final class AnimationManager {
                             continue;
                         }
                         ILoopType loopType = state.getLoopType();
+                        // 防滑步：移动类动画按真实水平速度缩放播放倍速
+                        applyPlaybackSpeed(event, targetName);
                         logAnimChange(animId, "main_controller playing '" + targetName + "' (predicate '" + animationName + "') for " + animId);
                         return playAnimation(event, targetName, loopType);
                     }
