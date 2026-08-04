@@ -890,6 +890,10 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 }
             }
             logOffset("parseAnimations anim[" + animIndex + "] DONE (" + anim.name + ")");
+            // YSMU: "empty" 是内置调试动画，模型不得定义——已解析但不写入（见 YsmBuiltinAnimations）。
+            if ("empty".equals(anim.name)) {
+                continue;
+            }
             animFile.animations.put(anim.name, anim);
         }
 

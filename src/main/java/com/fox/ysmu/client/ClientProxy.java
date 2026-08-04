@@ -27,6 +27,8 @@ public class ClientProxy extends CommonProxy {
         super.init(event);
         AnimationRegister.registerAnimationState();
         AnimationRegister.registerVariables();
+        // 注册内置 empty 动画的兜底/过滤钩子（vendored AnimationFile 无反向依赖）。
+        com.fox.ysmu.client.animation.YsmBuiltinAnimations.registerHooks();
 
         // 注册可选模组依赖检测。当控制器使用某模组的变量（如 ctrl.tac_*），
         // 但该模组未加载时，运行时自动跳过对应控制器。

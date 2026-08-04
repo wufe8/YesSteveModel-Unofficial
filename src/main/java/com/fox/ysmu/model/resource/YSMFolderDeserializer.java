@@ -727,6 +727,10 @@ public class YSMFolderDeserializer implements AutoCloseable {
         for (Map.Entry<String, JsonElement> entry : animations.entrySet()) {
             RawYsmModel.RawAnimation animation = new RawYsmModel.RawAnimation();
             animation.name = entry.getKey();
+            // YSMU: "empty" 是内置调试动画，模型不得定义——加载期直接丢弃（见 YsmBuiltinAnimations）。
+            if ("empty".equals(animation.name)) {
+                continue;
+            }
             if (entry.getValue().isJsonObject()) {
                 JsonObject animObj = entry.getValue().getAsJsonObject();
                 animation.length = (float) getDouble(animObj, "animation_length", 0d);

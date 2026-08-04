@@ -3,6 +3,8 @@ package software.bernie.geckolib3.file;
 import java.io.Serializable;
 import java.util.Collection;
 import java.util.HashMap;
+import java.util.function.BiFunction;
+import java.util.function.Predicate;
 
 import software.bernie.geckolib3.core.builder.Animation;
 
@@ -11,15 +13,22 @@ public class AnimationFile implements Serializable {
     private static final long serialVersionUID = 42L;
     public HashMap<String, Animation> animations = new HashMap<>();
 
+    // YSMU: host-mod-injected hooks. Typed with plain JDK functional interfaces so this
+    // vendored file has NO compile-time dependency back on mod code (inverted control).
+    /** (animationName, model-defined animation) -> replacement animation, or null to keep
+     *  the model's own. YSMU uses it for the built-in no-op "empty" animation fallback. */
+    public static BiFunction<String, Animation, Animation> builtinFallback = null;
+    /** Animation names rejected on write (e.g. the built-in debug animation "empty", which
+     *  per the YSM wiki is an exceptional debug animation models must not define). */
+    public static Predicate<String> rejectedAnimationNames = null;
+
     public Animation getAnimation(String name) {
         Animation anim = animations.get(name);
-        // YSMU: 内置 "empty" 空动画兜底。模型控制器引用 "empty" 但模型文件未定义时
-        // （如 Endfield_Rossi 的 空闲 状态）返回硬编码的内置空动画（见
-        // YsmBuiltinAnimations），避免 setAnimation 加载失败导致 currentAnimation
-        // 为 null，进而触发 all_animations_finished 误判等连锁问题。
-        // 模型自行定义了 "empty" 时以模型为准（除非调试开关 DEBUG_EMPTY_VISIBLE 打开）。
-        if (com.fox.ysmu.client.animation.YsmBuiltinAnimations.isBuiltinEmptyUsed(name, anim)) {
-            return com.fox.ysmu.client.animation.YsmBuiltinAnimations.getEmptyAnimation();
+        if (builtinFallback != null) {
+            Animation fallback = builtinFallback.apply(name, anim);
+            if (fallback != null) {
+                return fallback;
+            }
         }
         return anim;
     }
@@ -29,6 +38,9 @@ public class AnimationFile implements Serializable {
     }
 
     public void putAnimation(String name, Animation animation) {
+        if (rejectedAnimationNames != null && rejectedAnimationNames.test(name)) {
+            return;
+        }
         this.animations.put(name, animation);
     }
 }
