@@ -111,10 +111,12 @@ public class Config {
      *  仅作为默认值：若模型控制器 JSON 定义了 blend_transition 会按状态覆盖此值。 */
     public static int ANIMATION_TRANSITION_TICKS = 4;
 
-    /** 移动动画防滑步（stride matching）总开关：
+    /** 移动动画防滑步（stride matching）总开关（默认关闭）：
      *  按真实水平速度缩放 walk/run/sneak 等移动类动画的播放倍速，
-     *  使步态周期与位移匹配，减少脚在地面滑动的观感。 */
-    public static boolean ANIMATION_SPEED_MATCH = true;
+     *  使步态周期与位移匹配，减少脚在地面滑动的观感。
+     *  默认关闭：该功能假设每个动画循环恰好是两步（一个完整步幅），
+     *  但不少模型设计成 1 步或 3/4 步，强行匹配反而更怪，按需开启。 */
+    public static boolean ANIMATION_SPEED_MATCH = false;
     /** 防滑步基础倍率：整体缩放防滑步播放倍速（1.0 = 各步态规范步幅）。
      *  唯一的外部调节旋钮——所有模型动画整体偏快/偏慢时在此微调；
      *  各步态的规范步幅是内部常量（walk/run 4.317、sneak 1.295、swim 1.727），
