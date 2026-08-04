@@ -882,30 +882,36 @@ public class ClientModelManager {
             // in keyframe Molang expressions. This catches cases where a controller's
             // animation entries are bare strings with no conditions, but the animation
             // keyframe values reference mod-specific variables like ctrl.tac_hold_gun.
+            //
+            // 逐动画扫描：只标记自身内容真正引用模组变量的动画。
+            // 之前是"文件内任一动画匹配就标记文件内所有动画"——smx 的 main.animation.json
+            // 里仅 sneak/sneaking 引用 ctrl.tac_，却把 pre_parallel0-7/表情/衣服 全部误标为
+            // tacz 依赖，导致 pre_parallel_0 控制器在 tacz 未加载时被整体跳过（衣服/表情
+            // 永不播放、备用表情悬浮）。
             String animJsonStr = new String(animData, StandardCharsets.UTF_8);
             java.util.Map<String, java.util.Set<String>> fileAnimToMods = null;
-            for (com.fox.ysmu.client.animation.controller.ModDependency dep :
-                com.fox.ysmu.client.animation.controller.ModDependencyRegistry.getAll()) {
-                if (dep.matches(animJsonStr)) {
-                    if (fileAnimToMods == null) {
-                        fileAnimToMods = new java.util.LinkedHashMap<>();
-                    }
-                    // If any animation in this file matches, add ALL animation names
-                    // from this file with this modId.
-                    try {
-                        com.google.gson.JsonObject animRoot = new com.google.gson.JsonParser().parse(animJsonStr)
-                            .getAsJsonObject();
-                        com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
-                        if (anims != null) {
-                            for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae : anims.entrySet()) {
+            try {
+                com.google.gson.JsonObject animRoot = new com.google.gson.JsonParser().parse(animJsonStr)
+                    .getAsJsonObject();
+                com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
+                if (anims != null) {
+                    for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae : anims.entrySet()) {
+                        if (!ae.getValue().isJsonObject()) continue;
+                        String animationJson = ae.getValue().toString();
+                        for (com.fox.ysmu.client.animation.controller.ModDependency dep :
+                            com.fox.ysmu.client.animation.controller.ModDependencyRegistry.getAll()) {
+                            if (dep.matches(animationJson)) {
+                                if (fileAnimToMods == null) {
+                                    fileAnimToMods = new java.util.LinkedHashMap<>();
+                                }
                                 fileAnimToMods.computeIfAbsent(ae.getKey(), k -> new java.util.LinkedHashSet<>())
                                     .add(dep.getModId());
                             }
                         }
-                    } catch (Exception ignored) {
-                        // Best-effort scan; parsing failures are harmless
                     }
                 }
+            } catch (Exception ignored) {
+                // Best-effort scan; parsing failures are harmless
             }
             if (fileAnimToMods != null) {
                 for (java.util.Map.Entry<String, java.util.Set<String>> e : fileAnimToMods.entrySet()) {

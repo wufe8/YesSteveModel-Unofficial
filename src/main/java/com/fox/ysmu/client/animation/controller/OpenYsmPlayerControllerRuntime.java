@@ -755,6 +755,13 @@ public final class OpenYsmPlayerControllerRuntime {
             && (excludeRoot || animationNames.size() > 1);
         String finalName;
         ILoopType finalLoop;
+        if (Config.DEBUG_CONTROLLER && ctrlName != null
+            && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))
+            && allowDebugLog("CTRL-ANIM-" + ctrlName)) {
+            ysmu.LOG.info("[YSMU-CTRL-ANIM] {} state='{}' animations={} mergedBones={}",
+                ctrlName, state.name, animationNames,
+                mergedBones == null ? -1 : mergedBones.size());
+        }
         if (needsMergedCopy) {
             // Remove Root bone for overlay controllers
             if (excludeRoot) {
