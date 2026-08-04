@@ -306,6 +306,9 @@ commands.yes_steve_model.welcome=§6§l[§aYSMU§6§l] §rWelcome! You are runni
 commands.yes_steve_model.welcome.sound_hint=§6§l[§aYSMU§6§l] §7To enable missing sound effects (e.g. trident, goat horn), use §e/ysm setgamepath <path> [version]§7 to point to your modern Minecraft directory.
 commands.yes_steve_model.welcome.on=§6§l[§aYSMU§6§l] §rWelcome message enabled.
 commands.yes_steve_model.welcome.off=§6§l[§aYSMU§6§l] §rWelcome message disabled.
+commands.yes_steve_model.loadlocal.started=§6§l[§aYSM§6§l] §rLoading local models...
+commands.yes_steve_model.loadlocal.complete=§6§l[§aYSM§6§l] §rLocal models: §e%d§r registered, §e%d§r skipped (already present), §e%d§r failed
+commands.yes_steve_model.loadlocal.none=§6§l[§aYSM§6§l] §rNo local models found.
 
 molang.yes_steve_model.bg_width=900
 molang.yes_steve_model.pi.desc=π, constant.

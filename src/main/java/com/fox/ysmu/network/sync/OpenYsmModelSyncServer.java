@@ -119,7 +119,10 @@ public final class OpenYsmModelSyncServer {
         }
     }
 
-    static byte[] createClientCacheKey(byte[] serverKey) {
+    /** Derives the per-client cache key from the server key. Public so the client's
+     *  local-model loader (LocalModelLoader) can compute the same key for its own
+     *  local cache files. */
+    public static byte[] createClientCacheKey(byte[] serverKey) {
         byte[] key = Arrays.copyOf(serverKey, 56);
         for (int i = 0; i < key.length; i++) {
             key[i] ^= (byte) (0x5A + i * 31);

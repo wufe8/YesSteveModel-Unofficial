@@ -18,10 +18,12 @@ import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry;
 import com.fox.ysmu.data.ModelData;
 import com.fox.ysmu.model.ServerModelManager;
+import com.fox.ysmu.model.format.OpenYsmSyncInfo;
 import com.fox.ysmu.model.resource.RawYsmModelAdapter;
 import com.fox.ysmu.model.resource.YSMBinaryDeserializer;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.network.NetworkHandler;
+import com.fox.ysmu.network.sync.OpenYsmModelSyncServer;
 import com.fox.ysmu.network.message.C2SCompleteFeedback17;
 import com.fox.ysmu.network.message.C2SModelSyncPayload17;
 import com.fox.ysmu.util.ModelIdUtil;
@@ -692,13 +694,79 @@ public final class OpenYsmModelSyncClient {
 
     /** Decrypts a client cache file written by this session's OpenYSM sync into
      *  clear bytes using the session client key. Returns null on failure. Used by
-     *  ClientModelManager lazy-reload (geo/anim/texture) after an idle unload. */
+     *  ClientModelManager lazy-reload (geo/anim/texture) after an idle unload.
+     *  Falls back to the client's own local key so locally-registered models
+     *  (LocalModelLoader) stay restorable even after a real server sync
+     *  overwrote {@link #clientKey}. */
     public static byte[] readClientCacheToClearBytes(byte[] cacheBytes) {
-        if (clientKey == null) return null;
+        if (cacheBytes == null) return null;
+        if (clientKey != null) {
+            try {
+                return YsmCrypt.read(cacheBytes, clientKey);
+            } catch (Exception ignored) {
+                // fall through to the local key below
+            }
+        }
+        byte[] localKey = localClientKey();
+        if (localKey != null && localKey != clientKey) {
+            try {
+                return YsmCrypt.read(cacheBytes, localKey);
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    /** The client's own local cache key (derived from the local server_index key),
+     *  used for local model fallback registration. */
+    private static byte[] localClientKey() {
+        byte[] serverKey = ServerModelManager.OPEN_YSM_SERVER_KEY;
+        if (serverKey == null || serverKey.length != 56) return null;
+        return OpenYsmModelSyncServer.createClientCacheKey(serverKey);
+    }
+
+    /**
+     * 注册单个本地模型（仅自己可见），由 {@link LocalModelLoader} 调用。
+     * 复用真实同步的「服务端缓存 → transcode → 写客户端缓存 → 解密 → 解析 → apply」
+     * 路径，不经过网络。synchronized 与真实同步（processServerData 等）共用类锁，
+     * 避免并发篡改 clientKey/currentCacheFolderName；本地注册期间真实同步会等待，
+     * 反之亦然（每个模型粒度，不影响整体）。
+     *
+     * @return 模型主体注册成功（不可桥接的模型也会注册投射物/轮盘，返回 false）
+     */
+    public static synchronized boolean registerLocalModel(OpenYsmSyncInfo info, byte[] serverCacheBytes) {
+        if (info == null || serverCacheBytes == null || serverCacheBytes.length == 0) {
+            return false;
+        }
+        byte[] localKey = localClientKey();
+        if (localKey == null) {
+            return false;
+        }
+        // 保存现场，本地注册结束后恢复，绝不污染真实同步状态。
+        String prevFolder = currentCacheFolderName;
+        byte[] prevClientKey = clientKey;
+        byte[] prevServerKey = serverKey;
         try {
-            return YsmCrypt.read(cacheBytes, clientKey);
+            currentCacheFolderName = "0";
+            clientKey = localKey;
+            serverKey = ServerModelManager.OPEN_YSM_SERVER_KEY;
+            byte[] clientCacheBytes = YsmCrypt.transcodeServerDataToClientCache(
+                serverCacheBytes, serverKey, clientKey, info.getHash1(), info.getHash2());
+            File outFile = new File(getCacheDir(),
+                YSMClientCache.generateCacheFileName(info.getHash1(), info.getHash2(), clientKey));
+            FileUtils.writeByteArrayToFile(outFile, clientCacheBytes);
+            byte[] clearBytes = YsmCrypt.read(clientCacheBytes, clientKey);
+            ServerModelContext context = new ServerModelContext(
+                info.getHash1(), info.getHash2(), info.getModelId(),
+                info.isCustomSkinModel() ? 1 : 0, info.getFormat());
+            return parseAndRegisterModel(clearBytes, context);
         } catch (Exception e) {
-            return null;
+            ysmu.LOG.warn("Failed to register local model {}: {}", info.getModelId(), e.getMessage());
+            return false;
+        } finally {
+            currentCacheFolderName = prevFolder;
+            clientKey = prevClientKey;
+            serverKey = prevServerKey;
         }
     }
 
