@@ -224,9 +224,11 @@ public final class AnimationManager {
         return val != null ? val : 0;
     }
 
-    /** 防滑步（stride matching）：legacy 主控制器路径。只对 main_controller 生效；
-     *  GUI 预览（player==null）不干预，避免覆盖预览页的暂停/冻结倍速。 */
-    private static void applyPlaybackSpeed(AnimationEvent<CustomPlayerEntity> event, String animationName) {
+    /** 防滑步（stride matching）+ 逐动画倍速（anim_speed）：legacy 控制器路径。
+     *  在公共 playAnimation 入口调用，因此所有 legacy 控制器都会应用 anim_speed；
+     *  防滑步仅对 main_controller 生效。GUI 预览（player==null）不干预，
+     *  避免覆盖预览页的暂停/冻结倍速。 */
+    private static void applyPlaybackSpeed(AnimationEvent<?> event, String animationName) {
         if (event == null || event.getController() == null) {
             return;
         }
@@ -272,6 +274,9 @@ public final class AnimationManager {
     @NotNull
     private static <P extends IAnimatable> PlayState playAnimation(AnimationEvent<P> event, String animationName,
         ILoopType loopType) {
+        // 播放倍速（stride × anim_speed）：所有 legacy 控制器共用入口统一生效；
+        // 预览（player==null）在 applyPlaybackSpeed 内跳过，不覆盖预览冻结。
+        applyPlaybackSpeed(event, animationName);
         if (animationName != null && (animationName.equals("gui") || animationName.startsWith("extra"))) {
             EntityPlayer p = event.getAnimatable() instanceof CustomPlayerEntity
                 ? ((CustomPlayerEntity) event.getAnimatable()).getPlayer() : null;
@@ -287,6 +292,7 @@ public final class AnimationManager {
 
     @NotNull
     private static <P extends IAnimatable> PlayState playAnimation(AnimationEvent<P> event, String animationName) {
+        applyPlaybackSpeed(event, animationName);
         event.getController()
             .setAnimation(new AnimationBuilder().addAnimation(animationName));
         return PlayState.CONTINUE;
@@ -656,8 +662,6 @@ public final class AnimationManager {
                             continue;
                         }
                         ILoopType loopType = state.getLoopType();
-                        // 防滑步：移动类动画按真实水平速度缩放播放倍速
-                        applyPlaybackSpeed(event, targetName);
                         logAnimChange(animId, "main_controller playing '" + targetName + "' (predicate '" + animationName + "') for " + animId);
                         return playAnimation(event, targetName, loopType);
                     }

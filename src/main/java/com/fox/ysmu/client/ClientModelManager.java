@@ -1080,9 +1080,12 @@ public class ClientModelManager {
                     String animationName = entry.getKey();
                     Animation animation;
                     try {
-                        JsonObject animJson = JsonAnimationUtils.getAnimation(jsonObject, animationName);
+                        // getAnimation 返回 Entry<String, JsonElement>，value 即动画 JSON 对象；
+                        // Entry 直接交给 deserializeJsonToAnimation，JsonObject 用于读取 anim_time_update/anim_speed。
+                        Map.Entry<String, JsonElement> animEntry = JsonAnimationUtils.getAnimation(jsonObject, animationName);
+                        JsonObject animJson = animEntry.getValue().getAsJsonObject();
                         animation = JsonAnimationUtils
-                            .deserializeJsonToAnimation(animJson, parser);
+                            .deserializeJsonToAnimation(animEntry, parser);
                         // YSMU: attach Bedrock-style anim_time_update（自定义动画时间推进，秒）
                         JsonElement atu = animJson.get("anim_time_update");
                         if (atu != null && atu.isJsonPrimitive()) {
@@ -1688,6 +1691,8 @@ public class ClientModelManager {
         MODEL_STATS.clear();
         // Release geo/anim through the lifecycle framework (frees GeckoLibCache too).
         AssetManager.clearAll();
+        // 释放防滑步的每玩家平滑倍速状态（换世界/清模型时不留残留）。
+        com.fox.ysmu.client.animation.MovementSpeedMatcher.clearAll();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.clear();
         CACHED_MODEL_MD5.clear();

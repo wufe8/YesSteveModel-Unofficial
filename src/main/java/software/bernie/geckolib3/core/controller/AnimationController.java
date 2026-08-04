@@ -782,7 +782,7 @@ public class AnimationController<T extends IAnimatable> {
             parser.setValue("query.delta_time", deltaSeconds);
             try {
                 MolangExpression expr = ANIM_TIME_UPDATE_CACHE.computeIfAbsent(
-                    currentAnimation.animTimeUpdate,
+                    currentAnimation.animTimeUpdate.toLowerCase(Locale.ROOT),
                     s -> {
                         try {
                             return parser.parseExpression(s);

@@ -8,6 +8,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.MathHelper;
 
 import com.fox.ysmu.Config;
+import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.builder.Animation;
 import software.bernie.geckolib3.core.molang.MolangParser;
@@ -157,13 +158,8 @@ public final class MovementSpeedMatcher {
 
         // 客观验证：DEBUG_CONTROLLER 开启时每秒打印一次实际数值
         if (Config.DEBUG_CONTROLLER && allowDebugLog("SPEED-MATCH")) {
-            com.fox.ysmu.ysmu.LOG.info("[YSMU-SPEED] anim='{}' cycle={}s design={} groundSpeed={} target={}x (BASE={})",
-                primaryAnimationName,
-                String.format(java.util.Locale.ROOT, "%.3f", cycleSeconds),
-                String.format(java.util.Locale.ROOT, "%.3f", design),
-                String.format(java.util.Locale.ROOT, "%.3f", groundSpeed),
-                String.format(java.util.Locale.ROOT, "%.3f", target),
-                String.format(java.util.Locale.ROOT, "%.3f", Config.ANIMATION_SPEED_MATCH_BASE));
+            ysmu.LOG.info("[YSMU-SPEED] anim='{}' cycle={}s design={} groundSpeed={} target={}x (BASE={})",
+                primaryAnimationName, cycleSeconds, design, groundSpeed, target, Config.ANIMATION_SPEED_MATCH_BASE);
         }
 
         double response = Config.ANIMATION_SPEED_MATCH_RESPONSE;
@@ -253,7 +249,9 @@ public final class MovementSpeedMatcher {
         } catch (NumberFormatException e) {
             // Molang 表达式：每帧求值（依赖 query 变量，如 query.ground_speed）
             try {
-                MolangExpression expr = ANIM_SPEED_CACHE.computeIfAbsent(raw, s -> {
+                // parseExpression 内部会 lowercase（字符串字面量除外），缓存 key 统一小写以避免重复条目
+                String key = raw.toLowerCase(java.util.Locale.ROOT);
+                MolangExpression expr = ANIM_SPEED_CACHE.computeIfAbsent(key, s -> {
                     try {
                         return parser.parseExpression(s);
                     } catch (Exception ex) {

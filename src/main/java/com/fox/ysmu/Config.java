@@ -122,7 +122,7 @@ public class Config {
      *  各步态的规范步幅是内部常量（walk/run 4.317、sneak 1.295、swim 1.727），
      *  最终的可视化逐模型校准页（方案 C）会覆盖此值。 */
     public static double ANIMATION_SPEED_MATCH_BASE = 1.0;
-    /** 防滑步倍速平滑响应系数（0~1，每 tick 向目标倍速逼近的比例）。
+    /** 防滑步倍速平滑响应系数（配置允许 0.05~1.0，默认 0.5；每 tick 向目标倍速逼近的比例）。
      *  越小越平滑但反应越慢；越大反应越快但急起急停可能可见。 */
     public static double ANIMATION_SPEED_MATCH_RESPONSE = 0.5;
 
