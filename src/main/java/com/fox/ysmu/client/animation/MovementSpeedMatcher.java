@@ -10,10 +10,14 @@ import net.minecraft.util.MathHelper;
 import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
 
+import org.apache.commons.lang3.StringUtils;
+
 import software.bernie.geckolib3.core.builder.Animation;
+import software.bernie.geckolib3.core.controller.AnimationController;
 import software.bernie.geckolib3.core.molang.MolangParser;
 import software.bernie.geckolib3.core.molang.expressions.MolangExpression;
 import software.bernie.geckolib3.file.AnimationFile;
+import software.bernie.geckolib3.resource.GeckoLibCache;
 
 /**
  * 移动动画防滑步（stride matching）。
@@ -266,6 +270,35 @@ public final class MovementSpeedMatcher {
             }
             return 1.0d;
         }
+    }
+
+    /**
+     * 计算并写入控制器播放倍速 = anim_speed × 防滑步倍率。
+     * legacy（AnimationManager）与 OpenYSM（OpenYsmPlayerControllerRuntime）
+     * 两条播放路径共用此实现，避免重复。
+     *
+     * @param ctrl             目标控制器（非 null）
+     * @param player           玩家；null（GUI 预览实体）时不干预，避免覆盖预览冻结
+     * @param animationName    正在播放的动画名；空白视为不缩放
+     * @param isBodyController 是否主身体控制器——防滑步仅对主身体控制器生效，
+     *                         anim_speed 对所有控制器生效
+     * @param file             模型动画文件（可 null）
+     */
+    public static void applyPlaybackSpeed(AnimationController<?> ctrl, EntityPlayer player,
+        String animationName, boolean isBodyController, AnimationFile file) {
+        if (ctrl == null || player == null || StringUtils.isBlank(animationName)) {
+            return;
+        }
+        double strideMultiplier = 1.0d;
+        // 防滑步：仅主身体控制器按真实速度缩放（设计速度 = 步幅 / 周期）
+        if (Config.ANIMATION_SPEED_MATCH && isBodyController) {
+            double cycleSeconds = cycleSeconds(file, animationName);
+            strideMultiplier = computeMultiplier(player, animationName, DEFAULT_PROVIDER, cycleSeconds);
+        }
+        // anim_speed：模型作者逐动画播放倍率（所有控制器都生效）
+        double animSpeed = animSpeedFor(file, animationName, GeckoLibCache.getInstance().parser);
+        // 最终倍率 = anim_speed × 防滑步倍率
+        ctrl.animationSpeed = strideMultiplier * animSpeed;
     }
 
     /** 清除指定玩家的平滑状态（例如切换模型/离开世界时）。 */

@@ -224,10 +224,10 @@ public final class AnimationManager {
         return val != null ? val : 0;
     }
 
-    /** 防滑步（stride matching）+ 逐动画倍速（anim_speed）：legacy 控制器路径。
+    /** 播放倍速（stride × anim_speed）：legacy 控制器路径。
      *  在公共 playAnimation 入口调用，因此所有 legacy 控制器都会应用 anim_speed；
      *  防滑步仅对 main_controller 生效。GUI 预览（player==null）不干预，
-     *  避免覆盖预览页的暂停/冻结倍速。 */
+     *  避免覆盖预览页的暂停/冻结倍速。计算逻辑见 MovementSpeedMatcher.applyPlaybackSpeed。 */
     private static void applyPlaybackSpeed(AnimationEvent<?> event, String animationName) {
         if (event == null || event.getController() == null) {
             return;
@@ -238,25 +238,10 @@ public final class AnimationManager {
         if (player == null) {
             return;
         }
-        boolean strideOn = Config.ANIMATION_SPEED_MATCH
-            && ControllerUtils.MAIN_CONTROLLER.equals(event.getController().getName())
-            && StringUtils.isNotBlank(animationName);
-        double strideMultiplier = 1.0d;
-        double animSpeed = 1.0d;
-        ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
+        ResourceLocation animId = animatable.getAnimation();
         AnimationFile file = animId != null ? GeckoLibCache.getInstance().getAnimations().get(animId) : null;
-        // 防滑步：仅主控制器按真实速度缩放
-        if (strideOn) {
-            double cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, animationName);
-            strideMultiplier = MovementSpeedMatcher.computeMultiplier(
-                player, animationName, MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds);
-        }
-        // anim_speed：模型作者逐动画播放倍率
-        if (StringUtils.isNotBlank(animationName)) {
-            animSpeed = MovementSpeedMatcher.animSpeedFor(file, animationName, GeckoLibCache.getInstance().parser);
-        }
-        // 最终倍率 = anim_speed × 防滑步倍率
-        event.getController().animationSpeed = strideMultiplier * animSpeed;
+        MovementSpeedMatcher.applyPlaybackSpeed(event.getController(), player, animationName,
+            ControllerUtils.MAIN_CONTROLLER.equals(event.getController().getName()), file);
     }
 
     @NotNull

@@ -43,8 +43,9 @@ public class ConfigScreen extends GuiScreen {
         } else if (page == 1) {
             int i = 0;
             addCheckbox(3,  x + 5, y + 25 + i++ * 22, "print_animation_roulette_msg", Config.PRINT_ANIMATION_ROULETTE_MSG);
-            addCheckbox(7,  x + 5, y + 25 + i++ * 22, "render_wearable",         Config.RENDER_WEARABLE);
             addCheckbox(13, x + 5, y + 25 + i++ * 22, "hide_offhand_defoliage_axe", Config.HIDE_OFFHAND_DEFOLIAGE_AXE);
+            // 渲染其他模组背部模型：开关紧邻其下的缩放滑条，便于对照调整
+            addCheckbox(7,  x + 5, y + 25 + i++ * 22, "render_wearable",         Config.RENDER_WEARABLE);
             // 可穿戴模型缩放：连续值用滑条（比多次点击方便）；范围与 Config 一致（0.1-5.0）
             this.buttonList.add(new ConfigSlider(10, x + 5, y + 25 + i++ * 22, 400,
                 "gui.yes_steve_model.config.wearable_render_scale",

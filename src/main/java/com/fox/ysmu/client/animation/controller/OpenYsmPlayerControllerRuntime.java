@@ -533,35 +533,20 @@ public final class OpenYsmPlayerControllerRuntime {
         return PlayState.CONTINUE;
     }
 
-    /** 防滑步（stride matching）：按真实水平速度缩放移动类动画的播放倍速。
-     *  仅对主身体控制器（main_controller / player.pre_main）生效，
-     *  post_*、arm、swing、use 等动作控制器不受影响。
-     *  player==null（GUI 预览实体）时跳过，避免覆盖预览页的暂停/冻结倍速。 */
+    /** 播放倍速（stride × anim_speed）：OpenYSM 控制器路径。
+     *  防滑步仅对主身体控制器（main_controller / player.pre_main）生效，
+     *  anim_speed 对所有控制器生效。player==null（GUI 预览实体）时跳过，
+     *  避免覆盖预览页的暂停/冻结倍速。计算逻辑见 MovementSpeedMatcher.applyPlaybackSpeed。 */
     private static void applyPlaybackSpeed(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         String geckoControllerName, List<String> existing) {
         // GUI 预览（player==null）：不干预 animationSpeed（由预览页控制暂停/冻结）
-        if (player == null) {
+        if (player == null || existing == null || existing.isEmpty()) {
             return;
         }
-        AnimationController<?> ctrl = event.getController();
-        boolean isBody = MAIN_CONTROLLER.equals(geckoControllerName) || OPENYSM_PRE_MAIN_CONTROLLER.equals(geckoControllerName);
-        boolean strideOn = Config.ANIMATION_SPEED_MATCH && isBody && existing != null && !existing.isEmpty();
-        double strideMultiplier = 1.0d;
-        double animSpeed = 1.0d;
         ResourceLocation animId = event.getAnimatable().getAnimation();
         AnimationFile file = animId != null ? GeckoLibCache.getInstance().getAnimations().get(animId) : null;
-        // 防滑步：仅主身体控制器按真实速度缩放（设计速度 = 步幅 / 周期）
-        if (strideOn) {
-            double cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, existing.get(0));
-            strideMultiplier = MovementSpeedMatcher.computeMultiplier(
-                player, existing.get(0), MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds);
-        }
-        // anim_speed：模型作者逐动画播放倍率（所有控制器都生效）
-        if (existing != null && !existing.isEmpty()) {
-            animSpeed = MovementSpeedMatcher.animSpeedFor(file, existing.get(0), GeckoLibCache.getInstance().parser);
-        }
-        // 最终倍率 = anim_speed × 防滑步倍率
-        ctrl.animationSpeed = strideMultiplier * animSpeed;
+        boolean isBody = MAIN_CONTROLLER.equals(geckoControllerName) || OPENYSM_PRE_MAIN_CONTROLLER.equals(geckoControllerName);
+        MovementSpeedMatcher.applyPlaybackSpeed(event.getController(), player, existing.get(0), isBody, file);
     }
 
     private static RuntimeState runtimeState(EntityPlayer player, ResourceLocation animationId,
