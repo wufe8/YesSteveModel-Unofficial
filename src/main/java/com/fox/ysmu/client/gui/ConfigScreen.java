@@ -3,6 +3,7 @@ package com.fox.ysmu.client.gui;
 import java.util.List;
 
 import com.fox.ysmu.client.gui.button.ConfigCheckBox;
+import com.fox.ysmu.client.gui.button.ConfigSlider;
 import com.fox.ysmu.client.gui.button.FlatColorButton;
 import com.fox.ysmu.Config;
 import net.minecraft.client.gui.GuiButton;
@@ -51,6 +52,13 @@ public class ConfigScreen extends GuiScreen {
                 I18n.format("gui.yes_steve_model.config.texture_target_size." + Config.TEXTURE_TARGET_SIZE)));
             this.buttonList.add(new FlatColorButton(12, x + 5, y + 25 + i++ * 22, 400, 20,
                 I18n.format("gui.yes_steve_model.config.texture_vram_budget." + Config.TEXTURE_VRAM_BUDGET_MB)));
+            // 防滑步（stride matching）设置：开关 + 基础倍率滑条
+            // （平滑响应 AnimationSpeedMatchResponse 只留在 config 文件，不提供滑条）
+            addCheckbox(14, x + 5, y + 25 + i++ * 22, "animation_speed_match", Config.ANIMATION_SPEED_MATCH);
+            this.buttonList.add(new ConfigSlider(15, x + 5, y + 25 + i++ * 22, 400,
+                "gui.yes_steve_model.config.animation_speed_match_base",
+                0.25, 4.0, 0.05, Config.ANIMATION_SPEED_MATCH_BASE,
+                v -> Config.ANIMATION_SPEED_MATCH_BASE = v));
         }
     }
 
@@ -71,7 +79,7 @@ public class ConfigScreen extends GuiScreen {
             case 1: case 2: case 4: case 5: case 6: case 8: case 9:
                 actionPage0(button);
                 break;
-            case 3: case 7: case 13: case 10: case 11: case 12:
+            case 3: case 7: case 13: case 14: case 10: case 11: case 12:
                 actionPage1(button);
                 break;
         }
@@ -122,6 +130,10 @@ public class ConfigScreen extends GuiScreen {
                 break;
             case 13:
                 Config.HIDE_OFFHAND_DEFOLIAGE_AXE = !Config.HIDE_OFFHAND_DEFOLIAGE_AXE;
+                ((ConfigCheckBox) button).doPress();
+                break;
+            case 14:
+                Config.ANIMATION_SPEED_MATCH = !Config.ANIMATION_SPEED_MATCH;
                 ((ConfigCheckBox) button).doPress();
                 break;
             case 10:
