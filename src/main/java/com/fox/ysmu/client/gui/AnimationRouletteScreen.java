@@ -565,6 +565,19 @@ public class AnimationRouletteScreen extends GuiScreen {
             software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
                 .computeIfAbsent(key, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
                 .set(entry.getValue());
+            // MolangParser.parseExpression() lowercases the whole expression
+            // (lowerCaseOutsideStrings), so an uppercase roaming var (e.g. v.CBody)
+            // resolves to the lowercase key.  Inject the lowercase variant too —
+            // mirroring the animation runtime (MolangPhysicsRuntime /
+            // OpenYsmPlayerControllerRuntime) which injects both cases — otherwise
+            // the GUI read-back returns 0 and the slider thumb / radio selection
+            // never reflects the actual value (Endfield_Rossi v.CBody etc.).
+            String lcKey = "v." + entry.getKey().toLowerCase(java.util.Locale.ROOT);
+            if (!lcKey.equals(key)) {
+                software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
+                    .computeIfAbsent(lcKey, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
+                    .set(entry.getValue());
+            }
         }
         try {
             software.bernie.geckolib3.core.molang.MolangParser parser =
@@ -579,6 +592,62 @@ public class AnimationRouletteScreen extends GuiScreen {
             Double v = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(roamingName);
             return v != null ? v : 0;
         }
+    }
+
+    /** Determines which radio label is currently selected.
+     *  When the form has a non-blank `value`, OpenYSM convention is that the
+     *  variable's value IS the 0-based label index.  When `value` is blank (e.g.
+     *  Endfield_Rossi's 体型预设, whose labels assign several variables at once),
+     *  derive the selection by matching each label's assignment expression
+     *  against the current roaming variable state. */
+    private static int getSelectedRadioIndex(ConfigForm form) {
+        if (StringUtils.isNotBlank(form.defaultValue)) {
+            double curVal = getMolangVar(form.defaultValue);
+            int idx = (int) Math.round(curVal);
+            if (idx >= 0 && idx < form.labels.size()) {
+                return idx;
+            }
+            return 0;
+        }
+        int idx = 0;
+        for (Map.Entry<String, String> label : form.labels.entrySet()) {
+            if (expressionMatchesCurrent(label.getValue())) {
+                return idx;
+            }
+            idx++;
+        }
+        return 0;
+    }
+
+    /** Checks whether a semicolon-separated assignment expression (e.g.
+     *  "v.CBody=-2;v.CHead=2") matches the current roaming variable values.
+     *  Used to derive the selected index of a radio with a blank `value`. */
+    private static boolean expressionMatchesCurrent(String expression) {
+        if (StringUtils.isBlank(expression)) {
+            return false;
+        }
+        for (String part : expression.split(";")) {
+            part = part.trim();
+            if (part.isEmpty()) {
+                continue;
+            }
+            int eqIdx = part.indexOf('=');
+            if (eqIdx <= 0) {
+                continue;
+            }
+            String varName = part.substring(0, eqIdx).trim();
+            String valStr = part.substring(eqIdx + 1).trim().replaceAll(";+$", "").trim();
+            try {
+                double target = Double.parseDouble(valStr);
+                double current = getMolangVar(varName);
+                if (Math.abs(current - target) > 1e-6) {
+                    return false;
+                }
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private void handleRangeChange(int formIndex, int mouseX, int panelX, int panelW) {
@@ -744,11 +813,7 @@ public class AnimationRouletteScreen extends GuiScreen {
                 drawString(fontRendererObj, maxStr, panelX + panelW - fontRendererObj.getStringWidth(maxStr), sliderY + 6, 0x888888);
                 drawCenteredString(fontRendererObj, valStr, panelX + panelW / 2, sliderY + 6, 0xFFFF55);
             } else if ("radio".equals(form.type)) {
-                double curVal = getMolangVar(form.defaultValue);
-                int selectedIndex = (int) Math.round(curVal);
-                if (selectedIndex < 0 || selectedIndex >= form.labels.size()) {
-                    selectedIndex = 0;
-                }
+                int selectedIndex = getSelectedRadioIndex(form);
                 int yOff = fy + 24;
                 int idx = 0;
                 for (Map.Entry<String, String> label : form.labels.entrySet()) {
