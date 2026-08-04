@@ -37,17 +37,19 @@ public class ConfigScreen extends GuiScreen {
             addCheckbox(5,  x + 5, y + 25 + i++ * 22, "disable_player_render",   Config.DISABLE_PLAYER_RENDER);
             addCheckbox(6,  x + 5, y + 25 + i++ * 22, "swap_config_sides",       Config.SWAP_CONFIG_SIDES);
             addCheckbox(8,  x + 5, y + 25 + i++ * 22, "gui_enhancements",        Config.GUI_ENHANCEMENTS);
-            // 与上方 ConfigCheckBox 标签（x+28）对齐，避免混排时看似未居中
+            // 预览刷新：点击循环离散值（0-4），文本置中与其他点击项一致
             this.buttonList.add(new FlatColorButton(9, x + 5, y + 25 + i++ * 22, 400, 20,
-                I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH))
-                .setLeftAligned(28));
+                I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH)));
         } else if (page == 1) {
             int i = 0;
             addCheckbox(3,  x + 5, y + 25 + i++ * 22, "print_animation_roulette_msg", Config.PRINT_ANIMATION_ROULETTE_MSG);
             addCheckbox(7,  x + 5, y + 25 + i++ * 22, "render_wearable",         Config.RENDER_WEARABLE);
             addCheckbox(13, x + 5, y + 25 + i++ * 22, "hide_offhand_defoliage_axe", Config.HIDE_OFFHAND_DEFOLIAGE_AXE);
-            this.buttonList.add(new FlatColorButton(10, x + 5, y + 25 + i++ * 22, 400, 20,
-                I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE)));
+            // 可穿戴模型缩放：连续值用滑条（比多次点击方便）
+            this.buttonList.add(new ConfigSlider(10, x + 5, y + 25 + i++ * 22, 400,
+                "gui.yes_steve_model.config.wearable_render_scale",
+                0.5, 1.5, 0.05, Config.WEARABLE_RENDER_SCALE,
+                v -> Config.WEARABLE_RENDER_SCALE = v));
             this.buttonList.add(new FlatColorButton(11, x + 5, y + 25 + i++ * 22, 400, 20,
                 I18n.format("gui.yes_steve_model.config.texture_target_size." + Config.TEXTURE_TARGET_SIZE)));
             this.buttonList.add(new FlatColorButton(12, x + 5, y + 25 + i++ * 22, 400, 20,
@@ -79,7 +81,7 @@ public class ConfigScreen extends GuiScreen {
             case 1: case 2: case 4: case 5: case 6: case 8: case 9:
                 actionPage0(button);
                 break;
-            case 3: case 7: case 13: case 14: case 10: case 11: case 12:
+            case 3: case 7: case 13: case 14: case 11: case 12:
                 actionPage1(button);
                 break;
         }
@@ -136,11 +138,6 @@ public class ConfigScreen extends GuiScreen {
                 Config.ANIMATION_SPEED_MATCH = !Config.ANIMATION_SPEED_MATCH;
                 ((ConfigCheckBox) button).doPress();
                 break;
-            case 10:
-                Config.WEARABLE_RENDER_SCALE = Math.round((Config.WEARABLE_RENDER_SCALE + 0.1) * 10) / 10.0;
-                if (Config.WEARABLE_RENDER_SCALE > 1.5) Config.WEARABLE_RENDER_SCALE = 0.5;
-                button.displayString = I18n.format("gui.yes_steve_model.config.wearable_render_scale", Config.WEARABLE_RENDER_SCALE);
-                break;
             case 11:
                 Config.TEXTURE_TARGET_SIZE = nextTextureTargetSize(Config.TEXTURE_TARGET_SIZE);
                 button.displayString = I18n.format("gui.yes_steve_model.config.texture_target_size." + Config.TEXTURE_TARGET_SIZE);
@@ -179,6 +176,28 @@ public class ConfigScreen extends GuiScreen {
     public void drawScreen(int pMouseX, int pMouseY, float pPartialTick) {
         this.drawDefaultBackground();
         super.drawScreen(pMouseX, pMouseY, pPartialTick);
+    }
+
+    /** 鼠标滚轮翻页（等同点击右上角页码按钮）；右键返回（等同左上角返回按钮）。 */
+    @Override
+    public void handleMouseInput() {
+        int dWheel = org.lwjgl.input.Mouse.getDWheel();
+        if (dWheel != 0) {
+            page = (page + 1) % 2;
+            this.initGui();
+            return;
+        }
+        super.handleMouseInput();
+    }
+
+    @Override
+    protected void mouseClicked(int pMouseX, int pMouseY, int pButton) {
+        // 右键：返回模型预览页（等同左上角返回按钮 id 0）
+        if (pButton == 1) {
+            this.mc.displayGuiScreen(parent);
+            return;
+        }
+        super.mouseClicked(pMouseX, pMouseY, pButton);
     }
 
     @Override
