@@ -1016,6 +1016,12 @@ public final class RawYsmModelAdapter {
         if (animation.blendWeight != null) {
             json.add("blend_weight", molangValue(animation.blendWeight));
         }
+        if (animation.animTimeUpdate != null && !animation.animTimeUpdate.isEmpty()) {
+            json.addProperty("anim_time_update", animation.animTimeUpdate);
+        }
+        if (animation.animSpeed != null && !animation.animSpeed.isEmpty()) {
+            json.addProperty("anim_speed", animation.animSpeed);
+        }
 
         JsonObject bones = new JsonObject();
         for (RawYsmModel.RawBoneAnimation boneAnimation : animation.boneAnimations) {

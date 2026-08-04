@@ -49,6 +49,7 @@ import software.bernie.geckolib3.core.keyframe.KeyFrameLocation;
 import software.bernie.geckolib3.core.keyframe.ParticleEventKeyFrame;
 import software.bernie.geckolib3.core.keyframe.VectorKeyFrameList;
 import software.bernie.geckolib3.core.molang.MolangParser;
+import software.bernie.geckolib3.core.molang.expressions.MolangExpression;
 import software.bernie.geckolib3.core.processor.IBone;
 import software.bernie.geckolib3.core.snapshot.BoneSnapshot;
 import software.bernie.geckolib3.core.util.Axis;
@@ -197,6 +198,15 @@ public class AnimationController<T extends IAnimatable> {
     protected boolean needsAnimationReload = false;
     // YSMU: animationSpeed — external control for pause/freeze (used by animation preview screen)
     public double animationSpeed = 1D;
+    // YSMU: anim_time_update — Bedrock 风格逐动画自定义时间推进
+    /** 上一次计算出的动画时间（tick）；-1 = 未初始化（新动画/重启时重置）。 */
+    private double lastAnimTimeTick = -1;
+    /** 计算 anim_time_update 时的动画实例（动画切换时重置 lastAnimTimeTick）。 */
+    private Animation lastAnimTimeAnimation;
+    /** 上一帧 actualTick（用于计算 query.delta_time）。 */
+    private double lastActualTick = -1;
+    /** anim_time_update 表达式解析缓存（按表达式文本，全局共享）。 */
+    private static final ConcurrentHashMap<String, MolangExpression> ANIM_TIME_UPDATE_CACHE = new ConcurrentHashMap<>();
     private final Set<EventKeyFrame<?>> executedKeyFrames = new HashSet<>();
 
     /**
@@ -752,6 +762,45 @@ public class AnimationController<T extends IAnimatable> {
     private void processCurrentAnimation(double tick, double actualTick, MolangParser parser,
         boolean crashWhenCantFindBone) {
         assert currentAnimation != null;
+        // YSMU: anim_time_update — 逐动画自定义时间推进（Bedrock 风格）。
+        // 表达式每帧求值，返回动画时间（秒）；query.anim_time = 上一帧时间，
+        // query.delta_time = 本帧时间增量（秒）。未提供该字段时走默认时间推进。
+        boolean customTime = currentAnimation.animTimeUpdate != null
+            && !currentAnimation.animTimeUpdate.isEmpty();
+        if (customTime) {
+            if (this.lastAnimTimeAnimation != currentAnimation) {
+                this.lastAnimTimeAnimation = currentAnimation;
+                this.lastAnimTimeTick = -1;
+            }
+            double prevSeconds = this.lastAnimTimeTick >= 0 ? this.lastAnimTimeTick / 20.0 : 0.0;
+            double deltaSeconds = actualTick - this.lastActualTick;
+            if (deltaSeconds <= 0.0 || deltaSeconds > 1.0) {
+                deltaSeconds = 1.0 / 20.0; // 兜底：一 tick
+            }
+            this.lastActualTick = actualTick;
+            parser.setValue("query.anim_time", prevSeconds);
+            parser.setValue("query.delta_time", deltaSeconds);
+            try {
+                MolangExpression expr = ANIM_TIME_UPDATE_CACHE.computeIfAbsent(
+                    currentAnimation.animTimeUpdate,
+                    s -> {
+                        try {
+                            return parser.parseExpression(s);
+                        } catch (Exception e) {
+                            return null;
+                        }
+                    });
+                if (expr != null) {
+                    double newSeconds = expr.get();
+                    if (newSeconds < 0.0) {
+                        newSeconds = 0.0;
+                    }
+                    tick = newSeconds * 20.0;
+                }
+            } catch (Exception ignored) {
+                // 表达式出错：回退到默认时间推进
+            }
+        }
         // Animation has ended
         if (tick >= currentAnimation.animationLength) {
             if (currentAnimation.loop == EDefaultLoopTypes.HOLD_ON_LAST_FRAME) {
@@ -777,6 +826,9 @@ public class AnimationController<T extends IAnimatable> {
                 resetEventKeyFrames();
                 tick = wrapLoopTick(actualTick, tick, currentAnimation.animationLength);
             }
+        }
+        if (customTime) {
+            this.lastAnimTimeTick = tick;
         }
         setAnimTime(parser, tick);
         processKeyFrameEvents(tick);

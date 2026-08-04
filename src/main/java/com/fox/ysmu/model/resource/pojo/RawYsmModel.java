@@ -101,6 +101,10 @@ public class RawYsmModel {
         public float length;
         public int loopMode;
         public Object blendWeight;
+        /** YSMU: Bedrock-style anim_time_update expression（秒） */
+        public String animTimeUpdate;
+        /** YSMU: per-animation playback speed multiplier（数字或 Molang 表达式） */
+        public String animSpeed;
         public int unkInt1;
         public int unkInt2;
         public int unkInt4;

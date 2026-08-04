@@ -236,21 +236,25 @@ public final class AnimationManager {
         if (player == null) {
             return;
         }
-        boolean shouldMatch = Config.ANIMATION_SPEED_MATCH
+        boolean strideOn = Config.ANIMATION_SPEED_MATCH
             && ControllerUtils.MAIN_CONTROLLER.equals(event.getController().getName())
             && StringUtils.isNotBlank(animationName);
-        // 读取当前动画的实际周期（秒），供设计速度 = 基准步幅 / 周期 计算
-        double cycleSeconds = -1.0d;
-        if (shouldMatch) {
-            ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
-            if (animId != null) {
-                AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
-                cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, animationName);
-            }
+        double strideMultiplier = 1.0d;
+        double animSpeed = 1.0d;
+        ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
+        AnimationFile file = animId != null ? GeckoLibCache.getInstance().getAnimations().get(animId) : null;
+        // 防滑步：仅主控制器按真实速度缩放
+        if (strideOn) {
+            double cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, animationName);
+            strideMultiplier = MovementSpeedMatcher.computeMultiplier(
+                player, animationName, MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds);
         }
-        event.getController().animationSpeed = shouldMatch
-            ? MovementSpeedMatcher.computeMultiplier(player, animationName, MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds)
-            : 1.0d;
+        // anim_speed：模型作者逐动画播放倍率
+        if (StringUtils.isNotBlank(animationName)) {
+            animSpeed = MovementSpeedMatcher.animSpeedFor(file, animationName, GeckoLibCache.getInstance().parser);
+        }
+        // 最终倍率 = anim_speed × 防滑步倍率
+        event.getController().animationSpeed = strideMultiplier * animSpeed;
     }
 
     @NotNull
@@ -639,6 +643,8 @@ public final class AnimationManager {
                             software.bernie.geckolib3.core.builder.Animation copy = new software.bernie.geckolib3.core.builder.Animation();
                             copy.animationLength = defaultAnim.animationLength;
                             copy.loop = defaultAnim.loop;
+                            copy.animTimeUpdate = defaultAnim.animTimeUpdate;
+                            copy.animSpeed = defaultAnim.animSpeed;
                             copy.boneAnimations = defaultAnim.boneAnimations;
                             animFile.animations.put(targetName, copy);
                             anim = copy;

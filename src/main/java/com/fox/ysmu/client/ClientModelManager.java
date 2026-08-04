@@ -1080,8 +1080,19 @@ public class ClientModelManager {
                     String animationName = entry.getKey();
                     Animation animation;
                     try {
+                        JsonObject animJson = JsonAnimationUtils.getAnimation(jsonObject, animationName);
                         animation = JsonAnimationUtils
-                            .deserializeJsonToAnimation(JsonAnimationUtils.getAnimation(jsonObject, animationName), parser);
+                            .deserializeJsonToAnimation(animJson, parser);
+                        // YSMU: attach Bedrock-style anim_time_update（自定义动画时间推进，秒）
+                        JsonElement atu = animJson.get("anim_time_update");
+                        if (atu != null && atu.isJsonPrimitive()) {
+                            animation.animTimeUpdate = atu.getAsString();
+                        }
+                        // YSMU: attach anim_speed（逐动画播放倍率，数字或 Molang 表达式）
+                        JsonElement aspd = animJson.get("anim_speed");
+                        if (aspd != null && aspd.isJsonPrimitive()) {
+                            animation.animSpeed = aspd.getAsString();
+                        }
                         animationFile.putAnimation(animationName, animation);
                     } catch (Exception e) {
                         ysmu.LOG.warn(

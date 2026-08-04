@@ -734,6 +734,14 @@ public class YSMFolderDeserializer implements AutoCloseable {
                 if (hasObject(animObj, "blend_weight")) {
                     animation.blendWeight = animObj.get("blend_weight");
                 }
+                // YSMU: Bedrock-style anim_time_update（自定义动画时间推进表达式，秒）
+                if (hasObject(animObj, "anim_time_update")) {
+                    animation.animTimeUpdate = getStr(animObj, "anim_time_update", "");
+                }
+                // YSMU: anim_speed（逐动画播放倍率，数字或 Molang 表达式）
+                if (hasObject(animObj, "anim_speed")) {
+                    animation.animSpeed = getStr(animObj, "anim_speed", "");
+                }
                 if (hasObject(animObj, "bones")) {
                     for (Map.Entry<String, JsonElement> boneEntry : animObj.getAsJsonObject("bones").entrySet()) {
                         RawYsmModel.RawBoneAnimation bone = new RawYsmModel.RawBoneAnimation();

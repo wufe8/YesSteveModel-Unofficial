@@ -544,22 +544,24 @@ public final class OpenYsmPlayerControllerRuntime {
             return;
         }
         AnimationController<?> ctrl = event.getController();
-        boolean shouldMatch = Config.ANIMATION_SPEED_MATCH
-            && (MAIN_CONTROLLER.equals(geckoControllerName) || OPENYSM_PRE_MAIN_CONTROLLER.equals(geckoControllerName))
-            && existing != null && !existing.isEmpty();
-        if (!shouldMatch) {
-            ctrl.animationSpeed = 1.0d;
-            return;
-        }
-        // 读取当前动画的实际周期（秒），供设计速度 = 基准步幅 / 周期 计算
-        double cycleSeconds = -1.0d;
+        boolean isBody = MAIN_CONTROLLER.equals(geckoControllerName) || OPENYSM_PRE_MAIN_CONTROLLER.equals(geckoControllerName);
+        boolean strideOn = Config.ANIMATION_SPEED_MATCH && isBody && existing != null && !existing.isEmpty();
+        double strideMultiplier = 1.0d;
+        double animSpeed = 1.0d;
         ResourceLocation animId = event.getAnimatable().getAnimation();
-        if (animId != null) {
-            AnimationFile file = GeckoLibCache.getInstance().getAnimations().get(animId);
-            cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, existing.get(0));
+        AnimationFile file = animId != null ? GeckoLibCache.getInstance().getAnimations().get(animId) : null;
+        // 防滑步：仅主身体控制器按真实速度缩放（设计速度 = 步幅 / 周期）
+        if (strideOn) {
+            double cycleSeconds = MovementSpeedMatcher.cycleSeconds(file, existing.get(0));
+            strideMultiplier = MovementSpeedMatcher.computeMultiplier(
+                player, existing.get(0), MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds);
         }
-        ctrl.animationSpeed = MovementSpeedMatcher.computeMultiplier(
-            player, existing.get(0), MovementSpeedMatcher.DEFAULT_PROVIDER, cycleSeconds);
+        // anim_speed：模型作者逐动画播放倍率（所有控制器都生效）
+        if (existing != null && !existing.isEmpty()) {
+            animSpeed = MovementSpeedMatcher.animSpeedFor(file, existing.get(0), GeckoLibCache.getInstance().parser);
+        }
+        // 最终倍率 = anim_speed × 防滑步倍率
+        ctrl.animationSpeed = strideMultiplier * animSpeed;
     }
 
     private static RuntimeState runtimeState(EntityPlayer player, ResourceLocation animationId,
@@ -829,6 +831,8 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             if (primaryAnim != null) {
                 mergedAnim.animationLength = primaryAnim.animationLength;
+                mergedAnim.animTimeUpdate = primaryAnim.animTimeUpdate;
+                mergedAnim.animSpeed = primaryAnim.animSpeed;
                 // When the animation file has no explicit loop field (null),
                 // default to HOLD_ON_LAST_FRAME so the last frame is held
                 // instead of snapping bones back to bind pose.

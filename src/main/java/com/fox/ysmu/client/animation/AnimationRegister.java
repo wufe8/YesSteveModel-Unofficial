@@ -90,6 +90,7 @@ public class AnimationRegister {
     private static void registerQueryVariables(MolangParser parser) {
         parser.register(new LazyVariable("query.actor_count", 0));
         parser.register(new LazyVariable("query.anim_time", 0));
+        parser.register(new LazyVariable("query.delta_time", 0.05));
 
         parser.register(new LazyVariable("query.body_x_rotation", 0));
         parser.register(new LazyVariable("query.body_y_rotation", 0));

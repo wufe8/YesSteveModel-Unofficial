@@ -10,6 +10,8 @@ import net.minecraft.util.MathHelper;
 import com.fox.ysmu.Config;
 
 import software.bernie.geckolib3.core.builder.Animation;
+import software.bernie.geckolib3.core.molang.MolangParser;
+import software.bernie.geckolib3.core.molang.expressions.MolangExpression;
 import software.bernie.geckolib3.file.AnimationFile;
 
 /**
@@ -118,6 +120,8 @@ public final class MovementSpeedMatcher {
 
     /** 每玩家平滑倍速状态（有状态版本；后续无状态版本可移除）。 */
     private static final Map<UUID, Double> SMOOTHED_MULTIPLIER = new ConcurrentHashMap<>();
+    /** anim_speed 表达式解析缓存（按表达式文本，全局共享）。 */
+    private static final Map<String, MolangExpression> ANIM_SPEED_CACHE = new ConcurrentHashMap<>();
 
     private MovementSpeedMatcher() {}
 
@@ -229,6 +233,41 @@ public final class MovementSpeedMatcher {
             }
         }
         return -1.0d;
+    }
+
+    /**
+     * 求值当前动画的 anim_speed（逐动画播放倍率，数字或 Molang 表达式）。
+     * 无该字段/求值失败返回 1.0（不缩放）。负值钳制为 0（冻结）。
+     */
+    public static double animSpeedFor(AnimationFile file, String animationName, MolangParser parser) {
+        if (file == null || animationName == null) {
+            return 1.0d;
+        }
+        Animation anim = file.getAnimation(animationName);
+        if (anim == null || anim.animSpeed == null || anim.animSpeed.isEmpty()) {
+            return 1.0d;
+        }
+        String raw = anim.animSpeed.trim();
+        try {
+            return Math.max(0.0d, Double.parseDouble(raw));
+        } catch (NumberFormatException e) {
+            // Molang 表达式：每帧求值（依赖 query 变量，如 query.ground_speed）
+            try {
+                MolangExpression expr = ANIM_SPEED_CACHE.computeIfAbsent(raw, s -> {
+                    try {
+                        return parser.parseExpression(s);
+                    } catch (Exception ex) {
+                        return null;
+                    }
+                });
+                if (expr != null) {
+                    return Math.max(0.0d, expr.get());
+                }
+            } catch (Exception ignored) {
+                // 求值失败回退 1.0
+            }
+            return 1.0d;
+        }
     }
 
     /** 清除指定玩家的平滑状态（例如切换模型/离开世界时）。 */
