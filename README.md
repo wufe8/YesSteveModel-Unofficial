@@ -47,12 +47,15 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **WebP 纹理解码**：移植 ImageStream 解码器，处理加密 `.ysm` 中的 WebP 贴图
 - **内置模型**：内置默认模型自动提取到 `config/ysmu/custom`
 - **负尺寸 Cube 归一化**：自动归一化 BlockBench 负尺寸 Cube + 移除零 UV 面，提升模型兼容性
+- **统一模型同步**：合并 legacy（MD5/AES）与 OpenYSM 两条同步路径为单一路径；服务端内容寻址去重、原子写缓存、侧车索引（二次启动重建降至 ~5s）；大模型库同步索引分块传输（突破 1.7.10 32KB 包限制）
+- **按需懒加载**：几何/动画/贴图按需后台加载、空闲自动卸载，显著降低大型模型库的同步峰值内存与显存占用
 
 ### 动画系统
 - **动画控制器**：状态机、blend transition、timeline、`on_entry`/`on_exit`
 - **并行动画播放**：支持 `parallel_N` 控制器，多动画同时播放
 - **攻击连击系统**：`post_swing` 状态机推进 attack1→2→3，支持检测模型武器可见性
-- **潜行动画修复**：四种降级路径（MOVE-BLOCK、SKY-REDIRECT、wasMoving、通用回退），修复无 `ground` 状态模型的潜行动画
+- **潜行动画修复**：四种降级路径（MOVE-BLOCK、SKY-REDIRECT、wasMoving、通用回退），修复无 `ground` 状态模型的潜行动画；自动识别模型控制器是否自行处理潜行，未处理时正确回退到 legacy 潜行状态机
+- **动画过渡修复**：GeckoLib blend transition 实际生效（原首帧即跳过过渡），可通过 `AnimationTransitionTicks` 配置全局过渡时长（默认 200ms，模型 `blend_transition` 优先）
 - **动画合并修复**：`arm.animation.json` 空动画不再覆盖 `main.animation.json` 有骨骼的正常版本
 - **Root 骨骼过滤**：非主控制器自动剔除 Root 骨骼动画，防止身体旋转被覆盖
 - **额外动画轮盘**：可定制的 8 槽位动画轮盘，支持子菜单导航、翻页
@@ -75,6 +78,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **OGG Vorbis 播放**：通过 DirectSound 实现模型音效播放
 - **控制器级生命周期**：音效与 GeckoLib 控制器绑定，动画切换/停止时自动清理
 - **vanilla 音效回退**：非 OGG 音效通过 `SoundHandler.playSound` 播放
+- **音效内存缓存**：模型音效不再明文落盘（原写 `SOUND_CACHE/*.ogg`），改为内存缓存 + 后台预暖，首播无卡顿、磁盘不泄漏明文
 
 ### 配置与 GUI
 - **全新配置面板**：右侧面板布局、更大预览、拖拽旋转预览玩家
@@ -83,6 +87,10 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **翻页/锁定按钮**：动画轮盘锁定、多页导航
 - **`/ysm play` 命令**：在游戏中播放指定动画
 - **预览刷新频率调整**：FBO 缓存刷新频率 在模型选择(Alt+Y)的设置页面中可以调整模型预览的刷新率 能有效提升预览页面的游戏帧数 但会导致动画预览卡顿
+- **调试覆盖层**：`/ysm debug overlay`（快捷键 Ctrl+P）实时显示控制器状态/Molang 变量，支持搜索与过滤；`/ysm debug query <表达式>` 运行时查询变量值
+- **副手物品隐藏**：`HiddenOffhandItems` 可配置隐藏指定副手物品（默认隐藏 Extra Utilities 除叶斧），避免其错误渲染
+- **显存预算与降采样**：`TextureVramBudget`（默认 256MB）超预算按 LRU 整模型释放 GPU 纹理（字节保留在内存，重传无白模）；`TextureTargetSize`（默认关）可对超大贴图按 2 的幂降采样进一步压显存
+- **渲染路径防御**：渲染/调度异常节流抑制，单个模型问题不再导致日志刷屏或崩溃报告反复触发
 - **堆内存优化**：原始模型数据在同步完成后释放（~1GB）；GeckoLib 动画缓存自动卸载闲置模型（每模型 ~9MB）；KeyFrame ConstantValue 内联为原始 double 字段（~160MB）；AnimationPoint 对象池复用减少 GC 压力
 - **HUD 自拍模型 FBO 缓存**：在 Alt+P 配置界面可按 C 切换。开启后 HUD 模型以自适应帧率更新（>125fps 时每 8 帧刷新，62.5-125fps 每 4 帧，<62.5fps 每 2 帧），大幅降低 HUD 渲染开销（测试模型从 164fps 提升至 520fps）；关闭则每帧完整渲染
 
@@ -113,7 +121,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-03` | 投射物渲染、攻击连击修复、并行模型缓存、格挡支持、滑条默认值修复 |
 | `1.9a1-04` | 一系列性能优化、负尺寸cube修复 |
 | `1.9a1-05` | 动画预览界面、HUD FBO 缓存、深度性能优化与 Bug 修复 |
-| `1.9a1-06` | 堆内存优化（降低~1-2GB占用）、GC 频率优化、Molang 表达式解析修复、跨模型变量污染修复、负尺寸 Cube 两遍渲染（文件夹 + .ysm 格式）、`query.is_blocking` 支持 |
+| `1.9a1-06` | 统一模型加载、懒加载与显存优化、动画/Molang 修复、调试覆盖层 |
 
 ---
 
@@ -165,6 +173,8 @@ git checkout perf/previewUI
 - 子模型(投射物/载具)可能还存在一些问题 目前仅保证默认模型投射物可用
 - [SKIP] v.roaming长期变量目前不会永久保存 可能 wont fix
 - 粒子系统未实现
+- 部分 `.ysm` 模型在服务端缓存重建时抛 `NoSuchElementException` 解析失败（每次重建均失败），会被跳过但不阻塞加载
+- [TODO] 自动化测试覆盖不足：目前仅格式解析测试，模型加载/同步等重构缺少回归测试
 - [FIXED] ysm格式的cube路径与文件夹json的cube路径不同 其poly_mash会丢失size<0的状态 导致本应是负缩放大小的模型无法通过正确翻转法线 来做到内外面翻转/描边的效果
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
 - [SKIP] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为高阈值兜底（默认 1024 MB + 60秒后触发 强制GC），可通过配置关闭

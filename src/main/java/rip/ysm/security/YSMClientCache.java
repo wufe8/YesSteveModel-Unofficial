@@ -16,7 +16,12 @@ public class YSMClientCache {
 
     public static String generateCacheFileName(long hash1, long hash2, byte[] rtKey) {
         if (rtKey == null || rtKey.length != 56) return null;
-        int seed = 114514; // todo: 换成真随机数
+        // YSMU: 勿改随机数 —— 该 seed 被写入文件名（见下方 buf.putInt(seed)），
+        // getModelUUIDFromFileName 会从文件名读回并重新播种，故 buildCacheIndex 不受其值影响；
+        // 但 generateCacheFileName 必须对相同 (hash1,hash2,rtKey) 返回确定性文件名
+        // （写盘路径 OpenYsmModelSyncClient:312 与懒加载记忆路径 :468 都依赖它），
+        // 若每次随机会导致缓存命中失效、懒加载找不到文件、服务端内容去重错乱。
+        int seed = 114514;
 
         MT19937 mt = new MT19937(Integer.toUnsignedLong(seed));
         long m1 = hash1 ^ mt.extract_number();
