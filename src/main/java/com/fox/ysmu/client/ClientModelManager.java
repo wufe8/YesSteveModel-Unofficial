@@ -1448,8 +1448,9 @@ public class ClientModelManager {
         List<ResourceLocation> texIds = MODELS.get(baseId);
         if (texIds == null || texIds.isEmpty()) return;
 
-        // Upload any texture that isn't on the GPU yet (bytes are always in RAM;
-        // the restore below is only a defensive fallback).
+        // Upload any texture that isn't on the GPU yet. When Config
+        // TEXTURE_RELEASE_BYTES_ON_IDLE freed the raw bytes, restore them from the
+        // encrypted client cache first (same decrypt path as geo/anim lazy reload).
         // NOTE: use isUploaded() not getGlTextureId()==-1 — the latter lazily
         // allocates a fresh GL texture ID on check, masking the unloaded state
         // and skipping the re-upload (rendering white).
@@ -1461,9 +1462,9 @@ public class ClientModelManager {
                 continue;
             }
             if (!tex.hasData()) {
-                // Defensive: normally bytes are always present. If a future change
-                // frees them, restore from the encrypted client cache (same decrypt
-                // path as geo/anim lazy reload).
+                // Config TEXTURE_RELEASE_BYTES_ON_IDLE frees raw bytes on idle unload;
+                // restore from the encrypted client cache (same decrypt path as
+                // geo/anim lazy reload) before uploading.
                 restoreTextureData(tex, modelId, texId);
             }
             tex.upload();
@@ -1473,13 +1474,15 @@ public class ClientModelManager {
     }
 
     /**
-     * Defensive fallback: restores a texture's raw bytes from the encrypted client
-     * cache file if the in-memory copy is missing. Currently unused in normal flow
-     * (bytes stay in RAM), but kept so unload can be re-enabled safely. Re-decrypts
-     * the (small) model file on demand, same as
-     * {@link #ensureGeoModelLoaded} / {@link #ensureAnimationsLoaded}.
+     * Restores a texture's raw bytes from the encrypted client cache file when the
+     * in-memory copy was freed by {@link Config#TEXTURE_RELEASE_BYTES_ON_IDLE}.
+     * Re-decrypts the (small) model file on demand, same as
+     * {@link #ensureGeoModelLoaded} / {@link #ensureAnimationsLoaded}. Runs on the
+     * render thread via {@link #ensureTexturesLoaded} — brief hitch on first re-entry
+     * of an idle model, never a white texture.
      */
-    private static void restoreTextureData(OuterFileTexture tex, ResourceLocation mainModelId, ResourceLocation texId) {
+    /** 供 {@link OuterFileTexture#upload} 在字节被懒释放时自我恢复（任何绑定路径都不白模）。 */
+    public static void restoreTextureData(OuterFileTexture tex, ResourceLocation mainModelId, ResourceLocation texId) {
         try {
             ModelData data = loadLegacyModelData(mainModelId);
             if (data == null) {
@@ -1494,6 +1497,9 @@ public class ClientModelManager {
             byte[] texBytes = texName != null ? texMap.get(texName) : null;
             if (texBytes != null) {
                 tex.setData(texBytes);
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
+                    ysmu.LOG.info("[YSMU-MODEL] Restored texture bytes for {} (model {}): {} bytes", texId, mainModelId, texBytes.length);
+                }
             } else if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
                 ysmu.LOG.info("[YSMU-MODEL] Texture restore MISS for {} (model {}): key '{}' not in cache", texId, mainModelId, texName);
             }
@@ -1625,6 +1631,14 @@ public class ClientModelManager {
                 OuterFileTexture tex = (OuterFileTexture) YSM_TEXTURE_OBJECTS.get(texId);
                 if (tex != null && tex.isUploaded()) {
                     tex.freeGlTexture();
+                    if (Config.TEXTURE_RELEASE_BYTES_ON_IDLE) {
+                        // 空闲卸载时一并释放堆内字节：堆内存不再随模型库线性增长；
+                        // 下次使用由 ensureTexturesLoaded → restoreTextureData 重解密恢复。
+                        tex.freeData();
+                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
+                            ysmu.LOG.info("[YSMU-MODEL] Released texture bytes for {} (model {})", texId, modelBaseId);
+                        }
+                    }
                     if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
                         ysmu.LOG.info("[YSMU-MODEL] Unloaded GPU texture for {} (model {})", texId, modelBaseId);
                     }

@@ -89,6 +89,12 @@ public class Config {
      *  128-256 MB; raise it if on-screen demand regularly exceeds the budget. */
     public static int TEXTURE_VRAM_BUDGET_MB = 256;
 
+    /** 30s 空闲卸载 GPU 纹理时，是否一并释放堆内的原始字节。
+     *  释放的字节在下次使用时由 ensureTexturesLoaded → restoreTextureData 从加密客户端
+     *  缓存重解密（与 geo/anim 懒恢复同一条已验证路径）。消除大库纹理字节的线性堆增长；
+     *  代价是闲置模型重新入场时会在渲染线程短暂解密其缓存文件。 */
+    public static boolean TEXTURE_RELEASE_BYTES_ON_IDLE = true;
+
     // Model sync config
     public static boolean ENABLE_SYNC_PROTOCOL = true;
     public static int THREAD_COUNT = 4;
@@ -209,6 +215,7 @@ public class Config {
         ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "ysm_sync", ACCEPT_SOUND_FX, "Whether sync should accept model sound effect resources", load);
         TEXTURE_TARGET_SIZE = syncInt("TextureTargetSize", "ysm_sync", TEXTURE_TARGET_SIZE, "Target texture dimension (px) uploaded to VRAM. 0 = full resolution. Larger textures are downscaled by a power of two (result in [target, 2*target)).", 0, 8192, load);
         TEXTURE_VRAM_BUDGET_MB = syncInt("TextureVramBudget", "ysm_sync", TEXTURE_VRAM_BUDGET_MB, "YSM model texture VRAM budget in MB. 0 = unlimited. When uploaded texture VRAM exceeds this, least-recently-used models' GPU textures are freed (raw bytes stay in RAM, so re-upload is cheap and never white).", 0, 8192, load);
+        TEXTURE_RELEASE_BYTES_ON_IDLE = syncBoolean("TextureReleaseBytesOnIdle", "ysm_sync", TEXTURE_RELEASE_BYTES_ON_IDLE, "Release raw texture bytes from heap when a model's GPU textures idle-unload (30s). Re-decrypted from the encrypted client cache on next use (same path as geo/anim lazy reload). Eliminates the linear heap growth from texture bytes on large libraries; the first re-entry of an idle model briefly decrypts its cache file on the render thread.", load);
         HIDE_OFFHAND_DEFOLIAGE_AXE = syncBoolean("HideOffhandDefoliageAxe", Configuration.CATEGORY_GENERAL, HIDE_OFFHAND_DEFOLIAGE_AXE, "Hide the Extra Utilities defoliage axe while held in the offhand (first-person hand, model in-hand layer, HUD selfie).", load);
         HIDDEN_OFFHAND_ITEMS = syncStringList("HiddenOffhandItems", Configuration.CATEGORY_GENERAL, HIDDEN_OFFHAND_ITEMS, "Offhand items (format modid:itemname) that are never rendered while held in the offhand (first-person hand, model in-hand layer, HUD selfie). Default: Extra Utilities defoliage axe.", load);
         ANIMATION_TRANSITION_TICKS = syncInt("AnimationTransitionTicks", "animation", ANIMATION_TRANSITION_TICKS, "Global GeckoLib animation transition length in ticks (20 ticks = 1s). 0 = instant, 2 = 100ms, 4 = 200ms. Model-defined blend_transition overrides this per state.", 0, 40, load);

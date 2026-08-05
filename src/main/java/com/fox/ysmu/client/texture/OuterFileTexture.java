@@ -91,7 +91,21 @@ public class OuterFileTexture extends AbstractTexture {
         }
         this.failed = false; // cooldown elapsed — allow a retry
         if (this.data == null) {
-            return; // bytes freed — restore via setData before re-upload
+            // 字节已被懒卸载释放（Config.TEXTURE_RELEASE_BYTES_ON_IDLE）：从加密客户端
+            // 缓存重解密恢复后再上传。让「不白模」成为纹理对象自身的硬约束——任何绑定路径
+            // （含第一人称手这类不经过 ensureTexturesLoaded 的）都不会白模；失败时与解码
+            // 失败同样节流重试。
+            com.fox.ysmu.client.ClientModelManager.restoreTextureData(
+                this,
+                com.fox.ysmu.util.ModelIdUtil.getMainId(
+                    com.fox.ysmu.util.ModelIdUtil.getModelIdFromSubId(this.id)),
+                this.id);
+            if (this.data == null) {
+                // 恢复失败（缓存缺失/损坏）：节流，避免每帧重复解密整个模型文件。
+                this.failed = true;
+                this.failedAt = System.currentTimeMillis();
+                return;
+            }
         }
         ByteArrayInputStream inputStream = new ByteArrayInputStream(this.data);
         try {
