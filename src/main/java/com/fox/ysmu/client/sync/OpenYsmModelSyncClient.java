@@ -411,6 +411,14 @@ public final class OpenYsmModelSyncClient {
         }
 
         private void sendComplete(int status, String message) {
+            // 只有当前同步（STATE 指向本实例）能发送完成信号。快速重连 / 加载期间 /ysm
+            // reload 会整体替换 STATE（handlePayload 见 step==1 换新、S2CVersionCheck17 调
+            // resetConnectionState），旧同步的后台看门狗/完成轮询/解析任务仍会在旧实例上
+            // 运行；若它们继续发送完成，服务端 complete() 会把新同步的 SYNC_STATES 条目
+            // 误删，导致新同步的 packet05 下载被掐断（模型缺失 + 60s 停滞兜底）。
+            if (STATE != this) {
+                return;
+            }
             // 防止看门狗/错误路径/正常路径重复发送完成信号。
             if (!completionSent.compareAndSet(false, true)) {
                 return;

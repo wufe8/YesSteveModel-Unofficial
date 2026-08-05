@@ -1,5 +1,6 @@
 package com.fox.ysmu.network.message;
 
+import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.sync.OpenYsmModelSyncClient;
 import com.fox.ysmu.Config;
 import com.fox.ysmu.network.NetworkHandler;
@@ -41,6 +42,12 @@ public class S2CVersionCheck17 implements IMessage {
         public IMessage onMessage(S2CVersionCheck17 message, MessageContext ctx) {
             if (ctx.side == Side.CLIENT && Config.ENABLE_SYNC_PROTOCOL) {
                 OpenYsmModelSyncClient.resetConnectionState();
+                // 新一轮同步即将开始（进服握手 / /ysm reload）：立即结束旧同步的后台循环。
+                // 旧 SyncState 已被整体替换，但其看门狗与完成轮询仍在旧实例上运行，靠
+                // SYNC_IN_PROGRESS 判断是否退出；此处置 false 让它们在下一次迭代立即退出，
+                // 否则加载期间 reload 时旧任务会继续空转到解析排空/60s 停滞。新同步在
+                // packet03 处重新置 true。
+                ClientModelManager.SYNC_IN_PROGRESS = false;
                 NetworkHandler.CHANNEL.sendToServer(new C2SVersionCheck17(NetworkHandler.PROTOCOL_VERSION));
             }
             return null;
