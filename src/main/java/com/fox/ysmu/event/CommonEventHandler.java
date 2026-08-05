@@ -50,6 +50,7 @@ public class CommonEventHandler {
         if (event.player instanceof EntityPlayerMP) {
             LAST_MOTION_STATES.remove(event.player.getUniqueID());
             OpenYsmModelSyncServer.clear(event.player.getUniqueID());
+            OpenYsmModelSyncServer.clearResyncCooldown(event.player.getUniqueID());
         }
     }
 

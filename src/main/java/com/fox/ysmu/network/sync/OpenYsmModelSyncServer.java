@@ -57,6 +57,65 @@ public final class OpenYsmModelSyncServer {
                 return t;
             });
 
+    /**
+     * 玩家手动 /ysm sync 重同步的冷却时间戳（UUID → 上次 resync 时间）。冷却只作用于玩家
+     * 主动触发的重同步；进服握手路径（sendRequestSyncModelMessage → S2CVersionCheck17 →
+     * startSync）不受影响。登出时在 CommonEventHandler.onPlayerLoggedOut 清理。
+     */
+    private static final Map<UUID, Long> LAST_RESYNC = Maps.newConcurrentMap();
+
+    /** {@link #requestResync} 返回码。 */
+    public static final int RESYNC_OK = 0;
+    public static final int RESYNC_COOLDOWN = 1;
+    public static final int RESYNC_DISABLED = 2;
+    public static final int RESYNC_FAILED = 3;
+
+    /**
+     * 玩家主动请求重新同步（/ysm sync）。受 {@code RESYNC_COOLDOWN_SECONDS} 限频：
+     * -1 完全拒绝；0 不限；>0 每个玩家冷却。玩家可高频触发 resync 消耗服务器上行带宽，
+     * 因此该入口必须限频，且冷却判定在服务端（客户端不可信）。
+     */
+    public static int requestResync(EntityPlayerMP player) {
+        if (player == null) {
+            return RESYNC_FAILED;
+        }
+        int cooldownSeconds = Config.RESYNC_COOLDOWN_SECONDS;
+        if (cooldownSeconds < 0) {
+            return RESYNC_DISABLED;
+        }
+        UUID playerId = player.getUniqueID();
+        long now = System.currentTimeMillis();
+        if (cooldownSeconds > 0) {
+            Long last = LAST_RESYNC.get(playerId);
+            if (last != null && now - last < cooldownSeconds * 1000L) {
+                return RESYNC_COOLDOWN;
+            }
+        }
+        LAST_RESYNC.put(playerId, now);
+        return startSync(player) ? RESYNC_OK : RESYNC_FAILED;
+    }
+
+    /** 冷却剩余秒数（供命令层提示；未在冷却中返回 0）。 */
+    public static long resyncRemainingSeconds(UUID playerId) {
+        int cooldownSeconds = Config.RESYNC_COOLDOWN_SECONDS;
+        if (cooldownSeconds <= 0 || playerId == null) {
+            return 0L;
+        }
+        Long last = LAST_RESYNC.get(playerId);
+        if (last == null) {
+            return 0L;
+        }
+        long remaining = cooldownSeconds - (System.currentTimeMillis() - last) / 1000L;
+        return Math.max(0L, remaining);
+    }
+
+    /** 登出时清理冷却记录。 */
+    public static void clearResyncCooldown(UUID playerId) {
+        if (playerId != null) {
+            LAST_RESYNC.remove(playerId);
+        }
+    }
+
     private OpenYsmModelSyncServer() {}
 
     /**

@@ -295,7 +295,7 @@ key.yes_steve_model.debug_overlay.desc=Toggle Molang Debug Overlay
 key.yes_steve_model.open_extra_player_render.desc=Extra Player Render Config
 
 # ---- Commands ----
-commands.yes_steve_model.usage=/ysm <reload|play|playsound|setgamepath> [args]
+commands.yes_steve_model.usage=/ysm <reload|play|playsound|setgamepath|sync> [args]
 commands.yes_steve_model.setgamepath.usage=/ysm setgamepath <path> [version]
 commands.yes_steve_model.setgamepath.example=Example: /ysm setgamepath C:/Users/x/.minecraft 1.21
 commands.yes_steve_model.setgamepath.none=§6§l[§aYSM§6§l] §rNo game path configured.
@@ -311,6 +311,10 @@ commands.yes_steve_model.welcome.off=§6§l[§aYSMU§6§l] §rWelcome message di
 commands.yes_steve_model.loadlocal.started=§6§l[§aYSM§6§l] §rLoading local models...
 commands.yes_steve_model.loadlocal.complete=§6§l[§aYSM§6§l] §rLocal models: §e%d§r registered, §e%d§r skipped (already present), §e%d§r failed
 commands.yes_steve_model.loadlocal.none=§6§l[§aYSM§6§l] §rNo local models found.
+commands.yes_steve_model.sync.resync.started=§6§l[§aYSM§6§l] §rResyncing models from the server...
+commands.yes_steve_model.sync.resync.cooldown=§6§l[§aYSM§6§l] §rResync is on cooldown. Try again in §e%s§r seconds.
+commands.yes_steve_model.sync.resync.disabled=§6§l[§aYSM§6§l] §rResync is disabled on this server.
+commands.yes_steve_model.sync.resync.failed=§6§l[§aYSM§6§l] §rResync could not be started (sync protocol disabled or not ready).
 
 molang.yes_steve_model.bg_width=900
 molang.yes_steve_model.pi.desc=π, constant.

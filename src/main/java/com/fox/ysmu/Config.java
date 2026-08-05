@@ -96,6 +96,8 @@ public class Config {
     public static int PLAYER_SYNC_TIMEOUT = 60;
     public static boolean LOW_BANDWIDTH_USAGE = false;
     public static boolean ACCEPT_SOUND_FX = true;
+    /** 玩家手动 /ysm sync 重新同步的冷却秒数：-1 = 完全拒绝，0 = 不限。 */
+    public static int RESYNC_COOLDOWN_SECONDS = 600;
 
     // Offhand item render hiding
     /** 隐藏副手物品渲染的总开关（第二页 GUI 开关，默认开启）。 */
@@ -201,6 +203,8 @@ public class Config {
         THREAD_COUNT = syncInt("ThreadCount", "ysm_sync", THREAD_COUNT, "Target worker count for YSM model sync tasks", 1, 32, load);
         BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
         PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);
+        RESYNC_COOLDOWN_SECONDS = syncInt("ResyncCooldownSeconds", "ysm_sync", RESYNC_COOLDOWN_SECONDS,
+            "Cooldown in seconds between player-triggered /ysm sync resyncs. -1 rejects the resync command entirely; 0 = no cooldown", -1, Integer.MAX_VALUE, load);
         LOW_BANDWIDTH_USAGE = syncBoolean("LowBandwidthUsage", "ysm_sync", LOW_BANDWIDTH_USAGE, "Whether sync should use smaller chunks and conservative throttling", load);
         ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "ysm_sync", ACCEPT_SOUND_FX, "Whether sync should accept model sound effect resources", load);
         TEXTURE_TARGET_SIZE = syncInt("TextureTargetSize", "ysm_sync", TEXTURE_TARGET_SIZE, "Target texture dimension (px) uploaded to VRAM. 0 = full resolution. Larger textures are downscaled by a power of two (result in [target, 2*target)).", 0, 8192, load);

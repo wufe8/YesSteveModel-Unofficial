@@ -24,6 +24,7 @@ import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.model.ServerModelManager;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.SyncGamePath;
+import com.fox.ysmu.network.sync.OpenYsmModelSyncServer;
 
 public class YsmCommand extends CommandBase {
 
@@ -34,14 +35,14 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome|debug> [args]";
+        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome|debug|sync> [args]";
     }
 
     @Override
     public List addTabCompletionOptions(ICommandSender sender, String[] args) {
         if (args.length == 1) {
             return getListOfStringsMatchingLastWord(args,
-                "reload", "play", "playsound", "setgamepath", "buffer", "welcome", "debug");
+                "reload", "play", "playsound", "setgamepath", "buffer", "welcome", "debug", "sync");
         }
         if (args.length == 2) {
             if ("welcome".equalsIgnoreCase(args[0])) {
@@ -96,7 +97,7 @@ public class YsmCommand extends CommandBase {
         // Other subcommands (play, reload, debug) require the default permission level.
         // TODO: add @p/@a/@r target selector support for debug and play subcommands.
         if (!"setgamepath".equalsIgnoreCase(args[0]) && !"welcome".equalsIgnoreCase(args[0])
-            && !"buffer".equalsIgnoreCase(args[0])
+            && !"buffer".equalsIgnoreCase(args[0]) && !"sync".equalsIgnoreCase(args[0])
             && !super.canCommandSenderUseCommand(sender)) {
             throw new CommandException("commands.generic.permission");
         }
@@ -110,6 +111,8 @@ public class YsmCommand extends CommandBase {
             processSetGamePath(sender, args);
         } else if ("buffer".equalsIgnoreCase(args[0])) {
             processBuffer(sender);
+        } else if ("sync".equalsIgnoreCase(args[0])) {
+            processSync(sender);
         } else if ("welcome".equalsIgnoreCase(args[0])) {
             processWelcome(sender, args);
         } else if ("debug".equalsIgnoreCase(args[0])) {
@@ -257,6 +260,29 @@ public class YsmCommand extends CommandBase {
         com.fox.ysmu.network.NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.ShowBufferInfo(), player);
         player.addChatMessage(new net.minecraft.util.ChatComponentText(
             "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Querying buffer info..."));
+    }
+
+    /**
+     * 玩家主动重新同步（/ysm sync）：请求服务端重新发起 OpenYSM 同步。
+     * 非 OP 可用，但受 RESYNC_COOLDOWN_SECONDS 限频（防高频刷上行带宽）。
+     */
+    private void processSync(ICommandSender sender) {
+        if (!(sender instanceof EntityPlayerMP)) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        EntityPlayerMP player = (EntityPlayerMP) sender;
+        int result = OpenYsmModelSyncServer.requestResync(player);
+        if (result == OpenYsmModelSyncServer.RESYNC_OK) {
+            player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.sync.resync.started"));
+        } else if (result == OpenYsmModelSyncServer.RESYNC_COOLDOWN) {
+            long remaining = OpenYsmModelSyncServer.resyncRemainingSeconds(player.getUniqueID());
+            player.addChatMessage(new ChatComponentTranslation(
+                "commands.yes_steve_model.sync.resync.cooldown", remaining));
+        } else if (result == OpenYsmModelSyncServer.RESYNC_DISABLED) {
+            player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.sync.resync.disabled"));
+        } else {
+            player.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.sync.resync.failed"));
+        }
     }
 
     private void processWelcome(ICommandSender sender, String[] args) {
