@@ -43,41 +43,426 @@ import rip.ysm.security.YsmCrypt;
 public final class OpenYsmModelSyncClient {
 
     private static final SecureRandom RANDOM = new SecureRandom();
-    private static final Map<UUID, ServerModelContext> SERVER_MODELS = Maps.newConcurrentMap();
+    /** 同步索引重组缓冲上限：超出即拒绝（异常/恶意服务端可借超大 totalLength 触发 OOM）。 */
+    private static final int MAX_SYNC_INDEX_BYTES = 64 * 1024 * 1024;
 
-    private static volatile int syncStep = 1;
-    /** 剩余待解析模型数（缓存命中 + 下载）。全部为 0 时才允许发送完成信号。 */
-    private static final java.util.concurrent.atomic.AtomicInteger remainingTasks = new java.util.concurrent.atomic.AtomicInteger(0);
-    /** 完成等待是否已启动（防止多线程重复触发）。 */
-    private static final java.util.concurrent.atomic.AtomicBoolean completionScheduled = new java.util.concurrent.atomic.AtomicBoolean(false);
-    /** 完成信号是否已发送（防止看门狗/错误路径/正常路径重复发送）。 */
-    private static final java.util.concurrent.atomic.AtomicBoolean completionSent = new java.util.concurrent.atomic.AtomicBoolean(false);
-    /** 统计计数器：P1-1 后缓存命中与下载路径的解析都在后台线程并发执行，++ 不再安全。 */
-    private static final java.util.concurrent.atomic.AtomicInteger loadedModelsCount =
-        new java.util.concurrent.atomic.AtomicInteger(0);
-    private static final java.util.concurrent.atomic.AtomicInteger downloadedModelsCount =
-        new java.util.concurrent.atomic.AtomicInteger(0);
-    private static final java.util.concurrent.atomic.AtomicInteger cacheHitCount =
-        new java.util.concurrent.atomic.AtomicInteger(0);
-    private static volatile long syncStartTimeMs;
-    /** 最近一次同步进度推进时间（模型解析完成 / 下载字节到达）。看门狗据此判断同步是否「停滞」。 */
-    private static volatile long lastProgressTimeMs;
-    private static byte[] key1;
-    private static byte[] lastKey;
+    // ── 会话级字段（跨同步存活）─────────────────────────────
+    // clientKey/currentCacheFolderName/serverKey 刻意留在外层：懒加载重解密（闲置卸载
+    // 后恢复）与 /ysmlocal 会在后台线程读取它们，且跨同步存活；单次同步的状态字段
+    // （syncStep/密钥/索引缓冲/计数器/看门狗时间戳）在 SyncState 内。
     private static byte[] serverKey;
     private static byte[] clientKey;
     private static String currentCacheFolderName;
-    /** Reassembly buffer for the (encrypted, possibly chunked) sync index. */
-    private static byte[] syncIndexChunks;
-    private static int syncIndexTotal;
-    private static int syncIndexReceived;
-    /** 同步索引重组缓冲上限：超出即拒绝（异常/恶意服务端可借超大 totalLength 触发 OOM）。 */
-    private static final int MAX_SYNC_INDEX_BYTES = 64 * 1024 * 1024;
+
+    /** 当前同步状态。每次握手开始时新建（handlePayload 见 step==1 即换新实例），
+     *  reset/完成时整体替换，杜绝旧同步残留字段污染新一轮握手。 */
+    private static volatile SyncState STATE = new SyncState();
+
+    /** 单次 OpenYSM 同步的私有状态（会话级字段见外层注释）。 */
+    private static final class SyncState {
+
+        private int syncStep = 1;
+        private byte[] key1;
+        private byte[] lastKey;
+        /** Reassembly buffer for the (encrypted, possibly chunked) sync index. */
+        private byte[] syncIndexChunks;
+        private int syncIndexTotal;
+        private int syncIndexReceived;
+        private final Map<UUID, ServerModelContext> serverModels = Maps.newConcurrentMap();
+        /** 剩余待解析模型数（缓存命中 + 下载）。全部为 0 时才允许发送完成信号。 */
+        private final java.util.concurrent.atomic.AtomicInteger remainingTasks =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+        /** 完成等待是否已启动（防止多线程重复触发）。 */
+        private final java.util.concurrent.atomic.AtomicBoolean completionScheduled =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+        /** 完成信号是否已发送（防止看门狗/错误路径/正常路径重复发送）。 */
+        private final java.util.concurrent.atomic.AtomicBoolean completionSent =
+            new java.util.concurrent.atomic.AtomicBoolean(false);
+        /** 统计计数器：缓存命中与下载路径的解析都在后台线程并发执行，++ 不再安全。 */
+        private final java.util.concurrent.atomic.AtomicInteger loadedModelsCount =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+        private final java.util.concurrent.atomic.AtomicInteger downloadedModelsCount =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+        private final java.util.concurrent.atomic.AtomicInteger cacheHitCount =
+            new java.util.concurrent.atomic.AtomicInteger(0);
+        private volatile long syncStartTimeMs;
+        /** 最近一次同步进度推进时间（模型解析完成 / 下载字节到达）。看门狗据此判断是否「停滞」。 */
+        private volatile long lastProgressTimeMs;
+
+        // ── 单次同步的包处理 / 完成逻辑（实例方法，直接访问本状态字段）──────────
+
+        /** 处理一个（解密前的）同步包。调用方 handlePayload 已持有类锁，与旧实现的
+         *  static synchronized 语义一致。 */
+        private void processServerData(byte[] packetBytes) {
+            if (packetBytes == null || packetBytes.length == 0) {
+                resetConnectionState();
+                return;
+            }
+
+            try {
+                if (syncStep == 1) {
+                    byte[] decrypted = YsmCrypt.decrypt(packetBytes, YsmCrypt.publicKey);
+                    if (decrypted != null) {
+                        handlePacket01(decrypted);
+                    }
+                } else if (syncStep == 2) {
+                    byte[] decrypted = YsmCrypt.decrypt(packetBytes, lastKey);
+                    if (decrypted != null) {
+                        try (YSMByteBuf buf = new YSMByteBuf(Unpooled.wrappedBuffer(decrypted))) {
+                            handlePacket03(buf);
+                        }
+                    }
+                } else if (syncStep == 3) {
+                    byte[] decrypted = YsmCrypt.decrypt(packetBytes, key1);
+                    if (decrypted != null) {
+                        try (YSMByteBuf buf = new YSMByteBuf(Unpooled.wrappedBuffer(decrypted))) {
+                            handlePacket05(buf);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                sendComplete(C2SCompleteFeedback17.STATUS_FAILED, e.getClass().getSimpleName() + ": " + e.getMessage());
+                ysmu.LOG.warn("OpenYSM client sync error at step " + syncStep, e);
+            }
+        }
+
+        private void handlePacket01(byte[] decryptedBuffer) throws Exception {
+            // 状态在 handlePayload 进入 step==1 时已换新，无需（也不应）在此 reset——
+            // reset 会整体替换 STATE，而本方法继续在旧实例上跑会丢失后续包。
+            if (decryptedBuffer.length < 56) {
+                return;
+            }
+            key1 = Arrays.copyOfRange(decryptedBuffer, decryptedBuffer.length - 56, decryptedBuffer.length);
+            syncStep = 2;
+
+            byte[] garbage = randomGarbage();
+            try (YSMByteBuf out = new YSMByteBuf(Unpooled.buffer())) {
+                out.writeGarbageHeader(garbage.length, garbage);
+                out.writeByte((byte) 0x02);
+                out.writeByte((byte) 0x00);
+                YsmCrypt.EncryptedPacket encrypted = YsmCrypt.encrypt(out.toArray(), key1, true);
+                lastKey = encrypted.nextKey();
+                sendPayload(encrypted.data());
+            }
+        }
+
+        private void handlePacket03(YSMByteBuf buf) throws Exception {
+            buf.skipGarbageHeader();
+            int type = buf.readVarInt();
+            if (type != 3) {
+                return;
+            }
+
+            long folderHash = buf.readVarLong();
+            currentCacheFolderName = Long.toHexString(folderHash);
+            serverKey = new byte[56];
+            buf.getRawBuf().readBytes(serverKey);
+            clientKey = new byte[56];
+            buf.getRawBuf().readBytes(clientKey);
+
+            serverModels.clear();
+            File cacheDir = getCacheDir();
+            if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) {
+                ysmu.LOG.warn("Failed to create OpenYSM client cache directory {}", cacheDir);
+            }
+
+            Map<UUID, File> localCacheMap = YSMClientCache.buildCacheIndex(cacheDir, clientKey);
+            List<ModelHash> modelsToRequest = new ArrayList<>();
+            // packet03 头部：progressTotal（OpenYSM+legacy 并集）供进度条/完成统计使用；
+            // serverModelCount 仍是本索引的条目数（仅 OpenYSM 集合）。
+            int progressTotal = buf.readVarInt();
+            int serverModelCount = buf.readVarInt();
+            ClientModelManager.SYNC_TOTAL = progressTotal;
+            ClientModelManager.SYNC_LOADED = 0;
+            ClientModelManager.SYNC_FAILED = 0;
+            ClientModelManager.SYNC_IN_PROGRESS = true;
+            // 完成信号等待全部模型（缓存命中 + 下载）解析并应用完成。
+            remainingTasks.set(serverModelCount);
+            syncStartTimeMs = System.currentTimeMillis();
+            startSyncWatchdog();
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                ysmu.LOG.info("[YSMU-MODEL] OpenYSM client received sync index: models={}", serverModelCount);
+                ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
+                    serverModelCount, localCacheMap.size());
+            }
+
+            for (int i = 0; i < serverModelCount; i++) {
+                long hash1 = buf.readVarLong();
+                long hash2 = buf.readVarLong();
+                String modelId = buf.readString();
+                int customSkinModel = buf.readVarInt();
+                int version = buf.readVarInt();
+                ServerModelContext context = new ServerModelContext(hash1, hash2, modelId, customSkinModel, version);
+                serverModels.put(context.uuid, context);
+
+                File cachedFile = localCacheMap.get(context.uuid);
+                if (YSMClientCache.verifyFileContent(cachedFile, hash1, hash2)) {
+                    cacheHitCount.incrementAndGet();
+                    try {
+                        byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
+                        byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
+                        // Pre-parsing hundreds of cache hits inline blocks the single
+                        // synchronized index loop for minutes on large libraries (progress
+                        // bar looks frozen). Defer the heavy parse/registration to the
+                        // background pool so it runs in parallel with the download path;
+                        // the cheap read+decrypt stay inline so a corrupt cache file still
+                        // falls back to download before packet04 is sent.
+                        ThreadTools.THREAD_POOL.submit(() -> {
+                            try {
+                                if (parseAndRegisterModel(clearBytes, context)) {
+                                    loadedModelsCount.incrementAndGet();
+                                }
+                            } finally {
+                                taskFinished();
+                            }
+                        });
+                    } catch (Exception e) {
+                        // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
+                        // 避免整个同步流程因此崩溃，导致加载进度条无法显示。
+                        ysmu.LOG.warn("OpenYSM client cache HIT but decrypt FAILED for {} ({}), falling back to download: {}",
+                            modelId, context.uuid, e.getMessage());
+                        modelsToRequest.add(new ModelHash(hash1, hash2));
+                    }
+                } else {
+                    modelsToRequest.add(new ModelHash(hash1, hash2));
+                    if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                        ysmu.LOG.info("[YSMU-MODEL] Client cache MISS for {} ({}), cachedFile={}",
+                            modelId, context.uuid,
+                            cachedFile != null ? cachedFile : "(no local cache)");
+                    }
+                }
+            }
+
+            parsePackData(buf);
+            sendPacket04(modelsToRequest);
+            // 全缓存命中/零模型时完成信号由后台解析驱动；此处兜底极端情况
+            // （serverModelCount==0 或全部解析已在发送 packet04 前完成）。
+            if (remainingTasks.get() <= 0) {
+                maybeSendComplete();
+            }
+        }
+
+        private void handlePacket05(YSMByteBuf buf) throws Exception {
+            buf.skipGarbageHeader();
+            int type = buf.readVarInt();
+            if (type != 5) {
+                return;
+            }
+
+            long hash1 = buf.readVarLong();
+            long hash2 = buf.readVarLong();
+            UUID uuid = new UUID(hash1, hash2);
+            ServerModelContext context = serverModels.get(uuid);
+            if (context == null) {
+                ysmu.LOG.warn("OpenYSM client received unexpected chunk for {}", uuid);
+                return;
+            }
+
+            int totalSize = buf.readVarInt();
+            int chunkOffset = buf.readVarInt();
+            int chunkLength = buf.readVarInt();
+            if (context.fileBuffer == null) {
+                context.fileBuffer = new byte[totalSize];
+                context.totalSize = totalSize;
+                context.bytesReceived = 0;
+            }
+            buf.getRawBuf().readBytes(context.fileBuffer, chunkOffset, chunkLength);
+            context.bytesReceived += chunkLength;
+            // 下载仍在推进：重置看门狗的停滞倒计时（与任务完成一样算「有进展」）。
+            touchProgress();
+
+            if (context.bytesReceived >= context.totalSize) {
+                byte[] fileBuffer = context.fileBuffer;
+                context.fileBuffer = null;
+                try {
+                    byte[] clientCacheBytes = YsmCrypt
+                        .transcodeServerDataToClientCache(fileBuffer, serverKey, clientKey, hash1, hash2);
+                    File outFile = new File(getCacheDir(), YSMClientCache.generateCacheFileName(hash1, hash2, clientKey));
+                    FileUtils.writeByteArrayToFile(outFile, clientCacheBytes);
+
+                    byte[] clearBytes = YsmCrypt.read(clientCacheBytes, clientKey);
+                    // Defer the heavy parse to the background pool (mirrors the cache-hit
+                    // path): processServerData is synchronized, so parsing inline here
+                    // would hold the class lock for every model and serialize the whole
+                    // download+parse pipeline on a single pool thread. The cheap
+                    // transcode + file write + decrypt stay inline so a corrupt cache
+                    // still falls back to a fresh download on the next sync.
+                    final byte[] modelClearBytes = clearBytes;
+                    ThreadTools.THREAD_POOL.submit(() -> {
+                        try {
+                            if (parseAndRegisterModel(modelClearBytes, context)) {
+                                loadedModelsCount.incrementAndGet();
+                                downloadedModelsCount.incrementAndGet();
+                            }
+                            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                                ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
+                            }
+                        } catch (Exception e) {
+                            // A single corrupt/truncated model cache file must not abort the whole
+                            // sync (which previously failed the progress bar and left the library
+                            // unloaded). Log it, skip the model, and keep going.
+                            ysmu.LOG.warn("OpenYSM client failed to process downloaded model {} ({}): {}",
+                                context.modelId, uuid, e.getMessage());
+                            ClientModelManager.SYNC_FAILED++;
+                        } finally {
+                            // 该模型解析已完成（成功或失败），计入总任务数；全部完成后触发完成信号。
+                            taskFinished();
+                        }
+                    });
+                } catch (Exception e) {
+                    // 转码/解密失败（如会话密钥不匹配/服务端缓存损坏）：直接跳过该模型，
+                    // 不再进入后台解析，但同样计入总任务数，避免完成信号永不到达。
+                    ysmu.LOG.warn("OpenYSM client failed to decrypt downloaded model {} ({}): {}",
+                        context.modelId, uuid, e.getMessage());
+                    ClientModelManager.SYNC_FAILED++;
+                    taskFinished();
+                }
+            }
+        }
+
+        private void sendPacket04(List<ModelHash> modelsToRequest) throws Exception {
+            syncStep = 3;
+
+            byte[] garbage = randomGarbage();
+            try (YSMByteBuf out = new YSMByteBuf(Unpooled.buffer())) {
+                out.writeGarbageHeader(garbage.length, garbage);
+                out.writeByte((byte) 0x04);
+                out.writeVarInt(modelsToRequest.size());
+                for (ModelHash hash : modelsToRequest) {
+                    out.writeVarLong(hash.hash1);
+                    out.writeVarLong(hash.hash2);
+                }
+                sendPayload(YsmCrypt.encrypt(out.toArray(), key1, false).data());
+            }
+            // 完成信号不再由「下载数==0」触发（全缓存命中时会提前结束），改由
+            // taskFinished() → remainingTasks 全部完成 + 应用管线排空后触发。
+        }
+
+        /**
+         * 一个模型（缓存命中或下载）的解析已完成。全部模型解析完成后，等待主线程
+         * apply 管线排空（进度/统计准确），再发送完成信号。
+         */
+        private void taskFinished() {
+            // 每个模型解析完成都视为一次进展：重置看门狗停滞倒计时。
+            touchProgress();
+            if (remainingTasks.decrementAndGet() <= 0) {
+                maybeSendComplete();
+            }
+        }
+
+        /** 记录一次同步进展（模型解析完成或下载字节到达），供看门狗判断是否停滞。 */
+        private void touchProgress() {
+            lastProgressTimeMs = System.currentTimeMillis();
+        }
+
+        /**
+         * 启动完成等待：所有模型解析已提交，但主线程的 applyPreParsed 可能仍在逐帧
+         * 消费队列——全缓存命中（下载数 0）时若立即发完成，成功数会远小于总数
+         * （如 343/681）。轮询 {@link ClientModelManager#isApplyPipelineDrained()}，
+         * 排空后发送完成；超时或同步被重置则兜底退出，不挂死。
+         */
+        private void maybeSendComplete() {
+            if (syncStep < 3 || !completionScheduled.compareAndSet(false, true)) {
+                return;
+            }
+            ThreadTools.THREAD_POOL.submit(() -> {
+                long deadline = System.currentTimeMillis() + COMPLETION_APPLY_DRAIN_TIMEOUT_MS;
+                while (System.currentTimeMillis() < deadline) {
+                    if (!ClientModelManager.SYNC_IN_PROGRESS) {
+                        return; // 同步已被重置/断开，不再补发完成。
+                    }
+                    if (ClientModelManager.isApplyPipelineDrained()) {
+                        sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+                        return;
+                    }
+                    try {
+                        Thread.sleep(50L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+                        return;
+                    }
+                }
+                // 超时兜底：应用仍未排空（如主线程长时间阻塞），按当前状态发送完成。
+                sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+            });
+        }
+
+        /** 同步开始时启动；所有任务正常完成或同步被重置即退出。若 1 分钟内没有任何进展
+         *  （如某些模型被请求但服务端从未下发、缓存文件缺失/损坏），强制发送完成兜底。 */
+        private void startSyncWatchdog() {
+            lastProgressTimeMs = System.currentTimeMillis();
+            ThreadTools.THREAD_POOL.submit(() -> {
+                while (ClientModelManager.SYNC_IN_PROGRESS && remainingTasks.get() > 0) {
+                    if (System.currentTimeMillis() - lastProgressTimeMs >= SYNC_STALL_TIMEOUT_MS) {
+                        ysmu.LOG.warn("OpenYSM client sync stalled (no progress for {}s, {} task(s) left), forcing completion",
+                            SYNC_STALL_TIMEOUT_MS / 1000, remainingTasks.get());
+                        sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+                        return;
+                    }
+                    try {
+                        Thread.sleep(1000L);
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                }
+            });
+        }
+
+        private void sendComplete(int status, String message) {
+            // 防止看门狗/错误路径/正常路径重复发送完成信号。
+            if (!completionSent.compareAndSet(false, true)) {
+                return;
+            }
+            NetworkHandler.CHANNEL.sendToServer(
+                new C2SCompleteFeedback17(status, loadedModelsCount.get(), downloadedModelsCount.get(),
+                    cacheHitCount.get(), message));
+            if (status == C2SCompleteFeedback17.STATUS_SUCCESS) {
+                long elapsed = System.currentTimeMillis() - syncStartTimeMs;
+                ysmu.LOG.info(
+                    "OpenYSM client sync complete: loaded={}, downloaded={}, cacheHits={}, time={}ms",
+                    loadedModelsCount.get(), downloadedModelsCount.get(), cacheHitCount.get(), elapsed);
+                // 在聊天栏输出客户端完成信息（成功/失败/总数统计；总数=统一索引大小）
+                int registered = ClientModelManager.MODELS.size();
+                int failed = ClientModelManager.SYNC_FAILED;
+                int total = ClientModelManager.SYNC_TOTAL;
+                net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+                if (mc.thePlayer != null) {
+                    mc.thePlayer.addChatMessage(
+                        new net.minecraft.util.ChatComponentTranslation(
+                            "message.yes_steve_model.sync.complete", elapsed));
+                    mc.thePlayer.addChatMessage(
+                        new net.minecraft.util.ChatComponentTranslation(
+                            "message.yes_steve_model.sync.complete_models", registered, failed, total));
+                }
+            }
+            ClientModelManager.SYNC_IN_PROGRESS = false;
+            resetConnectionState();
+        }
+    }
 
     private OpenYsmModelSyncClient() {}
 
     public static void handlePayload(byte[] data) {
-        ThreadTools.THREAD_POOL.submit(() -> processServerData(data));
+        ThreadTools.THREAD_POOL.submit(() -> {
+            // 与旧实现 processServerData 的 static synchronized 一致：所有同步包处理
+            // 串行在类锁内（与 registerLocalModel 等互斥）。
+            synchronized (OpenYsmModelSyncClient.class) {
+                if (data == null || data.length == 0) {
+                    resetConnectionState();
+                    return;
+                }
+                // 每轮同步从 packet01（step==1）开始：此时换用全新的 SyncState，
+                // 等价于旧 handlePacket01 开头的 resetConnectionState()。
+                SyncState state = STATE;
+                if (state == null || state.syncStep == 1) {
+                    state = new SyncState();
+                    STATE = state;
+                }
+                state.processServerData(data);
+            }
+        });
     }
 
     /**
@@ -87,55 +472,46 @@ public final class OpenYsmModelSyncClient {
      * server chunks to stay under the ~32 KB custom-payload limit.
      */
     public static synchronized void handleSyncIndexChunk(int totalLength, int offset, byte[] chunk, boolean last) {
+        SyncState state = STATE;
         // 索引分块只会在等待 packet03（syncStep==2）时到达；其他阶段收到即忽略，
         // 避免陈旧/乱序 chunk 污染重组缓冲或误触发后续处理。
-        if (syncStep != 2 || chunk == null || chunk.length == 0) {
+        if (state == null || state.syncStep != 2 || chunk == null || chunk.length == 0) {
             return;
         }
         if (totalLength <= 0 || totalLength > MAX_SYNC_INDEX_BYTES) {
             ysmu.LOG.warn("OpenYSM client rejected sync index chunk: total={}", totalLength);
-            syncIndexChunks = null;
-            syncIndexTotal = 0;
-            syncIndexReceived = 0;
+            state.syncIndexChunks = null;
+            state.syncIndexTotal = 0;
+            state.syncIndexReceived = 0;
             return;
         }
-        if (syncIndexChunks == null || syncIndexTotal != totalLength) {
-            syncIndexChunks = new byte[totalLength];
-            syncIndexTotal = totalLength;
-            syncIndexReceived = 0;
+        if (state.syncIndexChunks == null || state.syncIndexTotal != totalLength) {
+            state.syncIndexChunks = new byte[totalLength];
+            state.syncIndexTotal = totalLength;
+            state.syncIndexReceived = 0;
         }
-        if (offset < 0 || offset + chunk.length > syncIndexChunks.length) {
+        if (offset < 0 || offset + chunk.length > state.syncIndexChunks.length) {
             ysmu.LOG.warn("OpenYSM client sync index chunk out of range: offset={}, len={}, total={}",
                 offset, chunk.length, totalLength);
             return;
         }
-        System.arraycopy(chunk, 0, syncIndexChunks, offset, chunk.length);
-        syncIndexReceived += chunk.length;
+        System.arraycopy(chunk, 0, state.syncIndexChunks, offset, chunk.length);
+        state.syncIndexReceived += chunk.length;
         if (last) {
-            byte[] full = syncIndexChunks;
-            syncIndexChunks = null;
-            syncIndexTotal = 0;
-            syncIndexReceived = 0;
+            byte[] full = state.syncIndexChunks;
+            state.syncIndexChunks = null;
+            state.syncIndexTotal = 0;
+            state.syncIndexReceived = 0;
             handlePayload(full);
         }
     }
 
     public static synchronized void resetConnectionState() {
-        syncStep = 1;
-        remainingTasks.set(0);
-        completionScheduled.set(false);
-        completionSent.set(false);
-        loadedModelsCount.set(0);
-        downloadedModelsCount.set(0);
-        cacheHitCount.set(0);
-        key1 = null;
-        lastKey = null;
+        // 整体替换 SyncState：清空所有单次同步字段（等价于旧实现逐字段重置，
+        // 且原子、无中途被观察到的半重置状态）。
+        STATE = new SyncState();
         serverKey = null;
         currentCacheFolderName = null;
-        syncIndexChunks = null;
-        syncIndexTotal = 0;
-        syncIndexReceived = 0;
-        SERVER_MODELS.clear();
         // NOTE: clientKey is intentionally KEPT — lazy geo/anim/texture reload
         // re-decrypts the client cache files with it after an idle unload, and
         // the sync teardown (sendComplete) also calls resetConnectionState(). It
@@ -148,249 +524,13 @@ public final class OpenYsmModelSyncClient {
         ClientModelManager.SYNC_IN_PROGRESS = false;
     }
 
-    private static synchronized void processServerData(byte[] packetBytes) {
-        if (packetBytes == null || packetBytes.length == 0) {
-            resetConnectionState();
-            return;
-        }
 
-        try {
-            if (syncStep == 1) {
-                byte[] decrypted = YsmCrypt.decrypt(packetBytes, YsmCrypt.publicKey);
-                if (decrypted != null) {
-                    handlePacket01(decrypted);
-                }
-            } else if (syncStep == 2) {
-                byte[] decrypted = YsmCrypt.decrypt(packetBytes, lastKey);
-                if (decrypted != null) {
-                    try (YSMByteBuf buf = new YSMByteBuf(Unpooled.wrappedBuffer(decrypted))) {
-                        handlePacket03(buf);
-                    }
-                }
-            } else if (syncStep == 3) {
-                byte[] decrypted = YsmCrypt.decrypt(packetBytes, key1);
-                if (decrypted != null) {
-                    try (YSMByteBuf buf = new YSMByteBuf(Unpooled.wrappedBuffer(decrypted))) {
-                        handlePacket05(buf);
-                    }
-                }
-            }
-        } catch (Exception e) {
-            sendComplete(C2SCompleteFeedback17.STATUS_FAILED, e.getClass().getSimpleName() + ": " + e.getMessage());
-            ysmu.LOG.warn("OpenYSM client sync error at step " + syncStep, e);
-        }
-    }
 
-    private static void handlePacket01(byte[] decryptedBuffer) throws Exception {
-        resetConnectionState();
-        if (decryptedBuffer.length < 56) {
-            return;
-        }
-        key1 = Arrays.copyOfRange(decryptedBuffer, decryptedBuffer.length - 56, decryptedBuffer.length);
-        syncStep = 2;
 
-        byte[] garbage = randomGarbage();
-        try (YSMByteBuf out = new YSMByteBuf(Unpooled.buffer())) {
-            out.writeGarbageHeader(garbage.length, garbage);
-            out.writeByte((byte) 0x02);
-            out.writeByte((byte) 0x00);
-            YsmCrypt.EncryptedPacket encrypted = YsmCrypt.encrypt(out.toArray(), key1, true);
-            lastKey = encrypted.nextKey();
-            sendPayload(encrypted.data());
-        }
-    }
 
-    private static void handlePacket03(YSMByteBuf buf) throws Exception {
-        buf.skipGarbageHeader();
-        int type = buf.readVarInt();
-        if (type != 3) {
-            return;
-        }
 
-        long folderHash = buf.readVarLong();
-        currentCacheFolderName = Long.toHexString(folderHash);
-        serverKey = new byte[56];
-        buf.getRawBuf().readBytes(serverKey);
-        clientKey = new byte[56];
-        buf.getRawBuf().readBytes(clientKey);
 
-        SERVER_MODELS.clear();
-        File cacheDir = getCacheDir();
-        if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) {
-            ysmu.LOG.warn("Failed to create OpenYSM client cache directory {}", cacheDir);
-        }
 
-        Map<UUID, File> localCacheMap = YSMClientCache.buildCacheIndex(cacheDir, clientKey);
-        List<ModelHash> modelsToRequest = new ArrayList<>();
-        // packet03 头部：progressTotal（OpenYSM+legacy 并集）供进度条/完成统计使用；
-        // serverModelCount 仍是本索引的条目数（仅 OpenYSM 集合）。
-        int progressTotal = buf.readVarInt();
-        int serverModelCount = buf.readVarInt();
-        ClientModelManager.SYNC_TOTAL = progressTotal;
-        ClientModelManager.SYNC_LOADED = 0;
-        ClientModelManager.SYNC_FAILED = 0;
-        ClientModelManager.SYNC_IN_PROGRESS = true;
-        // 完成信号等待全部模型（缓存命中 + 下载）解析并应用完成。
-        remainingTasks.set(serverModelCount);
-        syncStartTimeMs = System.currentTimeMillis();
-        startSyncWatchdog();
-        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-            ysmu.LOG.info("[YSMU-MODEL] OpenYSM client received sync index: models={}", serverModelCount);
-            ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
-                serverModelCount, localCacheMap.size());
-        }
-
-        for (int i = 0; i < serverModelCount; i++) {
-            long hash1 = buf.readVarLong();
-            long hash2 = buf.readVarLong();
-            String modelId = buf.readString();
-            int customSkinModel = buf.readVarInt();
-            int version = buf.readVarInt();
-            ServerModelContext context = new ServerModelContext(hash1, hash2, modelId, customSkinModel, version);
-            SERVER_MODELS.put(context.uuid, context);
-
-            File cachedFile = localCacheMap.get(context.uuid);
-            if (YSMClientCache.verifyFileContent(cachedFile, hash1, hash2)) {
-                cacheHitCount.incrementAndGet();
-                try {
-                    byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
-                    byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
-                    // Pre-parsing hundreds of cache hits inline blocks the single
-                    // synchronized index loop for minutes on large libraries (progress
-                    // bar looks frozen). Defer the heavy parse/registration to the
-                    // background pool so it runs in parallel with the download path;
-                    // the cheap read+decrypt stay inline so a corrupt cache file still
-                    // falls back to download before packet04 is sent.
-                    ThreadTools.THREAD_POOL.submit(() -> {
-                        try {
-                            if (parseAndRegisterModel(clearBytes, context)) {
-                                loadedModelsCount.incrementAndGet();
-                            }
-                        } finally {
-                            taskFinished();
-                        }
-                    });
-                } catch (Exception e) {
-                    // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
-                    // 避免整个同步流程因此崩溃，导致加载进度条无法显示。
-                    ysmu.LOG.warn("OpenYSM client cache HIT but decrypt FAILED for {} ({}), falling back to download: {}",
-                        modelId, context.uuid, e.getMessage());
-                    modelsToRequest.add(new ModelHash(hash1, hash2));
-                }
-            } else {
-                modelsToRequest.add(new ModelHash(hash1, hash2));
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-                    ysmu.LOG.info("[YSMU-MODEL] Client cache MISS for {} ({}), cachedFile={}",
-                        modelId, context.uuid,
-                        cachedFile != null ? cachedFile : "(no local cache)");
-                }
-            }
-        }
-
-        parsePackData(buf);
-        sendPacket04(modelsToRequest);
-        // 全缓存命中/零模型时完成信号由后台解析驱动；此处兜底极端情况
-        // （serverModelCount==0 或全部解析已在发送 packet04 前完成）。
-        if (remainingTasks.get() <= 0) {
-            maybeSendComplete();
-        }
-    }
-
-    private static void handlePacket05(YSMByteBuf buf) throws Exception {
-        buf.skipGarbageHeader();
-        int type = buf.readVarInt();
-        if (type != 5) {
-            return;
-        }
-
-        long hash1 = buf.readVarLong();
-        long hash2 = buf.readVarLong();
-        UUID uuid = new UUID(hash1, hash2);
-        ServerModelContext context = SERVER_MODELS.get(uuid);
-        if (context == null) {
-            ysmu.LOG.warn("OpenYSM client received unexpected chunk for {}", uuid);
-            return;
-        }
-
-        int totalSize = buf.readVarInt();
-        int chunkOffset = buf.readVarInt();
-        int chunkLength = buf.readVarInt();
-        if (context.fileBuffer == null) {
-            context.fileBuffer = new byte[totalSize];
-            context.totalSize = totalSize;
-            context.bytesReceived = 0;
-        }
-        buf.getRawBuf().readBytes(context.fileBuffer, chunkOffset, chunkLength);
-        context.bytesReceived += chunkLength;
-        // 下载仍在推进：重置看门狗的停滞倒计时（与任务完成一样算「有进展」）。
-        touchProgress();
-
-        if (context.bytesReceived >= context.totalSize) {
-            byte[] fileBuffer = context.fileBuffer;
-            context.fileBuffer = null;
-            try {
-                byte[] clientCacheBytes = YsmCrypt
-                    .transcodeServerDataToClientCache(fileBuffer, serverKey, clientKey, hash1, hash2);
-                File outFile = new File(getCacheDir(), YSMClientCache.generateCacheFileName(hash1, hash2, clientKey));
-                FileUtils.writeByteArrayToFile(outFile, clientCacheBytes);
-
-                byte[] clearBytes = YsmCrypt.read(clientCacheBytes, clientKey);
-                // Defer the heavy parse to the background pool (mirrors the cache-hit
-                // path): processServerData is synchronized, so parsing inline here
-                // would hold the class lock for every model and serialize the whole
-                // download+parse pipeline on a single pool thread. The cheap
-                // transcode + file write + decrypt stay inline so a corrupt cache
-                // still falls back to a fresh download on the next sync.
-                final byte[] modelClearBytes = clearBytes;
-                ThreadTools.THREAD_POOL.submit(() -> {
-                    try {
-                        if (parseAndRegisterModel(modelClearBytes, context)) {
-                            loadedModelsCount.incrementAndGet();
-                            downloadedModelsCount.incrementAndGet();
-                        }
-                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-                            ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
-                        }
-                    } catch (Exception e) {
-                        // A single corrupt/truncated model cache file must not abort the whole
-                        // sync (which previously failed the progress bar and left the library
-                        // unloaded). Log it, skip the model, and keep going.
-                        ysmu.LOG.warn("OpenYSM client failed to process downloaded model {} ({}): {}",
-                            context.modelId, uuid, e.getMessage());
-                        ClientModelManager.SYNC_FAILED++;
-                    } finally {
-                        // 该模型解析已完成（成功或失败），计入总任务数；全部完成后触发完成信号。
-                        taskFinished();
-                    }
-                });
-            } catch (Exception e) {
-                // 转码/解密失败（如会话密钥不匹配/服务端缓存损坏）：直接跳过该模型，
-                // 不再进入后台解析，但同样计入总任务数，避免完成信号永不到达。
-                ysmu.LOG.warn("OpenYSM client failed to decrypt downloaded model {} ({}): {}",
-                    context.modelId, uuid, e.getMessage());
-                ClientModelManager.SYNC_FAILED++;
-                taskFinished();
-            }
-        }
-    }
-
-    private static void sendPacket04(List<ModelHash> modelsToRequest) throws Exception {
-        syncStep = 3;
-
-        byte[] garbage = randomGarbage();
-        try (YSMByteBuf out = new YSMByteBuf(Unpooled.buffer())) {
-            out.writeGarbageHeader(garbage.length, garbage);
-            out.writeByte((byte) 0x04);
-            out.writeVarInt(modelsToRequest.size());
-            for (ModelHash hash : modelsToRequest) {
-                out.writeVarLong(hash.hash1);
-                out.writeVarLong(hash.hash2);
-            }
-            sendPayload(YsmCrypt.encrypt(out.toArray(), key1, false).data());
-        }
-        // 完成信号不再由「下载数==0」触发（全缓存命中时会提前结束），改由
-        // taskFinished() → remainingTasks 全部完成 + 应用管线排空后触发。
-    }
 
     private static boolean parseAndRegisterModel(byte[] clearBytes, ServerModelContext context) {
         try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(clearBytes, OpenYsmFormat.OPEN_YSM_SYNC_FORMAT)) {
@@ -817,55 +957,9 @@ public final class OpenYsmModelSyncClient {
         NetworkHandler.CHANNEL.sendToServer(new C2SModelSyncPayload17(payload));
     }
 
-    /**
-     * 一个模型（缓存命中或下载）的解析已完成。全部模型解析完成后，等待主线程
-     * apply 管线排空（进度/统计准确），再发送完成信号。
-     */
-    private static void taskFinished() {
-        // 每个模型解析完成都视为一次进展：重置看门狗停滞倒计时。
-        touchProgress();
-        if (remainingTasks.decrementAndGet() <= 0) {
-            maybeSendComplete();
-        }
-    }
 
-    /** 记录一次同步进展（模型解析完成或下载字节到达），供看门狗判断是否停滞。 */
-    private static void touchProgress() {
-        lastProgressTimeMs = System.currentTimeMillis();
-    }
 
-    /**
-     * 启动完成等待：所有模型解析已提交，但主线程的 applyPreParsed 可能仍在逐帧
-     * 消费队列——全缓存命中（下载数 0）时若立即发完成，成功数会远小于总数
-     * （如 343/681）。轮询 {@link ClientModelManager#isApplyPipelineDrained()}，
-     * 排空后发送完成；超时或同步被重置则兜底退出，不挂死。
-     */
-    private static void maybeSendComplete() {
-        if (syncStep < 3 || !completionScheduled.compareAndSet(false, true)) {
-            return;
-        }
-        ThreadTools.THREAD_POOL.submit(() -> {
-            long deadline = System.currentTimeMillis() + COMPLETION_APPLY_DRAIN_TIMEOUT_MS;
-            while (System.currentTimeMillis() < deadline) {
-                if (!ClientModelManager.SYNC_IN_PROGRESS) {
-                    return; // 同步已被重置/断开，不再补发完成。
-                }
-                if (ClientModelManager.isApplyPipelineDrained()) {
-                    sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-                    return;
-                }
-                try {
-                    Thread.sleep(50L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-                    return;
-                }
-            }
-            // 超时兜底：应用仍未排空（如主线程长时间阻塞），按当前状态发送完成。
-            sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-        });
-    }
+
 
     /** 完成等待的上限：应用管线在正常游戏内排空很快，此值仅作极端情况的兜底。 */
     private static final long COMPLETION_APPLY_DRAIN_TIMEOUT_MS = 2 * 60_000L;
@@ -875,58 +969,9 @@ public final class OpenYsmModelSyncClient {
      *  挂死并截断模型列表；改为「1 分钟无进展」的停滞判定后，只要同步还在推进就不会触发。 */
     private static final long SYNC_STALL_TIMEOUT_MS = 60_000L;
 
-    /** 同步开始时启动；所有任务正常完成或同步被重置即退出。若 1 分钟内没有任何进展
-     *  （如某些模型被请求但服务端从未下发、缓存文件缺失/损坏），强制发送完成兜底。 */
-    private static void startSyncWatchdog() {
-        lastProgressTimeMs = System.currentTimeMillis();
-        ThreadTools.THREAD_POOL.submit(() -> {
-            while (ClientModelManager.SYNC_IN_PROGRESS && remainingTasks.get() > 0) {
-                if (System.currentTimeMillis() - lastProgressTimeMs >= SYNC_STALL_TIMEOUT_MS) {
-                    ysmu.LOG.warn("OpenYSM client sync stalled (no progress for {}s, {} task(s) left), forcing completion",
-                        SYNC_STALL_TIMEOUT_MS / 1000, remainingTasks.get());
-                    sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-                    return;
-                }
-                try {
-                    Thread.sleep(1000L);
-                } catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-            }
-        });
-    }
 
-    private static void sendComplete(int status, String message) {
-        // 防止看门狗/错误路径/正常路径重复发送完成信号。
-        if (!completionSent.compareAndSet(false, true)) {
-            return;
-        }
-        NetworkHandler.CHANNEL.sendToServer(
-            new C2SCompleteFeedback17(status, loadedModelsCount.get(), downloadedModelsCount.get(),
-                cacheHitCount.get(), message));
-        if (status == C2SCompleteFeedback17.STATUS_SUCCESS) {
-            long elapsed = System.currentTimeMillis() - syncStartTimeMs;
-            ysmu.LOG.info(
-                "OpenYSM client sync complete: loaded={}, downloaded={}, cacheHits={}, time={}ms",
-                loadedModelsCount.get(), downloadedModelsCount.get(), cacheHitCount.get(), elapsed);
-            // 在聊天栏输出客户端完成信息（成功/失败/总数统计；总数=统一索引大小）
-            int registered = ClientModelManager.MODELS.size();
-            int failed = ClientModelManager.SYNC_FAILED;
-            int total = ClientModelManager.SYNC_TOTAL;
-            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
-            if (mc.thePlayer != null) {
-                mc.thePlayer.addChatMessage(
-                    new net.minecraft.util.ChatComponentTranslation(
-                        "message.yes_steve_model.sync.complete", elapsed));
-                mc.thePlayer.addChatMessage(
-                    new net.minecraft.util.ChatComponentTranslation(
-                        "message.yes_steve_model.sync.complete_models", registered, failed, total));
-            }
-        }
-        ClientModelManager.SYNC_IN_PROGRESS = false;
-        resetConnectionState();
-    }
+
+
 
     private static byte[] randomGarbage() {
         byte[] garbage = new byte[16 + RANDOM.nextInt(48)];
