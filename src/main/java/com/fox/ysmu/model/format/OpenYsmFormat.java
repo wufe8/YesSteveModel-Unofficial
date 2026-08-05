@@ -51,8 +51,9 @@ import rip.ysm.security.YsmCrypt;
 public final class OpenYsmFormat {
 
     private static final byte[] OPEN_YSM_PREFIX = new byte[] { (byte) 0xEF, (byte) 0xBB, (byte) 0xBF, 'Y', 'S', 'G', 'P' };
-    /** OpenYSM 同步缓存二进制格式号（与 {@link ModelCacheWriter} 一致）。 */
-    private static final int OPEN_YSM_SYNC_FORMAT = 32;
+    /** OpenYSM 同步缓存二进制格式号。唯一来源，客户端反序列化（OpenYsmModelSyncClient /
+     *  ClientModelManager 懒加载）与 ModelCacheWriter 序列化共用此值。 */
+    public static final int OPEN_YSM_SYNC_FORMAT = 32;
 
     private OpenYsmFormat() {}
 
@@ -63,22 +64,8 @@ public final class OpenYsmFormat {
             ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
             if (cached != null) {
                 fp = YSMFolderDeserializer.computeFolderHash(dir);
-                if (fp.equals(cached.srcFp)) {
-                    if (!cached.ok) {
-                        ModelIndexCache.mark(modelId, cached);
-                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                            ysmu.LOG.info("[YSMU-MODEL] Folder model {} previously failed, skipped rebuild", modelId);
-                        }
-                        return;
-                    }
-                    if (ModelIndexCache.isCacheUsable(cached)) {
-                        OPEN_YSM_SYNC_INFO.put(modelId, toSyncInfo(modelId, cached));
-                        ModelIndexCache.mark(modelId, cached);
-                        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                            ysmu.LOG.info("[YSMU-MODEL] Folder model {} cache hit, skipped rebuild", modelId);
-                        }
-                        return;
-                    }
+                if (trySidecarHit(modelId, fp, "Folder model " + modelId)) {
+                    return;
                 }
             }
 
@@ -148,23 +135,8 @@ public final class OpenYsmFormat {
         // 尾部哈希 = 整个加密文件内容的 CityHash（decryptYsmFile 也用同一校验），
         // 内容变化必然导致指纹变化 → 命中时无需解密/反序列化即可复用缓存。
         String fp = ysmFileFingerprint(encrypted);
-        ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
-        if (cached != null && fp.equals(cached.srcFp)) {
-            if (!cached.ok) {
-                ModelIndexCache.mark(modelId, cached);
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] .ysm {} previously failed, skipped rebuild", modelId);
-                }
-                return;
-            }
-            if (ModelIndexCache.isCacheUsable(cached)) {
-                OPEN_YSM_SYNC_INFO.put(modelId, toSyncInfo(modelId, cached));
-                ModelIndexCache.mark(modelId, cached);
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] .ysm {} cache hit, skipped rebuild", modelId);
-                }
-                return;
-            }
+        if (trySidecarHit(modelId, fp, ".ysm " + modelId)) {
+            return;
         }
 
         try {
@@ -263,23 +235,8 @@ public final class OpenYsmFormat {
         }
         // 便宜指纹：长度 + 头部 body MD5（offset 8..24，整个 body 的内容哈希）。
         String fp = encrypted.length + ":" + toHexCompact(Arrays.copyOfRange(encrypted, 8, 24));
-        ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
-        if (cached != null && fp.equals(cached.srcFp)) {
-            if (!cached.ok) {
-                ModelIndexCache.mark(modelId, cached);
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] Legacy .ysm {} previously failed, skipped rebuild", modelId);
-                }
-                return;
-            }
-            if (ModelIndexCache.isCacheUsable(cached)) {
-                OPEN_YSM_SYNC_INFO.put(modelId, toSyncInfo(modelId, cached));
-                ModelIndexCache.mark(modelId, cached);
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
-                    ysmu.LOG.info("[YSMU-MODEL] Legacy .ysm {} cache hit, skipped rebuild", modelId);
-                }
-                return;
-            }
+        if (trySidecarHit(modelId, fp, "Legacy .ysm " + modelId)) {
+            return;
         }
 
         try {
@@ -349,6 +306,37 @@ public final class OpenYsmFormat {
         return new OpenYsmSyncInfo(modelId, e.cacheFile,
             Long.parseUnsignedLong(e.hash1, 16), Long.parseUnsignedLong(e.hash2, 16),
             OPEN_YSM_SYNC_FORMAT, false);
+    }
+
+    /**
+     * 尝试用侧车命中跳过重建（folder/ysm/legacy 三条路径共用）。
+     * 返回 true 表示「已由侧车处理」（命中或上次失败跳过），调用方应直接 return；
+     * 返回 false 表示未命中，需要按正常流程重建。
+     *
+     * @param label debug 日志用的模型类型标签（含 modelId，如 "Folder model xxx"）
+     */
+    private static boolean trySidecarHit(String modelId, String fp, String label) {
+        ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
+        if (cached == null || !fp.equals(cached.srcFp)) {
+            return false;
+        }
+        if (!cached.ok) {
+            // 上次构建失败且文件未变：跳过重试，避免问题模型每次启动烧时间。
+            ModelIndexCache.mark(modelId, cached);
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                ysmu.LOG.info("[YSMU-MODEL] {} previously failed, skipped rebuild", label);
+            }
+            return true;
+        }
+        if (ModelIndexCache.isCacheUsable(cached)) {
+            OPEN_YSM_SYNC_INFO.put(modelId, toSyncInfo(modelId, cached));
+            ModelIndexCache.mark(modelId, cached);
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
+                ysmu.LOG.info("[YSMU-MODEL] {} cache hit, skipped rebuild", label);
+            }
+            return true;
+        }
+        return false;
     }
 
     /** 构造侧车条目。 */

@@ -23,8 +23,6 @@ import rip.ysm.security.YsmCrypt;
 
 final class ModelCacheWriter {
 
-    private static final int OPEN_YSM_SYNC_FORMAT = 32;
-
     private ModelCacheWriter() {}
 
     static ServerModelInfo write(ModelData data) throws Exception {
@@ -47,7 +45,7 @@ final class ModelCacheWriter {
 
         byte[] cacheBytes = YsmCrypt.encryptServerCache(clearBytes, OPEN_YSM_SERVER_KEY, hashes[0], hashes[1]);
         atomicWrite(CACHE_SERVER.resolve(cacheFileName), cacheBytes);
-        return new OpenYsmSyncInfo(modelId, cacheFileName, hashes[0], hashes[1], OPEN_YSM_SYNC_FORMAT, false);
+        return new OpenYsmSyncInfo(modelId, cacheFileName, hashes[0], hashes[1], OpenYsmFormat.OPEN_YSM_SYNC_FORMAT, false);
     }
 
     /**
@@ -74,7 +72,7 @@ final class ModelCacheWriter {
         if (!Config.ACCEPT_SOUND_FX && raw.soundFiles != null && !raw.soundFiles.isEmpty()) {
             raw.soundFiles = new java.util.LinkedHashMap<>();
         }
-        try (YSMByteBuf serialized = YSMBinarySerializer.serialize(raw, OPEN_YSM_SYNC_FORMAT, true)) {
+        try (YSMByteBuf serialized = YSMBinarySerializer.serialize(raw, OpenYsmFormat.OPEN_YSM_SYNC_FORMAT, true)) {
             return serialized.toArray();
         } finally {
             raw.soundFiles = originalSoundFiles;

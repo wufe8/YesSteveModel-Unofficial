@@ -1329,7 +1329,8 @@ public class ClientModelManager {
             byte[] clearBytes = com.fox.ysmu.client.sync.OpenYsmModelSyncClient.readClientCacheToClearBytes(fileBytes);
             if (clearBytes == null) return null;
             try (com.fox.ysmu.model.resource.YSMBinaryDeserializer deserializer =
-                     new com.fox.ysmu.model.resource.YSMBinaryDeserializer(clearBytes, 32)) {
+                     new com.fox.ysmu.model.resource.YSMBinaryDeserializer(clearBytes,
+                         com.fox.ysmu.model.format.OpenYsmFormat.OPEN_YSM_SYNC_FORMAT)) {
                 com.fox.ysmu.model.resource.pojo.RawYsmModel raw = deserializer.deserializeKeepOpen();
                 deserializer.parseYSMFooter(raw);
                 raw.modelId = com.fox.ysmu.util.ModelIdUtil.getModelIdFromMainId(mainModelId).getResourcePath();

@@ -235,9 +235,9 @@ public final class OpenYsmModelSyncServer {
                 out.getRawBuf().writeBytes(ServerModelManager.OPEN_YSM_SERVER_KEY);
                 out.getRawBuf().writeBytes(state.clientCacheKey);
 
-                // 进度条总模型数 = OpenYSM + legacy 并集（legacy 模型走旧版同步路径，
-                // 不在此索引中，但客户端最终会注册它们）。与下方索引条目数分离：
-                // 条目数仍只遍历 OpenYSM 集合。
+                // 进度条总模型数 = OpenYSM 同步索引大小。统一模型加载后索引已覆盖全部
+                // 模型（文件夹 + BOM+YSGP + 转换后的裸 YSGP），与下方索引条目数一致；
+                // 两个字段分开写是为了兼容旧协议布局，客户端已按同一数值使用。
                 out.writeVarInt(totalModelCount());
                 out.writeVarInt(state.allowedModels.size());
                 for (OpenYsmSyncInfo model : state.allowedModels) {
