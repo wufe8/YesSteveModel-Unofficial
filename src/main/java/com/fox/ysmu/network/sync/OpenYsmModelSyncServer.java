@@ -5,6 +5,7 @@ import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -42,6 +43,19 @@ public final class OpenYsmModelSyncServer {
     /** Encrypted sync-index chunk size, safely under the ~32 KB custom-payload limit. */
     private static final int SYNC_INDEX_CHUNK_SIZE = 20000;
     private static final Map<UUID, PlayerSyncState> SYNC_STATES = Maps.newConcurrentMap();
+    /**
+     * 模型文件流式发送专用线程池（守护线程）。与通用 THREAD_POOL 隔离：低带宽模式下
+     * 一次同步会长时间 sleep 节流，若占用通用池的核心线程（默认仅 4 个），并发同步的
+     * 玩家会挤占服务端缓存重建/其他包处理。专用池只做流式发送，不影响其他任务。
+     */
+    private static final java.util.concurrent.ExecutorService STREAM_POOL =
+        java.util.concurrent.Executors.newFixedThreadPool(
+            Math.max(1, Math.min(2, Config.THREAD_COUNT)),
+            r -> {
+                Thread t = new Thread(r, "YSMU-SyncStream");
+                t.setDaemon(true);
+                return t;
+            });
 
     private OpenYsmModelSyncServer() {}
 
@@ -70,6 +84,13 @@ public final class OpenYsmModelSyncServer {
         state.allowedModels.addAll(ServerModelManager.OPEN_YSM_SYNC_INFO.values());
         state.allowedModels.sort(Comparator.comparingInt(
             (OpenYsmSyncInfo info) -> Config.DEFAULT_MODEL_ID.equals(info.getModelId()) ? 0 : 1));
+        // 索引已按缓存文件内容去重（cacheFileName 即 hash1+hash2 十六进制拼接），
+        // (hash1, hash2) 在索引内唯一。预建哈希索引把 findAllowedModel 从 O(n) 降到
+        // O(1)，大库全 miss 首同步不再做 ~n² 次线性扫描。
+        for (OpenYsmSyncInfo info : state.allowedModels) {
+            state.allowedByHash.computeIfAbsent(info.getHash1(), k -> new HashMap<>())
+                .put(info.getHash2(), info);
+        }
         SYNC_STATES.put(playerId, state);
         ysmu.LOG.info(
             "Starting OpenYSM model sync for {}: models={}",
@@ -330,7 +351,7 @@ public final class OpenYsmModelSyncServer {
     }
 
     private static void sendPacket05(UUID playerId, PlayerSyncState state, List<OpenYsmSyncInfo> requested) {
-        ThreadTools.THREAD_POOL.submit(() -> {
+        STREAM_POOL.submit(() -> {
             int sentModels = 0;
             try {
                 int chunkSize = getChunkSize();
@@ -391,12 +412,8 @@ public final class OpenYsmModelSyncServer {
     }
 
     private static OpenYsmSyncInfo findAllowedModel(PlayerSyncState state, long hash1, long hash2) {
-        for (OpenYsmSyncInfo info : state.allowedModels) {
-            if (info.matches(hash1, hash2)) {
-                return info;
-            }
-        }
-        return null;
+        Map<Long, OpenYsmSyncInfo> byHash2 = state.allowedByHash.get(hash1);
+        return byHash2 == null ? null : byHash2.get(hash2);
     }
 
     private static byte[] randomGarbage() {
@@ -436,6 +453,8 @@ public final class OpenYsmModelSyncServer {
         private final String playerName;
         private final byte[] clientCacheKey;
         private final List<OpenYsmSyncInfo> allowedModels = new ArrayList<>();
+        /** (hash1, hash2) → info 查找索引，startSync 构建 allowedModels 后填充。 */
+        private final Map<Long, Map<Long, OpenYsmSyncInfo>> allowedByHash = new HashMap<>();
         private byte[] key1;
         private byte[] clientNextKey;
         private int step = 1;

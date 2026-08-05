@@ -42,8 +42,4 @@ public final class OpenYsmSyncInfo {
     public boolean isCustomSkinModel() {
         return customSkinModel;
     }
-
-    public boolean matches(long otherHash1, long otherHash2) {
-        return hash1 == otherHash1 && hash2 == otherHash2;
-    }
 }
