@@ -1512,6 +1512,75 @@ public class ClientModelManager {
         AssetManager.tick();
     }
 
+    // ── 使用中模型的主动预暖 / 快速卸载 ─────────────────────────────
+    /**
+     * 主模型 id（"ysmu:model/main"）→ 最近一次「正在使用」的时间戳。由渲染（本地玩家/
+     * 其他玩家/NPC）、GUI 预览、进服时的自身模型同步共同驱动；周期扫描把超过
+     * {@link #IN_USE_UNLOAD_MS} 未使用的模型立即释放（懒几何/动画回 ABSENT，下次使用
+     * 再按需恢复）。目标：只让「当前正在使用的模型」保持常驻、切换模型后 ~5s 内卸载，
+     * 避免对全部模型预暖把懒加载省下的峰值内存又吃回去。
+     */
+    private static final java.util.concurrent.ConcurrentHashMap<ResourceLocation, Long> IN_USE_MODELS =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    /** 使用中模型多久未刷新标记即释放（对齐纹理 TEXTURE_PROTECT_MS=5s）。 */
+    private static final long IN_USE_UNLOAD_MS = 5_000L;
+
+    /**
+     * 标记一个模型为「正在使用」：刷新时间戳；首次标记（不在使用集合中）时主动预暖一次
+     * 懒几何/动画（READY 直接命中并刷新 idle，ABSENT 在后台解密+解析后写回
+     * GeckoLibCache），消除首次渲染/预览的空白。线程安全（渲染线程/网络回调/主线程）。
+     *
+     * @param modelOrMainId base id（"ysmu:model"）或 main id（"ysmu:model/main"）均可
+     */
+    public static void markModelInUse(ResourceLocation modelOrMainId) {
+        if (modelOrMainId == null) {
+            return;
+        }
+        ResourceLocation mainId = ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(modelOrMainId));
+        boolean first = IN_USE_MODELS.put(mainId, System.currentTimeMillis()) == null;
+        if (first) {
+            com.fox.ysmu.client.asset.AssetManager.geo(mainId).get();
+            com.fox.ysmu.client.asset.AssetManager.anim(mainId).get();
+        }
+    }
+
+    /**
+     * 周期性扫描（客户端 tick 每 ~5s）：释放超过 {@link #IN_USE_UNLOAD_MS} 未使用的模型。
+     * 默认模型（AssetManager.tick 常驻）与本地玩家当前模型（进存档即在使用）不释放。
+     * 主线程调用。
+     */
+    public static void sweepInUseModels() {
+        long now = System.currentTimeMillis();
+        ResourceLocation ownModel = getLocalPlayerMainModelId();
+        for (java.util.Map.Entry<ResourceLocation, Long> e : IN_USE_MODELS.entrySet()) {
+            ResourceLocation mainId = e.getKey();
+            if (isDefaultModelBundle(mainId)) {
+                continue;
+            }
+            if (ownModel != null && ownModel.equals(mainId)) {
+                continue;
+            }
+            if (now - e.getValue() > IN_USE_UNLOAD_MS) {
+                IN_USE_MODELS.remove(mainId, e.getValue());
+                com.fox.ysmu.client.asset.AssetManager.release(mainId);
+            }
+        }
+    }
+
+    /** 本地玩家当前主模型 id；无玩家/无 EEP 时为 null。 */
+    @Nullable
+    private static ResourceLocation getLocalPlayerMainModelId() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        if (mc.thePlayer == null) {
+            return null;
+        }
+        com.fox.ysmu.eep.ExtendedModelInfo eep = com.fox.ysmu.eep.ExtendedModelInfo.get(mc.thePlayer);
+        if (eep == null) {
+            return null;
+        }
+        return ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(eep.getModelId()));
+    }
+
     /**
      * Frees the GPU copy of textures whose model hasn't been accessed recently.
      * Invoked by {@link AssetManager#tick()}.

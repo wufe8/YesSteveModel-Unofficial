@@ -87,6 +87,13 @@ public final class AssetManager {
         ANIM.clear();
     }
 
+    /** 立即释放主模型（main 几何 + main 动画）的懒资源（模型切换后快速卸载用，主线程调用）。
+     *  未加载/加载中为 no-op；arm 几何不在主模型 key 下，仍由闲置扫描回收。 */
+    public static void release(ResourceLocation mainId) {
+        GEO.release(mainId);
+        ANIM.release(mainId);
+    }
+
     /** 当前登记的几何条目数（诊断用）。 */
     public static int geoSize() {
         return GEO.size();

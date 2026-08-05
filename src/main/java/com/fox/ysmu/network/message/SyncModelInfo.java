@@ -5,6 +5,7 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.nbt.NBTTagCompound;
 
 import com.fox.ysmu.eep.ExtendedModelInfo;
+import com.fox.ysmu.util.ModelIdUtil;
 import com.fox.ysmu.util.ThreadTools;
 
 import cpw.mods.fml.common.network.ByteBufUtils;
@@ -67,6 +68,12 @@ public class SyncModelInfo implements IMessage {
                             ExtendedModelInfo eep = ExtendedModelInfo.get(player);
                             if (eep != null) {
                                 eep.loadNBTData(message.modelInfoNBT);
+                                // 进存档/进服：本地玩家自己的模型立即标记「使用中」并主动预暖，
+                                // 不等第一帧渲染才触发懒加载（消除进服瞬间的空白）。
+                                if (player.equals(Minecraft.getMinecraft().thePlayer)) {
+                                    com.fox.ysmu.client.ClientModelManager.markModelInUse(
+                                        ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(eep.getModelId())));
+                                }
                             }
                         }
                     } catch (InterruptedException e) {

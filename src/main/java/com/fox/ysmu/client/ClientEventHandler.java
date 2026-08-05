@@ -73,8 +73,10 @@ public class ClientEventHandler {
         }
     }
 
-    /** Tick counter for periodic lazy-animation unload (~every 100 ticks = 5s). */
+    /** Tick counter for periodic lazy-animation unload (every 1200 ticks = 60s). */
     private static int unloadTick = 0;
+    /** Tick counter for in-use model sweep (every 100 ticks = 5s). */
+    private static int inUseSweepTick = 0;
 
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
@@ -86,6 +88,12 @@ public class ClientEventHandler {
             unloadTick = 0;
             ClientModelManager.unloadUnusedCaches();
             DirectBufferWatchdog.tick();
+        }
+        // 周期性释放「不再使用」的模型（切换模型/离开视野后 ~5s 内卸载懒几何/动画，
+        // 只保留正在使用的模型常驻，控制峰值内存）。
+        if (++inUseSweepTick >= 100) {
+            inUseSweepTick = 0;
+            ClientModelManager.sweepInUseModels();
         }
         if (!pendingModelLoad) {
             return;

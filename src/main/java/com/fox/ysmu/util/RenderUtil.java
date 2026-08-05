@@ -394,6 +394,9 @@ public final class RenderUtil {
                 // and NPE. Trigger background reload as well so a freshly shown
                 // model animates as soon as it is ready.
                 ResourceLocation previewMainId = ModelIdUtil.getMainId(modelId);
+                // 标记为「正在使用」（GUI 预览即使用）：刷新时间戳并首次主动预暖，
+                // 让预览立即渲染而不是先空白 ~1s；关闭 GUI 后 ~5s 由快速卸载回收。
+                com.fox.ysmu.client.ClientModelManager.markModelInUse(previewMainId);
                 // Trigger geo reload when the previewed model was idle-evicted:
                 // get() reloads in the background on ABSENT, and on READY it
                 // refreshes the idle timestamp exactly like touch(). Using only

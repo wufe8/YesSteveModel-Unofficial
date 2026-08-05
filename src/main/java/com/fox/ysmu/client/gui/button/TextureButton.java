@@ -60,6 +60,9 @@ public class TextureButton extends GuiButton {
     @Override
     public void drawButton(Minecraft mc, int mouseX, int mouseY) {
         FontRenderer font = mc.fontRenderer;
+        // 可见按钮每帧标记自身模型「使用中」：浏览中的页面保持常驻，关闭 GUI 后由
+        // 快速卸载扫描（~5s）回收。
+        com.fox.ysmu.client.ClientModelManager.markModelInUse(modelId);
         this.field_146123_n = mouseX >= this.xPosition && mouseY >= this.yPosition && mouseX < this.xPosition + this.width && mouseY < this.yPosition + this.height;
         this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + this.height, 0xFF_434242, 0xFF_434242);
 

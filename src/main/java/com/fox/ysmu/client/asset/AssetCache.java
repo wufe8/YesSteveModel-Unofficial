@@ -210,6 +210,14 @@ public final class AssetCache<K, V> {
         });
     }
 
+    /** 立即释放指定资源（READY→ABSENT 并调用 provider.release；未加载/加载中时为 no-op）。 */
+    public void release(K key) {
+        Entry<V> e = entries.get(key);
+        if (e != null) {
+            release(key, e);
+        }
+    }
+
     private void release(K key, Entry<V> e) {
         if (!e.cas(State.READY, State.ABSENT)) {
             return;

@@ -112,6 +112,11 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         ResourceLocation location = this.modelProvider.getModelLocation(animatable);
         ResourceLocation mainModelId = this.animatable != null
             ? this.animatable.getMainModel() : null;
+        if (mainModelId != null) {
+            // 记录「正在使用」（本地玩家/其他玩家/NPC 每帧渲染即使用）：刷新时间戳并
+            // 首次主动预暖，驱动快速卸载扫描（切换模型后旧模型 ~5s 内释放）。
+            com.fox.ysmu.client.ClientModelManager.markModelInUse(mainModelId);
+        }
         GeoModel geoModel = GeckoLibCache.getInstance()
             .getGeoModels()
             .get(location);

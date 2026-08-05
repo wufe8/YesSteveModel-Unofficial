@@ -186,6 +186,9 @@ public class ModelButton extends GuiButton {
             return;
         }
         refreshGuiAnimFlags();
+        // 可见按钮每帧标记自身模型「使用中」：浏览中的页面保持常驻（FBO 重渲染不空白），
+        // 关闭 GUI 后 ~5s 由快速卸载扫描回收。
+        ClientModelManager.markModelInUse(mainModelId);
         FontRenderer font = mc.fontRenderer;
         // Hover状态
         this.field_146123_n = mouseX >= this.xPosition && mouseY >= this.yPosition
