@@ -1526,9 +1526,10 @@ public class ClientModelManager {
     private static final long IN_USE_UNLOAD_MS = 5_000L;
 
     /**
-     * 标记一个模型为「正在使用」：刷新时间戳；首次标记（不在使用集合中）时主动预暖一次
-     * 懒几何/动画（READY 直接命中并刷新 idle，ABSENT 在后台解密+解析后写回
-     * GeckoLibCache），消除首次渲染/预览的空白。线程安全（渲染线程/网络回调/主线程）。
+     * 标记一个模型为「正在使用」：仅刷新时间戳（纯追踪，不触发加载）。实际加载始终按需
+     * （渲染/预览路径各自的 .get()）；mark 只负责「常驻 + 快速卸载」——避免在加载期对一批
+     * 显示中的模型（如整页缩略图）全量构建完整动画/几何图，压高峰值内存。
+     * 线程安全（渲染线程/网络回调/主线程）。
      *
      * @param modelOrMainId base id（"ysmu:model"）或 main id（"ysmu:model/main"）均可
      */
@@ -1537,11 +1538,21 @@ public class ClientModelManager {
             return;
         }
         ResourceLocation mainId = ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(modelOrMainId));
-        boolean first = IN_USE_MODELS.put(mainId, System.currentTimeMillis()) == null;
-        if (first) {
-            com.fox.ysmu.client.asset.AssetManager.geo(mainId).get();
-            com.fox.ysmu.client.asset.AssetManager.anim(mainId).get();
+        IN_USE_MODELS.put(mainId, System.currentTimeMillis());
+    }
+
+    /**
+     * 主动预暖一个模型的懒几何/动画（READY 命中并刷新 idle；ABSENT 在后台解析后写回
+     * GeckoLibCache）。只用于真正「正在使用」的极少数模型（如本地玩家进服时的自身模型）；
+     * 批量显示的缩略图不应走这里——内存优先，保持按需懒加载。线程安全。
+     */
+    public static void warmModel(ResourceLocation modelOrMainId) {
+        if (modelOrMainId == null) {
+            return;
         }
+        ResourceLocation mainId = ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(modelOrMainId));
+        com.fox.ysmu.client.asset.AssetManager.geo(mainId).get();
+        com.fox.ysmu.client.asset.AssetManager.anim(mainId).get();
     }
 
     /**
@@ -1768,6 +1779,8 @@ public class ClientModelManager {
         CACHED_MODEL_MD5.clear();
         OPENYSM_CACHE_FORMAT.clear();
         TEXTURE_LAST_USED.clear();
+        // 全量清缓存时一并清空「使用中」追踪，避免旧 id 残留（5s 扫描对已清空模型做无谓 release）。
+        IN_USE_MODELS.clear();
         // Free GPU textures + heap bytes
         for (net.minecraft.client.renderer.texture.ITextureObject tex : YSM_TEXTURE_OBJECTS.values()) {
             if (tex instanceof com.fox.ysmu.client.texture.OuterFileTexture oft) {

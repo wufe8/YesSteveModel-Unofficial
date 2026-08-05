@@ -74,7 +74,9 @@ public class TextureButton extends GuiButton {
             modelCacheLastRefreshInterval = refreshInterval;
         }
         boolean timeToRefresh = refreshInterval > 0 && --modelCacheFramesUntilRefresh <= 0;
-        if (modelCacheDirty || timeToRefresh) {
+        // 同步进行中不重建 FBO 缩略图（内存优先，同步完成后恢复按需渲染）。
+        if (!com.fox.ysmu.client.ClientModelManager.SYNC_IN_PROGRESS
+            && (modelCacheDirty || timeToRefresh)) {
             modelCacheDirty = false;
             modelCacheFramesUntilRefresh = refreshInterval;
 

@@ -68,10 +68,10 @@ public class SyncModelInfo implements IMessage {
                             ExtendedModelInfo eep = ExtendedModelInfo.get(player);
                             if (eep != null) {
                                 eep.loadNBTData(message.modelInfoNBT);
-                                // 进存档/进服：本地玩家自己的模型立即标记「使用中」并主动预暖，
-                                // 不等第一帧渲染才触发懒加载（消除进服瞬间的空白）。
+                                // 进存档/进服：本地玩家自己的模型立即预暖（唯一允许的主动预暖
+                                // 目标，1 个模型无内存成本），不等第一帧渲染才触发懒加载。
                                 if (player.equals(Minecraft.getMinecraft().thePlayer)) {
-                                    com.fox.ysmu.client.ClientModelManager.markModelInUse(
+                                    com.fox.ysmu.client.ClientModelManager.warmModel(
                                         ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(eep.getModelId())));
                                 }
                             }

@@ -104,6 +104,10 @@ public class ModelButton extends GuiButton {
         if (this.lazyAnimChecked) {
             return;
         }
+        // 同步进行中不加载完整动画（内存优先：缩略图按需，同步完成后恢复）。
+        if (ClientModelManager.SYNC_IN_PROGRESS) {
+            return;
+        }
         if (++this.lazyAnimAttempts > 600) {
             // Give up after ~10s: model has no (or unresolvable) main animation.
             this.lazyAnimChecked = true;
@@ -260,7 +264,10 @@ public class ModelButton extends GuiButton {
         boolean hoverChanged = this.field_146123_n != modelCacheWasHovered;
         boolean animChanged = !guiAnimName.equals(modelCacheGuiAnim);
         boolean timeToRefresh = refreshInterval > 0 && --modelCacheFramesUntilRefresh <= 0;
-        if (hoverChanged || animChanged || modelCacheDirty || timeToRefresh) {
+        // 同步进行中不重建 FBO 缩略图：完整 geo/anim 留给同步完成后按需加载（压峰值内存），
+        // 期间显示已缓存的 FBO（首次为空白占位）。
+        if (!ClientModelManager.SYNC_IN_PROGRESS
+            && (hoverChanged || animChanged || modelCacheDirty || timeToRefresh)) {
             modelCacheWasHovered = this.field_146123_n;
             modelCacheGuiAnim = guiAnimName;
             modelCacheDirty = false;
