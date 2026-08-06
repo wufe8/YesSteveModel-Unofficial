@@ -273,6 +273,23 @@ public final class OpenYsmPlayerControllerRuntime {
         STATES.clear();
     }
 
+    /** 清理指定玩家的全部 RuntimeState（玩家登出时调用）。
+     *  玩家断线/离开世界后，按 (playerId, model, controller) 组合累积的
+     *  状态不再被使用，但会一直驻留到下次 reload 的 clear()——多玩家长时
+     *  运行会缓慢增长，这里按玩家精确清除。 */
+    public static void clearPlayer(UUID playerId) {
+        if (playerId == null) {
+            return;
+        }
+        java.util.Iterator<Map.Entry<StateKey, RuntimeState>> it = STATES.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<StateKey, RuntimeState> e = it.next();
+            if (playerId.equals(e.getKey().playerId)) {
+                it.remove();
+            }
+        }
+    }
+
     /**
      * 清零预览（player==null）上下文中指定模型的条件动画变量（swing/hold 类），
      * 使条件驱动的动画立即停止。只影响 GUI 预览状态，不影响实际玩家模型。

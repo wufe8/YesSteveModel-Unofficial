@@ -326,6 +326,14 @@ public class ClientEventHandler {
         RemotePlayerAnimationQueries.clear();
         RemotePlayerMotionStates.clear();
         NPCData.clear();
+        // 清理按玩家残留的动画状态机 / Molang 作用域 / 防滑步平滑倍速，
+        // 避免玩家登出后这些 (playerId, ...) 状态驻留到下次 reload。
+        if (event.player != null) {
+            java.util.UUID pid = event.player.getUniqueID();
+            com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.clearPlayer(pid);
+            com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.clearPlayer(pid);
+            com.fox.ysmu.client.animation.MovementSpeedMatcher.clearSmoothing(event.player);
+        }
     }
 
     private static boolean isVanillaPlayer(ResourceLocation modelId) {

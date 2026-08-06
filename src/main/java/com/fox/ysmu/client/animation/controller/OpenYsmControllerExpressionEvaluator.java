@@ -406,6 +406,11 @@ public final class OpenYsmControllerExpressionEvaluator {
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "expr:" + expression,
                 "Failed to evaluate OpenYSM controller expression: " + expression + " (" + e.getMessage() + ")");
+            // DEBUG_CONTROLLER 下打印完整堆栈，方便定位表达式求值的真实失败点
+            //（warnOnce 只警告一次，掩盖了每次触发的上下文）。
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                com.fox.ysmu.ysmu.LOG.debug("Failed to evaluate OpenYSM controller expression: {}", expression, e);
+            }
             return FALSE;
         }
     }

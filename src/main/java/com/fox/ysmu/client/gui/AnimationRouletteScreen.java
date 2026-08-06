@@ -562,11 +562,13 @@ public class AnimationRouletteScreen extends GuiScreen {
      *  Evaluates the expression through the Molang parser so that values like
      *  {@code "v.roaming.bq_eye+1"} work correctly (OpenYSM spec allows
      *  expressions, not just simple variable names, in {@code radio} form values). */
-    private static double getMolangVar(String expression) {
+    private double getMolangVar(String expression) {
         if (StringUtils.isBlank(expression)) return 0;
-        // Inject PENDING_ROAMING into the Molang parser so expressions like
-        // "v.roaming.bq_eye+1" resolve "v.roaming.bq_eye" correctly.
-        for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
+        // 只注入当前轮盘所属模型作用域的 roaming 值（而非全局 PENDING_ROAMING），
+        // 避免 GUI read-back 显示其它模型设置的同名变量值（跨模型串值）。
+        java.util.Map<String, Double> modelRoaming =
+            OpenYsmPlayerControllerRuntime.getRoamingVarsForModel(this.currentMainId);
+        for (java.util.Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
             String key = "v." + entry.getKey();
             software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
                 .computeIfAbsent(key, k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0))
@@ -595,7 +597,7 @@ public class AnimationRouletteScreen extends GuiScreen {
             String varName = expression.contains("=")
                 ? expression.substring(0, expression.indexOf('=')).trim() : expression.trim();
             String roamingName = varName.startsWith("v.") ? varName.substring(2) : varName;
-            Double v = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(roamingName);
+            Double v = modelRoaming.get(roamingName);
             return v != null ? v : 0;
         }
     }
@@ -606,7 +608,7 @@ public class AnimationRouletteScreen extends GuiScreen {
      *  Endfield_Rossi's 体型预设, whose labels assign several variables at once),
      *  derive the selection by matching each label's assignment expression
      *  against the current roaming variable state. */
-    private static int getSelectedRadioIndex(ConfigForm form) {
+    private int getSelectedRadioIndex(ConfigForm form) {
         if (StringUtils.isNotBlank(form.defaultValue)) {
             double curVal = getMolangVar(form.defaultValue);
             int idx = (int) Math.round(curVal);
@@ -628,7 +630,7 @@ public class AnimationRouletteScreen extends GuiScreen {
     /** Checks whether a semicolon-separated assignment expression (e.g.
      *  "v.CBody=-2;v.CHead=2") matches the current roaming variable values.
      *  Used to derive the selected index of a radio with a blank `value`. */
-    private static boolean expressionMatchesCurrent(String expression) {
+    private boolean expressionMatchesCurrent(String expression) {
         if (StringUtils.isBlank(expression)) {
             return false;
         }

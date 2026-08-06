@@ -147,6 +147,21 @@ public final class MolangPhysicsRuntime {
         OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
     }
 
+    /** 清理指定玩家的全部 ScopeState（玩家登出时调用），避免断线后
+     *  (player, model) 组合的物理/变量状态残留到下次 reload。 */
+    public static void clearPlayer(UUID playerId) {
+        if (playerId == null) {
+            return;
+        }
+        java.util.Iterator<Map.Entry<ScopeKey, ScopeState>> it = STATES.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<ScopeKey, ScopeState> e = it.next();
+            if (playerId.equals(e.getKey().playerId)) {
+                it.remove();
+            }
+        }
+    }
+
     public static double firstOrder(int nameId, double input, double response) {
         if (nameId == MolangStringPool.EMPTY_ID) {
             return 0.0D;
