@@ -51,6 +51,9 @@ public class AnimationRouletteScreen extends GuiScreen {
     private boolean draggingPreview = false;
     private int previewDragStartX;
     private float previewYawDeg = 25f; // 3/4 view default
+    /** 当前轮盘所属的模型 mainId（initGui 时从玩家 EEP 读取），
+     *  用于 roaming 变量显式标记的模型维度（避免同名变量跨模型串值）。 */
+    private ResourceLocation currentMainId;
 
     @Override
     public void initGui() {
@@ -62,6 +65,7 @@ public class AnimationRouletteScreen extends GuiScreen {
             if (eep != null) {
                 ResourceLocation modelId = eep.getModelId();
                 ResourceLocation mainId = ModelIdUtil.getMainId(modelId);
+                this.currentMainId = mainId;
                 ExtraWheelData wheelData = ClientModelManager.EXTRA_WHEEL.get(mainId);
                 if (wheelData != null && !wheelData.entries.isEmpty()) {
                     this.currentEntries = wheelData.entries;
@@ -519,7 +523,7 @@ public class AnimationRouletteScreen extends GuiScreen {
      * prefix stripped (e.g. "roaming.ef" not "v.roaming.ef").
      * Supports "v.name=value" (assignment) and "v.name" (toggle 0↔1).
      */
-    private static void setMolangVar(String expression) {
+    private void setMolangVar(String expression) {
         if (StringUtils.isBlank(expression)) return;
         expression = expression.trim();
         String varName;
@@ -546,7 +550,9 @@ public class AnimationRouletteScreen extends GuiScreen {
             .getOrDefault(roamingName, 0.0);
         double newValue = Double.isNaN(value) ? (oldValue > 0 ? 0 : 1) : value;
         OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(roamingName, newValue);
-        OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.add(roamingName);
+        // 按当前轮盘所属模型标记显式设置，避免模型 A 的设置串到模型 B
+        // （B 的 `v.X ?? 默认` 或 step2/step3 过滤会据此判断）。
+        OpenYsmPlayerControllerRuntime.markRoamingExplicit(this.currentMainId, roamingName);
         if (Config.DEBUG_WHEEL) {
             ysmu.LOG.info("[YSMU-ROAM] set '{}' = {} (was {}, from '{}')", roamingName, newValue, oldValue, expression);
         }

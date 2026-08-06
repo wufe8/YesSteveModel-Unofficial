@@ -315,7 +315,13 @@ public class MolangParser extends MathBuilder {
                     boolean userSet = false;
                     String lookupName = leftExpr.startsWith("v.") ? leftExpr.substring(2) : leftExpr;
                     if (com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.containsKey(leftExpr)) {
-                        userSet = com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.contains(lookupName);
+                        // 按"当前渲染模型"判断用户显式设置，避免模型 A 设置的变量
+                        // 让模型 B 的 `v.X ?? 默认` 误判为 userSet（跨模型污染）。
+                        // 无模型上下文时回退为全局显式标记判定。
+                        userSet = com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                            .isRoamingExplicit(
+                                com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.getCurrentModelId(),
+                                lookupName);
                     }
                     double result = userSet ? l : (l != 0 ? l : r);
                     return result;

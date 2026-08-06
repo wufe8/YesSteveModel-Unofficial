@@ -131,7 +131,7 @@ public final class MolangPhysicsRuntime {
             timeDelta = (float) ((renderTicks - prevRenderTicks) / 20.0);
         }
         prevRenderTicks = renderTicks;
-        currentFrameContext = new FrameContext(state, processor);
+        currentFrameContext = new FrameContext(modelId, state, processor);
     }
 
     public static void end() {
@@ -317,13 +317,22 @@ public final class MolangPhysicsRuntime {
     }
 
     private static final class FrameContext {
+        private final ResourceLocation modelId;
         private final ScopeState state;
         private final AnimationProcessor<?> processor;
 
-        private FrameContext(ScopeState state, AnimationProcessor<?> processor) {
+        private FrameContext(ResourceLocation modelId, ScopeState state, AnimationProcessor<?> processor) {
+            this.modelId = modelId;
             this.state = state;
             this.processor = processor;
         }
+    }
+
+    /** 当前渲染帧所属的模型 id（null 表示无活动帧上下文）。供 ?? 运算符等
+     *  需要按模型判断"用户显式设置"的场景使用。 */
+    public static ResourceLocation getCurrentModelId() {
+        FrameContext context = currentFrameContext;
+        return context == null ? null : context.modelId;
     }
 
     private static final class ScopeState {

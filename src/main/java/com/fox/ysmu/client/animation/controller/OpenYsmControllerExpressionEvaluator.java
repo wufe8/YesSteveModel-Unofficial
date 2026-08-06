@@ -18,6 +18,7 @@ import org.apache.commons.lang3.StringUtils;
 import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
 import com.fox.ysmu.client.animation.condition.InnerClassify;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
+import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
@@ -444,7 +445,11 @@ public final class OpenYsmControllerExpressionEvaluator {
                 // tryApplyController() 的注入循环用陈旧值覆盖刚设的值
                 if (varName.startsWith("roaming.")) {
                     OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(varName, value);
-                    OpenYsmPlayerControllerRuntime.EXPLICIT_ROAMING.add(varName);
+                    // 按当前模型标记显式设置，避免同名变量跨模型串值
+                    // （模型 A 的 onEntry 设置 v.roaming.X 不应让模型 B 的
+                    // v.X ?? 默认 误判为 userSet 或 overlay 到 B）。
+                    OpenYsmPlayerControllerRuntime.markRoamingExplicit(
+                        currentModelId(context), varName);
                 }
             }
         }
@@ -477,6 +482,19 @@ public final class OpenYsmControllerExpressionEvaluator {
             }
         }
         return -1;
+    }
+
+    /** 当前求值上下文所属的模型 id（用于 roaming 显式标记的模型维度）；
+     *  拿不到（event/animatable 缺失或非玩家实体）时返回 null，退化为全局标记。 */
+    private static net.minecraft.util.ResourceLocation currentModelId(Context ctx) {
+        if (ctx == null || ctx.event == null || ctx.event.getAnimatable() == null) {
+            return null;
+        }
+        Object animatable = ctx.event.getAnimatable();
+        if (animatable instanceof CustomPlayerEntity) {
+            return ((CustomPlayerEntity) animatable).getAnimation();
+        }
+        return null;
     }
     /**
      * Static helper for debug queries — evaluates a ctrl.* state using only

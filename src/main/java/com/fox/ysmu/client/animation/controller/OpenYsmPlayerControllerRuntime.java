@@ -64,8 +64,45 @@ public final class OpenYsmPlayerControllerRuntime {
     public static final Map<String, Double> PENDING_ROAMING = new ConcurrentHashMap<>();
     /** Tracks which PENDING_ROAMING keys were explicitly set by user interaction
      *  (not just default-initialized). Used by the ?? operator to distinguish
-     *  "user set to 0" from "never set (defaults to 0)". */
+     *  "user set to 0" from "never set (defaults to 0)".
+     *  NOTE: 全局集合仅用于"无模型上下文"写入的兜底（见 markRoamingExplicit）。
+     *  正常路径应使用 {@link #markRoamingExplicit}/{@link #isRoamingExplicit}
+     *  按模型维度读写，避免模型 A 的显式设置泄漏到模型 B。 */
     public static final java.util.Set<String> EXPLICIT_ROAMING = java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /**
+     * 显式设置的 roaming 变量按模型隔离：modelId → set of varName（不含 v. 前缀）。
+     * 用户通过轮盘 GUI 或在控制器 onEntry/onExit 表达式中设置 v.roaming.* 时，
+     * 只标记该变量属于当前操作的模型，避免同名但含义不同的自定义变量跨模型串值。
+     */
+    private static final Map<ResourceLocation, java.util.Set<String>> EXPLICIT_ROAMING_BY_MODEL =
+        new ConcurrentHashMap<>();
+
+    /**
+     * 标记某模型的 roaming 变量为"用户显式设置"。modelId 为 null 时退化为
+     * 全局标记（写入方拿不到模型上下文的兜底，对所有模型生效）。
+     */
+    public static void markRoamingExplicit(ResourceLocation modelId, String varName) {
+        if (modelId != null) {
+            EXPLICIT_ROAMING_BY_MODEL.computeIfAbsent(modelId,
+                k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()))
+                .add(varName);
+        } else {
+            EXPLICIT_ROAMING.add(varName);
+        }
+    }
+
+    /** 判断某变量是否在指定模型上被显式设置。全局标记（无模型上下文写入）对所有模型生效。 */
+    public static boolean isRoamingExplicit(ResourceLocation modelId, String varName) {
+        if (EXPLICIT_ROAMING.contains(varName)) {
+            return true;
+        }
+        if (modelId != null) {
+            java.util.Set<String> set = EXPLICIT_ROAMING_BY_MODEL.get(modelId);
+            return set != null && set.contains(varName);
+        }
+        return false;
+    }
 
     /**
      * Tracks which roaming variable names each model has registered via its
@@ -152,12 +189,14 @@ public final class OpenYsmPlayerControllerRuntime {
         result.putAll(defaults);
 
         // 2. Overlay with explicitly user-set values from PENDING_ROAMING.
-        //    Only vars in EXPLICIT_ROAMING are overlaid — initial defaults
-        //    set by registerExtraWheel() are NOT in EXPLICIT_ROAMING, so
-        //    they stay per-model.
+        //    Only vars explicitly marked for THIS model are overlaid — initial
+        //    defaults set by registerExtraWheel() are NOT in EXPLICIT_ROAMING,
+        //    so they stay per-model.  Using isRoamingExplicit(modelId, ...)
+        //    keeps model A's user-set values from leaking into model B even
+        //    when both models happen to use the same variable name.
         for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
             String key = entry.getKey();
-            boolean inExplicit = EXPLICIT_ROAMING.contains(key);
+            boolean inExplicit = isRoamingExplicit(modelId, key);
             // Global vars that are not model-specific
             boolean isGlobal = "lock_wheel".equals(key) || "wheel_anim".equals(key);
             if (inExplicit || isGlobal) {
@@ -168,10 +207,13 @@ public final class OpenYsmPlayerControllerRuntime {
         // 3. For models with no registered vars, also include any PENDING_ROAMING
         //    entries that are explicitly set but not known to any registered model
         //    (e.g. runtime-registered vars from radio button expressions).
+        //    isKnownToAnyModel() guard: only truly unregistered vars leak through
+        //    here — a var that belongs to model A (registered via its forms) must
+        //    NOT be injected into a model B that has no registered vars.
         if (knownVars == null || knownVars.isEmpty()) {
             for (Map.Entry<String, Double> entry : PENDING_ROAMING.entrySet()) {
                 String key = entry.getKey();
-                if (EXPLICIT_ROAMING.contains(key)) {
+                if (isRoamingExplicit(modelId, key) && !isKnownToAnyModel(key)) {
                     result.put(key, entry.getValue());
                 }
             }
@@ -180,10 +222,21 @@ public final class OpenYsmPlayerControllerRuntime {
         return result;
     }
 
+    /** 判断变量名是否已注册到任何模型（MODEL_ROAMING_VARS）。 */
+    private static boolean isKnownToAnyModel(String varName) {
+        for (java.util.Set<String> vars : MODEL_ROAMING_VARS.values()) {
+            if (vars.contains(varName)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     /** Clears the per-model roaming variable tracking (called during cache reset). */
     public static void clearModelRoamingVars() {
         MODEL_ROAMING_VARS.clear();
         MODEL_ROAMING_DEFAULTS.clear();
+        EXPLICIT_ROAMING_BY_MODEL.clear();
     }
 
     private OpenYsmPlayerControllerRuntime() {}
