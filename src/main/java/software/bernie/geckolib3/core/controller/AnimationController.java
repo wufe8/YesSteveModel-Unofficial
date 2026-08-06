@@ -207,6 +207,12 @@ public class AnimationController<T extends IAnimatable> {
     private double lastActualTick = -1;
     /** anim_time_update 表达式解析缓存（按表达式文本，全局共享）。 */
     private static final ConcurrentHashMap<String, MolangExpression> ANIM_TIME_UPDATE_CACHE = new ConcurrentHashMap<>();
+
+    /** 清理 anim_time_update 表达式解析缓存（模型重载/资源清空时调用），
+     *  避免模型反复重载后按表达式文本累积的解析结果无限增长。 */
+    public static void clearAnimTimeUpdateCache() {
+        ANIM_TIME_UPDATE_CACHE.clear();
+    }
     private final Set<EventKeyFrame<?>> executedKeyFrames = new HashSet<>();
 
     /**
@@ -800,6 +806,11 @@ public class AnimationController<T extends IAnimatable> {
             } catch (Exception ignored) {
                 // 表达式出错：回退到默认时间推进
             }
+        } else {
+            // 非 anim_time_update 动画：query.delta_time 固定为 1 tick（1/20 秒）。
+            // 否则会残留上一个 anim_time_update 动画设置的真实增量值，导致
+            // 普通动画关键帧 Molang 引用 query.delta_time 时读到陈旧/跨动画的值。
+            parser.setValue("query.delta_time", 1.0 / 20.0);
         }
         // Animation has ended
         if (tick >= currentAnimation.animationLength) {

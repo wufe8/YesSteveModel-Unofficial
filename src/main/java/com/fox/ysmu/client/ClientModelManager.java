@@ -1812,6 +1812,10 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.clearModelRoamingVars();
         MolangPhysicsRuntime.clear();
         MolangInstructionExecutor.clearWarnings();
+        // 清空按表达式文本累积的解析缓存（anim_time_update / 控制器条件表达式），
+        // 避免模型反复重载后无限增长。
+        software.bernie.geckolib3.core.controller.AnimationController.clearAnimTimeUpdateCache();
+        com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator.clearCompiledCache();
         SYNC_TOTAL = -1;
         SYNC_LOADED = 0;
         SYNC_FAILED = 0;

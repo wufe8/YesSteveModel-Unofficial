@@ -35,6 +35,12 @@ public final class OpenYsmControllerExpressionEvaluator {
     private static final java.util.concurrent.ConcurrentHashMap<String, CompiledExpr> COMPILED_CACHE =
         new java.util.concurrent.ConcurrentHashMap<>();
 
+    /** 清理编译表达式缓存（模型重载/资源清空时调用），避免按表达式文本累积的
+     *  解析结果在长时间运行/反复重载后无限增长。 */
+    public static void clearCompiledCache() {
+        COMPILED_CACHE.clear();
+    }
+
     /**
      * 各控制器最近一次在条件求值中评估 any/all_animations_finished 的真实结果。
      * key = "<geckoControllerName>|<querySuffix>"，
