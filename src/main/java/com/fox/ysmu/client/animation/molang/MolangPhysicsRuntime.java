@@ -55,32 +55,12 @@ public final class MolangPhysicsRuntime {
         // PENDING_ROAMING prevents cross-model variable contamination.
         Map<String, Double> modelRoaming = OpenYsmPlayerControllerRuntime.getRoamingVarsForModel(modelId);
         if (!modelRoaming.isEmpty()) {
+            // 注入 v. 前缀 + 原 case + 小写 + 去 "roaming." 前缀的裸名，使
+            // ScopedMolangVariable（关键帧 Molang）能按多种写法命中同一变量；
+            // 否则裸名引用（如 v.bq_eye）会因只存了 v.roaming.bq_eye 而读到 0。
             for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
-                String prefixedKey = "v." + entry.getKey();
-                state.variables.put(prefixedKey, entry.getValue());
-                String lcKey = "v." + entry.getKey().toLowerCase(java.util.Locale.ROOT);
-                if (!lcKey.equals(prefixedKey)) {
-                    state.variables.put(lcKey, entry.getValue());
-                }
-                // Also inject with the "roaming." prefix stripped so that
-                // bone keyframes referencing the plain variable (e.g. v.bq_eye)
-                // can find the value through ScopedMolangVariable →
-                // MolangPhysicsRuntime.getVariable().  ScopedMolangVariable.get()
-                // ONLY checks state.variables (via MolangPhysicsRuntime), NOT
-                // MolangParser.VARIABLES, so without this injection the value
-                // always falls back to 0.0 and expression wheel has no effect.
-                // The raw roaming value (preset index) is injected as a fallback;
-                // if a timeline instruction computes a derived blend factor,
-                // it overrides this value when it fires (sameAnim re-execution).
-                String rawKey = entry.getKey();
-                if (rawKey.startsWith("roaming.")) {
-                    String plainKey = "v." + rawKey.substring("roaming.".length());
-                    state.variables.put(plainKey, entry.getValue());
-                    String lcPlainKey = plainKey.toLowerCase(java.util.Locale.ROOT);
-                    if (!lcPlainKey.equals(plainKey)) {
-                        state.variables.put(lcPlainKey, entry.getValue());
-                    }
-                }
+                OpenYsmPlayerControllerRuntime.injectRoamingVar(state.variables, "v.",
+                    entry.getKey(), entry.getValue());
             }
             // car_stuff@player_ctrl_parallel_6.molang:
             //   v.show_car=v.roaming.car && !(ctrl.tac_hold_gun||...)

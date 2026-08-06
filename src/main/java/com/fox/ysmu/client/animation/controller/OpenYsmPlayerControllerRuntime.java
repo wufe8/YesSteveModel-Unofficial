@@ -104,6 +104,26 @@ public final class OpenYsmPlayerControllerRuntime {
         return false;
     }
 
+    /** 把 roaming 变量注入目标 map：原 case + 小写 +（roaming. 前缀剥离后的）裸名 + 裸名小写，
+     *  使控制器条件（RuntimeState，keyPrefix=""）与关键帧 Molang（ScopeState，keyPrefix="v."）
+     *  都能按多种写法命中同一变量。两处注入逻辑唯一实现，避免重复漂移。 */
+    public static void injectRoamingVar(java.util.Map<String, Double> target, String keyPrefix,
+        String varName, double value) {
+        target.put(keyPrefix + varName, value);
+        String lc = varName.toLowerCase(java.util.Locale.ROOT);
+        if (!lc.equals(varName)) {
+            target.put(keyPrefix + lc, value);
+        }
+        if (varName.startsWith("roaming.")) {
+            String plain = varName.substring("roaming.".length());
+            target.put(keyPrefix + plain, value);
+            String lcPlain = plain.toLowerCase(java.util.Locale.ROOT);
+            if (!lcPlain.equals(plain)) {
+                target.put(keyPrefix + lcPlain, value);
+            }
+        }
+    }
+
     /**
      * Tracks which roaming variable names each model has registered via its
      * extraAnimationButtons config forms.  Used to filter PENDING_ROAMING
@@ -397,31 +417,14 @@ public final class OpenYsmPlayerControllerRuntime {
         // Inject roaming variables scoped to the current model only.
         // Using getRoamingVarsForModel() instead of directly iterating
         // PENDING_ROAMING prevents cross-model variable contamination.
-        // Inject both original case and lowercase for compatibility.
+        // injectRoamingVar covers original case + lowercase + the "roaming."
+        // prefix-stripped bare name (so controller conditions like
+        // "v.bq_eye<=0" can find the value via localVariableValue("bq_eye")
+        // even though the stored key is "roaming.bq_eye").
         Map<String, Double> modelRoaming = getRoamingVarsForModel(animationId);
         if (!modelRoaming.isEmpty()) {
             for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
-                runtimeState.variables.put(entry.getKey(), entry.getValue());
-                String lcKey = entry.getKey().toLowerCase(java.util.Locale.ROOT);
-                if (!lcKey.equals(entry.getKey())) {
-                    runtimeState.variables.put(lcKey, entry.getValue());
-                }
-                // Also inject with the "roaming." prefix stripped so that
-                // controller conditions like "v.bq_eye<=0" can find the value
-                // via localVariableValue("bq_eye"), which looks up the bare
-                // name (without "roaming.") in runtimeState.variables.
-                // Otherwise the condition always reads 0 (default) because
-                // the value is stored as "roaming.bq_eye" instead of "bq_eye",
-                // and the timeline instruction that computes v.bq_eye from
-                // v.roaming.bq_eye runs AFTER the condition evaluation.
-                if (entry.getKey().startsWith("roaming.")) {
-                    String plainKey = entry.getKey().substring("roaming.".length());
-                    runtimeState.variables.put(plainKey, entry.getValue());
-                    String lcPlainKey = plainKey.toLowerCase(java.util.Locale.ROOT);
-                    if (!lcPlainKey.equals(plainKey)) {
-                        runtimeState.variables.put(lcPlainKey, entry.getValue());
-                    }
-                }
+                injectRoamingVar(runtimeState.variables, "", entry.getKey(), entry.getValue());
             }
         }
         // Debug: log roaming variables relevant to pants/coat switching

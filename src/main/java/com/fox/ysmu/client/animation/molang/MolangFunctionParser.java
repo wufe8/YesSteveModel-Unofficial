@@ -94,6 +94,24 @@ public final class MolangFunctionParser {
         return true;
     }
 
+    /** 从 blockOpen 位置向前回溯，提取最近的 ctrl.<state> 中的 state 名；找不到/为空返回 null。 */
+    private static String extractCtrlStateName(String script, int blockOpen) {
+        String prefix = script.substring(0, blockOpen);
+        int lastCtrl = prefix.lastIndexOf("ctrl.");
+        if (lastCtrl < 0) {
+            return null;
+        }
+        String afterCtrl = prefix.substring(lastCtrl + 5);
+        StringBuilder stateName = new StringBuilder();
+        for (int i = 0; i < afterCtrl.length(); i++) {
+            char c = afterCtrl.charAt(i);
+            if (c == '(' || c == '?' || Character.isWhitespace(c)) break;
+            stateName.append(c);
+        }
+        String state = stateName.toString().trim();
+        return state.isEmpty() ? null : state;
+    }
+
     /** 在字符串中查找字符 ch，但跳过被单引号或双引号包裹的区域 */
     private static int indexOfSkipStrings(String s, char ch, int from) {
         for (int i = from; i < s.length(); i++) {
@@ -133,19 +151,8 @@ public final class MolangFunctionParser {
             searchFrom = blockEnd + 1;
             // 只提取纯 ctrl.<state> ? { 条件（state 名到 ? 之间只有空白）
             if (!isSimpleCtrlCondition(script, stateEnd, qmarkPos)) continue;
-            // 从 blockOpen 向前找到 state 名
-            String prefix = script.substring(0, blockOpen);
-            int lastCtrl = prefix.lastIndexOf("ctrl.");
-            if (lastCtrl < 0) continue;
-            String afterCtrl = prefix.substring(lastCtrl + 5);
-            StringBuilder stateName = new StringBuilder();
-            for (int i = 0; i < afterCtrl.length(); i++) {
-                char c = afterCtrl.charAt(i);
-                if (c == '(' || c == '?' || Character.isWhitespace(c)) break;
-                stateName.append(c);
-            }
-            String state = stateName.toString().trim();
-            if (state.isEmpty() || result.containsKey(state)) continue;
+            String state = extractCtrlStateName(script, blockOpen);
+            if (state == null || result.containsKey(state)) continue;
             // 在块内容中找到第一个 ctrl.set_animation('name')
             String blockContent = script.substring(blockOpen + 1, blockEnd);
             Matcher animMatcher = SET_ANIM_PATTERN.matcher(blockContent);
@@ -182,19 +189,8 @@ public final class MolangFunctionParser {
             int blockOpen = block[0];
             int blockEnd = block[1];
             searchFrom = blockEnd + 1;
-            // 从 blockOpen 向前找到 state 名
-            String prefix = script.substring(0, blockOpen);
-            int lastCtrl = prefix.lastIndexOf("ctrl.");
-            if (lastCtrl < 0) continue;
-            String afterCtrl = prefix.substring(lastCtrl + 5);
-            StringBuilder stateName = new StringBuilder();
-            for (int i = 0; i < afterCtrl.length(); i++) {
-                char c = afterCtrl.charAt(i);
-                if (c == '(' || c == '?' || Character.isWhitespace(c)) break;
-                stateName.append(c);
-            }
-            String state = stateName.toString().trim();
-            if (state.isEmpty()) continue;
+            String state = extractCtrlStateName(script, blockOpen);
+            if (state == null) continue;
             // 块内容
             String blockContent = script.substring(blockOpen + 1, blockEnd);
             // 在这个块中找所有条件守卫的 set_animation
