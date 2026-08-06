@@ -83,7 +83,6 @@ public class GeoBuilder implements IGeoBuilder {
         geoBone.inflate = rawBone.getInflate();
         geoBone.parent = parent;
         geoBone.setModelRendererName(rawBone.getName());
-        geoBone.isGlow = rawBone.getName() != null && rawBone.getName().startsWith("ysmGlow");
 
         geoBone.setRotationX((float) Math.toRadians(rotation.x));
         geoBone.setRotationY((float) Math.toRadians(rotation.y));

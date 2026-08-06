@@ -490,9 +490,11 @@ public final class RawYsmModelAdapter {
     /**
      * Sanitises geometry JSON in-place:
      * 1. Removes per-face UV entries where uv_size has a zero dimension.
-     * 2. Normalises negative cube sizes (BlockBench allows negative sizes to
-     *    indicate the cube extends from origin in the opposite direction;
-     *    GeckoLib's vertex winding assumes positive size).
+     * 2. Keeps negative cube sizes — they represent inside-out shell / glow-ring
+     *    geometry, not an "extends the opposite way" convention.
+     *    GeoCube.createFromPojoCube() normalises them at build time (abs size +
+     *    origin adjustment) and sets hasNegSize; the renderer uses CULL_FRONT
+     *    for the outline effect. This pass only counts them for debug logging.
      */
     private static void sanitizeGeometryJson(JsonObject root) {
         JsonElement geomElem = root.get("minecraft:geometry");
@@ -527,7 +529,7 @@ public final class RawYsmModelAdapter {
                     // and occlude the inner positive cube entirely.
                     // ── Count for debug logging ────────────────────────────────
                     JsonElement sizeElem = cube.get("size");
-                    boolean negSizeFixed = false;
+                    boolean hasNegSize = false;
                     if (sizeElem != null && sizeElem.isJsonArray()
                         && sizeElem.getAsJsonArray().size() >= 3) {
                         JsonArray sizeArr = sizeElem.getAsJsonArray();
@@ -535,10 +537,10 @@ public final class RawYsmModelAdapter {
                         double sy = sizeArr.get(1).getAsDouble();
                         double sz = sizeArr.get(2).getAsDouble();
                         if (sx < 0 || sy < 0 || sz < 0) {
-                            negSizeFixed = true;
+                            hasNegSize = true;
                         }
                     }
-                    if (negSizeFixed) totalNegSizeCubes++;
+                    if (hasNegSize) totalNegSizeCubes++;
 
                     // ── Remove zero-size UV faces ──────────────────────────────
                     JsonElement uvElem = cube.get("uv");
@@ -572,7 +574,7 @@ public final class RawYsmModelAdapter {
                     totalRemovedFaces, totalFaces);
             }
             if (totalNegSizeCubes > 0) {
-                ysmu.LOG.info("[YSMU-MODEL] sanitizeGeometryJson: normalised {} negative-size cubes",
+                ysmu.LOG.info("[YSMU-MODEL] sanitizeGeometryJson: kept {} negative-size cubes (hasNegSize)",
                     totalNegSizeCubes);
             }
         }

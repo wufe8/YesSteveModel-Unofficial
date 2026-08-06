@@ -236,8 +236,6 @@ public final class RenderUtil {
                             // renderer.render() re-enables culling — turn it back off for
                             // subsequent renders (extra entity, ground) in the Z-flipped matrix.
                             GL11.glDisable(GL11.GL_CULL_FACE);
-                            // Render ride/boat vehicle entities on top
-                            renderExtraEntity(yaw, player, entity, dispatcher);
                             // Render ground INSIDE the animation-adjustment matrix so it inherits
                             // animation-specific offsets (sit -0.5, ride +0.85, etc.) and stays
                             // at the model's feet level regardless of animation type.
@@ -321,10 +319,6 @@ public final class RenderUtil {
         GlStateManager.popMatrix();
     }
 
-    // Placeholder for ride/boat vehicle entity rendering (not yet implemented).
-    private static void renderExtraEntity(float yaw, EntityPlayer player, CustomPlayerEntity playerEntity,
-        RenderManager dispatcher) {}
-
     public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, Consumer<CustomPlayerEntity> consumer) {
         if (player == null) {
@@ -358,13 +352,8 @@ public final class RenderUtil {
         });
     }
 
-    public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
-        ResourceLocation modelId, ResourceLocation textureId, boolean disablePreviewRotation) {
-        renderEntityInInventory(pPosX, pPosY, pScale, player, modelId, textureId, entity -> {
-            // Keep preview animation if set (don't clear)
-        }, disablePreviewRotation);
-    }
-
+    /** 带预览旋转开关的完整版：disablePreviewRotation=true 时固定正面视角
+     *  （renderModel 内通过 yOffset/不旋转实现），ModelButton 预览页使用。 */
     public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, Consumer<CustomPlayerEntity> consumer,
         boolean disablePreviewRotation) {
