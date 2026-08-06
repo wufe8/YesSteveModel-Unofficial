@@ -35,14 +35,14 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome|debug|sync> [args]";
+        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome|debug|sync|help> [args] (type /ysm help for details)";
     }
 
     @Override
     public List addTabCompletionOptions(ICommandSender sender, String[] args) {
         if (args.length == 1) {
             return getListOfStringsMatchingLastWord(args,
-                "reload", "play", "playsound", "setgamepath", "buffer", "welcome", "debug", "sync");
+                "reload", "play", "playsound", "setgamepath", "buffer", "welcome", "debug", "sync", "help");
         }
         if (args.length == 2) {
             if ("welcome".equalsIgnoreCase(args[0])) {
@@ -93,6 +93,11 @@ public class YsmCommand extends CommandBase {
         if (args.length < 1) {
             throw new WrongUsageException(getCommandUsage(sender));
         }
+        // help 对所有玩家可用，在权限检查之前处理。
+        if ("help".equalsIgnoreCase(args[0])) {
+            processHelp(sender, args);
+            return;
+        }
         // setgamepath, welcome, and buffer are allowed for all players (client-side only).
         // Other subcommands (play, reload, debug) require the default permission level.
         // TODO: add @p/@a/@r target selector support for debug and play subcommands.
@@ -126,13 +131,52 @@ public class YsmCommand extends CommandBase {
         StopWatch watch = new StopWatch();
         watch.start();
         com.fox.ysmu.ysmu.LOG.info("YSM reload command started by {}", sender.getCommandSenderName());
-        checkModelFiles(sender, CUSTOM);
+        int skipped = checkModelFiles(sender, CUSTOM);
         ServerModelManager.reloadPacks();
         ServerModelManager.sendRequestSyncModelMessage(sender.getEntityWorld().playerEntities);
         watch.stop();
         com.fox.ysmu.ysmu.LOG.info("YSM reload command finished in {}ms, players notified: {}",
             watch.getTime(), sender.getEntityWorld().playerEntities.size());
-        sender.addChatMessage(new ChatComponentTranslation("message.yes_steve_model.model.reload.info", watch.getTime()));
+        sender.addChatMessage(new ChatComponentTranslation(
+            "message.yes_steve_model.model.reload.info", watch.getTime(), skipped));
+    }
+
+    /** 游戏内指令帮助：/ysm help [subcommand]。无参数列出全部子命令，带参数显示详情。
+     *  服务端命令只能用翻译键输出（服务端无法判断客户端语言）。 */
+    private void processHelp(ICommandSender sender, String[] args) {
+        if (args.length >= 2) {
+            String sub = args[1].toLowerCase(java.util.Locale.ROOT);
+            boolean found = "reload".equals(sub) || "play".equals(sub) || "playsound".equals(sub)
+                || "buffer".equals(sub) || "setgamepath".equals(sub) || "welcome".equals(sub)
+                || "sync".equals(sub) || "debug".equals(sub) || "ysmlocal".equals(sub);
+            if (!found) {
+                sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.unknown", sub));
+                return;
+            }
+            sender.addChatMessage(new ChatComponentTranslation(
+                "commands.yes_steve_model.help.detail.title", sub));
+            sender.addChatMessage(new ChatComponentTranslation(
+                "commands.yes_steve_model.help.detail." + sub + ".usage"));
+            sender.addChatMessage(new ChatComponentTranslation(
+                "commands.yes_steve_model.help.detail." + sub + ".desc"));
+            return;
+        }
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.title"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.reload"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.play"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.playsound"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.buffer"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.setgamepath"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.welcome"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.sync"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.debug"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.ysmlocal"));
+        // 关闭进服 welcome 引导的提示：整行可点击，执行 /ysm welcome off。
+        net.minecraft.util.ChatComponentTranslation off = new net.minecraft.util.ChatComponentTranslation(
+            "commands.yes_steve_model.help.welcome_off");
+        off.getChatStyle().setChatClickEvent(new net.minecraft.event.ClickEvent(
+            net.minecraft.event.ClickEvent.Action.RUN_COMMAND, "/ysm welcome off"));
+        sender.addChatMessage(off);
     }
 
     private void processPlay(ICommandSender sender, String[] args) {
@@ -351,8 +395,12 @@ public class YsmCommand extends CommandBase {
         }
     }
 
-    private void checkModelFiles(ICommandSender sender, Path rootPath) {
+    /** 检查自定义模型文件夹结构；对每个不完整（缺 main.json/arm.json/材质）的文件夹
+     *  报告具体错误，并返回「跳过」的文件夹数量（结构不完整、无法加载的模型数）。
+     *  材质名不合法只告警不计数（模型仍可加载）。 */
+    private int checkModelFiles(ICommandSender sender, Path rootPath) {
         Collection<File> dirs = FileUtils.listFiles(rootPath.toFile(), DirectoryFileFilter.INSTANCE, null);
+        int skipped = 0;
         for (File dir : dirs) {
             String dirName = dir.getName();
             boolean noMainModelFile = true;
@@ -386,7 +434,11 @@ public class YsmCommand extends CommandBase {
             if (noTextureFile) {
                 sender.addChatMessage(new ChatComponentTranslation("message.yes_steve_model.model.reload.error.no_texture_file", dirName));
             }
+            if (noMainModelFile || noArmModelFile || noTextureFile) {
+                skipped++;
+            }
         }
+        return skipped;
     }
 
     private static boolean isNotBlankFile(File file) {

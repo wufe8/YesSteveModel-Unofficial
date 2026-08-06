@@ -33,14 +33,13 @@ public class CommonEventHandler {
     public static void onPlayerLoggedIn(cpw.mods.fml.common.gameevent.PlayerEvent.PlayerLoggedInEvent event) {
         if (event.player != null) {
             requestModelSync(event.player);
-            // Report the server-side model cache rebuild time on world join, reusing the
-            // same localized message as /ysm reload. The rebuild happens at server start
-            // (preInit) or on /ysm reload — not per-login — so this just reports the last
-            // completed rebuild; 0 means no rebuild finished yet (skip).
+            // Report the server-side model cache rebuild time on world join.
+            // Distinct from /ysm reload's message (which also reports skipped folders)
+            // because this one only has the rebuild duration, not a skip count.
             long loadTimeMs = ServerModelManager.LAST_LOAD_TIME_MS;
             if (loadTimeMs > 0) {
                 event.player.addChatMessage(new net.minecraft.util.ChatComponentTranslation(
-                    "message.yes_steve_model.model.reload.info", loadTimeMs));
+                    "message.yes_steve_model.model.reload.ready", loadTimeMs));
             }
         }
     }

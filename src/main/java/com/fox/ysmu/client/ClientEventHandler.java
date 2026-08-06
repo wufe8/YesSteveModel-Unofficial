@@ -131,18 +131,19 @@ public class ClientEventHandler {
                 mc.thePlayer.addChatMessage(new net.minecraft.util.ChatComponentTranslation(
                     "commands.yes_steve_model.welcome.sound_hint"));
             }
-            // Disable hint with clickable [Click Here] — runs /ysm welcome off
-            net.minecraft.util.ChatComponentText disableMsg = new net.minecraft.util.ChatComponentText(
-                net.minecraft.util.EnumChatFormatting.GRAY + (isChinese ? "您可以点击 " : "Click ") +
+            // Guide players to the in-game command help (/ysm help); how to disable
+            // the welcome message itself is described inside the help output.
+            net.minecraft.util.ChatComponentText helpMsg = new net.minecraft.util.ChatComponentText(
+                net.minecraft.util.EnumChatFormatting.GRAY + (isChinese ? "点击 " : "Click ") +
                 net.minecraft.util.EnumChatFormatting.GREEN + "" + net.minecraft.util.EnumChatFormatting.UNDERLINE +
-                (isChinese ? "[关闭此消息]" : "[Disable]") +
+                (isChinese ? "[点击这里]" : "[here]") +
                 net.minecraft.util.EnumChatFormatting.RESET + "" + net.minecraft.util.EnumChatFormatting.GRAY +
-                (isChinese ? " 关闭欢迎消息，或输入 " : " to disable the welcome message, or type ") +
-                net.minecraft.util.EnumChatFormatting.YELLOW + "/ysm welcome off" +
-                net.minecraft.util.EnumChatFormatting.GRAY + (isChinese ? "。" : "."));
-            disableMsg.getChatStyle().setChatClickEvent(new net.minecraft.event.ClickEvent(
-                net.minecraft.event.ClickEvent.Action.RUN_COMMAND, "/ysm welcome off"));
-            mc.thePlayer.addChatMessage(disableMsg);
+                (isChinese ? " 或者输入 " : " or type ") +
+                net.minecraft.util.EnumChatFormatting.YELLOW + "/ysm help" +
+                net.minecraft.util.EnumChatFormatting.GRAY + (isChinese ? " 查看全部指令。" : " to see all commands."));
+            helpMsg.getChatStyle().setChatClickEvent(new net.minecraft.event.ClickEvent(
+                net.minecraft.event.ClickEvent.Action.RUN_COMMAND, "/ysm help"));
+            mc.thePlayer.addChatMessage(helpMsg);
         }
     }
 
