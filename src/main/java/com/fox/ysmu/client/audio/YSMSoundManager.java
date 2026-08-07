@@ -42,6 +42,8 @@ public final class YSMSoundManager {
     /** Lazily cached SoundSystem reflection handle */
     private static Object sndSystem = null;
     private static boolean sndSystemSearched = false;
+    /** Lazily cached setPosition reflection handle (per-tick position updates). */
+    private static java.lang.reflect.Method sndSetPosition = null;
     /**
      * 防抖：同一 controller+sound 在短时间内的重复触发将被忽略。
      * 当动画子条件变化（如站立→奔跑导致 sword_attack_01 切换到 sword_attack_run1）
@@ -198,7 +200,7 @@ public final class YSMSoundManager {
             if (Config.DEBUG_SOUND) {
                 ysmu.LOG.info("[YSMU-SOUND] local asset: '{}' → {}", soundName, localOgg);
             }
-            playOggDirect(localOgg, volume, pitch);
+            playOggDirect(localOgg, soundName, volume, pitch);
             return;
         }
 
@@ -299,6 +301,38 @@ public final class YSMSoundManager {
         CONTROLLER_SOUNDS.clear();
     }
 
+    /**
+     * 把活跃音源的位置更新到玩家当前坐标（每 tick 由 ClientEventHandler 调用）。
+     * OpenAL 的 panning 基于音源相对听者的方位：若音源固定在播放时刻的位置而听者
+     * 移动，左右平移会立即造成左右声道跳变/混叠。把音源绑定在玩家身上后相对方位
+     * 恒定在正前方，panning 保持中央（第一人称自身音效语义上也正确）。
+     * 成本：活跃源数 × 1 次反射 setPosition，活跃源通常只有几个，可忽略。
+     */
+    public static void updateSourcePositions() {
+        if (ACTIVE_SOURCES.isEmpty()) return;
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc == null || mc.thePlayer == null) return;
+        Object ss = resolveSndSystem();
+        if (ss == null) return;
+        if (sndSetPosition == null) {
+            try {
+                sndSetPosition = ss.getClass().getMethod(
+                    "setPosition", String.class, float.class, float.class, float.class);
+            } catch (NoSuchMethodException e) {
+                ysmu.LOG.warn("[YSMU-SOUND] setPosition not available");
+                return;
+            }
+        }
+        float px = (float) mc.thePlayer.posX;
+        float py = (float) mc.thePlayer.posY;
+        float pz = (float) mc.thePlayer.posZ;
+        for (String src : ACTIVE_SOURCES.values()) {
+            try {
+                sndSetPosition.invoke(ss, src, px, py, pz);
+            } catch (Exception ignored) {}
+        }
+    }
+
     /** Returns an unmodifiable view of all registered sounds (name → in-memory OGG bytes). */
     public static Map<String, byte[]> getSoundFiles() {
         return java.util.Collections.unmodifiableMap(SOUND_FILES);
@@ -355,6 +389,7 @@ public final class YSMSoundManager {
         SOUND_FILES.clear();
         sndSystem = null;
         sndSystemSearched = false;
+        sndSetPosition = null;
     }
 
     // ── Internal ──────────────────────────────────────────
@@ -466,8 +501,11 @@ public final class YSMSoundManager {
             && vorbis[3] == 'b' && vorbis[4] == 'i' && vorbis[5] == 's';
     }
 
-    /** 通过 SoundSystem 直接播放 OGG */
-    private static void playOggDirect(Path oggPath, float volume, float pitch) {
+    /** 通过 SoundSystem 直接播放 OGG（本地高版本游戏资产路径）。
+     *  与内存字节版（playOggDirect(byte[],...)）一致：播放前停止旧同名源，
+     *  播放后把 soundName→srcName 记入 ACTIVE_SOURCES，使 stopSound/
+     *  stopController/stopAll 能追踪并停止这些音效，避免每次播放泄漏音源。 */
+    private static void playOggDirect(Path oggPath, String soundName, float volume, float pitch) {
         Object ss = resolveSndSystem();
         if (ss == null) return;
         // Skip invalid OGG files – passing them to CodecJOrbis can freeze the
@@ -478,6 +516,8 @@ public final class YSMSoundManager {
         }
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.thePlayer == null) return; // world not fully loaded yet
+        // 停止旧同名源（对齐内存字节路径：同名音效重播前先停旧的）。
+        if (soundName != null) stopSound(soundName);
         try {
             String srcName = "ysm_" + sourceCounter.incrementAndGet();
             float px = (float) mc.thePlayer.posX;
@@ -535,6 +575,8 @@ public final class YSMSoundManager {
             try { ss.getClass().getMethod("setPitch", String.class, float.class).invoke(ss, srcName, pitch); } catch (NoSuchMethodException ignored) {}
             try { ss.getClass().getMethod("setVolume", String.class, float.class).invoke(ss, srcName, volume); } catch (NoSuchMethodException ignored) {}
             ss.getClass().getMethod("play", String.class).invoke(ss, srcName);
+            // 追踪音源（对齐内存字节版），使停止路径能覆盖本地资产音效。
+            if (soundName != null) ACTIVE_SOURCES.put(soundName, srcName);
             if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] playing '{}' as {}", oggPath.getFileName(), srcName);
         } catch (Exception e) {
             ysmu.LOG.warn("[YSMU-SOUND] Failed to play: {}", e.getMessage());
