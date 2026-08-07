@@ -282,8 +282,12 @@ public final class YSMSoundManager {
     public static void stopController(String controllerName) {
         String soundName = CONTROLLER_SOUNDS.remove(controllerName);
         if (soundName != null) stopSound(soundName);
-        // 清除该控制器的防抖记录，确保下次重新触发时能正常播放
-        SOUND_KEYFRAME_LAST_TIME.keySet().removeIf(k -> k.startsWith(controllerName + "::"));
+        // 清除该控制器的防抖记录，确保下次重新触发时能正常播放。
+        // 防抖 key 在带 modelId 时为 modelId::controller::sound（onSoundKeyframe
+        // 拼装），仅按 startsWith(controllerName::) 匹配不到，需同时匹配
+        // "::controller::" 中间段。
+        SOUND_KEYFRAME_LAST_TIME.keySet().removeIf(
+            k -> k.startsWith(controllerName + "::") || k.contains("::" + controllerName + "::"));
     }
 
     /** 停止指定名称的音效 */

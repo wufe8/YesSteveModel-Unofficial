@@ -19,6 +19,7 @@ import net.minecraftforge.event.entity.EntityJoinWorldEvent;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.client.animation.RemotePlayerAnimationQueries;
+import com.fox.ysmu.client.audio.YSMSoundManager;
 import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.renderer.CustomPlayerRenderer;
@@ -83,6 +84,8 @@ public class ClientEventHandler {
         if (event.phase != TickEvent.Phase.END) {
             return;
         }
+        // 第一人称音效音源跟随玩家（成本：活跃源数 × 1 次反射 setPosition，通常几个源）
+        YSMSoundManager.updateSourcePositions();
         // Periodically unload unused animation data from GeckoLibCache
         if (++unloadTick >= 1200) {
             unloadTick = 0;
