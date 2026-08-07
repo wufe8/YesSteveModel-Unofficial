@@ -348,6 +348,24 @@ commands.yes_steve_model.help.detail.debug.desc=  Debug tooling: query Molang va
 commands.yes_steve_model.help.detail.ysmlocal.usage=  Usage: §e/ysmlocal
 commands.yes_steve_model.help.detail.ysmlocal.desc=  Register locally scanned models (config/ysmu/custom + builtin) visible only to you. Client-side only. Example: §e/ysmlocal
 
+gui.yes_steve_model.sync_progress=Syncing models: %d / %d
+gui.yes_steve_model.sync_model=Loading: 
+molang.yes_steve_model.query.is_blocking.desc=Returns 1.0 if the entity is blocking with a sword, else it returns 0.0.
+gui.yes_steve_model.sync_waiting=Waiting for server...
+gui.yes_steve_model.texture.paused=[⏸ PAUSED]
+gui.yes_steve_model.texture.resume=Resume
+gui.yes_steve_model.model_count=%d models
+message.yes_steve_model.sync.complete=§6§l[§aYSMU§6§l] §aClient sync complete in %d ms
+message.yes_steve_model.sync.complete_models=§6§l[§aYSMU§6§l] §aModel load finished: §e%d§a loaded, §e%d§a failed (total §e%d§a)
+
+# =====================================================================
+# [ARCHIVED 2026-08-08] Unused Molang documentation keys
+# ---------------------------------------------------------------------
+# Carried over from the OpenYSM reference implementation. No YSMU code
+# path references these keys (there is no Molang help UI yet), and zh_CN
+# has no translations for them either. Kept here so future Molang help
+# panels can re-enable them; do NOT treat missing zh_CN as a bug.
+# =====================================================================
 molang.yes_steve_model.bg_width=900
 molang.yes_steve_model.pi.desc=π, constant.
 molang.yes_steve_model.e.desc=Natural logarithm, constant.
@@ -410,12 +428,3 @@ molang.yes_steve_model.ysm.elytra_rot_y.desc=Returns the entity's elytra y rotat
 molang.yes_steve_model.ysm.elytra_rot_z.desc=Returns the entity's elytra z rotation.
 molang.yes_steve_model.ysm.food_level.desc=Returns the player's hunger value.
 molang.yes_steve_model.ysm.first_person_mod_hide.desc=Return 1.0 if the First Person Mod is installed and player's head needs to be hidden, else it returns 0.0
-gui.yes_steve_model.sync_progress=Syncing models: %d / %d
-gui.yes_steve_model.sync_model=Loading: 
-molang.yes_steve_model.query.is_blocking.desc=Returns 1.0 if the entity is blocking with a sword, else it returns 0.0.
-gui.yes_steve_model.sync_waiting=Waiting for server...
-gui.yes_steve_model.texture.paused=[⏸ PAUSED]
-gui.yes_steve_model.texture.resume=Resume
-gui.yes_steve_model.model_count=%d models
-message.yes_steve_model.sync.complete=§6§l[§aYSMU§6§l] §aClient sync complete in %d ms
-message.yes_steve_model.sync.complete_models=§6§l[§aYSMU§6§l] §aModel load finished: §e%d§a loaded, §e%d§a failed (total §e%d§a)

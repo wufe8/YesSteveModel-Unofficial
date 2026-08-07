@@ -107,7 +107,15 @@ public class BackhandCompat {
 
     public static boolean swingingArm(EntityPlayer player) {
         if (BACKHAND_LOADED) {
-            return !BackhandUtils.isUsingOffhand(player); // true表示主手
+            try {
+                return !BackhandUtils.isUsingOffhand(player); // true表示主手
+            } catch (Throwable t) {
+                // 与 isRenderingOffhand 一致：Backhand 版本不符（方法缺失/签名变化）时
+                // 安全回退到主手，避免在每帧 Molang/动画求值路径上抛 LinkageError。
+                warnOnce("backhand-api-usingoffhand-swing",
+                    "Backhand API call failed (incompatible version " + backhandVersion() + "?): " + t);
+                return true;
+            }
         }
         return true;
     }
