@@ -113,12 +113,19 @@ public final class ParticleEffectUtil {
             return false;
         }
         String particleName = normalizeParticleId(id);
-        // 自定义粒子：若高版本游戏资产里有该粒子的纹理（如 falling_dripstone_water），
-        // 则生成 CustomParticleFX（独立渲染）；否则回退 vanilla spawnParticle。
-        int customTexId = ParticleTextureManager.getTextureId(particleName);
+        // 只有行为表覆盖的高版本粒子（vanilla 无对应）才启用自定义纹理；
+        // 其余（heart/note/portal/flame 等 1.7.10 有内置对应的）一律走 vanilla，
+        // 避免自定义粒子行为崩坏（如 heart 高速散开）。
+        ParticleBehaviors.Behavior beh = ParticleBehaviors.get(particleName);
+        int customTexId = -1;
+        if (beh != null) {
+            // 自定义粒子：若高版本游戏资产里有该粒子的纹理（如 falling_dripstone_water），
+            // 则生成 CustomParticleFX（独立渲染）；否则回退 vanilla spawnParticle。
+            customTexId = ParticleTextureManager.getTextureId(particleName);
+        }
         // 高版本资产缺失时，把常见高版本粒子名映射到 1.7.10 内置近似粒子，保证效果可见。
         String emitName = particleName;
-        if (customTexId < 0) {
+        if (beh == null || customTexId < 0) {
             String fallback = VANILLA_FALLBACK.get(particleName);
             if (fallback != null) {
                 emitName = fallback;
@@ -167,10 +174,16 @@ public final class ParticleEffectUtil {
                 ysmu.LOG.info("[YSMU-PARTICLE] spawn {} -> world=({},{},{}) yaw={} entityPos=({},{},{})",
                     isAbsolute ? "abs" : "rel", x, y, z, dbgYaw, entity.posX, entity.posY, entity.posZ);
             }
-            emit(mc, emitName, customTexId, x, y, z, vx, vy, vz, lifetime);
+            emit(mc, emitName, customTexId, beh, x, y, z, vx, vy, vz, lifetime);
             return true;
         }
+        // count > 0：OpenYSM 不设置寿命（emitParticle 里没有 setLifetime），粒子用
+        // 类型默认寿命；自定义粒子用行为表默认寿命（含随机范围，对齐 SplashParticle
+        // 8~40 tick），vanilla 粒子由类型自带。
         Random random = entity.worldObj.rand;
+        int life = beh != null ? beh.defaultLifetime
+            + (beh.lifetimeVariance > 0 ? random.nextInt(beh.lifetimeVariance + 1) : 0)
+            : lifetime;
         for (int i = 0; i < count; i++) {
             double spreadX = random.nextGaussian() * dx;
             double spreadY = random.nextGaussian() * dy;
@@ -183,7 +196,7 @@ public final class ParticleEffectUtil {
             // 同 count==0：1.7.10 玩家 posY 含 yOffset(1.62)，用 boundingBox.minY（脚底）对齐 OpenYSM。
             final double y = entity.boundingBox.minY + spawn[1];
             final double z = entity.posZ + spawn[2];
-            emit(mc, emitName, customTexId, x, y, z, vx, vy, vz, lifetime);
+            emit(mc, emitName, customTexId, beh, x, y, z, vx, vy, vz, life);
         }
         return true;
     }
@@ -194,13 +207,28 @@ public final class ParticleEffectUtil {
      * 全部经 {@code func_152344_a} 提交到客户端主线程。
      */
     private static void emit(Minecraft mc, String particleName, int customTexId,
+        ParticleBehaviors.Behavior beh,
         double x, double y, double z, double vx, double vy, double vz, int lifetime) {
-        if (customTexId >= 0) {
+        if (customTexId >= 0 && beh != null) {
+            // 水滴/雪花/水花类忽略调用方速度，用行为表自身的初始运动（对齐高版本
+            // 粒子类行为：水滴下落、水花垂直小弹跳——避免模型传的过大 speed 让粒子
+            // 随机飞散/瞬间飞出看不见）。velocityScale 预留在需要缩放外部速度时用。
+            final double mx = beh.ignoreVelocity ? beh.initVx : vx * beh.velocityScale;
+            final double my = beh.ignoreVelocity ? beh.initVy : vy * beh.velocityScale;
+            final double mz = beh.ignoreVelocity ? beh.initVz : vz * beh.velocityScale;
+            final float scale = beh.scale;
+            final float gravity = beh.gravity;
+            final float tr = beh.tintR;
+            final float tg = beh.tintG;
+            final float tb = beh.tintB;
+            final boolean fade = beh.fadeOut;
+            final boolean dieGround = beh.dieOnGround;
+            final int tid = customTexId;
             mc.func_152344_a(() -> {
                 if (mc.theWorld != null) {
-                    // 尺寸/重力先用合理默认（后续可按高版本 particle JSON 的 behavior 解析细化）
                     CustomParticleManager.add(new CustomParticleFX(
-                        mc.theWorld, x, y, z, vx, vy, vz, customTexId, 2.0F, lifetime, 0.6F));
+                        mc.theWorld, x, y, z, mx, my, mz, tid,
+                        scale, lifetime, gravity, tr, tg, tb, fade, dieGround));
                 }
             });
         } else {

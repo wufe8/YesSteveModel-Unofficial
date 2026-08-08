@@ -23,10 +23,21 @@ public class CustomParticleFX extends EntityFX {
     private final float vMin;
     private final float uMax;
     private final float vMax;
+    /** 寿命末期是否渐隐（水花/雪花类）。 */
+    private final boolean fadeOut;
+    /** 撞到地面或进入液体时立即消失（高版本 SplashParticle 行为）。 */
+    private final boolean dieOnGround;
 
+    /**
+     * @param tintR/tintG/tintB 颜色乘数（1,1,1 = 纹理原样；高版本水滴纹理本身是白色，
+     *        需要 tint 成水色）。alpha 默认 1.0，fadeOut 时随寿命递减。
+     * @param fadeOut 寿命末期是否渐隐
+     * @param dieOnGround 撞到地面或进入液体时立即消失
+     */
     public CustomParticleFX(World world, double x, double y, double z,
             double vx, double vy, double vz, int glTextureId,
-            float scale, int maxAge, float gravity) {
+            float scale, int maxAge, float gravity,
+            float tintR, float tintG, float tintB, boolean fadeOut, boolean dieOnGround) {
         super(world, x, y, z);
         this.glTextureId = glTextureId;
         this.motionX = vx;
@@ -35,10 +46,30 @@ public class CustomParticleFX extends EntityFX {
         this.particleScale = scale;
         this.particleMaxAge = Math.max(maxAge, 1);
         this.particleGravity = gravity;
+        this.particleRed = tintR;
+        this.particleGreen = tintG;
+        this.particleBlue = tintB;
+        this.fadeOut = fadeOut;
+        this.dieOnGround = dieOnGround;
         this.uMin = 0.0F;
         this.vMin = 0.0F;
         this.uMax = 1.0F;
         this.vMax = 1.0F;
+    }
+
+    @Override
+    public void onUpdate() {
+        super.onUpdate();
+        if (fadeOut && particleMaxAge > 0) {
+            // 水花/雪花随寿命渐隐（alpha 从 1 → 0）
+            float t = (float) this.particleAge / (float) this.particleMaxAge;
+            this.particleAlpha = Math.max(0.0F, 1.0F - t);
+        }
+        if (dieOnGround && (this.onGround || this.isInWater())) {
+            // 对齐高版本 SplashParticle：落在地面或进入液体立即消失
+            // （1.7.10 EntityFX 默认落地后会继续滑行，看起来像向外飞行）
+            this.setDead();
+        }
     }
 
     /** 渲染层 3：独立于 vanilla 的 layer 0/1/2，由 MixinEffectRenderer 额外渲染。 */

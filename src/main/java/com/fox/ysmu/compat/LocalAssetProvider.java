@@ -157,10 +157,23 @@ public final class LocalAssetProvider {
                 }
             }
             if (Config.DEBUG_PARTICLE || particleTextures == 0) {
+                String note;
+                if (particleTextures == 0) {
+                    String jarVer = Config.HIGH_VERSION_JAR_VERSION;
+                    if (jarVer != null && !jarVer.trim().isEmpty()) {
+                        note = "(0 particle textures in assets/objects - textures are read from the "
+                            + "version jar versions/" + jarVer + "/" + jarVer + ".jar instead; "
+                            + "expected for 1.21.2+/26.x, custom high-version particles still work)";
+                    } else {
+                        note = "(0 particle textures in assets/objects and HighVersionJarVersion is empty - "
+                            + "custom high-version particles unavailable; set HighVersionJarVersion to a "
+                            + "version dir whose client jar holds textures/particles)";
+                    }
+                } else {
+                    note = "";
+                }
                 ysmu.LOG.info("[YSMU-ASSET] asset index stats: {} particle textures, {} particle defs {}",
-                    particleTextures, particleDefs,
-                    particleTextures == 0 ? "(no particle textures -> custom high-version particles unavailable; "
-                        + "use a complete high-version assets directory)" : "");
+                    particleTextures, particleDefs, note);
             }
 
             // 2. Extract and parse sounds.json from asset objects
