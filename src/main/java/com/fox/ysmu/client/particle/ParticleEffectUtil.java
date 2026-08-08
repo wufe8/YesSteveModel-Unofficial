@@ -5,6 +5,7 @@ import java.util.Random;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.EntityLivingBase;
+import net.minecraft.world.World;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
@@ -116,24 +117,13 @@ public final class ParticleEffectUtil {
         // 只有行为表覆盖的高版本粒子（vanilla 无对应）才启用自定义纹理；
         // 其余（heart/note/portal/flame 等 1.7.10 有内置对应的）一律走 vanilla，
         // 避免自定义粒子行为崩坏（如 heart 高速散开）。
-        ParticleBehaviors.Behavior beh = ParticleBehaviors.get(particleName);
-        int customTexId = -1;
-        if (beh != null) {
-            // 自定义粒子：若高版本游戏资产里有该粒子的纹理（如 falling_dripstone_water），
-            // 则生成 CustomParticleFX（独立渲染）；否则回退 vanilla spawnParticle。
-            customTexId = ParticleTextureManager.getTextureId(particleName);
-        }
-        // 高版本资产缺失时，把常见高版本粒子名映射到 1.7.10 内置近似粒子，保证效果可见。
-        String emitName = particleName;
-        if (beh == null || customTexId < 0) {
-            String fallback = VANILLA_FALLBACK.get(particleName);
-            if (fallback != null) {
-                emitName = fallback;
-                if (Config.DEBUG_PARTICLE) {
-                    ysmu.LOG.info("[YSMU-PARTICLE] '{}' no high-version texture -> vanilla fallback '{}'",
-                        particleName, fallback);
-                }
-            }
+        Resolution res = resolve(particleName);
+        ParticleBehaviors.Behavior beh = res.beh;
+        int customTexId = res.customTexId;
+        String emitName = res.emitName;
+        if (Config.DEBUG_PARTICLE && !emitName.equals(particleName)) {
+            ysmu.LOG.info("[YSMU-PARTICLE] '{}' no high-version texture -> vanilla fallback '{}'",
+                particleName, emitName);
         }
         if (count < 0) {
             count = 0;
@@ -267,5 +257,95 @@ public final class ParticleEffectUtil {
             return trimmed.substring("minecraft:".length());
         }
         return trimmed;
+    }
+
+    /**
+     * 解析粒子名 → 行为/自定义纹理 GL id/发射名（行为表 + 高版本纹理 + vanilla fallback）。
+     * 供实体路径（{@link #handleParticle}）与 /particle 指令路径（{@link #spawnAt}）共用。
+     */
+    private static Resolution resolve(String particleName) {
+        // 只有行为表覆盖的高版本粒子（vanilla 无对应）才启用自定义纹理；其余
+        // （heart/note/portal/flame 等）一律走 vanilla，避免自定义粒子行为崩坏。
+        ParticleBehaviors.Behavior beh = ParticleBehaviors.get(particleName);
+        int customTexId = -1;
+        if (beh != null) {
+            customTexId = ParticleTextureManager.getTextureId(particleName);
+        }
+        String emitName = particleName;
+        if (beh == null || customTexId < 0) {
+            String fallback = VANILLA_FALLBACK.get(particleName);
+            if (fallback != null) {
+                emitName = fallback;
+            }
+        }
+        return new Resolution(beh, customTexId, emitName);
+    }
+
+    /** 解析结果：行为 + 自定义纹理 GL id + 最终发射名。 */
+    private static final class Resolution {
+        final ParticleBehaviors.Behavior beh;
+        final int customTexId;
+        final String emitName;
+
+        Resolution(ParticleBehaviors.Behavior beh, int customTexId, String emitName) {
+            this.beh = beh;
+            this.customTexId = customTexId;
+            this.emitName = emitName;
+        }
+    }
+
+    /**
+     * /particle 指令入口：在绝对世界坐标生成粒子（无实体上下文，世界系高斯散布）。
+     *
+     * <p>参数语义与原版 /particle 命令一致：count==0 时单粒子、速度 = delta×speed
+     * （方向向量）；count&gt;0 时位置 = pos + 高斯×delta（σ）、速度 = 高斯×speed。
+     * 分发/纹理/fallback 与 {@link #handleParticle} 完全一致（复用 {@link #resolve}
+     * 与 {@link #emit}）。应在客户端主线程调用（网络 handler 需先 func_152344_a 回主线程）。</p>
+     */
+    public static void spawnAt(World world, String id,
+        double x, double y, double z,
+        double dx, double dy, double dz,
+        double speed, int count, int lifetime) {
+        if (world == null || !world.isRemote) {
+            return;
+        }
+        if (id == null || id.trim().isEmpty()) {
+            return;
+        }
+        String particleName = normalizeParticleId(id);
+        Resolution res = resolve(particleName);
+        if (Config.DEBUG_PARTICLE) {
+            ysmu.LOG.info("[YSMU-PARTICLE] /particle id='{}' name='{}' pos=({},{},{}) "
+                + "delta=({},{},{}) speed={} count={} lifetime={}",
+                id, particleName, x, y, z, dx, dy, dz, speed, count, lifetime);
+        }
+        if (count < 0) {
+            count = 0;
+        }
+        if (count > MAX_BATCH_COUNT) {
+            count = MAX_BATCH_COUNT;
+        }
+        if (lifetime < 1) {
+            lifetime = 1;
+        }
+        Minecraft mc = Minecraft.getMinecraft();
+        if (count == 0) {
+            emit(mc, res.emitName, res.customTexId, res.beh,
+                x, y, z, speed * dx, speed * dy, speed * dz, lifetime);
+            return;
+        }
+        Random random = world.rand;
+        int life = res.beh != null ? res.beh.defaultLifetime
+            + (res.beh.lifetimeVariance > 0 ? random.nextInt(res.beh.lifetimeVariance + 1) : 0)
+            : lifetime;
+        for (int i = 0; i < count; i++) {
+            double sx = x + random.nextGaussian() * dx;
+            double sy = y + random.nextGaussian() * dy;
+            double sz = z + random.nextGaussian() * dz;
+            double vx = random.nextGaussian() * speed;
+            double vy = random.nextGaussian() * speed;
+            double vz = random.nextGaussian() * speed;
+            emit(mc, res.emitName, res.customTexId, res.beh, sx, sy, sz, vx, vy, vz, life);
+        }
     }
 }

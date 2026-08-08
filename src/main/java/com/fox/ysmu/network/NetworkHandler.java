@@ -42,6 +42,7 @@ public final class NetworkHandler {
     private static final int CLIENTBOUND_SHOW_BUFFER_INFO = 22;
     private static final int CLIENTBOUND_QUERY_MOLANG_VAR = 23;
     private static final int CLIENTBOUND_OPENYSM_SYNC_INDEX_CHUNK_17 = 24;
+    private static final int CLIENTBOUND_SPAWN_PARTICLE_COMMAND = 25;
 
     public static final int OPEN_NPC_MODEL_GUI = 93;
     public static final int SET_NPC_MODEL_ID = 94;
@@ -177,6 +178,11 @@ public final class NetworkHandler {
             PacketQueryMolangVar.Handler.class,
             PacketQueryMolangVar.class,
             CLIENTBOUND_QUERY_MOLANG_VAR,
+            Side.CLIENT);
+        CHANNEL.registerMessage(
+            SpawnParticleCommand.Handler.class,
+            SpawnParticleCommand.class,
+            CLIENTBOUND_SPAWN_PARTICLE_COMMAND,
             Side.CLIENT);
     }
 

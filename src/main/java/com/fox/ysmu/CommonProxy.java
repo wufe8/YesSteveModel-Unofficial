@@ -1,5 +1,6 @@
 package com.fox.ysmu;
 
+import com.fox.ysmu.command.ParticleCommand;
 import com.fox.ysmu.command.YsmCommand;
 import com.fox.ysmu.model.ServerModelManager;
 import com.fox.ysmu.network.NetworkHandler;
@@ -32,6 +33,7 @@ public class CommonProxy {
     // register server commands in this event handler (Remove if not needed)
     public void serverStarting(FMLServerStartingEvent event) {
         event.registerServerCommand(new YsmCommand());
+        event.registerServerCommand(new ParticleCommand());
     }
 
     public void handleStarModels(SyncStarModels message) {}
