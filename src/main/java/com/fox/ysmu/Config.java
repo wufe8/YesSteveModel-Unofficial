@@ -57,6 +57,11 @@ public class Config {
     public static boolean DEBUG_ANIMATION = false;
     public static boolean DEBUG_SOUND = false;
     public static boolean DEBUG_PARTICLE = false;
+    /** 调试/测试用：粒子生成时从 Y 偏移额外减去的值（格）。默认 0。
+     *  用于临时校正模型粒子高度偏差（如 mingf 火焰偏高约 2 格）。 */
+    public static double PARTICLE_Y_ADJUST = 0.0;
+    /** 调试/测试用：粒子 xyz 偏移全部置 0（直接生成在实体位置）。 */
+    public static boolean PARTICLE_ZERO_OFFSET = false;
     public static boolean DEBUG_MERGED_ANIMATIONS = false;
     public static boolean SHOW_WELCOME_MESSAGE = true;
 
@@ -199,6 +204,8 @@ public class Config {
         DEBUG_ANIMATION = syncBoolean("DebugAnimation", "debug", DEBUG_ANIMATION, "Enable animation playback debug logging ([YSMU-ANIM])", load);
         DEBUG_SOUND = syncBoolean("DebugSound", "debug", DEBUG_SOUND, "Enable sound cache/playback debug logging ([YSM Sound])", load);
         DEBUG_PARTICLE = syncBoolean("DebugParticle", "debug", DEBUG_PARTICLE, "Enable particle()/abs_particle() debug logging ([YSMU-PARTICLE])", load);
+        PARTICLE_Y_ADJUST = syncDouble("ParticleYAdjust", "debug", PARTICLE_Y_ADJUST, "Extra Y offset subtracted from particle()/abs_particle() spawn position, in blocks (debug/testing; default 0)", -10.0, 10.0, load);
+        PARTICLE_ZERO_OFFSET = syncBoolean("ParticleZeroOffset", "debug", PARTICLE_ZERO_OFFSET, "Force particle()/abs_particle() xyz offsets to 0 (spawn at entity position; debug/testing)", load);
         DEBUG_MERGED_ANIMATIONS = syncBoolean("DebugMergedAnimations", "debug", DEBUG_MERGED_ANIMATIONS, "Show __ysm_merged__ animations in the preview GUI for debugging", load);
         SHOW_WELCOME_MESSAGE = syncBoolean("ShowWelcomeMessage", "debug", SHOW_WELCOME_MESSAGE, "Show the welcome/info message when joining a world", load);
 

@@ -113,7 +113,8 @@ public class MolangParser extends MathBuilder {
         this.functions.put("ysm.particle", ParticleFunction.class);
         this.functions.put("particle", ParticleFunction.class);
         this.functions.put("abs_particle", ParticleFunction.class);
-        // ysm.bone_pivot_abs：骨骼本地枢轴（近似实现，见 BonePivotAbsFunction）。
+        // ysm.bone_pivot_abs：骨骼绝对枢轴（模型单位），沿父链应用完整变换，
+        // 语义对齐 OpenYSM（见 MolangPhysicsRuntime.bonePivot）。
         // .x/.y/.z 后缀由 rewriteVectorFunction 重写为 _x/_y/_z 注册名。
         this.functions.put("ysm.bone_pivot_abs_x", BonePivotAbsFunction.class);
         this.functions.put("ysm.bone_pivot_abs_y", BonePivotAbsFunction.class);

@@ -86,6 +86,14 @@ public final class ParticleEffectUtil {
         if (lifetime < 1) {
             lifetime = 1;
         }
+        // 调试/测试用全局 Y 偏移校正（Config.PARTICLE_Y_ADJUST，默认 0）
+        oy -= Config.PARTICLE_Y_ADJUST;
+        // 调试/测试用：xyz 偏移全部置 0（粒子直接生成在实体位置）
+        if (Config.PARTICLE_ZERO_OFFSET) {
+            ox = 0.0;
+            oy = 0.0;
+            oz = 0.0;
+        }
         if (Config.DEBUG_PARTICLE) {
             ysmu.LOG.info("[YSMU-PARTICLE] id='{}' name='{}' abs={} offset=({},{},{}) delta=({},{},{}) speed={} count={} lifetime={}",
                 id, particleName, isAbsolute, ox, oy, oz, dx, dy, dz, speed, count, lifetime);

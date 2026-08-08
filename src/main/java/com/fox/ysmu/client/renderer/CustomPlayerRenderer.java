@@ -138,6 +138,9 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 com.fox.ysmu.client.asset.AssetManager.anim(mainModelId).get();
                 com.fox.ysmu.client.ClientModelManager.ensureTexturesLoaded(mainModelId);
             }
+            com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setBoneTracking(true,
+                getWidthScale(animatable), getHeightScale(animatable), getWidthScale(animatable),
+                mainModelId);
             try {
                 super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
                 // 渲染 AdventureBackpack2 背部可穿戴物品（直升机背包等）
@@ -148,6 +151,9 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 }
             } catch (Exception e) {
                 suppressRenderError("doRender[" + location + "]", e);
+            } finally {
+                com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setBoneTracking(false,
+                    1.0F, 1.0F, 1.0F, null);
             }
         } else if (mainModelId == null
             || !com.fox.ysmu.client.asset.AssetManager.geo(mainModelId).isPending()) {

@@ -34,6 +34,17 @@ public class MatrixStack {
     @SuppressWarnings("unused")
     private float[] tempArray = new float[16];
 
+    /** 骨骼渲染变换回调（YSMU 粒子/特效 bone_pivot_abs 追踪用，与几何渲染同一路径）。
+     *  null 时零开销（渲染热路径仅一次空判断）。
+     *  <p>传入骨链累计后的完整矩阵 {@code mat}（blocks，含模型缩放，预 yaw/预玩家位移），
+     *  以及该骨骼的枢轴点（blocks）。回调必须同步复制所需数据（Matrix4f 会被后续变换复用）。 */
+    public interface BoneTransformSink {
+        void onBoneTransform(GeoBone bone, Matrix4f mat, float pivotX, float pivotY, float pivotZ);
+    }
+
+    /** 全局回调，由 MolangPhysicsRuntime 注册。 */
+    public static BoneTransformSink boneTransformSink = null;
+
     public MatrixStack() {
         modelStack[0] = new Matrix4f();
         normalStack[0] = new Matrix3f();
@@ -256,6 +267,14 @@ public class MatrixStack {
 
         // Apply combined matrix to stack top
         modelStack[depth - 1].mul(this.tempModelMatrix);
+
+        // YSMU: 可选骨骼变换追踪——与几何渲染同一路径，供 bone_pivot_abs 读取。
+        // 传入骨链累计后的完整矩阵（含本骨骼自身 T·R·S·T 的影响），bone_pivot_abs
+        // 用它计算枢轴点的世界位置（M×pivot），避免骨骼自身缩放/旋转污染平移列。
+        BoneTransformSink sink = boneTransformSink;
+        if (sink != null) {
+            sink.onBoneTransform(bone, modelStack[depth - 1], px, py, pz);
+        }
 
         // Normal matrix: rotation + sign-flip for negative scales
         this.tempNormalMatrix.setIdentity();

@@ -4,6 +4,8 @@ import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 
+import javax.vecmath.Matrix4f;
+
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
 
@@ -16,6 +18,8 @@ import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangStringPool;
 import software.bernie.geckolib3.core.processor.AnimationProcessor;
 import software.bernie.geckolib3.core.processor.IBone;
+import software.bernie.geckolib3.geo.render.built.GeoBone;
+import software.bernie.geckolib3.util.MatrixStack;
 
 public final class MolangPhysicsRuntime {
 
@@ -23,6 +27,22 @@ public final class MolangPhysicsRuntime {
      *  Safe because all client rendering happens on the Minecraft client thread. */
     private static FrameContext currentFrameContext;
     private static final Map<ScopeKey, ScopeState> STATES = new ConcurrentHashMap<>();
+
+    /** 渲染路径骨骼绝对位置追踪（bone_pivot_abs 与几何渲染走同一矩阵路径）。
+     *  每帧在 MatrixStack.transformBone 里按 模型+骨名 记录骨链累计后的完整 4×4 矩阵
+     *  （blocks，含模型缩放，预 yaw / 预玩家位移）。bone_pivot_abs 用该矩阵计算
+     *  枢轴点的世界位置（M×pivot），避免骨骼自身缩放/旋转污染平移列（如 mingf 火把
+     *  locator 的 scale [1.25, 2.5, 1.5] 会让平移列 z 虚增约 2 倍）。 */
+    private static final Map<String, float[]> CAPTURED_BONE_MATRIX = new java.util.HashMap<>();
+    private static boolean trackingEnabled = false;
+    private static ResourceLocation trackingModelId = null;
+    private static float trackScaleX = 1.0F;
+    private static float trackScaleY = 1.0F;
+    private static float trackScaleZ = 1.0F;
+
+    static {
+        MatrixStack.boneTransformSink = MolangPhysicsRuntime::captureBoneTransform;
+    }
 
     /** Time delta (in seconds) since the last render frame, used by ysm.time_delta. */
     private static float timeDelta = 0f;
@@ -123,6 +143,7 @@ public final class MolangPhysicsRuntime {
 
     public static void clear() {
         STATES.clear();
+        CAPTURED_BONE_MATRIX.clear();
         currentFrameContext = null;
         OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
     }
@@ -288,20 +309,204 @@ public final class MolangPhysicsRuntime {
         return bone.getPositionZ();
     }
 
-    /** 骨骼本地枢轴（x/y/z）。OpenYSM 的 bone_pivot_abs 返回绝对枢轴，1.7.10
-     *  只有本地枢轴，此处为近似实现。 */
+    /** 开启/关闭渲染期骨骼变换追踪（CustomPlayerRenderer 每帧包裹渲染调用）。
+     *  开启时 MatrixStack.transformBone 记录每个骨的完整累计矩阵，供 bone_pivot_abs 读取。
+     *
+     * @param scaleX/scaleY/scaleZ 模型渲染缩放（renderEarly 应用的 width/height/width）
+     * @param modelId 当前渲染的模型主 id（用于隔离不同模型的骨骼） */
+    public static void setBoneTracking(boolean enabled, float scaleX, float scaleY, float scaleZ,
+        ResourceLocation modelId) {
+        trackingEnabled = enabled;
+        if (enabled) {
+            trackScaleX = scaleX;
+            trackScaleY = scaleY;
+            trackScaleZ = scaleZ;
+            trackingModelId = modelId;
+        } else {
+            trackingModelId = null;
+        }
+    }
+
+    /** MatrixStack 每骨渲染后回调：记录骨链累计后的完整矩阵
+     *  （blocks，含模型缩放，预 yaw/预玩家位移）。回调须同步复制（Matrix4f 会被复用）。 */
+    private static void captureBoneTransform(GeoBone bone, javax.vecmath.Matrix4f mat,
+        float pivotX, float pivotY, float pivotZ) {
+        if (!trackingEnabled || trackingModelId == null || bone == null || bone.getName() == null) {
+            return;
+        }
+        String key = trackingModelId + "::" + bone.getName();
+        float[] v = CAPTURED_BONE_MATRIX.get(key);
+        if (v == null) {
+            v = new float[16];
+            CAPTURED_BONE_MATRIX.put(key, v);
+        }
+        v[0] = mat.m00;
+        v[1] = mat.m01;
+        v[2] = mat.m02;
+        v[3] = mat.m03;
+        v[4] = mat.m10;
+        v[5] = mat.m11;
+        v[6] = mat.m12;
+        v[7] = mat.m13;
+        v[8] = mat.m20;
+        v[9] = mat.m21;
+        v[10] = mat.m22;
+        v[11] = mat.m23;
+        v[12] = mat.m30;
+        v[13] = mat.m31;
+        v[14] = mat.m32;
+        v[15] = mat.m33;
+    }
+
+    /** 骨骼绝对枢轴（模型单位，16 单位 = 1 格；OpenYSM bone_pivot_abs 语义）。
+     *  优先读取渲染路径追踪到的骨骼矩阵（与几何渲染同一矩阵路径）；
+     *  未追踪到（首帧/预览等）时回退为沿父链矩阵重算。
+     *  <p>三轴都用 M×pivot（枢轴点世界位置）——平移列会被目标骨骼自身 scale/rotation
+     *  污染（如 mingf 火把 locator 的 scale [1.25,2.5,1.5]：平移列 z 虚增~2 倍、
+     *  x/y 抖动），M×pivot 稳定且正确（左手 X≈-0.15、手高 Y≈1.25、前方 Z≈-0.4）。 */
     public static double bonePivot(int nameId, char axis) {
         IBone bone = bone(nameId);
         if (bone == null) {
             return 0.0D;
         }
+        double matrixResult = matrixBonePivot(bone, axis);
+        if (trackingEnabled && trackingModelId != null) {
+            String boneName = MolangStringPool.get(nameId);
+            float[] m = boneName == null ? null
+                : CAPTURED_BONE_MATRIX.get(trackingModelId + "::" + boneName);
+            if (m != null) {
+                // 枢轴点（blocks，与捕获矩阵同单位）
+                float px = bone.getPivotX() / 16f;
+                float py = bone.getPivotY() / 16f;
+                float pz = bone.getPivotZ() / 16f;
+                // 枢轴点的世界位置 = M × pivot（blocks），不受骨骼自身缩放/旋转污染。
+                // 平移列（m03/m13/m23）会被目标骨骼自身 scale/rotation 污染（如 mingf
+                // 火把 locator 的 scale [1.25,2.5,1.5] 让平移列 z 虚增~2 倍、x/y 抖动），
+                // M×pivot 稳定且正确：X≈-0.15（左手）、Y≈1.25（手高）、Z≈-0.4（前方）。
+                double wx = m[3] + (double) m[0] * px + (double) m[1] * py + (double) m[2] * pz;
+                double wy = m[7] + (double) m[4] * px + (double) m[5] * py + (double) m[6] * pz;
+                double wz = m[11] + (double) m[8] * px + (double) m[9] * py + (double) m[10] * pz;
+                // 模型局部系（前方=-Z、左手=-X），无需取反；模型公式自带 -bone_pivot_abs(...).z。
+                double capturedResult;
+                if (axis == 'x') {
+                    capturedResult = wx * (16.0D / trackScaleX);
+                } else if (axis == 'y') {
+                    capturedResult = wy * (16.0D / trackScaleY);
+                } else {
+                    capturedResult = wz * (16.0D / trackScaleZ);
+                }
+                if (Config.DEBUG_PARTICLE) {
+                    com.fox.ysmu.ysmu.LOG.info(
+                        "[YSMU-PARTICLE] bonePivot('{}',{}) MxPivot=({},{},{}) -> {} | matrixFallback -> {}",
+                        boneName, axis, wx, wy, wz, capturedResult, matrixResult);
+                }
+                return capturedResult;
+            }
+        }
+        if (Config.DEBUG_PARTICLE) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-PARTICLE] bonePivot('{}',{}) no-capture -> matrixFallback {}",
+                MolangStringPool.get(nameId), axis, matrixResult);
+        }
+        return matrixResult;
+    }
+
+    /** 沿 GeoBone 父链矩阵重算绝对枢轴（无渲染追踪时的回退，语义同 bonePivot：
+     *  三轴都用 M×pivot，模型局部系无需取反）。 */
+    private static double matrixBonePivot(IBone bone, char axis) {
+        if (!(bone instanceof GeoBone)) {
+            // VirtualBone 等无父链/几何：退化为本地枢轴（模型局部系，不取反）
+            if (axis == 'x') {
+                return bone.getPivotX();
+            }
+            if (axis == 'y') {
+                return bone.getPivotY();
+            }
+            return bone.getPivotZ();
+        }
+        GeoBone geo = (GeoBone) bone;
+        // 收集 root→target 骨链
+        java.util.ArrayList<GeoBone> chain = new java.util.ArrayList<>();
+        for (GeoBone b = geo; b != null; b = b.parent) {
+            chain.add(b);
+        }
+        java.util.Collections.reverse(chain);
+        Matrix4f acc = new Matrix4f();
+        acc.setIdentity();
+        Matrix4f tmp = new Matrix4f();
+        for (GeoBone b : chain) {
+            appendBoneTransform(acc, tmp, b);
+        }
+        // 枢轴点的世界位置 = M × pivot（模型单位），不受骨骼自身缩放/旋转污染。
+        float px = geo.getPivotX();
+        float py = geo.getPivotY();
+        float pz = geo.getPivotZ();
+        double wx = acc.m03 + (double) acc.m00 * px + (double) acc.m01 * py + (double) acc.m02 * pz;
+        double wy = acc.m13 + (double) acc.m10 * px + (double) acc.m11 * py + (double) acc.m12 * pz;
+        double wz = acc.m23 + (double) acc.m20 * px + (double) acc.m21 * py + (double) acc.m22 * pz;
+        // 模型局部系（前方=-Z、左手=-X），无需取反；模型公式自带 -bone_pivot_abs(...).z。
         if (axis == 'x') {
-            return bone.getPivotX();
+            return wx;
         }
         if (axis == 'y') {
-            return bone.getPivotY();
+            return wy;
         }
-        return bone.getPivotZ();
+        return wz;
+    }
+
+    /** acc = acc × M_bone（模型单位，与渲染 transformBone 相同的组合顺序）。 */
+    private static void appendBoneTransform(Matrix4f acc, Matrix4f tmp, GeoBone b) {
+        float px = b.getPivotX();
+        float py = b.getPivotY();
+        float pz = b.getPivotZ();
+        float tx = -b.getPositionX();
+        float ty = b.getPositionY();
+        float tz = b.getPositionZ();
+        float sx = b.getScaleX();
+        float sy = b.getScaleY();
+        float sz = b.getScaleZ();
+        float rx = b.getRotationX();
+        float ry = b.getRotationY();
+        float rz = b.getRotationZ();
+        // T(pos)
+        tmp.setIdentity();
+        tmp.m03 = tx;
+        tmp.m13 = ty;
+        tmp.m23 = tz;
+        acc.mul(tmp);
+        // T(pivot)
+        tmp.setIdentity();
+        tmp.m03 = px;
+        tmp.m13 = py;
+        tmp.m23 = pz;
+        acc.mul(tmp);
+        // Rz × Ry × Rx
+        if (rz != 0.0F) {
+            tmp.setIdentity();
+            tmp.rotZ(rz);
+            acc.mul(tmp);
+        }
+        if (ry != 0.0F) {
+            tmp.setIdentity();
+            tmp.rotY(ry);
+            acc.mul(tmp);
+        }
+        if (rx != 0.0F) {
+            tmp.setIdentity();
+            tmp.rotX(rx);
+            acc.mul(tmp);
+        }
+        // S
+        tmp.setIdentity();
+        tmp.m00 = sx;
+        tmp.m11 = sy;
+        tmp.m22 = sz;
+        acc.mul(tmp);
+        // T(-pivot)
+        tmp.setIdentity();
+        tmp.m03 = -px;
+        tmp.m13 = -py;
+        tmp.m23 = -pz;
+        acc.mul(tmp);
     }
 
     public static double boneScale(int nameId, char axis) {
