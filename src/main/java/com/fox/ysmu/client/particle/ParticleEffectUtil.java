@@ -107,7 +107,11 @@ public final class ParticleEffectUtil {
         if (count == 0) {
             double[] spawn = rotateOffset(entity, ox, oy, oz, isAbsolute);
             double x = entity.posX + spawn[0];
-            double y = entity.posY + spawn[1];
+            // 1.7.10 玩家 posY = 脚底 + yOffset(1.62)（Entity.posY = boundingBox.minY + yOffset），
+            // 而 OpenYSM(1.20.1) 的 entity.getY() = 脚底。直接用 posY 会让粒子系统性偏高约一个
+            // 眼睛高度（rossi 火焰剑 / mingf 火把都偏高 ~1.6）。用 boundingBox.minY（脚底）与
+            // OpenYSM 语义对齐。
+            double y = entity.boundingBox.minY + spawn[1];
             double z = entity.posZ + spawn[2];
             final double vx = speed * dx;
             final double vy = speed * dy;
@@ -135,7 +139,8 @@ public final class ParticleEffectUtil {
             final double vz = random.nextGaussian() * speed;
             double[] spawn = rotateOffset(entity, ox + spreadX, oy + spreadY, oz + spreadZ, isAbsolute);
             final double x = entity.posX + spawn[0];
-            final double y = entity.posY + spawn[1];
+            // 同 count==0：1.7.10 玩家 posY 含 yOffset(1.62)，用 boundingBox.minY（脚底）对齐 OpenYSM。
+            final double y = entity.boundingBox.minY + spawn[1];
             final double z = entity.posZ + spawn[2];
             mc.func_152344_a(() -> {
                 if (mc.theWorld != null) {

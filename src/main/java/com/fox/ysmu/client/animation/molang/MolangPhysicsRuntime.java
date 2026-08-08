@@ -28,6 +28,16 @@ public final class MolangPhysicsRuntime {
     private static FrameContext currentFrameContext;
     private static final Map<ScopeKey, ScopeState> STATES = new ConcurrentHashMap<>();
 
+    /**
+     * 最近一帧 ScopeState 的 v.* 变量快照（debug 用）。
+     * 嵌套赋值（如 {@code (cond) ? (v.wet = 30) : 0}）经由
+     * {@code ScopedMolangVariable.set()} 只写入当前帧的 ScopeState；
+     * frame context 在渲染帧结束（end()）后即被清空，debug overlay / /ysm query
+     * 再读 MolangParser.VARIABLES 只会拿到默认 0。这里在 end() 时保存快照，
+     * 让这些读取路径能拿到最近一帧的真实值。
+     */
+    private static Map<String, Double> lastFrameVariables = java.util.Collections.emptyMap();
+
     /** 渲染路径骨骼绝对位置追踪（bone_pivot_abs 与几何渲染走同一矩阵路径）。
      *  每帧在 MatrixStack.transformBone 里按 模型+骨名 记录骨链累计后的完整 4×4 矩阵
      *  （blocks，含模型缩放，预 yaw / 预玩家位移）。bone_pivot_abs 用该矩阵计算
@@ -135,6 +145,13 @@ public final class MolangPhysicsRuntime {
     }
 
     public static void end() {
+        // 保存最近一帧的 ScopeState 变量快照（debug overlay / /ysm query 用）：
+        // 嵌套赋值（如 v.wet）只写 ScopeState，frame context 结束后再读
+        // MolangParser.VARIABLES 只会拿到默认 0，因此这里先存一份副本。
+        FrameContext context = currentFrameContext;
+        lastFrameVariables = context == null
+            ? java.util.Collections.<String, Double>emptyMap()
+            : new java.util.HashMap<>(context.state.variables);
         currentFrameContext = null;
         // Clear the per-frame roaming variable cache so the next frame
         // picks up any PENDING_ROAMING changes from the GUI thread.
@@ -144,8 +161,19 @@ public final class MolangPhysicsRuntime {
     public static void clear() {
         STATES.clear();
         CAPTURED_BONE_MATRIX.clear();
+        lastFrameVariables = java.util.Collections.emptyMap();
         currentFrameContext = null;
         OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
+    }
+
+    /** 最近一帧 ScopeState 的 v.* 变量快照（frame context 已结束后仍可读）。 */
+    public static Map<String, Double> getLastFrameVariables() {
+        return lastFrameVariables;
+    }
+
+    /** 读取最近一帧 ScopeState 中某个变量的值；该帧未设置则返回 null。 */
+    public static Double getLastFrameVariable(String name) {
+        return lastFrameVariables.get(name);
     }
 
     /** 清理指定玩家的全部 ScopeState（玩家登出时调用），避免断线后

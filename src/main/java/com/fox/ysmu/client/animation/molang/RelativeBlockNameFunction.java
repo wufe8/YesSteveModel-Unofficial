@@ -55,7 +55,10 @@ public class RelativeBlockNameFunction extends Function {
                 return 0.0d;
             }
             int x = (int) Math.round((entity.posX + dx) - 0.5d);
-            int y = (int) Math.round((entity.posY + dy) - 0.5d);
+            // OpenYSM 用 entity.getY()（脚底）；1.7.10 玩家 posY = 脚底 + yOffset(1.62)，
+            // 需用 boundingBox.minY（脚底）对齐，否则相对方块检测整体上移约一个眼睛高度
+            // （如站在 campfire 旁会检测到头顶的方块）。
+            int y = (int) Math.round((entity.boundingBox.minY + dy) - 0.5d);
             int z = (int) Math.round((entity.posZ + dz) - 0.5d);
             Block block = entity.worldObj.getBlock(x, y, z);
             String name = block == null ? null : Block.blockRegistry.getNameForObject(block);

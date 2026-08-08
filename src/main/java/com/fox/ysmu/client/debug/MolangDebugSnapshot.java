@@ -10,6 +10,7 @@ import net.minecraft.util.ChatComponentText;
 
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
+import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 
 import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangParser;
@@ -69,8 +70,12 @@ public final class MolangDebugSnapshot {
         if (var != null) {
             return var.get();
         }
-        // 2. v.* 变量 — 检查 PENDING_ROAMING（GUI/轮盘设置的漫游值）
+        // 2. v.* 变量 — 先查最近一帧 ScopeState 快照（嵌套赋值/动画 timeline
+        //    写入的真实值，如 v.wet），再查 PENDING_ROAMING（GUI/轮盘设置的
+        //    漫游值），最后回退 MolangParser.VARIABLES（顶层赋值写入的）。
         if (name.startsWith("v.")) {
+            Double frameVal = MolangPhysicsRuntime.getLastFrameVariable(name);
+            if (frameVal != null) return frameVal;
             String key = name.substring(2);
             Double roamingVal = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(key);
             if (roamingVal != null) return roamingVal;
@@ -124,6 +129,14 @@ public final class MolangDebugSnapshot {
                 : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
                 result.put(roamingPrefix + entry.getKey(), entry.getValue());
             }
+            // 补充最近一帧 ScopeState 快照：动画嵌套赋值（如 v.wet）写入的值
+            // 不在 PENDING_ROAMING，也不在 MolangParser.VARIABLES，需从这里读。
+            for (Map.Entry<String, Double> entry
+                : MolangPhysicsRuntime.getLastFrameVariables().entrySet()) {
+                if ("v.*".equals(pattern) || entry.getKey().startsWith("v.roaming.")) {
+                    result.put(entry.getKey(), entry.getValue());
+                }
+            }
         }
         // query.* 通配符 — 补充动画完成查询的真实动态值
         if (prefix.startsWith("query.")) {
@@ -166,6 +179,11 @@ public final class MolangDebugSnapshot {
         // v.roaming.* 漫游变量
         for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
             result.put("v." + entry.getKey(), entry.getValue());
+        }
+        // 最近一帧 ScopeState 快照 — 覆盖 VARIABLES 中的默认值，反映动画嵌套赋值
+        // （如 v.wet）写入的真实帧值，并补充非 roaming 的 v.*（如 v.anim_ctrl）。
+        for (Map.Entry<String, Double> entry : MolangPhysicsRuntime.getLastFrameVariables().entrySet()) {
+            result.put(entry.getKey(), entry.getValue());
         }
         // ctrl.* 动态状态 — 使用 evaluator 的实时评估
         EntityPlayer p = Minecraft.getMinecraft().thePlayer;

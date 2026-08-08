@@ -418,7 +418,10 @@ public class AnimationRegister {
         if (player.worldObj == null) {
             return false;
         }
-        int eyeY = MathHelper.floor_double(player.posY + player.getEyeHeight());
+        // 1.7.10 玩家 posY 已含 yOffset(1.62) = 眼睛高度（Entity.posY = boundingBox.minY + yOffset），
+        // 相机直接用 posY。OpenYSM 的 isUnderWater 检查眼睛（getY() + eyeHeight）所在流体，
+        // 这里等价检查 floor(posY) 所在方块即可——不能再 + getEyeHeight()（会高出约 1.62）。
+        int eyeY = MathHelper.floor_double(player.posY);
         int eyeX = MathHelper.floor_double(player.posX);
         int eyeZ = MathHelper.floor_double(player.posZ);
         return player.worldObj.getBlock(eyeX, eyeY, eyeZ).getMaterial() == net.minecraft.block.material.Material.water;

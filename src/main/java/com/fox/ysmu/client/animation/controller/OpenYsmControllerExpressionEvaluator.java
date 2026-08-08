@@ -1003,8 +1003,10 @@ public final class OpenYsmControllerExpressionEvaluator {
             }
             if ("eye_in_water".equals(name)) {
                 if (player.worldObj == null) return FALSE;
+                // 1.7.10 玩家 posY 已 = 眼睛高度（posY = boundingBox.minY + yOffset，相机直接用 posY），
+                // 与 OpenYSM isUnderWater 检查眼睛（getY() + eyeHeight）等价，不能再加 getEyeHeight()。
                 int eyeX = net.minecraft.util.MathHelper.floor_double(player.posX);
-                int eyeY = net.minecraft.util.MathHelper.floor_double(player.posY + player.getEyeHeight());
+                int eyeY = net.minecraft.util.MathHelper.floor_double(player.posY);
                 int eyeZ = net.minecraft.util.MathHelper.floor_double(player.posZ);
                 return player.worldObj.getBlock(eyeX, eyeY, eyeZ).getMaterial()
                     == net.minecraft.block.material.Material.water ? TRUE : FALSE;
