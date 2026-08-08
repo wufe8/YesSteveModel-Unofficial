@@ -53,6 +53,13 @@ public final class LocalAssetProvider {
     private static boolean initialized = false;
     private static boolean initFailed = false;
     private static final Random RANDOM = new Random();
+    /** 高版本游戏目录（init 时保存，供版本 jar 读取）。 */
+    private static Path gameDir = null;
+    /**
+     * 版本 jar（新版 Minecraft 的 textures/particles 所在，如 versions/26.2/26.2.jar）。
+     * 惰性打开；sounds 仍从 assets/objects 读取。
+     */
+    private static java.util.zip.ZipFile versionJar = null;
 
     private LocalAssetProvider() {}
 
@@ -138,6 +145,24 @@ public final class LocalAssetProvider {
             }
             ysmu.LOG.info("[YSMU-ASSET] Loaded asset index with {} entries from {}", assetIndex.size(), indexFile);
 
+            // 资产完整性诊断：统计纹理/粒子相关条目，帮助用户判断该高版本目录
+            // 是否包含完整的游戏资源（某些精简/仅声音安装会缺少 textures/particle）。
+            int particleTextures = 0;
+            int particleDefs = 0;
+            for (String key : assetIndex.keySet()) {
+                if (key.startsWith("minecraft/textures/particle/")) {
+                    particleTextures++;
+                } else if (key.startsWith("minecraft/particles/")) {
+                    particleDefs++;
+                }
+            }
+            if (Config.DEBUG_PARTICLE || particleTextures == 0) {
+                ysmu.LOG.info("[YSMU-ASSET] asset index stats: {} particle textures, {} particle defs {}",
+                    particleTextures, particleDefs,
+                    particleTextures == 0 ? "(no particle textures -> custom high-version particles unavailable; "
+                        + "use a complete high-version assets directory)" : "");
+            }
+
             // 2. Extract and parse sounds.json from asset objects
             AssetObject soundsJsonObj = assetIndex.get(SOUNDS_JSON_PATH);
             if (soundsJsonObj == null) {
@@ -163,6 +188,10 @@ public final class LocalAssetProvider {
             }
             ysmu.LOG.info("[YSMU-ASSET] Loaded {} sound events from sounds.json", soundEventMap.size());
 
+            // 保存游戏目录并惰性打开版本 jar（新版纹理/粒子所在）。
+            LocalAssetProvider.gameDir = gameDir;
+            initVersionJar();
+
             initialized = true;
             if (Config.DEBUG_SOUND) {
                 ysmu.LOG.info("[YSMU-ASSET] LocalAssetProvider initialized: gamePath={}, version={}", gamePath, assetVer);
@@ -183,6 +212,14 @@ public final class LocalAssetProvider {
 
     /** Reset cached state so the next access re-reads from config. */
     public static void reset() {
+        if (versionJar != null) {
+            try {
+                versionJar.close();
+            } catch (Exception ignored) {
+            }
+        }
+        versionJar = null;
+        gameDir = null;
         initialized = false;
         initFailed = false;
         soundEventMap = null;
@@ -246,6 +283,149 @@ public final class LocalAssetProvider {
         }
 
         return oggFile;
+    }
+
+    /**
+     * 通用资产读取：按虚拟路径（如 {@code minecraft/textures/particle/drip_water.png}）查资产索引，
+     * 返回 {@code assets/objects/} 下的实际文件路径。与 {@link #resolveSound} 共用同一份
+     * assetIndex / objectsDir，可读取任意高版本资源（音效、粒子纹理等）。
+     * 路径须带命名空间前缀（与资产索引 key 格式一致，如 {@code minecraft/...}）。
+     *
+     * @param virtualPath 资产虚拟路径（如 {@code minecraft/textures/particle/drip_water.png}）
+     * @return 本地文件绝对路径；未找到则返回 {@code null}
+     */
+    public static Path resolveAssetPath(String virtualPath) {
+        if (!isAvailable()) return null;
+        AssetObject obj = assetIndex.get(virtualPath);
+        if (obj == null) {
+            if (Config.DEBUG_PARTICLE) {
+                ysmu.LOG.debug("[YSMU-ASSET] Asset index entry not found for '{}'", virtualPath);
+            }
+            return null;
+        }
+        Path file = objectsDir.resolve(obj.hash.substring(0, 2)).resolve(obj.hash);
+        if (!Files.isRegularFile(file)) {
+            if (Config.DEBUG_PARTICLE) {
+                ysmu.LOG.debug("[YSMU-ASSET] Asset file not found at '{}' (hash {})", file, obj.hash);
+            }
+            return null;
+        }
+        return file;
+    }
+
+    /**
+     * 惰性打开版本 jar（{@code <gameDir>/versions/<HighVersionJarVersion>/<...>.jar}），
+     * 新版 Minecraft（1.21.2+ / 26.x）的 textures/particles 位于版本 jar 内。
+     */
+    private static void initVersionJar() {
+        String jarVer = Config.HIGH_VERSION_JAR_VERSION;
+        if (jarVer == null || jarVer.trim().isEmpty() || gameDir == null) {
+            return;
+        }
+        Path jarFile = gameDir.resolve("versions").resolve(jarVer).resolve(jarVer + ".jar");
+        if (!Files.isRegularFile(jarFile)) {
+            ysmu.LOG.warn("[YSMU-ASSET] version jar not found: {} (set HighVersionJarVersion to the version dir name)",
+                jarFile);
+            return;
+        }
+        try {
+            versionJar = new java.util.zip.ZipFile(jarFile.toFile());
+            ysmu.LOG.info("[YSMU-ASSET] Opened version jar for textures/particles: {}", jarFile);
+        } catch (Exception e) {
+            ysmu.LOG.warn("[YSMU-ASSET] Failed to open version jar {}: {}", jarFile, e.toString());
+        }
+    }
+
+    /**
+     * 读取高版本资源字节。{@code relPath} 相对 minecraft（如
+     * {@code textures/particle/drip_fall.png}）。
+     * 优先从版本 jar（{@code assets/minecraft/<relPath>}，新版纹理/粒子所在）读取，
+     * 其次从 {@code assets/objects}（资产索引 {@code minecraft/<relPath>}）读取。
+     *
+     * @param relPath 相对 minecraft 的虚拟路径（不带命名空间前缀）
+     * @return 资源字节；未找到返回 {@code null}
+     */
+    public static byte[] readAssetBytes(String relPath) {
+        if (!isAvailable()) return null;
+        // 1) 版本 jar（新版 textures/particles 所在）
+        java.util.zip.ZipFile jar = versionJar;
+        if (jar != null) {
+            java.util.zip.ZipEntry entry = jar.getEntry("assets/minecraft/" + relPath);
+            if (entry != null) {
+                try (InputStream in = jar.getInputStream(entry)) {
+                    return IOUtils.toByteArray(in);
+                } catch (Exception e) {
+                    if (Config.DEBUG_PARTICLE) {
+                        ysmu.LOG.debug("[YSMU-ASSET] failed to read jar entry {}: {}", relPath, e.toString());
+                    }
+                }
+            }
+        }
+        // 2) assets/objects（资产索引）
+        Path p = resolveAssetPath("minecraft/" + relPath);
+        if (p != null) {
+            try {
+                return Files.readAllBytes(p);
+            } catch (Exception e) {
+                if (Config.DEBUG_PARTICLE) {
+                    ysmu.LOG.debug("[YSMU-ASSET] failed to read object {}: {}", p, e.toString());
+                }
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 读取高版本粒子纹理字节。优先解析 {@code particles/<name>.json} 的纹理字段
+     * （新版用 {@code textures} 数组，如 {@code "minecraft:drip_fall"}；旧版用
+     * {@code texture} 字符串），再读 {@code textures/particle/<tex>.png}；JSON 缺失
+     * 时回退 {@code textures/particle/<name>.png}。从版本 jar 或 assets/objects 读取。
+     *
+     * @param particleName 粒子名，可带命名空间（如 {@code minecraft:falling_dripstone_water}）
+     * @return PNG 字节；未找到返回 {@code null}
+     */
+    public static byte[] readParticleTextureBytes(String particleName) {
+        if (!isAvailable()) return null;
+        String stripped = stripNamespace(particleName);
+        if (stripped.isEmpty()) return null;
+        // 1) particles/<name>.json → texture/textures 字段
+        byte[] def = readAssetBytes("particles/" + stripped + ".json");
+        if (def != null) {
+            try {
+                com.google.gson.JsonObject obj = new com.google.gson.JsonParser()
+                    .parse(new String(def, StandardCharsets.UTF_8))
+                    .getAsJsonObject();
+                String tex = null;
+                if (obj.has("textures") && obj.get("textures").isJsonArray()
+                    && obj.getAsJsonArray("textures").size() > 0) {
+                    tex = obj.getAsJsonArray("textures").get(0).getAsString();
+                } else if (obj.has("texture") && obj.get("texture").isJsonPrimitive()) {
+                    tex = obj.get("texture").getAsString();
+                }
+                if (Config.DEBUG_PARTICLE) {
+                    ysmu.LOG.info("[YSMU-ASSET] particles/{}.json -> texture='{}'", stripped, tex);
+                }
+                if (tex != null && !tex.isEmpty()) {
+                    byte[] data = readAssetBytes("textures/particle/" + stripNamespace(tex) + ".png");
+                    if (data != null) return data;
+                    if (Config.DEBUG_PARTICLE) {
+                        ysmu.LOG.info("[YSMU-ASSET] textures/particle/{}.png not found", stripNamespace(tex));
+                    }
+                }
+            } catch (Exception e) {
+                if (Config.DEBUG_PARTICLE) {
+                    ysmu.LOG.info("[YSMU-ASSET] failed to parse particles/{}.json: {}", stripped, e.toString());
+                }
+            }
+        }
+        // 2) 回退：textures/particle/<name>.png
+        return readAssetBytes("textures/particle/" + stripped + ".png");
+    }
+
+    /** 剥离资源名/纹理名的命名空间前缀（{@code minecraft:drip_fall} → {@code drip_fall}）。 */
+    private static String stripNamespace(String name) {
+        int colon = name.indexOf(':');
+        return colon >= 0 ? name.substring(colon + 1) : name;
     }
 
     /**

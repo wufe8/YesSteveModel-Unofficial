@@ -87,6 +87,14 @@ public class CommonEventHandler {
         if (event.world.isRemote) {
             com.fox.ysmu.client.audio.YSMSoundManager.clear();
             com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.clear();
+            com.fox.ysmu.client.particle.CustomParticleManager.clear();
+        }
+    }
+
+    @SubscribeEvent
+    public static void onClientTick(TickEvent.ClientTickEvent event) {
+        if (event.phase == TickEvent.Phase.END) {
+            com.fox.ysmu.client.particle.CustomParticleManager.tick();
         }
     }
 

@@ -39,6 +39,36 @@ public final class ParticleEffectUtil {
     /** 批量粒子上限，防止模型包误用刷屏（1.7.10 粒子系统自身有数量上限）。 */
     private static final int MAX_BATCH_COUNT = 64;
 
+    /**
+     * 高版本粒子名 → 1.7.10 内置近似粒子名（降级）。
+     * 当高版本游戏资产缺失（asset index 无 textures/particle）时，用 1.7.10 内置粒子
+     * 近似显示，保证粒子链路可见；配置了完整高版本资产后自动改用真实纹理。
+     */
+    private static final java.util.Map<String, String> VANILLA_FALLBACK = new java.util.HashMap<>();
+
+    static {
+        VANILLA_FALLBACK.put("falling_dripstone_water", "dripWater");
+        VANILLA_FALLBACK.put("dripping_dripstone_water", "dripWater");
+        VANILLA_FALLBACK.put("falling_dripstone_lava", "dripLava");
+        VANILLA_FALLBACK.put("dripping_dripstone_lava", "dripLava");
+        VANILLA_FALLBACK.put("rain", "droplet");
+        VANILLA_FALLBACK.put("snowflake", "snowshovel");
+        VANILLA_FALLBACK.put("snow", "snowshovel");
+        VANILLA_FALLBACK.put("bubble_column_up", "bubble");
+        VANILLA_FALLBACK.put("bubble_pop", "bubble");
+        VANILLA_FALLBACK.put("poof", "smoke");
+        VANILLA_FALLBACK.put("small_flame", "flame");
+        VANILLA_FALLBACK.put("soul_fire_flame", "flame");
+        VANILLA_FALLBACK.put("campfire_cosy_smoke", "smoke");
+        VANILLA_FALLBACK.put("campfire_signal_smoke", "largesmoke");
+        VANILLA_FALLBACK.put("large_smoke", "largesmoke");
+        VANILLA_FALLBACK.put("explosion", "largeexplode");
+        VANILLA_FALLBACK.put("explosion_emitter", "hugeexplosion");
+        VANILLA_FALLBACK.put("dragon_breath", "witchMagic");
+        VANILLA_FALLBACK.put("end_rod", "townaura");
+        VANILLA_FALLBACK.put("totem_of_undying", "happyVillager");
+    }
+
     /** 当前渲染帧的实体上下文（由 {@code AnimationRegister.setParserValue} 每帧写入），
      *  供无实体上下文的 mclib Function 在 get() 时刻读取。 */
     private static volatile Entity currentEntity;
@@ -83,6 +113,21 @@ public final class ParticleEffectUtil {
             return false;
         }
         String particleName = normalizeParticleId(id);
+        // 自定义粒子：若高版本游戏资产里有该粒子的纹理（如 falling_dripstone_water），
+        // 则生成 CustomParticleFX（独立渲染）；否则回退 vanilla spawnParticle。
+        int customTexId = ParticleTextureManager.getTextureId(particleName);
+        // 高版本资产缺失时，把常见高版本粒子名映射到 1.7.10 内置近似粒子，保证效果可见。
+        String emitName = particleName;
+        if (customTexId < 0) {
+            String fallback = VANILLA_FALLBACK.get(particleName);
+            if (fallback != null) {
+                emitName = fallback;
+                if (Config.DEBUG_PARTICLE) {
+                    ysmu.LOG.info("[YSMU-PARTICLE] '{}' no high-version texture -> vanilla fallback '{}'",
+                        particleName, fallback);
+                }
+            }
+        }
         if (count < 0) {
             count = 0;
         }
@@ -122,11 +167,7 @@ public final class ParticleEffectUtil {
                 ysmu.LOG.info("[YSMU-PARTICLE] spawn {} -> world=({},{},{}) yaw={} entityPos=({},{},{})",
                     isAbsolute ? "abs" : "rel", x, y, z, dbgYaw, entity.posX, entity.posY, entity.posZ);
             }
-            mc.func_152344_a(() -> {
-                if (mc.theWorld != null) {
-                    mc.theWorld.spawnParticle(particleName, x, y, z, vx, vy, vz);
-                }
-            });
+            emit(mc, emitName, customTexId, x, y, z, vx, vy, vz, lifetime);
             return true;
         }
         Random random = entity.worldObj.rand;
@@ -142,13 +183,33 @@ public final class ParticleEffectUtil {
             // 同 count==0：1.7.10 玩家 posY 含 yOffset(1.62)，用 boundingBox.minY（脚底）对齐 OpenYSM。
             final double y = entity.boundingBox.minY + spawn[1];
             final double z = entity.posZ + spawn[2];
+            emit(mc, emitName, customTexId, x, y, z, vx, vy, vz, lifetime);
+        }
+        return true;
+    }
+
+    /**
+     * 生成单个粒子：命中自定义纹理则 {@code addEffect(CustomParticleFX)}（独立渲染层 3），
+     * 否则走 1.7.10 vanilla {@code spawnParticle}（未知名静默跳过）。
+     * 全部经 {@code func_152344_a} 提交到客户端主线程。
+     */
+    private static void emit(Minecraft mc, String particleName, int customTexId,
+        double x, double y, double z, double vx, double vy, double vz, int lifetime) {
+        if (customTexId >= 0) {
+            mc.func_152344_a(() -> {
+                if (mc.theWorld != null) {
+                    // 尺寸/重力先用合理默认（后续可按高版本 particle JSON 的 behavior 解析细化）
+                    CustomParticleManager.add(new CustomParticleFX(
+                        mc.theWorld, x, y, z, vx, vy, vz, customTexId, 2.0F, lifetime, 0.6F));
+                }
+            });
+        } else {
             mc.func_152344_a(() -> {
                 if (mc.theWorld != null) {
                     mc.theWorld.spawnParticle(particleName, x, y, z, vx, vy, vz);
                 }
             });
         }
-        return true;
     }
 
     /**

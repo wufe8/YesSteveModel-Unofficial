@@ -36,10 +36,16 @@ public class Config {
     public static boolean GUI_HUD_PREVIEW_CACHE = true;
 
     // Local asset config
-    /** Path to a high-version Minecraft game directory (e.g. C:/Users/x/.minecraft) */
+    /** Path to a high-version Minecraft game directory (e.g. C:/Users/x/AppData/Roaming/.minecraft) */
     public static String HIGH_VERSION_GAME_PATH = "";
-    /** Asset version to use (e.g. "1.21"). Should match the game directory's assets/indexes/ */
-    public static String HIGH_VERSION_ASSET_VERSION = "1.21";
+    /** Asset version to use (e.g. "32"). Should match the game directory's assets/indexes/ */
+    public static String HIGH_VERSION_ASSET_VERSION = "32";
+    /**
+     * Version directory name under {@code <gamePath>/versions/} whose client jar holds
+     * textures/particles (e.g. "26.2"). Newer Minecraft versions keep textures inside the
+     * version jar instead of assets/objects; leave empty if not needed (older versions).
+     */
+    public static String HIGH_VERSION_JAR_VERSION = "26.2";
 
     // Debug Config
     public static boolean DEBUG_CONTROLLER = false;
@@ -191,6 +197,7 @@ public class Config {
         // Local asset config values
         HIGH_VERSION_GAME_PATH = syncString("HighVersionGamePath", "local_assets", HIGH_VERSION_GAME_PATH, "Path to a high-version Minecraft game directory (e.g. C:/Users/x/.minecraft). YSMU reads sounds.json and OGG files from here to play high-version sounds that Et-Futurum doesn't cover.", load);
         HIGH_VERSION_ASSET_VERSION = syncString("HighVersionAssetVersion", "local_assets", HIGH_VERSION_ASSET_VERSION, "Asset version to use (e.g. '1.21'). Must match the version subfolder under assets/indexes/ in the game directory.", load);
+        HIGH_VERSION_JAR_VERSION = syncString("HighVersionJarVersion", "local_assets", HIGH_VERSION_JAR_VERSION, "Version directory under <gamePath>/versions/ whose client jar holds textures/particles (e.g. '26.2'). Newer Minecraft versions keep textures inside the version jar; leave empty if not needed.", load);
 
         // Debug config values
         DEBUG_CONTROLLER = syncBoolean("DebugController", "debug", DEBUG_CONTROLLER, "Enable controller transition/roaming debug logging ([YSMU-CTRL])", load);
