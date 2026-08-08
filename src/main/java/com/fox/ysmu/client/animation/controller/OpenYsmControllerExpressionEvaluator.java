@@ -19,6 +19,7 @@ import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
 import com.fox.ysmu.client.animation.condition.InnerClassify;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
+import com.fox.ysmu.client.particle.ParticleEffectUtil;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
@@ -763,10 +764,32 @@ public final class OpenYsmControllerExpressionEvaluator {
                     return FALSE;
                 }
             }
+            // --- particle / abs_particle 函数（副作用：生成粒子，返回 1.0/0.0） ---
+            if (("particle".equals(name) || "abs_particle".equals(name)
+                || "ysm.particle".equals(name) || "ysm.abs_particle".equals(name))
+                && arguments.size() >= 1) {
+                String id = arguments.get(0).asString();
+                double ox = argNumber(arguments, 1);
+                double oy = argNumber(arguments, 2);
+                double oz = argNumber(arguments, 3);
+                double dx = argNumber(arguments, 4);
+                double dy = argNumber(arguments, 5);
+                double dz = argNumber(arguments, 6);
+                double speed = argNumber(arguments, 7);
+                int count = (int) argNumber(arguments, 8);
+                int lifetime = arguments.size() > 9 ? (int) arguments.get(9).asNumber() : 20;
+                boolean abs = name.startsWith("abs_") || name.startsWith("ysm.abs_");
+                return ParticleEffectUtil.handleParticle(player, id,
+                    ox, oy, oz, dx, dy, dz, speed, count, lifetime, abs) ? TRUE : FALSE;
+            }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "func:" + name,
                 "Unsupported OpenYSM controller function: " + name);
             return FALSE;
+        }
+
+        private static double argNumber(List<Argument> args, int index) {
+            return index < args.size() ? args.get(index).asNumber() : 0.0d;
         }
 
         private double localVariableValue(String name) {

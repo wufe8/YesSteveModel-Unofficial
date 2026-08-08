@@ -288,6 +288,22 @@ public final class MolangPhysicsRuntime {
         return bone.getPositionZ();
     }
 
+    /** 骨骼本地枢轴（x/y/z）。OpenYSM 的 bone_pivot_abs 返回绝对枢轴，1.7.10
+     *  只有本地枢轴，此处为近似实现。 */
+    public static double bonePivot(int nameId, char axis) {
+        IBone bone = bone(nameId);
+        if (bone == null) {
+            return 0.0D;
+        }
+        if (axis == 'x') {
+            return bone.getPivotX();
+        }
+        if (axis == 'y') {
+            return bone.getPivotY();
+        }
+        return bone.getPivotZ();
+    }
+
     public static double boneScale(int nameId, char axis) {
         IBone bone = bone(nameId);
         if (bone == null) {

@@ -56,6 +56,7 @@ public class Config {
     public static boolean DEBUG_MODEL_RENDER = false;
     public static boolean DEBUG_ANIMATION = false;
     public static boolean DEBUG_SOUND = false;
+    public static boolean DEBUG_PARTICLE = false;
     public static boolean DEBUG_MERGED_ANIMATIONS = false;
     public static boolean SHOW_WELCOME_MESSAGE = true;
 
@@ -197,6 +198,7 @@ public class Config {
         DEBUG_MODEL_RENDER = syncBoolean("DebugModelRender", "debug", DEBUG_MODEL_RENDER, "Model render/arrow/bone-dump logging (needs DebugModelLoad)", load);
         DEBUG_ANIMATION = syncBoolean("DebugAnimation", "debug", DEBUG_ANIMATION, "Enable animation playback debug logging ([YSMU-ANIM])", load);
         DEBUG_SOUND = syncBoolean("DebugSound", "debug", DEBUG_SOUND, "Enable sound cache/playback debug logging ([YSM Sound])", load);
+        DEBUG_PARTICLE = syncBoolean("DebugParticle", "debug", DEBUG_PARTICLE, "Enable particle()/abs_particle() debug logging ([YSMU-PARTICLE])", load);
         DEBUG_MERGED_ANIMATIONS = syncBoolean("DebugMergedAnimations", "debug", DEBUG_MERGED_ANIMATIONS, "Show __ysm_merged__ animations in the preview GUI for debugging", load);
         SHOW_WELCOME_MESSAGE = syncBoolean("ShowWelcomeMessage", "debug", SHOW_WELCOME_MESSAGE, "Show the welcome/info message when joining a world", load);
 

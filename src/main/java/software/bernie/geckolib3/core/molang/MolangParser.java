@@ -25,7 +25,9 @@ import software.bernie.geckolib3.core.molang.functions.FirstOrder;
 import software.bernie.geckolib3.core.molang.functions.SecondOrder;
 import software.bernie.geckolib3.core.molang.functions.SinDegrees;
 
+import com.fox.ysmu.client.animation.molang.BonePivotAbsFunction;
 import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
+import com.fox.ysmu.client.animation.molang.ParticleFunction;
 import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
@@ -104,7 +106,18 @@ public class MolangParser extends MathBuilder {
         // 缺失的 ysm.* 功能桩函数：防止高版本模型动画控制器每帧刷堆栈
         this.functions.put("ysm.play_sound", CtrlHoldFunction.class);
         this.functions.put("ysm.relative_block_name", CtrlHoldFunction.class);
-        this.functions.put("ysm.particle", CtrlHoldFunction.class);
+        // ysm.particle / particle / abs_particle：OpenYSM 粒子 Molang 函数。
+        // ParticleFunction 通过 MolangStringPool 还原字符串参数（粒子 id），
+        // 实体上下文由 ParticleEffectUtil.setCurrentEntity 每帧写入
+        // （AnimationRegister.setParserValue），在 get() 时刻读取。
+        this.functions.put("ysm.particle", ParticleFunction.class);
+        this.functions.put("particle", ParticleFunction.class);
+        this.functions.put("abs_particle", ParticleFunction.class);
+        // ysm.bone_pivot_abs：骨骼本地枢轴（近似实现，见 BonePivotAbsFunction）。
+        // .x/.y/.z 后缀由 rewriteVectorFunction 重写为 _x/_y/_z 注册名。
+        this.functions.put("ysm.bone_pivot_abs_x", BonePivotAbsFunction.class);
+        this.functions.put("ysm.bone_pivot_abs_y", BonePivotAbsFunction.class);
+        this.functions.put("ysm.bone_pivot_abs_z", BonePivotAbsFunction.class);
         this.functions.put("ysm.keyboard", CtrlHoldFunction.class);
 
         remap("abs", "math.abs");
@@ -434,6 +447,7 @@ public class MolangParser extends MathBuilder {
         rewritten = rewriteVectorFunction(rewritten, "ysm.bone_pos", "ysm.bone_pos");
         rewritten = rewriteVectorFunction(rewritten, "ysm.bone_position", "ysm.bone_position");
         rewritten = rewriteVectorFunction(rewritten, "ysm.bone_scale", "ysm.bone_scale");
+        rewritten = rewriteVectorFunction(rewritten, "ysm.bone_pivot_abs", "ysm.bone_pivot_abs");
         return rewritten;
     }
 

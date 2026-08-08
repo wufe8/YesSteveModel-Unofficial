@@ -16,6 +16,7 @@ import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
+import com.fox.ysmu.client.particle.ParticleEffectUtil;
 import net.minecraft.world.EnumSkyBlock;
 
 import software.bernie.geckolib3.core.builder.ILoopType;
@@ -196,6 +197,9 @@ public class AnimationRegister {
         if (mc.theWorld == null) {
             return;
         }
+        // 粒子 Molang 函数（particle/abs_particle）的实体上下文：mclib Function
+        // 无状态，粒子函数在 get() 时刻从这里读取当前渲染帧的玩家。
+        ParticleEffectUtil.setCurrentEntity(player);
         RemotePlayerAnimationQueries.QueryValues queryValues = RemotePlayerAnimationQueries
             .get(animationEvent, player, data.netHeadYaw);
         setEntityQueryValues(parser, data, player, mc, queryValues);
