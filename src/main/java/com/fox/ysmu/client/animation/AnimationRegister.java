@@ -166,6 +166,7 @@ public class AnimationRegister {
         parser.register(new LazyVariable("ysm.is_sleep", MolangUtils.FALSE));
         parser.register(new LazyVariable("ysm.is_sneak", MolangUtils.FALSE));
         parser.register(new LazyVariable("ysm.is_riptide", MolangUtils.FALSE));
+        parser.register(new LazyVariable("ysm.eye_in_water", MolangUtils.FALSE));
         parser.register(new LazyVariable("ysm.on_ladder", MolangUtils.FALSE));
         parser.register(new LazyVariable("ysm.is_fishing", MolangUtils.FALSE));
         parser.register(new LazyVariable("ysm.swinging", MolangUtils.FALSE));
@@ -302,6 +303,9 @@ public class AnimationRegister {
         parser.setValue("ysm.is_passenger", () -> MolangUtils.booleanToFloat(player.isRiding()));
         parser.setValue("ysm.is_sleep", () -> MolangUtils.booleanToFloat(player.isPlayerSleeping()));
         parser.setValue("ysm.is_sneak", () -> MolangUtils.booleanToFloat(isPlayerOnGround(player) && player.isSneaking()));
+        // OpenYSM 语义：eye_in_water = 眼睛是否在水下（isUnderWater）。
+        // 1.7.10 无 isUnderWater，用眼睛高度所在方块是否为水近似。
+        parser.setValue("ysm.eye_in_water", () -> MolangUtils.booleanToFloat(isEyeInWater(player)));
         parser.setValue("ysm.on_ladder", () -> MolangUtils.booleanToFloat(player.isOnLadder()));
         parser.setValue("ysm.is_fishing", () -> MolangUtils.booleanToFloat(player.fishEntity != null));
         parser.setValue("ysm.swinging", () -> MolangUtils.booleanToFloat(player.isSwingInProgress));
@@ -407,6 +411,17 @@ public class AnimationRegister {
         } else {
             return MolangUtils.booleanToFloat(player.getEquipmentInSlot(slotIndex) != null);
         }
+    }
+
+    /** OpenYSM isUnderWater 的 1.7.10 近似：眼睛高度所在方块为水材质。 */
+    private static boolean isEyeInWater(EntityPlayer player) {
+        if (player.worldObj == null) {
+            return false;
+        }
+        int eyeY = MathHelper.floor_double(player.posY + player.getEyeHeight());
+        int eyeX = MathHelper.floor_double(player.posX);
+        int eyeZ = MathHelper.floor_double(player.posZ);
+        return player.worldObj.getBlock(eyeX, eyeY, eyeZ).getMaterial() == net.minecraft.block.material.Material.water;
     }
 
     private static boolean isPlayerOnGround(EntityPlayer player) {

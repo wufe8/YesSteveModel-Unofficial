@@ -106,6 +106,12 @@ public final class ParticleEffectUtil {
             final double vx = speed * dx;
             final double vy = speed * dy;
             final double vz = speed * dz;
+            if (Config.DEBUG_PARTICLE) {
+                float dbgYaw = entity instanceof EntityLivingBase
+                    ? ((EntityLivingBase) entity).renderYawOffset : entity.rotationYaw;
+                ysmu.LOG.info("[YSMU-PARTICLE] spawn {} -> world=({},{},{}) yaw={} entityPos=({},{},{})",
+                    isAbsolute ? "abs" : "rel", x, y, z, dbgYaw, entity.posX, entity.posY, entity.posZ);
+            }
             mc.func_152344_a(() -> {
                 if (mc.theWorld != null) {
                     mc.theWorld.spawnParticle(particleName, x, y, z, vx, vy, vz);

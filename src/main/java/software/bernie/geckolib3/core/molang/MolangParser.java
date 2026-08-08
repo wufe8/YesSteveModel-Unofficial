@@ -27,11 +27,13 @@ import software.bernie.geckolib3.core.molang.functions.SinDegrees;
 
 import com.fox.ysmu.client.animation.molang.BonePivotAbsFunction;
 import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
+import com.fox.ysmu.client.animation.molang.EquippedEnchantmentLevelFunction;
 import com.fox.ysmu.client.animation.molang.ParticleFunction;
 import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
+import com.fox.ysmu.client.animation.molang.RelativeBlockNameFunction;
 import com.fox.ysmu.ysmu;
 
 /**
@@ -105,7 +107,12 @@ public class MolangParser extends MathBuilder {
 
         // 缺失的 ysm.* 功能桩函数：防止高版本模型动画控制器每帧刷堆栈
         this.functions.put("ysm.play_sound", CtrlHoldFunction.class);
-        this.functions.put("ysm.relative_block_name", CtrlHoldFunction.class);
+        // ysm.relative_block_name：返回玩家相对偏移处方块注册名（如
+        // "minecraft:campfire"），OpenYSM 语义，±5 格范围限制。字符串比较通过
+        // MolangStringPool 池化 id 实现（见 RelativeBlockNameFunction）。
+        this.functions.put("ysm.relative_block_name", RelativeBlockNameFunction.class);
+        // ysm.equipped_enchantment_level：返回指定槽位物品上给定附魔的等级之和。
+        this.functions.put("ysm.equipped_enchantment_level", EquippedEnchantmentLevelFunction.class);
         // ysm.particle / particle / abs_particle：OpenYSM 粒子 Molang 函数。
         // ParticleFunction 通过 MolangStringPool 还原字符串参数（粒子 id），
         // 实体上下文由 ParticleEffectUtil.setCurrentEntity 每帧写入
@@ -382,6 +389,27 @@ public class MolangParser extends MathBuilder {
             }
             throw new MolangException("Couldn't parse an expression!");
         }
+    }
+
+    /**
+     * OpenYSM 支持三元/括号内的嵌套赋值（如 {@code (cond) ? (v.wet = 30) : 0}）。
+     * mclib 的 {@link Operation#ASSIGN} 只是纯函数（返回右值、不写回变量），
+     * 无法产生副作用，因此这里把 {@code [var, "=", expr...]} 模式改写为带
+     * 副作用的 {@link MolangAssignment}。
+     */
+    @Override
+    public IValue parseSymbols(List<Object> symbols) throws Exception {
+        if (symbols.size() >= 3
+            && symbols.get(0) instanceof String
+            && symbols.get(1) instanceof String
+            && "=".equals(symbols.get(1))
+            && isVariable(symbols.get(0))) {
+            String name = normalizeVariableName((String) symbols.get(0));
+            LazyVariable variable = getVariable(name);
+            IValue value = parseSymbols(symbols.subList(2, symbols.size()));
+            return new MolangAssignment(this, variable, value);
+        }
+        return super.parseSymbols(symbols);
     }
 
     /**

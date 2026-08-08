@@ -1001,6 +1001,14 @@ public final class OpenYsmControllerExpressionEvaluator {
             if ("is_sneak".equals(name)) {
                 return isOnGround() && player.isSneaking() ? TRUE : FALSE;
             }
+            if ("eye_in_water".equals(name)) {
+                if (player.worldObj == null) return FALSE;
+                int eyeX = net.minecraft.util.MathHelper.floor_double(player.posX);
+                int eyeY = net.minecraft.util.MathHelper.floor_double(player.posY + player.getEyeHeight());
+                int eyeZ = net.minecraft.util.MathHelper.floor_double(player.posZ);
+                return player.worldObj.getBlock(eyeX, eyeY, eyeZ).getMaterial()
+                    == net.minecraft.block.material.Material.water ? TRUE : FALSE;
+            }
             if ("on_ladder".equals(name)) {
                 return player.isOnLadder() ? TRUE : FALSE;
             }

@@ -363,7 +363,12 @@ public final class MolangPhysicsRuntime {
      *  未追踪到（首帧/预览等）时回退为沿父链矩阵重算。
      *  <p>三轴都用 M×pivot（枢轴点世界位置）——平移列会被目标骨骼自身 scale/rotation
      *  污染（如 mingf 火把 locator 的 scale [1.25,2.5,1.5]：平移列 z 虚增~2 倍、
-     *  x/y 抖动），M×pivot 稳定且正确（左手 X≈-0.15、手高 Y≈1.25、前方 Z≈-0.4）。 */
+     *  x/y 抖动），M×pivot 稳定且正确。
+     *  <p><b>X 轴取负</b>：GeoBuilder 对 pivot.x/cube.x 取负（GeckoLib 内部约定），
+     *  捕获矩阵在 GeoBone 空间（左手 X 为负）；而模型粒子公式
+     *  {@code particle(..., bone_pivot_abs(...).x, ...)} 期望的 X 是渲染帧
+     *  （无 GL 镜像）的坐标（左手为正），因此 x 轴结果需取反。z 轴由模型公式自带的
+     *  {@code -bone_pivot_abs(...).z} 处理，y 轴无需取反。 */
     public static double bonePivot(int nameId, char axis) {
         IBone bone = bone(nameId);
         if (bone == null) {
@@ -380,16 +385,13 @@ public final class MolangPhysicsRuntime {
                 float py = bone.getPivotY() / 16f;
                 float pz = bone.getPivotZ() / 16f;
                 // 枢轴点的世界位置 = M × pivot（blocks），不受骨骼自身缩放/旋转污染。
-                // 平移列（m03/m13/m23）会被目标骨骼自身 scale/rotation 污染（如 mingf
-                // 火把 locator 的 scale [1.25,2.5,1.5] 让平移列 z 虚增~2 倍、x/y 抖动），
-                // M×pivot 稳定且正确：X≈-0.15（左手）、Y≈1.25（手高）、Z≈-0.4（前方）。
                 double wx = m[3] + (double) m[0] * px + (double) m[1] * py + (double) m[2] * pz;
                 double wy = m[7] + (double) m[4] * px + (double) m[5] * py + (double) m[6] * pz;
                 double wz = m[11] + (double) m[8] * px + (double) m[9] * py + (double) m[10] * pz;
-                // 模型局部系（前方=-Z、左手=-X），无需取反；模型公式自带 -bone_pivot_abs(...).z。
+                // GeoBone 空间 X 取负（GeoBuilder 约定）→ 渲染帧 X；模型公式 x 不取负。
                 double capturedResult;
                 if (axis == 'x') {
-                    capturedResult = wx * (16.0D / trackScaleX);
+                    capturedResult = -wx * (16.0D / trackScaleX);
                 } else if (axis == 'y') {
                     capturedResult = wy * (16.0D / trackScaleY);
                 } else {
@@ -411,12 +413,12 @@ public final class MolangPhysicsRuntime {
     }
 
     /** 沿 GeoBone 父链矩阵重算绝对枢轴（无渲染追踪时的回退，语义同 bonePivot：
-     *  三轴都用 M×pivot，模型局部系无需取反）。 */
+     *  三轴都用 M×pivot；x 轴取负（GeoBone 空间 → 渲染帧，见 bonePivot 注释）。 */
     private static double matrixBonePivot(IBone bone, char axis) {
         if (!(bone instanceof GeoBone)) {
-            // VirtualBone 等无父链/几何：退化为本地枢轴（模型局部系，不取反）
+            // VirtualBone 等无父链/几何：退化为本地枢轴（GeoBone 空间，x 取负）
             if (axis == 'x') {
-                return bone.getPivotX();
+                return -bone.getPivotX();
             }
             if (axis == 'y') {
                 return bone.getPivotY();
@@ -443,9 +445,9 @@ public final class MolangPhysicsRuntime {
         double wx = acc.m03 + (double) acc.m00 * px + (double) acc.m01 * py + (double) acc.m02 * pz;
         double wy = acc.m13 + (double) acc.m10 * px + (double) acc.m11 * py + (double) acc.m12 * pz;
         double wz = acc.m23 + (double) acc.m20 * px + (double) acc.m21 * py + (double) acc.m22 * pz;
-        // 模型局部系（前方=-Z、左手=-X），无需取反；模型公式自带 -bone_pivot_abs(...).z。
+        // x 轴取负（GeoBone 空间 → 渲染帧）；z 由模型公式自带取负，y 不变。
         if (axis == 'x') {
-            return wx;
+            return -wx;
         }
         if (axis == 'y') {
             return wy;

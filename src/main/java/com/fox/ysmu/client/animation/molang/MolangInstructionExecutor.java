@@ -134,13 +134,47 @@ public final class MolangInstructionExecutor {
     }
 
     /**
-     * Locates the first {@code =} character that acts as an assignment
+     * Locates the first {@code =} character that acts as a TOP-LEVEL assignment
      * operator (ignoring {@code ==}, {@code !=}, {@code <=}, {@code >=},
-     * and {@code ?=}/{@code ?:}).
+     * {@code ?=}/{@code ?:}, and any {@code =} nested inside parentheses,
+     * brackets, or ternary branches).
+     *
+     * <p>OpenYSM timeline instructions commonly use nested assignments like
+     * {@code (cond) ? (v.x = 30) : 0} — those {@code =} live inside parens and
+     * must NOT be treated as a top-level assignment (which would mis-parse the
+     * whole statement and skip it).  Only a bare {@code v.xxx = ...} at
+     * parentheses depth 0 is an assignment.</p>
      */
     private static int findAssignmentOperator(String text) {
+        int depth = 0;
+        boolean inString = false;
+        char quote = 0;
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);
+            if (inString) {
+                if (c == '\\' && i + 1 < text.length()) {
+                    i++;
+                } else if (c == quote) {
+                    inString = false;
+                }
+                continue;
+            }
+            if (c == '\'' || c == '"') {
+                inString = true;
+                quote = c;
+                continue;
+            }
+            if (c == '(') {
+                depth++;
+                continue;
+            }
+            if (c == ')') {
+                depth--;
+                continue;
+            }
+            if (depth != 0) {
+                continue;
+            }
             if (c == '=') {
                 // Skip two-character operators: ==, !=, <=, >=
                 if (i > 0) {
