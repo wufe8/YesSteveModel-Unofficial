@@ -44,9 +44,27 @@ public final class MolangInstructionExecutor {
 
     private MolangInstructionExecutor() {}
 
+    /** 限流：只对 v.wet / v.fireP / particle / enchantment 相关指令打印一次解析结果。 */
+    private static final java.util.Set<String> LOGGED_INSTRUCTION = java.util.Collections
+        .newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
     public static void execute(String instructions) {
         if (StringUtils.isBlank(instructions)) {
             return;
+        }
+
+        // 诊断：确认 parallel3 / swing:sword 的 timeline 指令是否真的被收到（只打一次）
+        if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+            String lower = instructions.toLowerCase(java.util.Locale.ROOT);
+            if (lower.contains("v.wet") || lower.contains("v.firep")
+                || lower.contains("particle") || lower.contains("enchantment_level")
+                || lower.contains("relative_block_name")) {
+                if (LOGGED_INSTRUCTION.add(instructions)) {
+                    ysmu.LOG.info("[YSMU-TL-RECV] instruction received ({} chars): {}",
+                        instructions.length(),
+                        instructions.length() > 400 ? instructions.substring(0, 400) + "..." : instructions);
+                }
+            }
         }
 
         // ── Instruction-level cache hit: skip split + parse entirely ──
@@ -110,20 +128,26 @@ public final class MolangInstructionExecutor {
         for (ParsedInstruction pi : ops) {
             if (pi.isAssignment) {
                 double d = pi.value.get();
+                // 大小写归一化：parseExpression 会对整个表达式 lowerCase，
+                // 模型骨骼/嵌套表达式读取的 key 都是小写（如 v.firep）。
+                // 顶层赋值 target 来自原始 timeline 指令（可能大写，如 v.fireP），
+                // 必须转小写写入，否则读取侧永远读不到（v.fireP 恒 0 bug）。
+                String target = pi.target.toLowerCase(java.util.Locale.ROOT);
                 // Write through MolangParser.VARIABLES so ScopedMolangVariable
                 // (if it exists) sees the change.
-                MolangParser.VARIABLES.computeIfAbsent(pi.target,
+                MolangParser.VARIABLES.computeIfAbsent(target,
                     k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0)).set(d);
                 // Also write directly to MolangPhysicsRuntime so that
                 // syncToRuntimeState() can see the value even when no
                 // ScopedMolangVariable was previously registered for this key
                 // (e.g. v.bq_eye set by pre_parallel7's timeline).
-                com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setVariable(pi.target, d);
+                com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setVariable(target, d);
                 // Log v.qh timeline variable assignments for debugging
                 if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
-                    String t = pi.target;
+                    String t = target;
                     if ("v.qh".equals(t) || "v.qh2".equals(t)
-                        || "v.jump".equals(t) || "v.random".equals(t)) {
+                        || "v.jump".equals(t) || "v.random".equals(t)
+                        || "v.wet".equals(t) || "v.firep".equals(t)) {
                         ysmu.LOG.info("[YSMU-TL-SET] {} = {}", t, d);
                     }
                 }

@@ -8,7 +8,6 @@ import net.minecraft.entity.EntityLivingBase;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
-import com.fox.ysmu.util.RenderUtil;
 
 /**
  * OpenYSM 风格粒子生成工具（1.7.10 落地层）。
@@ -66,14 +65,21 @@ public final class ParticleEffectUtil {
         double dx, double dy, double dz,
         double speed, int count, int lifetime, boolean isAbsolute) {
         if (entity == null || id == null || id.trim().isEmpty()) {
+            if (Config.DEBUG_PARTICLE) {
+                ysmu.LOG.info("[YSMU-PARTICLE] EARLY RETURN: entity={} id='{}'", entity, id);
+            }
             return false;
         }
-        if (RenderUtil.RENDERING_IN_INVENTORY || RenderUtil.RENDERING_IN_PAPERDOLL) {
-            // GUI 预览（背包/纸娃娃）里不往世界生成粒子
-            return false;
-        }
+        // 不再按渲染上下文拦截（RENDERING_IN_INVENTORY/PAPERDOLL）：模型预览页要么无动画、
+        // 要么只播放 preview 动画，不会触发粒子 timeline；而第一人称时玩家主模型动画由
+        // HUD 纸娃娃驱动，粒子必须正常生成到世界坐标（第一人称屏幕可见）。
+        // 只要实体与客户端世界有效就生成粒子。
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || mc.theWorld == null || !mc.theWorld.isRemote) {
+            if (Config.DEBUG_PARTICLE) {
+                ysmu.LOG.info("[YSMU-PARTICLE] EARLY RETURN: mc={} world={} remote={}",
+                    mc, mc == null ? null : mc.theWorld, mc == null ? null : mc.theWorld.isRemote);
+            }
             return false;
         }
         String particleName = normalizeParticleId(id);

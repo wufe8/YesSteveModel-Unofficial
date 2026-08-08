@@ -14,6 +14,7 @@ import net.minecraft.item.ItemStack;
 
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
 import com.fox.ysmu.compat.BackhandCompat;
+import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.molang.MolangStringPool;
 
@@ -78,27 +79,51 @@ public class EquippedEnchantmentLevelFunction extends Function {
         return 2;
     }
 
+    /** 限流：每次附魔查询打印一次结果（DEBUG_CONTROLLER）。 */
+    private static final java.util.Set<String> LOGGED_ENCH = java.util.Collections
+        .newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
     @Override
     public double get() {
         try {
             String slotType = MolangStringPool.get((int) getArg(0));
             Entity entity = ParticleEffectUtil.getCurrentEntity();
             if (slotType == null || !(entity instanceof EntityPlayer)) {
+                if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                    ysmu.LOG.info("[YSMU-ENCH] slotType={} entity={} -> 0 (bad ctx)",
+                        slotType, entity == null ? "null" : entity.getClass().getSimpleName());
+                }
                 return 0.0d;
             }
             ItemStack stack = getStack((EntityPlayer) entity, slotType);
             if (stack == null) {
+                if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                    ysmu.LOG.info("[YSMU-ENCH] slotType={} -> 0 (no stack)", slotType);
+                }
                 return 0.0d;
             }
             int total = 0;
+            StringBuilder dbg = new StringBuilder();
             for (int i = 1; i < this.args.length; i++) {
                 String enchName = MolangStringPool.get((int) getArg(i));
                 Integer enchId = enchName == null ? null : ENCHANTMENT_IDS.get(stripNamespace(enchName));
                 if (enchId != null && enchId >= 0 && enchId < Enchantment.enchantmentsList.length) {
                     Enchantment ench = Enchantment.enchantmentsList[enchId];
                     if (ench != null) {
-                        total += EnchantmentHelper.getEnchantmentLevel(ench.effectId, stack);
+                        int lvl = EnchantmentHelper.getEnchantmentLevel(ench.effectId, stack);
+                        total += lvl;
+                        if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                            dbg.append("[").append(enchName).append(" id=").append(enchId)
+                               .append(" lvl=").append(lvl).append("]");
+                        }
                     }
+                }
+            }
+            if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+                String key = slotType + "|" + stack.getUnlocalizedName() + "|" + dbg;
+                if (LOGGED_ENCH.add(key)) {
+                    ysmu.LOG.info("[YSMU-ENCH] slot={} stack={} ench={} total={}",
+                        slotType, stack.getUnlocalizedName(), dbg, total);
                 }
             }
             return total;

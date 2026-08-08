@@ -4,9 +4,16 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 
 import java.util.List;
 
+import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 class MolangParserOpenYsmPhysicsTest {
+
+    /** MolangParser.VARIABLES 是全局静态 map，测试间必须隔离，否则 v.* 值互相污染。 */
+    @BeforeEach
+    void clearGlobalVariables() {
+        MolangParser.VARIABLES.clear();
+    }
 
     @Test
     void parsesOpenYsmPhysicsFunctionsWithStringKeys() throws Exception {

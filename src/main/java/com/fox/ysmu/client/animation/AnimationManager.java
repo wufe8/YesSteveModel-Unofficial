@@ -24,6 +24,7 @@ import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.util.ControllerUtils;
+import com.fox.ysmu.ysmu;
 
 import com.google.common.collect.Lists;
 
@@ -361,7 +362,13 @@ public final class AnimationManager {
             // Skip if the animation doesn't exist in the model's file to avoid
             // GeckoLib's System.out.printf spam ("Could not load animation: ...").
             if (animationExistsInFile(animId, animationName)) {
+                if (Config.DEBUG_CONTROLLER && geckoName != null && geckoName.startsWith("parallel_")) {
+                    ysmu.LOG.info("[YSMU-PAR] {} fallback -> playLoopAnimation('{}')", geckoName, animationName);
+                }
                 return playLoopAnimation(event, animationName);
+            }
+            if (Config.DEBUG_CONTROLLER && geckoName != null && geckoName.startsWith("parallel_")) {
+                ysmu.LOG.info("[YSMU-PAR] {} fallback MISS: '{}' not in file", geckoName, animationName);
             }
             return PlayState.STOP;
         }
@@ -947,6 +954,10 @@ public final class AnimationManager {
 
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
+                if (Config.DEBUG_CONTROLLER) {
+                    ysmu.LOG.info("[YSMU-SWING] legacy: conditionalAnimation='{}' exists={} modelHasOwnSwingCtrl={}",
+                        conditionalAnimation, exists, modelHasOwnSwingCtrl);
+                }
                 if (exists) {
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.PLAY_ONCE);
                 }
