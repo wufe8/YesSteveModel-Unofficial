@@ -69,7 +69,13 @@ public class Config {
     /** 调试/测试用：粒子 xyz 偏移全部置 0（直接生成在实体位置）。 */
     public static boolean PARTICLE_ZERO_OFFSET = false;
     public static boolean DEBUG_MERGED_ANIMATIONS = false;
+
+    // Chat message config
+    /** 进世界时显示欢迎/提示消息。 */
     public static boolean SHOW_WELCOME_MESSAGE = true;
+    /** 在 chat 中显示服务端/客户端模型加载时间与模型加载数量。
+     *  默认关：正常时不显示；仅当有模型加载失败时才显示加载数量。 */
+    public static boolean SHOW_MODEL_LOAD_CHAT = false;
 
     // External wearable rendering (AdventureBackpack2 backpacks/copter/jetpack etc.)
     public static boolean RENDER_WEARABLE = true;
@@ -195,8 +201,8 @@ public class Config {
         SHOW_LOADING_PROGRESS = syncBoolean("ShowLoadingProgress", "gui", SHOW_LOADING_PROGRESS, "Show model sync progress bar overlay", load);
         GUI_MODEL_PREVIEW_REFRESH = syncInt("GuiModelPreviewRefresh", "gui", GUI_MODEL_PREVIEW_REFRESH, "Preview refresh interval in frames. 0 = static (no periodic refresh, only on interaction). 1-4 = refresh every N frames. Higher = smoother animation but more GPU load.", 0, 4, load);        GUI_HUD_PREVIEW_CACHE = syncBoolean("GuiHudPreviewCache", "gui", GUI_HUD_PREVIEW_CACHE, "HUD selfie model FBO cache. Disable for every-frame rendering (no performance gain).", load);
         // Local asset config values
-        HIGH_VERSION_GAME_PATH = syncString("HighVersionGamePath", "local_assets", HIGH_VERSION_GAME_PATH, "Path to a high-version Minecraft game directory (e.g. C:/Users/x/.minecraft). YSMU reads sounds.json and OGG files from here to play high-version sounds that Et-Futurum doesn't cover.", load);
-        HIGH_VERSION_ASSET_VERSION = syncString("HighVersionAssetVersion", "local_assets", HIGH_VERSION_ASSET_VERSION, "Asset version to use (e.g. '1.21'). Must match the version subfolder under assets/indexes/ in the game directory.", load);
+        HIGH_VERSION_GAME_PATH = syncString("HighVersionGamePath", "local_assets", HIGH_VERSION_GAME_PATH, "Path to a high-version Minecraft game directory (e.g. C:/Users/x/AppData/Roaming/.minecraft). YSMU reads sounds.json and OGG files from here to play high-version sounds that Et-Futurum doesn't cover.", load);
+        HIGH_VERSION_ASSET_VERSION = syncString("HighVersionAssetVersion", "local_assets", HIGH_VERSION_ASSET_VERSION, "Asset version to use (e.g. '32'). Must match the version subfolder under assets/indexes/ in the game directory.", load);
         HIGH_VERSION_JAR_VERSION = syncString("HighVersionJarVersion", "local_assets", HIGH_VERSION_JAR_VERSION, "Version directory under <gamePath>/versions/ whose client jar holds textures/particles (e.g. '26.2'). Newer Minecraft versions keep textures inside the version jar; leave empty if not needed.", load);
 
         // Debug config values
@@ -214,7 +220,10 @@ public class Config {
         PARTICLE_Y_ADJUST = syncDouble("ParticleYAdjust", "debug", PARTICLE_Y_ADJUST, "Extra Y offset subtracted from particle()/abs_particle() spawn position, in blocks (debug/testing; default 0)", -10.0, 10.0, load);
         PARTICLE_ZERO_OFFSET = syncBoolean("ParticleZeroOffset", "debug", PARTICLE_ZERO_OFFSET, "Force particle()/abs_particle() xyz offsets to 0 (spawn at entity position; debug/testing)", load);
         DEBUG_MERGED_ANIMATIONS = syncBoolean("DebugMergedAnimations", "debug", DEBUG_MERGED_ANIMATIONS, "Show __ysm_merged__ animations in the preview GUI for debugging", load);
-        SHOW_WELCOME_MESSAGE = syncBoolean("ShowWelcomeMessage", "debug", SHOW_WELCOME_MESSAGE, "Show the welcome/info message when joining a world", load);
+
+        // Chat message config values
+        SHOW_WELCOME_MESSAGE = syncBoolean("ShowWelcomeMessage", "chat", SHOW_WELCOME_MESSAGE, "Show the welcome/info message when joining a world", load);
+        SHOW_MODEL_LOAD_CHAT = syncBoolean("ShowModelLoadChat", "chat", SHOW_MODEL_LOAD_CHAT, "Show server/client model load time and model counts in chat. Off by default: hidden unless some models failed to load", load);
 
         // Model sync config values
         RENDER_WEARABLE = syncBoolean("RenderWearable", "compatibility", RENDER_WEARABLE, "Whether to render external wearable models (e.g. AdventureBackpack2 backpack/copter/jetpack) on YSM model's back", load);

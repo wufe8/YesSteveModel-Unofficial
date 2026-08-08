@@ -36,8 +36,9 @@ public class CommonEventHandler {
             // Report the server-side model cache rebuild time on world join.
             // Distinct from /ysm reload's message (which also reports skipped folders)
             // because this one only has the rebuild duration, not a skip count.
+            // Gated by Config.SHOW_MODEL_LOAD_CHAT (server-side config; off by default).
             long loadTimeMs = ServerModelManager.LAST_LOAD_TIME_MS;
-            if (loadTimeMs > 0) {
+            if (loadTimeMs > 0 && com.fox.ysmu.Config.SHOW_MODEL_LOAD_CHAT) {
                 event.player.addChatMessage(new net.minecraft.util.ChatComponentTranslation(
                     "message.yes_steve_model.model.reload.ready", loadTimeMs));
             }
@@ -94,6 +95,8 @@ public class CommonEventHandler {
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase == TickEvent.Phase.END) {
+            // 高版本资源健康检查：配置了路径但加载失败时在 chat 提醒玩家（幂等，成本极低）
+            com.fox.ysmu.compat.LocalAssetProvider.warnIfMisconfigured();
             com.fox.ysmu.client.particle.CustomParticleManager.tick();
         }
     }

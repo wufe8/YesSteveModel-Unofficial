@@ -66,6 +66,22 @@ public final class ParticleTextureManager {
         return getTextureId(particleName) >= 0;
     }
 
+    /**
+     * 清空纹理/失败缓存（{@code LocalAssetProvider.reset()} 配置变更时调用）。
+     * 否则旧的 GL 纹理 id 与失败状态会残留，导致同一进程内"同时出现高版本粒子
+     * 与 fallback 粒子"，或配置修好后仍一直 fallback（需重启才能生效）。
+     */
+    public static void clearCache() {
+        for (int texId : TEXTURES.values()) {
+            try {
+                TextureUtil.deleteTexture(texId);
+            } catch (Exception ignored) {
+            }
+        }
+        TEXTURES.clear();
+        FAILED.clear();
+    }
+
     private static int loadTexture(String particleName) {
         byte[] data = LocalAssetProvider.readParticleTextureBytes(particleName);
         if (data == null) {

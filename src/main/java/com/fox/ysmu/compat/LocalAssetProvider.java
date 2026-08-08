@@ -15,6 +15,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.Random;
 
+import net.minecraft.client.Minecraft;
+import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.ResourceLocation;
 
 import org.apache.commons.io.IOUtils;
@@ -45,6 +47,8 @@ import cpw.mods.fml.relauncher.SideOnly;
 public final class LocalAssetProvider {
 
     private static final String SOUNDS_JSON_PATH = "minecraft/sounds.json";
+    /** 与其他 YSMU chat 消息统一的前缀：金色粗体 [ + 绿色 YSMU + 金色粗体 ]。 */
+    private static final String CHAT_PREFIX = "\u00a76【\u00a7aYSMU\u00a76】\u00a7r";
     /** 音效事件名 → OGG 虚拟路径列表（如 "item.trident.throw" → ["item/trident/throw1", ...]） */
     private static Map<String, List<String>> soundEventMap = null;
     /** 虚拟路径 → 资产 SHA-1 哈希（如 "minecraft/sounds/item/trident/throw1.ogg" → "abc123..."） */
@@ -52,6 +56,12 @@ public final class LocalAssetProvider {
     private static Path objectsDir = null;
     private static boolean initialized = false;
     private static boolean initFailed = false;
+    /** 是否已在 chat 提醒过玩家加载失败（会话内只提醒一次，reset/reinit 后重置）。 */
+    private static boolean chatWarned = false;
+    /** 最近一次初始化失败的具体原因（warnIfMisconfigured 进世界后补发 chat 时使用）。 */
+    private static String lastFailReason = null;
+    /** init 成功但粒子纹理不可用（asset index 无粒子纹理且版本 jar 未配置/未打开）时的降级提示。 */
+    private static String particleFallbackNote = null;
     private static final Random RANDOM = new Random();
     /** 高版本游戏目录（init 时保存，供版本 jar 读取）。 */
     private static Path gameDir = null;
@@ -106,29 +116,23 @@ public final class LocalAssetProvider {
         try {
             gameDir = Paths.get(normalised);
         } catch (java.nio.file.InvalidPathException e) {
-            ysmu.LOG.warn("[YSMU-ASSET] Invalid game path '{}': {}", gamePath, e.getMessage());
-            initFailed = true;
+            fail("高版本游戏路径无效：" + gamePath);
             return;
         }
         if (!Files.isDirectory(gameDir)) {
-            ysmu.LOG.warn("[YSMU-ASSET] Game path '{}' is not a valid directory", gamePath);
-            initFailed = true;
+            fail("高版本游戏路径不是有效目录：" + gamePath);
             return;
         }
 
         Path indexesDir = gameDir.resolve("assets").resolve("indexes");
+        if (assetVer == null || assetVer.trim().isEmpty()) {
+            fail("HighVersionAssetVersion 未设置\n可用索引：" + listIndexFiles(indexesDir));
+            return;
+        }
         Path indexFile = indexesDir.resolve(assetVer + ".json");
         if (!Files.isRegularFile(indexFile)) {
-            // Log available index files to help the user find the right version
-            StringBuilder available = new StringBuilder();
-            try (java.util.stream.Stream<Path> files = java.nio.file.Files.list(indexesDir)) {
-                files.filter(p -> p.toString().endsWith(".json"))
-                    .forEach(p -> { if (available.length() > 0) available.append(", ");
-                        available.append(p.getFileName()); });
-            } catch (IOException ignored) {}
-            ysmu.LOG.warn("[YSMU-ASSET] Asset index not found: {} (check game path and version). Available: [{}]",
-                indexFile, available);
-            initFailed = true;
+            fail("找不到资产索引（HighVersionAssetVersion 可能不对）\n可用索引："
+                + listIndexFiles(indexesDir));
             return;
         }
 
@@ -139,8 +143,7 @@ public final class LocalAssetProvider {
             byte[] indexBytes = Files.readAllBytes(indexFile);
             assetIndex = parseAssetIndex(new String(indexBytes, StandardCharsets.UTF_8));
             if (assetIndex == null || assetIndex.isEmpty()) {
-                ysmu.LOG.warn("[YSMU-ASSET] Failed to parse asset index, or index is empty");
-                initFailed = true;
+                fail("资产索引解析失败：" + indexFile);
                 return;
             }
             ysmu.LOG.info("[YSMU-ASSET] Loaded asset index with {} entries from {}", assetIndex.size(), indexFile);
@@ -179,24 +182,21 @@ public final class LocalAssetProvider {
             // 2. Extract and parse sounds.json from asset objects
             AssetObject soundsJsonObj = assetIndex.get(SOUNDS_JSON_PATH);
             if (soundsJsonObj == null) {
-                ysmu.LOG.warn("[YSMU-ASSET] sounds.json not found in asset index");
-                initFailed = true;
+                fail("资产索引缺少 sounds.json（可能不是官方高版本目录）");
                 return;
             }
 
             Path soundsJsonFile = objectsDir.resolve(soundsJsonObj.hash.substring(0, 2))
                 .resolve(soundsJsonObj.hash);
             if (!Files.isRegularFile(soundsJsonFile)) {
-                ysmu.LOG.warn("[YSMU-ASSET] sounds.json object file not found at {}", soundsJsonFile);
-                initFailed = true;
+                fail("sounds.json 对象文件不存在");
                 return;
             }
 
             byte[] soundsJsonBytes = Files.readAllBytes(soundsJsonFile);
             soundEventMap = parseSoundsJson(new String(soundsJsonBytes, StandardCharsets.UTF_8));
             if (soundEventMap == null || soundEventMap.isEmpty()) {
-                ysmu.LOG.warn("[YSMU-ASSET] Failed to parse sounds.json, or no sound events found");
-                initFailed = true;
+                fail("sounds.json 解析失败（可能不是官方高版本目录）");
                 return;
             }
             ysmu.LOG.info("[YSMU-ASSET] Loaded {} sound events from sounds.json", soundEventMap.size());
@@ -205,13 +205,25 @@ public final class LocalAssetProvider {
             LocalAssetProvider.gameDir = gameDir;
             initVersionJar();
 
+            // 粒子纹理可用性检测：asset index 无粒子纹理（精简/仅声音安装，如 1.21.2+/26.x）
+            // 且版本 jar 未配置或打开失败 → 高版本粒子纹理不可用（非致命降级，进世界后温和提示一次）。
+            if (particleTextures == 0 && versionJar == null) {
+                String jarVer = Config.HIGH_VERSION_JAR_VERSION;
+                if (jarVer == null || jarVer.trim().isEmpty()) {
+                    particleFallbackNote = "高版本粒子纹理不可用：未配置 HighVersionJarVersion"
+                        + "（新版本 1.21.2+/26.x 的粒子纹理在版本 jar 中），将回退到 1.7.10 内置粒子";
+                } else {
+                    particleFallbackNote = "高版本粒子纹理不可用：版本 jar 未打开（HighVersionJarVersion='"
+                        + jarVer + "' 可能不对），将回退到 1.7.10 内置粒子";
+                }
+            }
+
             initialized = true;
             if (Config.DEBUG_SOUND) {
                 ysmu.LOG.info("[YSMU-ASSET] LocalAssetProvider initialized: gamePath={}, version={}", gamePath, assetVer);
             }
         } catch (Exception e) {
-            ysmu.LOG.warn("[YSMU-ASSET] Failed to initialize: {}", e.getMessage());
-            initFailed = true;
+            fail("高版本资源初始化异常：" + e.getMessage());
         }
     }
 
@@ -235,9 +247,15 @@ public final class LocalAssetProvider {
         gameDir = null;
         initialized = false;
         initFailed = false;
+        chatWarned = false;
+        lastFailReason = null;
+        particleFallbackNote = null;
         soundEventMap = null;
         assetIndex = null;
         objectsDir = null;
+        // 配置变更时清空粒子纹理缓存：否则旧的 GL 纹理/失败状态会残留，导致
+        // 同进程内"同时出现高版本粒子与 fallback 粒子"，或配置修好后仍一直 fallback。
+        com.fox.ysmu.client.particle.ParticleTextureManager.clearCache();
     }
 
     /**
@@ -246,6 +264,84 @@ public final class LocalAssetProvider {
     public static boolean isAvailable() {
         if (!initialized && !initFailed) init();
         return initialized;
+    }
+
+    /** 列出 assets/indexes/ 下可用的索引文件名（逗号分隔），用于失败提示。 */
+    private static String listIndexFiles(Path indexesDir) {
+        StringBuilder available = new StringBuilder();
+        try (java.util.stream.Stream<Path> files = java.nio.file.Files.list(indexesDir)) {
+            files.filter(p -> p.toString().endsWith(".json"))
+                .forEach(p -> { if (available.length() > 0) available.append(", ");
+                    available.append(p.getFileName()); });
+        } catch (IOException ignored) {}
+        return available.toString();
+    }
+
+    /**
+     * 主动健康检查（玩家进世界后每 tick 调用，成本极低）：若配置了高版本游戏路径
+     * 但加载失败，在 chat 输出汇总警告。幂等——会话内只提醒一次（reset/reinit 后重置），
+     * 且未配置路径（功能未启用）时完全不打扰。
+     */
+    public static void warnIfMisconfigured() {
+        String gamePath = Config.HIGH_VERSION_GAME_PATH;
+        if (gamePath == null || gamePath.trim().isEmpty()) {
+            return; // 未配置 = 功能未启用，不打扰
+        }
+        isAvailable(); // 确保 init 已执行（失败分支可能已在 chat 输出具体原因）
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc == null || mc.thePlayer == null) {
+            return;
+        }
+        // 1) 初始化失败：补发具体原因（fail 时若在加载界面 player 为 null 只写了日志）。
+        if (initFailed && !chatWarned) {
+            chatWarned = true;
+            String reason = lastFailReason != null ? lastFailReason : "高版本资源加载失败（详见日志）";
+            sendAssetChat("\u00a7c", reason);
+            return;
+        }
+        // 2) init 成功但粒子纹理不可用（降级）：温和提示一次。
+        if (particleFallbackNote != null && !chatWarned) {
+            chatWarned = true;
+            sendAssetChat("\u00a7e", particleFallbackNote);
+        }
+    }
+
+    /** 初始化失败：记录具体原因、记录日志、在 chat 提醒玩家（若在游戏中）、标记失败。 */
+    private static void fail(String message) {
+        lastFailReason = message;
+        warnChat(message);
+        initFailed = true;
+    }
+
+    /** 记录日志并在 chat 提醒玩家（若在游戏中）。非致命问题（如版本 jar 缺失）也可用。 */
+    private static void warnChat(String message) {
+        ysmu.LOG.warn("[YSMU-ASSET] " + message);
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc != null && mc.thePlayer != null) {
+            chatWarned = true;
+            sendAssetChat("\u00a7c", message);
+        }
+    }
+
+    /**
+     * 在 chat 发送高版本资源配置提示。消息可用 '\n' 拆分为多行，避免长消息在
+     * 客户端自动折行时把括号/文件名字符拆到两行显示。第一行附加配置位置说明。
+     */
+    private static void sendAssetChat(String colorCode, String message) {
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc == null || mc.thePlayer == null) return;
+        String[] lines = message.split("\n", -1);
+        for (int i = 0; i < lines.length; i++) {
+            String line = lines[i];
+            if (i == 0) {
+                mc.thePlayer.addChatMessage(new ChatComponentText(
+                    CHAT_PREFIX + " " + colorCode + line + "\u00a77（ysmu.cfg 高版本资源配置）"));
+            } else {
+                // 续行缩进，不带前缀（与用户期望的紧凑格式一致），灰色弱化。
+                mc.thePlayer.addChatMessage(new ChatComponentText(
+                    "  \u00a77" + line));
+            }
+        }
     }
 
     /**
@@ -337,15 +433,15 @@ public final class LocalAssetProvider {
         }
         Path jarFile = gameDir.resolve("versions").resolve(jarVer).resolve(jarVer + ".jar");
         if (!Files.isRegularFile(jarFile)) {
-            ysmu.LOG.warn("[YSMU-ASSET] version jar not found: {} (set HighVersionJarVersion to the version dir name)",
-                jarFile);
+            // 非致命：assets/objects 仍可用（音效、部分粒子）；但高版本粒子纹理读不到
+            warnChat("找不到版本 jar（HighVersionJarVersion 可能不对，高版本粒子纹理将回退）");
             return;
         }
         try {
             versionJar = new java.util.zip.ZipFile(jarFile.toFile());
             ysmu.LOG.info("[YSMU-ASSET] Opened version jar for textures/particles: {}", jarFile);
         } catch (Exception e) {
-            ysmu.LOG.warn("[YSMU-ASSET] Failed to open version jar {}: {}", jarFile, e.toString());
+            warnChat("打开版本 jar 失败：" + jarFile);
         }
     }
 

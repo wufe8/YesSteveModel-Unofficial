@@ -437,12 +437,20 @@ public final class OpenYsmModelSyncClient {
                 int total = ClientModelManager.SYNC_TOTAL;
                 net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
                 if (mc.thePlayer != null) {
-                    mc.thePlayer.addChatMessage(
-                        new net.minecraft.util.ChatComponentTranslation(
-                            "message.yes_steve_model.sync.complete", elapsed));
-                    mc.thePlayer.addChatMessage(
-                        new net.minecraft.util.ChatComponentTranslation(
-                            "message.yes_steve_model.sync.complete_models", registered, failed, total));
+                    // chat 开关（ShowModelLoadChat，默认关）：开启时显示耗时与数量；
+                    // 关闭时仅在有模型加载失败时才显示加载数量（不显示耗时）。
+                    if (com.fox.ysmu.Config.SHOW_MODEL_LOAD_CHAT) {
+                        mc.thePlayer.addChatMessage(
+                            new net.minecraft.util.ChatComponentTranslation(
+                                "message.yes_steve_model.sync.complete", elapsed));
+                        mc.thePlayer.addChatMessage(
+                            new net.minecraft.util.ChatComponentTranslation(
+                                "message.yes_steve_model.sync.complete_models", registered, failed, total));
+                    } else if (failed > 0) {
+                        mc.thePlayer.addChatMessage(
+                            new net.minecraft.util.ChatComponentTranslation(
+                                "message.yes_steve_model.sync.complete_models", registered, failed, total));
+                    }
                 }
             }
             ClientModelManager.SYNC_IN_PROGRESS = false;
