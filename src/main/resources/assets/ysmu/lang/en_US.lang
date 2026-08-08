@@ -358,6 +358,27 @@ gui.yes_steve_model.model_count=%d models
 message.yes_steve_model.sync.complete=§6§l[§aYSMU§6§l] §aClient sync complete in %d ms
 message.yes_steve_model.sync.complete_models=§6§l[§aYSMU§6§l] §aModel load finished: §e%d§a loaded, §e%d§a failed (total §e%d§a)
 
+# High-version asset config warnings (LocalAssetProvider). Values are plain
+# text; the [YSM] prefix, colors and the config hint are added in code.
+# To add a third-party language: copy this file to <lang>.lang (e.g. fr_FR.lang)
+# and translate the values. Use {nl} for a line break; %s for arguments (in order).
+message.yes_steve_model.asset.invalid_game_path=High-version game path is invalid: %s
+message.yes_steve_model.asset.not_a_directory=High-version game path is not a valid directory: %s
+message.yes_steve_model.asset.asset_version_missing=HighVersionAssetVersion not set{nl}Available indexes: %s
+message.yes_steve_model.asset.index_not_found=Asset index not found (HighVersionAssetVersion may be wrong){nl}Available indexes: %s
+message.yes_steve_model.asset.index_parse_failed=Failed to parse asset index: %s
+message.yes_steve_model.asset.sounds_json_missing=Asset index is missing sounds.json (may not be an official high-version game directory)
+message.yes_steve_model.asset.sounds_obj_missing=sounds.json object file not found
+message.yes_steve_model.asset.sounds_parse_failed=Failed to parse sounds.json (may not be an official high-version game directory)
+message.yes_steve_model.asset.init_exception=High-version asset initialization error: %s
+message.yes_steve_model.asset.jar_not_found=Version jar not found (HighVersionJarVersion may be wrong; high-version particle textures will fall back)
+message.yes_steve_model.asset.jar_open_failed=Failed to open version jar: %s
+message.yes_steve_model.asset.fallback_no_jar=HighVersionJarVersion not set; falling back to 1.7.10 built-in particles
+message.yes_steve_model.asset.fallback_jar_not_open=Version jar not opened (HighVersionJarVersion='%s' may be wrong); falling back to 1.7.10 built-in particles
+message.yes_steve_model.asset.available_versions=Available versions: %s
+message.yes_steve_model.asset.load_failed=High-version asset loading failed (see log)
+message.yes_steve_model.asset.config_hint=(ysmu.cfg high-version asset config)
+
 # =====================================================================
 # [ARCHIVED 2026-08-08] Unused Molang documentation keys
 # ---------------------------------------------------------------------

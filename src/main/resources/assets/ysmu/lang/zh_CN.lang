@@ -356,3 +356,24 @@ gui.yes_steve_model.texture.resume=继续
 gui.yes_steve_model.model_count=%d 个模型
 message.yes_steve_model.sync.complete=§6§l【§aYSMU§6§l】§a客户端同步完成，耗时 %d ms
 message.yes_steve_model.sync.complete_models=§6§l【§aYSMU§6§l】§a模型加载完成：成功 §e%d§a 个，失败 §e%d§a 个（共 §e%d§a）
+
+# 高版本资源配置提示（LocalAssetProvider）。值为纯文本；[YSM] 前缀、颜色与
+# 配置位置说明由代码统一添加。
+# 添加第三方语言：复制本文件为 <语言>.lang（如 fr_FR.lang）并翻译即可。
+# 换行用 {nl} 占位符；参数用 %s（按顺序）。
+message.yes_steve_model.asset.invalid_game_path=高版本游戏路径无效：%s
+message.yes_steve_model.asset.not_a_directory=高版本游戏路径不是有效目录：%s
+message.yes_steve_model.asset.asset_version_missing=HighVersionAssetVersion 未设置{nl}可用索引：%s
+message.yes_steve_model.asset.index_not_found=找不到资产索引（HighVersionAssetVersion 可能不对）{nl}可用索引：%s
+message.yes_steve_model.asset.index_parse_failed=资产索引解析失败：%s
+message.yes_steve_model.asset.sounds_json_missing=资产索引缺少 sounds.json（可能不是官方高版本目录）
+message.yes_steve_model.asset.sounds_obj_missing=sounds.json 对象文件不存在
+message.yes_steve_model.asset.sounds_parse_failed=sounds.json 解析失败（可能不是官方高版本目录）
+message.yes_steve_model.asset.init_exception=高版本资源初始化异常：%s
+message.yes_steve_model.asset.jar_not_found=找不到版本 jar（HighVersionJarVersion 可能不对，高版本粒子纹理将回退）
+message.yes_steve_model.asset.jar_open_failed=打开版本 jar 失败：%s
+message.yes_steve_model.asset.fallback_no_jar=未配置 HighVersionJarVersion，将回退到 1.7.10 内置粒子
+message.yes_steve_model.asset.fallback_jar_not_open=版本 jar 未打开（HighVersionJarVersion='%s' 可能不对），将回退到 1.7.10 内置粒子
+message.yes_steve_model.asset.available_versions=可用版本：%s
+message.yes_steve_model.asset.load_failed=高版本资源加载失败（详见日志）
+message.yes_steve_model.asset.config_hint=（ysmu.cfg 高版本资源配置）

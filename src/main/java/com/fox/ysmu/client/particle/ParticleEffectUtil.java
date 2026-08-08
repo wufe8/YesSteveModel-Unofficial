@@ -121,7 +121,8 @@ public final class ParticleEffectUtil {
         ParticleBehaviors.Behavior beh = res.beh;
         int customTexId = res.customTexId;
         String emitName = res.emitName;
-        if (Config.DEBUG_PARTICLE && !emitName.equals(particleName)) {
+        if (Config.DEBUG_PARTICLE && !emitName.equals(particleName)
+            && ParticleTextureManager.firstFallbackWarning(particleName)) {
             ysmu.LOG.info("[YSMU-PARTICLE] '{}' no high-version texture -> vanilla fallback '{}'",
                 particleName, emitName);
         }

@@ -29,8 +29,18 @@ public final class ParticleTextureManager {
     private static final Map<String, Integer> TEXTURES = new ConcurrentHashMap<>();
     /** 加载失败的粒子名：缓存失败状态，避免每帧重复 IO/解码。 */
     private static final Set<String> FAILED = ConcurrentHashMap.newKeySet();
+    /** 已提示过 vanilla fallback 的粒子名：DEBUG_PARTICLE 下每个名字只刷一次日志。 */
+    private static final Set<String> FALLBACK_WARNED = ConcurrentHashMap.newKeySet();
 
     private ParticleTextureManager() {}
+
+    /**
+     * 记录一次 vanilla fallback 提示。返回 true 表示本次是首次（应打日志），
+     * 后续同粒子名返回 false（静默）。仅 DEBUG_PARTICLE 下调用。
+     */
+    public static boolean firstFallbackWarning(String particleName) {
+        return FALLBACK_WARNED.add(particleName);
+    }
 
     /**
      * 获取粒子纹理的 GL id；不可用（无高版本游戏路径 / 找不到 PNG / 解码失败）
@@ -80,6 +90,7 @@ public final class ParticleTextureManager {
         }
         TEXTURES.clear();
         FAILED.clear();
+        FALLBACK_WARNED.clear();
     }
 
     private static int loadTexture(String particleName) {

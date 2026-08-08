@@ -18,6 +18,7 @@ import java.util.Random;
 import net.minecraft.client.Minecraft;
 import net.minecraft.util.ChatComponentText;
 import net.minecraft.util.ResourceLocation;
+import net.minecraft.util.StatCollector;
 
 import org.apache.commons.io.IOUtils;
 
@@ -47,8 +48,8 @@ import cpw.mods.fml.relauncher.SideOnly;
 public final class LocalAssetProvider {
 
     private static final String SOUNDS_JSON_PATH = "minecraft/sounds.json";
-    /** 与其他 YSMU chat 消息统一的前缀：金色粗体 [ + 绿色 YSMU + 金色粗体 ]。 */
-    private static final String CHAT_PREFIX = "\u00a76【\u00a7aYSMU\u00a76】\u00a7r";
+    /** 与其他 YSMU chat 消息统一的前缀：金色 [ + 绿色 YSMU + 金色 ]。 */
+    private static final String CHAT_PREFIX = "\u00a76[\u00a7aYSMU\u00a76]\u00a7r";
     /** 音效事件名 → OGG 虚拟路径列表（如 "item.trident.throw" → ["item/trident/throw1", ...]） */
     private static Map<String, List<String>> soundEventMap = null;
     /** 虚拟路径 → 资产 SHA-1 哈希（如 "minecraft/sounds/item/trident/throw1.ogg" → "abc123..."） */
@@ -116,23 +117,22 @@ public final class LocalAssetProvider {
         try {
             gameDir = Paths.get(normalised);
         } catch (java.nio.file.InvalidPathException e) {
-            fail("高版本游戏路径无效：" + gamePath);
+            fail(t("message.yes_steve_model.asset.invalid_game_path", gamePath));
             return;
         }
         if (!Files.isDirectory(gameDir)) {
-            fail("高版本游戏路径不是有效目录：" + gamePath);
+            fail(t("message.yes_steve_model.asset.not_a_directory", gamePath));
             return;
         }
 
         Path indexesDir = gameDir.resolve("assets").resolve("indexes");
         if (assetVer == null || assetVer.trim().isEmpty()) {
-            fail("HighVersionAssetVersion 未设置\n可用索引：" + listIndexFiles(indexesDir));
+            fail(t("message.yes_steve_model.asset.asset_version_missing", listIndexFiles(indexesDir)));
             return;
         }
         Path indexFile = indexesDir.resolve(assetVer + ".json");
         if (!Files.isRegularFile(indexFile)) {
-            fail("找不到资产索引（HighVersionAssetVersion 可能不对）\n可用索引："
-                + listIndexFiles(indexesDir));
+            fail(t("message.yes_steve_model.asset.index_not_found", listIndexFiles(indexesDir)));
             return;
         }
 
@@ -143,7 +143,7 @@ public final class LocalAssetProvider {
             byte[] indexBytes = Files.readAllBytes(indexFile);
             assetIndex = parseAssetIndex(new String(indexBytes, StandardCharsets.UTF_8));
             if (assetIndex == null || assetIndex.isEmpty()) {
-                fail("资产索引解析失败：" + indexFile);
+                fail(t("message.yes_steve_model.asset.index_parse_failed", indexFile));
                 return;
             }
             ysmu.LOG.info("[YSMU-ASSET] Loaded asset index with {} entries from {}", assetIndex.size(), indexFile);
@@ -182,21 +182,21 @@ public final class LocalAssetProvider {
             // 2. Extract and parse sounds.json from asset objects
             AssetObject soundsJsonObj = assetIndex.get(SOUNDS_JSON_PATH);
             if (soundsJsonObj == null) {
-                fail("资产索引缺少 sounds.json（可能不是官方高版本目录）");
+                fail(t("message.yes_steve_model.asset.sounds_json_missing"));
                 return;
             }
 
             Path soundsJsonFile = objectsDir.resolve(soundsJsonObj.hash.substring(0, 2))
                 .resolve(soundsJsonObj.hash);
             if (!Files.isRegularFile(soundsJsonFile)) {
-                fail("sounds.json 对象文件不存在");
+                fail(t("message.yes_steve_model.asset.sounds_obj_missing"));
                 return;
             }
 
             byte[] soundsJsonBytes = Files.readAllBytes(soundsJsonFile);
             soundEventMap = parseSoundsJson(new String(soundsJsonBytes, StandardCharsets.UTF_8));
             if (soundEventMap == null || soundEventMap.isEmpty()) {
-                fail("sounds.json 解析失败（可能不是官方高版本目录）");
+                fail(t("message.yes_steve_model.asset.sounds_parse_failed"));
                 return;
             }
             ysmu.LOG.info("[YSMU-ASSET] Loaded {} sound events from sounds.json", soundEventMap.size());
@@ -210,11 +210,15 @@ public final class LocalAssetProvider {
             if (particleTextures == 0 && versionJar == null) {
                 String jarVer = Config.HIGH_VERSION_JAR_VERSION;
                 if (jarVer == null || jarVer.trim().isEmpty()) {
-                    particleFallbackNote = "高版本粒子纹理不可用：未配置 HighVersionJarVersion"
-                        + "（新版本 1.21.2+/26.x 的粒子纹理在版本 jar 中），将回退到 1.7.10 内置粒子";
+                    particleFallbackNote = t("message.yes_steve_model.asset.fallback_no_jar");
                 } else {
-                    particleFallbackNote = "高版本粒子纹理不可用：版本 jar 未打开（HighVersionJarVersion='"
-                        + jarVer + "' 可能不对），将回退到 1.7.10 内置粒子";
+                    particleFallbackNote = t("message.yes_steve_model.asset.fallback_jar_not_open", jarVer);
+                }
+                // 顺带列出 versions/ 下可用的版本目录（含同名客户端 jar），方便用户改对配置。
+                String versions = listVersionDirs(gameDir);
+                if (!versions.isEmpty()) {
+                    particleFallbackNote += "\n"
+                        + t("message.yes_steve_model.asset.available_versions", versions);
                 }
             }
 
@@ -223,7 +227,7 @@ public final class LocalAssetProvider {
                 ysmu.LOG.info("[YSMU-ASSET] LocalAssetProvider initialized: gamePath={}, version={}", gamePath, assetVer);
             }
         } catch (Exception e) {
-            fail("高版本资源初始化异常：" + e.getMessage());
+            fail(t("message.yes_steve_model.asset.init_exception", e.getMessage()));
         }
     }
 
@@ -278,6 +282,32 @@ public final class LocalAssetProvider {
     }
 
     /**
+     * 列出 versions/ 下包含同名客户端 jar 的版本目录名（逗号分隔），用于失败提示。
+     * 只统计真正有客户端 jar 的版本（粒子纹理所在）；限制最多 8 个避免消息过长。
+     */
+    private static String listVersionDirs(Path gameDir) {
+        Path versionsDir = gameDir.resolve("versions");
+        if (!Files.isDirectory(versionsDir)) return "";
+        java.util.List<String> dirs = new java.util.ArrayList<>();
+        try (java.util.stream.Stream<Path> files = java.nio.file.Files.list(versionsDir)) {
+            files.filter(Files::isDirectory)
+                .filter(p -> Files.isRegularFile(p.resolve(p.getFileName() + ".jar")))
+                .map(p -> p.getFileName().toString())
+                .sorted()
+                .forEach(dirs::add);
+        } catch (IOException ignored) {}
+        if (dirs.isEmpty()) return "";
+        StringBuilder available = new StringBuilder();
+        int max = Math.min(dirs.size(), 8);
+        for (int i = 0; i < max; i++) {
+            if (i > 0) available.append(", ");
+            available.append(dirs.get(i));
+        }
+        if (dirs.size() > max) available.append(", ...");
+        return available.toString();
+    }
+
+    /**
      * 主动健康检查（玩家进世界后每 tick 调用，成本极低）：若配置了高版本游戏路径
      * 但加载失败，在 chat 输出汇总警告。幂等——会话内只提醒一次（reset/reinit 后重置），
      * 且未配置路径（功能未启用）时完全不打扰。
@@ -295,7 +325,8 @@ public final class LocalAssetProvider {
         // 1) 初始化失败：补发具体原因（fail 时若在加载界面 player 为 null 只写了日志）。
         if (initFailed && !chatWarned) {
             chatWarned = true;
-            String reason = lastFailReason != null ? lastFailReason : "高版本资源加载失败（详见日志）";
+            String reason = lastFailReason != null ? lastFailReason
+                : t("message.yes_steve_model.asset.load_failed");
             sendAssetChat("\u00a7c", reason);
             return;
         }
@@ -324,6 +355,17 @@ public final class LocalAssetProvider {
     }
 
     /**
+     * 本地化：按当前语言（en_US / zh_CN / 第三方语言）取翻译文本，支持 %s 占位符。
+     * 所有用户可见消息都应走这里，避免硬编码；语言文件在
+     * {@code assets/ysmu/lang/<语言>.lang}（第三方语言新增同名 .lang 文件即可）。
+     * 注意：1.7.10 的 lang 解析（parseLangFile）不做 '\n' 转义，多行请用 {@code {nl}}
+     * 占位符（此处替换为真实换行，配合 sendAssetChat 的多行拆分）。
+     */
+    private static String t(String key, Object... args) {
+        return StatCollector.translateToLocalFormatted(key, args).replace("{nl}", "\n");
+    }
+
+    /**
      * 在 chat 发送高版本资源配置提示。消息可用 '\n' 拆分为多行，避免长消息在
      * 客户端自动折行时把括号/文件名字符拆到两行显示。第一行附加配置位置说明。
      */
@@ -335,7 +377,8 @@ public final class LocalAssetProvider {
             String line = lines[i];
             if (i == 0) {
                 mc.thePlayer.addChatMessage(new ChatComponentText(
-                    CHAT_PREFIX + " " + colorCode + line + "\u00a77（ysmu.cfg 高版本资源配置）"));
+                    CHAT_PREFIX + " " + colorCode + line + "\u00a77"
+                        + t("message.yes_steve_model.asset.config_hint")));
             } else {
                 // 续行缩进，不带前缀（与用户期望的紧凑格式一致），灰色弱化。
                 mc.thePlayer.addChatMessage(new ChatComponentText(
@@ -434,14 +477,14 @@ public final class LocalAssetProvider {
         Path jarFile = gameDir.resolve("versions").resolve(jarVer).resolve(jarVer + ".jar");
         if (!Files.isRegularFile(jarFile)) {
             // 非致命：assets/objects 仍可用（音效、部分粒子）；但高版本粒子纹理读不到
-            warnChat("找不到版本 jar（HighVersionJarVersion 可能不对，高版本粒子纹理将回退）");
+            warnChat(t("message.yes_steve_model.asset.jar_not_found"));
             return;
         }
         try {
             versionJar = new java.util.zip.ZipFile(jarFile.toFile());
             ysmu.LOG.info("[YSMU-ASSET] Opened version jar for textures/particles: {}", jarFile);
         } catch (Exception e) {
-            warnChat("打开版本 jar 失败：" + jarFile);
+            warnChat(t("message.yes_steve_model.asset.jar_open_failed", jarFile));
         }
     }
 
