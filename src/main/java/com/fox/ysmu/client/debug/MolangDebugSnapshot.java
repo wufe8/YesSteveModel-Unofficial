@@ -327,6 +327,12 @@ public final class MolangDebugSnapshot {
                 CHAT_PREFIX + " §cUsage: /ysm debug eval <expression>"));
             return;
         }
+        // eval 是一次性求值：解析未知 token（如 "25e"）时 MolangParser.getVariable()
+        // 会用 computeIfAbsent 向全局静态 VARIABLES 写入默认 0 的残留条目，
+        // 永久污染 debug overlay 的数据源。先快照求值前的 key，结束后清理
+        // 本次新建的条目（未知变量按 Molang 语义求值为 0，但不应残留变量表）。
+        java.util.Set<String> keysBefore =
+            new java.util.HashSet<>(software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.keySet());
         try {
             software.bernie.geckolib3.core.molang.MolangParser parser =
                 software.bernie.geckolib3.resource.GeckoLibCache.getInstance().parser;
@@ -339,6 +345,16 @@ public final class MolangDebugSnapshot {
             player.addChatMessage(new ChatComponentText(
                 CHAT_PREFIX + " §cError evaluating: §f" + sanitize(expression)
                     + "§c — " + sanitize(String.valueOf(e.getMessage()))));
+        } finally {
+            java.util.List<String> added = new java.util.ArrayList<>();
+            for (String key : software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.keySet()) {
+                if (!keysBefore.contains(key)) {
+                    added.add(key);
+                }
+            }
+            for (String key : added) {
+                software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.remove(key);
+            }
         }
     }
 
