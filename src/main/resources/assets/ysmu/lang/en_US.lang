@@ -78,6 +78,7 @@ gui.yes_steve_model.hud_cache.off=HUD FBO Cache: OFF [C]
 gui.yes_steve_model.hud_follow.vanilla=HUD Follow: Vanilla [M]
 gui.yes_steve_model.hud_follow.smooth=HUD Follow: Vanilla Smooth [M]
 gui.yes_steve_model.hud_follow.ysm=HUD Follow: YSM [M]
+gui.yes_steve_model.hud_follow.ysm_smooth=HUD Follow: YSM Smooth [M]
 gui.yes_steve_model.texture.button.animation_name=Animation Name: %s
 gui.yes_steve_model.texture.button.attacked=Attacked
 gui.yes_steve_model.texture.button.attacked.desc=Play this animation when the player is attacked

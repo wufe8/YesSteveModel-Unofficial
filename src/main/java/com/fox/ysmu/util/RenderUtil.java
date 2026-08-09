@@ -617,11 +617,11 @@ public final class RenderUtil {
                 // 屏幕头部 = 180+yawOffset 完全固定（同 vanilla），query.head_y_rotation = offset
                 // 连续无 20Hz 抖动；query.body_y_rotation 仍为真实 B，不破坏身体动画过渡（v2/v3 教训）。
                 float offset;
-                if (!Float.isNaN(lastPolledOffset)
-                    && Minecraft.getSystemTime() - lastPolledBodyYawTime < 100L) {
+                if (!Float.isNaN(lastPolledFollow)
+                    && Minecraft.getSystemTime() - lastPolledFollowTime < 100L) {
                     // pollHudDisplayBodyYaw 已在本帧推进过状态机，直接消费其结果
-                    offset = lastPolledOffset;
-                    lastPolledOffset = Float.NaN;
+                    offset = lastPolledFollow;
+                    lastPolledFollow = Float.NaN;
                 } else {
                     // FBO 缓存关闭或配置界面直接渲染：在这里推进状态机
                     offset = hudFollowState.update(interpolatedYaw, bodyYaw);
@@ -637,6 +637,23 @@ public final class RenderUtil {
                 outerYaw = bodyYaw;
                 float headYaw = MathHelper.clamp_float(
                     MathHelper.wrapAngleTo180_float(interpolatedYaw - bodyYaw), -85.0F, 85.0F);
+                float headDisplay = MathHelper.wrapAngleTo180_float(bodyYaw - headYaw);
+                player.prevRotationYawHead = headDisplay;
+                player.rotationYawHead = headDisplay;
+            } else if (mode == Config.HUD_FOLLOW_YSM_SMOOTH) {
+                // ysm 平滑：身体锁死朝向屏幕（同 ysm），但头部用低通后的 clamp(V-Bs, ±85)
+                // 消除 20Hz tick 步进，头部随视角平滑转动。复用 HudFollowState（独立实例）。
+                float headYaw;
+                if (!Float.isNaN(lastPolledFollow)
+                    && Minecraft.getSystemTime() - lastPolledFollowTime < 100L) {
+                    // pollHudDisplayBodyYaw 已在本帧推进过状态机，直接消费其结果
+                    headYaw = lastPolledFollow;
+                    lastPolledFollow = Float.NaN;
+                } else {
+                    // FBO 缓存关闭或配置界面直接渲染：在这里推进状态机
+                    headYaw = ysmHeadState.update(interpolatedYaw, bodyYaw);
+                }
+                outerYaw = bodyYaw;
                 float headDisplay = MathHelper.wrapAngleTo180_float(bodyYaw - headYaw);
                 player.prevRotationYawHead = headDisplay;
                 player.rotationYawHead = headDisplay;
@@ -670,8 +687,11 @@ public final class RenderUtil {
 
     // ── HUD paperdoll follow-mode helpers ──
 
-    /** 原版平滑模式的 offset 最大幅值（°），沿用 vanilla 的阈值（当前按用户建议取 70°）。 */
-    private static final float HUD_SMOOTH_MAX_OFFSET = 70.0F;
+    /** 原版平滑模式的 offset 最大幅值（°），沿用 vanilla 的 ±75° 阈值
+     *  （renderYawOffset 始终被 vanilla 约束在 rotationYaw±75° 内）。 */
+    private static final float HUD_SMOOTH_MAX_OFFSET = 75.0F;
+    /** ysm 平滑模式的头部随视角最大幅值（°），沿用 ysm 的 ±85° 头部限制。 */
+    private static final float HUD_YSM_HEAD_MAX_OFFSET = 85.0F;
     /** 原版平滑模式对 offset 的基础低通时间常数（s），消除 20Hz 锯齿。 */
     private static final float HUD_SMOOTH_OFFSET_TC = 0.12F;
     /** 对身体偏航 B 的低通时间常数（s）：B 只在 tick 更新（20Hz 步进），先低通 B 再算
@@ -688,9 +708,10 @@ public final class RenderUtil {
     private static final float HUD_FAST_DEVIATION_DEG = 20.0F;
     /** 上次渲染时使用的跟随模式，用于切换模式时重置平滑状态。 */
     private static int lastFollowMode = -1;
-    /** 最近一次 pollHudDisplayBodyYaw 的屏幕可见 offset（非原版平滑模式为 NaN）。 */
-    private static float lastPolledOffset = Float.NaN;
-    private static long lastPolledBodyYawTime = 0L;
+    /** 最近一次 pollHudDisplayBodyYaw 的平滑跟随角（模式 1 为身体 offset、模式 3 为头部偏航；
+     *  非平滑模式为 NaN），供 renderPlayerEntity 消费。 */
+    private static float lastPolledFollow = Float.NaN;
+    private static long lastPolledFollowTime = 0L;
 
     /**
      * 帧率无关的平滑状态机（原版平滑模式）：对「vanilla 偏航 offset = V - B」做单一状态的
@@ -700,26 +721,31 @@ public final class RenderUtil {
      * （高速近直通，保持原版手感），偏差小时强平滑（消除 20Hz 锯齿）。
      */
     private static final class HudFollowState {
+        private final float maxOffset;
         private boolean initialized;
         private long lastTimeMs;
         private float offsetSmooth;
         /** 低通后的身体偏航（去除 20Hz tick 步进），仅用于计算 target，不用于渲染。 */
         private float bodySmooth;
 
+        HudFollowState(float maxOffset) {
+            this.maxOffset = maxOffset;
+        }
+
         void reset() {
             initialized = false;
         }
 
-        /** 用低通后的身体偏航计算 clamp 后的目标 offset。 */
+        /** 用低通后的身体偏航计算 clamp 后的目标跟随角。 */
         private float clampTarget(float rawViewYaw, float body) {
             return MathHelper.clamp_float(
-                MathHelper.wrapAngleTo180_float(rawViewYaw - body), -HUD_SMOOTH_MAX_OFFSET, HUD_SMOOTH_MAX_OFFSET);
+                MathHelper.wrapAngleTo180_float(rawViewYaw - body), -maxOffset, maxOffset);
         }
 
         /**
          * @param rawViewYaw  视角偏航 V 的原始帧间插值
          * @param realBodyYaw 真实身体偏航 B（帧间插值，逐 tick 更新）
-         * @return 屏幕可见 offset = 低通后的 clamp(V - Bs, ±70)，其中 Bs 为低通后的身体偏航
+         * @return 低通后的 clamp(V - Bs, ±maxOffset)，其中 Bs 为低通后的身体偏航
          */
         float update(float rawViewYaw, float realBodyYaw) {
             long now = Minecraft.getSystemTime();
@@ -765,35 +791,44 @@ public final class RenderUtil {
         }
     }
 
-    private static final HudFollowState hudFollowState = new HudFollowState();
+    private static final HudFollowState hudFollowState = new HudFollowState(HUD_SMOOTH_MAX_OFFSET);
+    /** ysm 平滑模式的头部状态机：身体锁屏，头部随视角平滑转动（±85°）。 */
+    private static final HudFollowState ysmHeadState = new HudFollowState(HUD_YSM_HEAD_MAX_OFFSET);
 
     /** 切换跟随模式时重置平滑状态，避免旧模式的残留值造成跳变。 */
     private static void ensureFollowMode(int mode) {
         if (lastFollowMode != mode) {
             lastFollowMode = mode;
             hudFollowState.reset();
+            ysmHeadState.reset();
         }
     }
 
     /**
-     * 每帧轮询（即使 FBO 不重渲染也调用）：推进原版平滑状态机。返回「屏幕可见的身体偏航
-     * offset = 低通后的 clamp(V - B, ±75)」供 HudPreviewCache 判断模型是否仍在转动
-     * （转动期间逐帧重渲染，静止时继续走 FBO 缓存）；非原版平滑模式返回 NaN。
-     * 结果存入 lastPolledOffset 供 renderPlayerEntity 消费（不覆写任何实体字段）。
+     * 每帧轮询（即使 FBO 不重渲染也调用）：推进当前平滑模式的状态机。返回该模式下的
+     * 平滑跟随角（原版平滑 = 屏幕可见身体 offset，ysm 平滑 = 头部偏航），供 HudPreviewCache
+     * 判断模型是否仍在转动（转动期间逐帧重渲染，静止时继续走 FBO 缓存）；非平滑模式返回 NaN。
+     * 结果存入 lastPolledFollow 供 renderPlayerEntity 消费（不覆写任何实体字段）。
      */
     public static float pollHudDisplayBodyYaw(EntityPlayer player, float partialTicks) {
         int mode = Config.HUD_FOLLOW_MODE;
         ensureFollowMode(mode);
-        if (mode != Config.HUD_FOLLOW_VANILLA_SMOOTH) {
-            lastPolledOffset = Float.NaN;
-            return Float.NaN;
-        }
         float viewYaw = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * partialTicks;
         float bodyYaw = Interpolations.lerpYaw(player.prevRenderYawOffset, player.renderYawOffset, partialTicks);
-        float offset = hudFollowState.update(viewYaw, bodyYaw);
-        lastPolledOffset = offset;
-        lastPolledBodyYawTime = Minecraft.getSystemTime();
-        return offset;
+        float follow;
+        if (mode == Config.HUD_FOLLOW_VANILLA_SMOOTH) {
+            // 原版平滑：平滑后的屏幕可见身体 offset
+            follow = hudFollowState.update(viewYaw, bodyYaw);
+        } else if (mode == Config.HUD_FOLLOW_YSM_SMOOTH) {
+            // ysm 平滑：平滑后的头部随视角偏航
+            follow = ysmHeadState.update(viewYaw, bodyYaw);
+        } else {
+            lastPolledFollow = Float.NaN;
+            return Float.NaN;
+        }
+        lastPolledFollow = follow;
+        lastPolledFollowTime = Minecraft.getSystemTime();
+        return follow;
     }
 
     private static Quaternion j2l(Quaternionf jomlQuat) {
