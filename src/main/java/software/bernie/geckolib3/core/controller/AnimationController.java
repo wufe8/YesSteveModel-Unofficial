@@ -231,10 +231,15 @@ public class AnimationController<T extends IAnimatable> {
                 .equals(this.currentAnimationBuilder.getRawAnimationList());
             if (builder.getRawAnimationList()
                 .equals(this.currentAnimationBuilder.getRawAnimationList()) && !this.needsAnimationReload) {
+                // Only re-arm the reload while Stopped (replay) or Running with a lost
+                // animation.  During an in-flight Transitioning the transition branch
+                // will dequeue the queued animation itself; re-arming here would make
+                // every same-builder setAnimation call restart the transition forever.
                 if (animationState == AnimationState.Stopped
-                    || (builder.getRawAnimationList()
-                        .get(builder.getRawAnimationList().size() - 1).loopType
-                        == ILoopType.EDefaultLoopTypes.LOOP && currentAnimation == null)) {
+                    || (animationState != AnimationState.Transitioning
+                        && builder.getRawAnimationList()
+                            .get(builder.getRawAnimationList().size() - 1).loopType
+                            == ILoopType.EDefaultLoopTypes.LOOP && currentAnimation == null)) {
                     needsAnimationReload = true;
                 }
             }
@@ -593,8 +598,16 @@ public class AnimationController<T extends IAnimatable> {
 
         // Handle transitioning to a different animation (or just starting one)
         if (animationState == AnimationState.Transitioning) {
-            // Just started transitioning, so set the current animation to the first one
-            if (tick == 0 || isJustStarting) {
+            // Just started transitioning, so set the current animation to the first one.
+            // Only dequeue when currentAnimation is actually missing: on later frames
+            // tick can legitimately be 0 (a leftover shouldResetTick from the previous
+            // setAnimation call), and re-polling an already-consumed queue here would
+            // null a valid currentAnimation.  A nulled currentAnimation then re-arms
+            // setAnimation's needsAnimationReload loop, trapping the controller in a
+            // perpetual Transitioning (tick stuck below transitionLengthTicks) with
+            // bones frozen at the transition-start pose — the "HUD model has no
+            // walk/swing animation" bug seen with shaders + first person + FBO off.
+            if ((tick == 0 || isJustStarting) && this.currentAnimation == null) {
                 justStartedTransition = false;
                 this.currentAnimation = animationQueue.poll();
                 resetEventKeyFrames();
