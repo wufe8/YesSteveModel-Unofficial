@@ -704,6 +704,9 @@ public final class RenderUtil {
     /** dt 超过该值（s）视为长时间暂停（切窗口/菜单/Alt-Tab）：此时重同步到当前值，
      *  用户不在看，瞬移无感；防止暂停期间服务器 tick 推进 B 后状态永久失配。 */
     private static final float HUD_SMOOTH_RESYNC_DT = 1.0F;
+    /** 解环绕差值（V - Bs）的最大绝对值（°）：超过后截断，防止多圈连续旋转无限累积；
+     *  单圈（<360°）内的旋转不受影响，快速旋转跨过 ±180° 时目标只钳制在极限而不反向跳变。 */
+    private static final float HUD_SMOOTH_MAX_UNWRAP = 360.0F;
     /** offset 偏差达到该值（°）时低通时间常数减半（高速时接近直通，保持原版手感）。 */
     private static final float HUD_FAST_DEVIATION_DEG = 20.0F;
     /** 上次渲染时使用的跟随模式，用于切换模式时重置平滑状态。 */
@@ -714,11 +717,14 @@ public final class RenderUtil {
     private static long lastPolledFollowTime = 0L;
 
     /**
-     * 帧率无关的平滑状态机（原版平滑模式）：对「vanilla 偏航 offset = V - B」做单一状态的
-     * 偏差自适应低通。目标值 clamp(V - B, ±75) 沿用 vanilla 的 ±75° 阈值（renderYawOffset
-     * 始终被 vanilla 约束在 rotationYaw±75° 内），因此永远不会越界。单一状态低通不会出现
-     * 「两个独立低通信号相减」在反向/阈值附近产生的振荡与截断锯齿；偏差大时时间常数缩小
-     * （高速近直通，保持原版手感），偏差小时强平滑（消除 20Hz 锯齿）。
+     * 帧率无关的平滑状态机（原版平滑/ysm 平滑共用）：对「跟随角 = V - B」做单一状态的
+     * 偏差自适应低通。目标值 clamp(V - Bs, ±maxOffset) 沿用 vanilla/ysm 的阈值。单一状态
+     * 低通不会出现「两个独立低通信号相减」在反向/阈值附近产生的振荡与截断锯齿；偏差大时
+     * 时间常数缩小（高速近直通），偏差小时强平滑（消除 20Hz 锯齿）。
+     * <p>
+     * 目标差值用「增量解环绕」连续跟踪：逐帧累加 wrap180(V - Bs) 的增量，而不是对
+     * 差值整体 wrap。这样快速旋转使 |V - Bs| 跨过 ±180° 时目标只钳制在 ±maxOffset 极限，
+     * 而不会 wrap 翻转到另一侧（消除高速旋转中头部/身体突然反向跳变的根因）。
      */
     private static final class HudFollowState {
         private final float maxOffset;
@@ -727,6 +733,10 @@ public final class RenderUtil {
         private float offsetSmooth;
         /** 低通后的身体偏航（去除 20Hz tick 步进），仅用于计算 target，不用于渲染。 */
         private float bodySmooth;
+        /** 连续（解环绕）的 V - Bs：逐帧增量累加，跨 ±180° 不翻转。 */
+        private float unwrappedDiff;
+        /** 上一帧 wrap180(V - Bs)，用于计算增量。 */
+        private float lastRawDiff;
 
         HudFollowState(float maxOffset) {
             this.maxOffset = maxOffset;
@@ -736,16 +746,28 @@ public final class RenderUtil {
             initialized = false;
         }
 
-        /** 用低通后的身体偏航计算 clamp 后的目标跟随角。 */
-        private float clampTarget(float rawViewYaw, float body) {
-            return MathHelper.clamp_float(
-                MathHelper.wrapAngleTo180_float(rawViewYaw - body), -maxOffset, maxOffset);
+        /** 初始化/重同步：把目标差值直接对齐到当前帧（不做解环绕累加）。 */
+        private float syncTarget(float rawViewYaw, float body) {
+            float rawDiff = MathHelper.wrapAngleTo180_float(rawViewYaw - body);
+            lastRawDiff = rawDiff;
+            unwrappedDiff = rawDiff;
+            return MathHelper.clamp_float(unwrappedDiff, -maxOffset, maxOffset);
+        }
+
+        /** 增量解环绕后的目标：对差值增量累加并截断，得到不会反向跳变的连续目标。 */
+        private float unwrapTarget(float rawViewYaw, float body) {
+            float rawDiff = MathHelper.wrapAngleTo180_float(rawViewYaw - body);
+            float dDiff = MathHelper.wrapAngleTo180_float(rawDiff - lastRawDiff);
+            lastRawDiff = rawDiff;
+            unwrappedDiff = MathHelper.clamp_float(
+                unwrappedDiff + dDiff, -HUD_SMOOTH_MAX_UNWRAP, HUD_SMOOTH_MAX_UNWRAP);
+            return MathHelper.clamp_float(unwrappedDiff, -maxOffset, maxOffset);
         }
 
         /**
          * @param rawViewYaw  视角偏航 V 的原始帧间插值
          * @param realBodyYaw 真实身体偏航 B（帧间插值，逐 tick 更新）
-         * @return 低通后的 clamp(V - Bs, ±maxOffset)，其中 Bs 为低通后的身体偏航
+         * @return 低通后的 clamp(V - Bs, ±maxOffset)（增量解环绕，快速旋转不反向跳变）
          */
         float update(float rawViewYaw, float realBodyYaw) {
             long now = Minecraft.getSystemTime();
@@ -753,7 +775,7 @@ public final class RenderUtil {
                 initialized = true;
                 lastTimeMs = now;
                 bodySmooth = realBodyYaw;
-                offsetSmooth = clampTarget(rawViewYaw, realBodyYaw);
+                offsetSmooth = syncTarget(rawViewYaw, realBodyYaw);
                 return offsetSmooth;
             }
             float dt = (now - lastTimeMs) / 1000.0F;
@@ -765,7 +787,7 @@ public final class RenderUtil {
             if (dt > HUD_SMOOTH_RESYNC_DT) {
                 // 长时间暂停：重同步（用户不在看，瞬移无感）
                 bodySmooth = realBodyYaw;
-                offsetSmooth = clampTarget(rawViewYaw, realBodyYaw);
+                offsetSmooth = syncTarget(rawViewYaw, realBodyYaw);
                 return offsetSmooth;
             }
             if (dt > HUD_SMOOTH_MAX_DT) {
@@ -777,7 +799,7 @@ public final class RenderUtil {
             float alphaB = 1.0F - (float) Math.exp(-dt / HUD_SMOOTH_BODY_TC);
             bodySmooth = MathHelper.wrapAngleTo180_float(bodySmooth + dB * alphaB);
 
-            float target = clampTarget(rawViewYaw, bodySmooth);
+            float target = unwrapTarget(rawViewYaw, bodySmooth);
             float delta = MathHelper.wrapAngleTo180_float(target - offsetSmooth);
             if (Math.abs(delta) < 0.001F) {
                 offsetSmooth = target;
