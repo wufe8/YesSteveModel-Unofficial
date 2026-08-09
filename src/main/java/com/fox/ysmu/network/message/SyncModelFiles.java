@@ -33,6 +33,12 @@ import io.netty.buffer.ByteBuf;
 public class SyncModelFiles implements IMessage {
 
     private static final int LEGACY_DIRECT_SEND_LIMIT = 1900 * 1024;
+    /**
+     * 客户端一次性上报的缓存 MD5 数量上限。恶意客户端可伪造巨大 count
+     * 触发 {@code new String[count]} 分配超大数组造成内存 DoS，因此必须在
+     * 反序列化入口硬限制（服务端模型数量远小于该值，正常玩家不会触顶）。
+     */
+    private static final int MAX_MODEL_COUNT = 100000;
 
     private String[] md5Info;
 
@@ -45,6 +51,9 @@ public class SyncModelFiles implements IMessage {
     @Override
     public void fromBytes(ByteBuf buf) {
         int count = buf.readInt();
+        if (count < 0 || count > MAX_MODEL_COUNT) {
+            throw new IllegalArgumentException("Invalid YSM sync model count: " + count);
+        }
         this.md5Info = new String[count];
         for (int i = 0; i < count; i++) {
             this.md5Info[i] = ByteBufUtils.readUTF8String(buf);

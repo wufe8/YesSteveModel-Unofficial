@@ -127,7 +127,12 @@ public class MolangParser extends MathBuilder {
         remap("max", "math.max");
         remap("min", "math.min");
         remap("mod", "math.mod");
-        remap("pi", "math.pi");
+        // π/e 在 MathBuilder 中注册为变量（键 "PI"/"E"），并非函数。原
+        // remap("pi", "math.pi") 会从函数表 remove 不存在的 "pi" 键并
+        // 把 null 塞进 "math.pi"，既污染函数表又让变量查询得到默认 0。
+        // 这里改为直接注册 math.* 常量变量，overlay/query 即可显示正确值。
+        this.register(new LazyVariable("math.pi", Math.PI));
+        this.register(new LazyVariable("math.e", Math.E));
         remap("pow", "math.pow");
         remap("random", "math.random");
         // MathBuilder 将 random_integer 注册为 "randomi"，而非 "random_integer"

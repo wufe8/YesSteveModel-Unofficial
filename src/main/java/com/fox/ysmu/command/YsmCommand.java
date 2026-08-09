@@ -49,7 +49,7 @@ public class YsmCommand extends CommandBase {
                 return getListOfStringsMatchingLastWord(args, "on", "off");
             }
             if ("debug".equalsIgnoreCase(args[0])) {
-                return getListOfStringsMatchingLastWord(args, "query", "overlay");
+                return getListOfStringsMatchingLastWord(args, "query", "overlay", "eval");
             }
         }
         if (args.length == 2 && "setgamepath".equalsIgnoreCase(args[0])) {
@@ -350,9 +350,18 @@ public class YsmCommand extends CommandBase {
             throw new CommandException("commands.generic.player.notFound");
         }
         EntityPlayerMP player = (EntityPlayerMP) sender;
+        // debug 子命令整体要求权限等级 4（单机主机玩家必定可用；服务器上
+        // 需要明确授予等级 4 的 OP，默认 op-permission-level=2 的服被挡住）。
+        // debug 会查询/求值 Molang（eval 可调用任意 ysm 函数，含副作用函数），
+        // 风险面大于普通子命令，故不沿用命令默认的等级 2。
+        // 1.7.10 的 EntityPlayerMP.canCommandSenderUseCommand 为双参签名
+        // (permissionLevel, commandName)，与 CommandBase 内部调用方式一致。
+        if (!player.canCommandSenderUseCommand(4, getCommandName())) {
+            throw new CommandException("commands.generic.permission");
+        }
         if (args.length < 2) {
             player.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug query <name> [name2 ...]"));
+                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug <query|overlay|eval>"));
             return;
         }
         String sub = args[1].toLowerCase(java.util.Locale.ROOT);
@@ -372,6 +381,27 @@ public class YsmCommand extends CommandBase {
             }
             NetworkHandler.CHANNEL.sendTo(
                 new com.fox.ysmu.network.message.PacketQueryMolangVar(varNames), player);
+        } else if ("eval".equals(sub)) {
+            // 权限等级 4 已在 processDebug 入口统一检查（eval 可调用任意
+            // ysm 函数，含 particle/play_sound 等副作用函数，风险面最大）。
+            if (args.length < 3) {
+                player.addChatMessage(new ChatComponentText(
+                    "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug eval <expression>"
+                        + "  (e.g. math.floor(3.7) or math.clamp(5,0,2)+1)"));
+                return;
+            }
+            // 合并剩余参数为完整表达式（支持带空格的参数）
+            StringBuilder expr = new StringBuilder();
+            for (int i = 2; i < args.length; i++) {
+                if (expr.length() > 0) expr.append(" ");
+                expr.append(args[i]);
+            }
+            String expression = expr.toString().trim();
+            if (expression.startsWith("\"") && expression.endsWith("\"")) {
+                expression = expression.substring(1, expression.length() - 1);
+            }
+            NetworkHandler.CHANNEL.sendTo(
+                new com.fox.ysmu.network.message.PacketEvalMolang(expression), player);
         } else if ("overlay".equals(sub)) {
             boolean wasActive = com.fox.ysmu.client.gui.debug.DebugOverlay.isActive();
             if (args.length >= 3 && "off".equalsIgnoreCase(args[2])) {
@@ -391,7 +421,7 @@ public class YsmCommand extends CommandBase {
         } else {
             player.addChatMessage(new ChatComponentText(
                 "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub
-                + ". Use: query | overlay"));
+                + ". Use: query | overlay | eval"));
         }
     }
 

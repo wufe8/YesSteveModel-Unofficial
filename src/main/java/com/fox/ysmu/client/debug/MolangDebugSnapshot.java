@@ -314,6 +314,44 @@ public final class MolangDebugSnapshot {
     }
 
     /**
+     * 求值一个 Molang 表达式/函数并把结果显示在聊天框。
+     * 供 {@code /ysm debug eval <expression>} 使用：输入任意函数或表达式
+     * （如 {@code math.floor(3.7)}、{@code math.clamp(5, 0, 2) + 1}），
+     * 输出其返回值。解析/求值在客户端进行（MolangParser 为客户端单例）。
+     */
+    public static void evalToChat(String expression) {
+        EntityPlayer player = Minecraft.getMinecraft().thePlayer;
+        if (player == null) return;
+        if (expression == null || expression.trim().isEmpty()) {
+            player.addChatMessage(new ChatComponentText(
+                CHAT_PREFIX + " §cUsage: /ysm debug eval <expression>"));
+            return;
+        }
+        try {
+            software.bernie.geckolib3.core.molang.MolangParser parser =
+                software.bernie.geckolib3.resource.GeckoLibCache.getInstance().parser;
+            software.bernie.geckolib3.core.molang.expressions.MolangExpression expr =
+                parser.parseExpression(expression);
+            double result = expr.get();
+            player.addChatMessage(new ChatComponentText(
+                CHAT_PREFIX + " §a" + sanitize(expression) + "§r = " + formatValue(result)));
+        } catch (Exception e) {
+            player.addChatMessage(new ChatComponentText(
+                CHAT_PREFIX + " §cError evaluating: §f" + sanitize(expression)
+                    + "§c — " + sanitize(String.valueOf(e.getMessage()))));
+        }
+    }
+
+    /**
+     * 去掉字符串里的 MC 格式码字符（0xA7），防止回显时被渲染成颜色/格式码。
+     * eval 的表达式是用户输入，含 {@code §} 时应原样显示而非变成聊天格式码。
+     */
+    private static String sanitize(String text) {
+        if (text == null) return "";
+        return text.replace('\u00a7', '&');
+    }
+
+    /**
      * 在聊天框输出变量值，支持通配符和模糊匹配。
      */
     public static void printSingleToChat(String name) {
