@@ -35,14 +35,14 @@ public class YsmCommand extends CommandBase {
 
     @Override
     public String getCommandUsage(ICommandSender sender) {
-        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome|debug|sync|help> [args] (type /ysm help for details)";
+        return "/ysm <reload|play|playsound|setgamepath|buffer|welcome|debug|reset|sync|help> [args] (type /ysm help for details)";
     }
 
     @Override
     public List addTabCompletionOptions(ICommandSender sender, String[] args) {
         if (args.length == 1) {
             return getListOfStringsMatchingLastWord(args,
-                "reload", "play", "playsound", "setgamepath", "buffer", "welcome", "debug", "sync", "help");
+                "reload", "play", "playsound", "setgamepath", "buffer", "welcome", "debug", "reset", "sync", "help");
         }
         if (args.length == 2) {
             if ("welcome".equalsIgnoreCase(args[0])) {
@@ -50,6 +50,11 @@ public class YsmCommand extends CommandBase {
             }
             if ("debug".equalsIgnoreCase(args[0])) {
                 return getListOfStringsMatchingLastWord(args, "query", "overlay", "eval");
+            }
+            if ("reset".equalsIgnoreCase(args[0])) {
+                return getListOfStringsMatchingLastWord(args,
+                    net.minecraft.server.MinecraftServer.getServer()
+                        .getConfigurationManager().getAllUsernames());
             }
         }
         if (args.length == 2 && "setgamepath".equalsIgnoreCase(args[0])) {
@@ -122,6 +127,8 @@ public class YsmCommand extends CommandBase {
             processWelcome(sender, args);
         } else if ("debug".equalsIgnoreCase(args[0])) {
             processDebug(sender, args);
+        } else if ("reset".equalsIgnoreCase(args[0])) {
+            processReset(sender, args);
         } else {
             throw new WrongUsageException(getCommandUsage(sender));
         }
@@ -148,7 +155,8 @@ public class YsmCommand extends CommandBase {
             String sub = args[1].toLowerCase(java.util.Locale.ROOT);
             boolean found = "reload".equals(sub) || "play".equals(sub) || "playsound".equals(sub)
                 || "buffer".equals(sub) || "setgamepath".equals(sub) || "welcome".equals(sub)
-                || "sync".equals(sub) || "debug".equals(sub) || "ysmlocal".equals(sub);
+                || "sync".equals(sub) || "debug".equals(sub) || "reset".equals(sub)
+                || "ysmclient".equals(sub);
             if (!found) {
                 sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.unknown", sub));
                 return;
@@ -169,8 +177,9 @@ public class YsmCommand extends CommandBase {
         sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.setgamepath"));
         sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.welcome"));
         sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.sync"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.reset"));
         sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.debug"));
-        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.ysmlocal"));
+        sender.addChatMessage(new ChatComponentTranslation("commands.yes_steve_model.help.line.ysmclient"));
         // 关闭进服 welcome 引导的提示：整行可点击，执行 /ysm welcome off。
         net.minecraft.util.ChatComponentTranslation off = new net.minecraft.util.ChatComponentTranslation(
             "commands.yes_steve_model.help.welcome_off");
@@ -423,6 +432,36 @@ public class YsmCommand extends CommandBase {
                 "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub
                 + ". Use: query | overlay | eval"));
         }
+    }
+
+    /**
+     * 重置其他玩家的 Molang 变量状态（/ysm reset <selector>）。
+     * 重置自己请用客户端命令 {@code /ysmclient reset}（纯本地，不走服务端）。
+     * 支持原版选择器（@p / @a / 玩家名）；清理在目标玩家的客户端执行
+     * （漫游变量/帧间状态/v.* 残留），保留模型定义，不需要重载模型。
+     */
+    private void processReset(ICommandSender sender, String[] args) {
+        if (args.length < 2) {
+            sender.addChatMessage(new ChatComponentText(
+                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm reset <player|@a|@p>"
+                    + "  — or use §e/ysmclient reset§r for yourself."));
+            return;
+        }
+        net.minecraft.entity.player.EntityPlayerMP[] targets;
+        try {
+            targets = net.minecraft.command.PlayerSelector.matchPlayers(sender, args[1]);
+        } catch (Exception e) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        if (targets == null || targets.length == 0) {
+            throw new CommandException("commands.generic.player.notFound");
+        }
+        for (net.minecraft.entity.player.EntityPlayerMP target : targets) {
+            NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.PacketResetMolang(), target);
+        }
+        sender.addChatMessage(new ChatComponentText(
+            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Reset Molang variables for §e"
+                + targets.length + "§r player(s)."));
     }
 
     /** 检查自定义模型文件夹结构；对每个不完整（缺 main.json/arm.json/材质）的文件夹

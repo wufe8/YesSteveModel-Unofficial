@@ -44,6 +44,7 @@ public final class NetworkHandler {
     private static final int CLIENTBOUND_OPENYSM_SYNC_INDEX_CHUNK_17 = 24;
     private static final int CLIENTBOUND_SPAWN_PARTICLE_COMMAND = 25;
     private static final int CLIENTBOUND_EVAL_MOLANG = 26;
+    private static final int CLIENTBOUND_RESET_MOLANG = 27;
 
     public static final int OPEN_NPC_MODEL_GUI = 93;
     public static final int SET_NPC_MODEL_ID = 94;
@@ -189,6 +190,11 @@ public final class NetworkHandler {
             PacketEvalMolang.Handler.class,
             PacketEvalMolang.class,
             CLIENTBOUND_EVAL_MOLANG,
+            Side.CLIENT);
+        CHANNEL.registerMessage(
+            PacketResetMolang.Handler.class,
+            PacketResetMolang.class,
+            CLIENTBOUND_RESET_MOLANG,
             Side.CLIENT);
     }
 

@@ -17,7 +17,7 @@ import org.apache.commons.io.FileUtils;
 /**
  * 客户端本地模型加载（仅自己可见）。
  *
- * 由客户端命令 /ysmlocal 触发（{@code CommandLoadLocal}），把客户端本地扫描到的
+ * 由客户端命令 /ysmclient load 触发（{@code CommandYsmClient}），把客户端本地扫描到的
  * 模型（config/ysmu/custom + builtin，由 {@code ServerModelManager.reloadPacks()}
  * 在客户端也构建）注册为客户端模型，仅自己可见——其他玩家没有这些模型，看到你
  * 仍为默认模型。

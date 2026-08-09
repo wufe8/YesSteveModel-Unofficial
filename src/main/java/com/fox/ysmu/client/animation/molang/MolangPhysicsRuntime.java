@@ -176,6 +176,11 @@ public final class MolangPhysicsRuntime {
         return lastFrameVariables.get(name);
     }
 
+    /** 清空最近一帧变量快照（/ysm reset 用），让 debug overlay 立即反映重置后的状态。 */
+    public static void clearLastFrameSnapshot() {
+        lastFrameVariables = java.util.Collections.emptyMap();
+    }
+
     /** 清理指定玩家的全部 ScopeState（玩家登出时调用），避免断线后
      *  (player, model) 组合的物理/变量状态残留到下次 reload。 */
     public static void clearPlayer(UUID playerId) {

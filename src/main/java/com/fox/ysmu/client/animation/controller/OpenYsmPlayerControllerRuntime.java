@@ -259,6 +259,45 @@ public final class OpenYsmPlayerControllerRuntime {
         EXPLICIT_ROAMING_BY_MODEL.clear();
     }
 
+    /**
+     * 重置指定模型的用户漫游变量（/ysm reset 用）。
+     * 只清除"用户通过 GUI/轮盘显式设置"的值：EXPLICIT_ROAMING_BY_MODEL 中属于
+     * 该模型的标记，以及 PENDING_ROAMING 中被这些标记覆盖的条目。
+     * 保留模型定义（MODEL_ROAMING_VARS / MODEL_ROAMING_DEFAULTS），因此 reset 后
+     * 变量回落到模型 ysm.json 定义的默认值，而不是消失。
+     */
+    public static void resetUserRoamingVars(ResourceLocation modelId) {
+        if (modelId == null) {
+            return;
+        }
+        java.util.Set<String> explicit = EXPLICIT_ROAMING_BY_MODEL.remove(modelId);
+        if (explicit != null) {
+            for (String varName : explicit) {
+                PENDING_ROAMING.remove(varName);
+            }
+            // 全局标记也可能含该模型的变量（无模型上下文写入的兜底路径）
+            EXPLICIT_ROAMING.removeAll(explicit);
+        }
+        // 全局标记里非模型专属的条目（如 lock_wheel / wheel_anim）也一并重置，
+        // 这些是用户设置的全局状态，reset 时应回默认。
+        EXPLICIT_ROAMING.remove("lock_wheel");
+        EXPLICIT_ROAMING.remove("wheel_anim");
+        PENDING_ROAMING.remove("lock_wheel");
+        PENDING_ROAMING.remove("wheel_anim");
+        invalidateFrameRoamingCache();
+    }
+
+    /**
+     * 重置所有用户的漫游变量（/ysm reset @a 用）。清空全部用户显式设置，
+     * 保留模型定义（MODEL_ROAMING_VARS / MODEL_ROAMING_DEFAULTS）。
+     */
+    public static void resetAllUserRoamingVars() {
+        PENDING_ROAMING.clear();
+        EXPLICIT_ROAMING.clear();
+        EXPLICIT_ROAMING_BY_MODEL.clear();
+        invalidateFrameRoamingCache();
+    }
+
     private OpenYsmPlayerControllerRuntime() {}
 
     public static PlayState tryApply(AnimationEvent<CustomPlayerEntity> event) {
@@ -289,7 +328,7 @@ public final class OpenYsmPlayerControllerRuntime {
      * the model has a dedicated controller for this slot (even if its state machine
      * hasn't produced an animation yet).
      */
-    static void clear() {
+    public static void clear() {
         STATES.clear();
     }
 

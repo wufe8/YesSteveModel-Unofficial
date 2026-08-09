@@ -48,7 +48,7 @@ public final class OpenYsmModelSyncClient {
 
     // ── 会话级字段（跨同步存活）─────────────────────────────
     // clientKey/currentCacheFolderName/serverKey 刻意留在外层：懒加载重解密（闲置卸载
-    // 后恢复）与 /ysmlocal 会在后台线程读取它们，且跨同步存活；单次同步的状态字段
+    // 后恢复）与 /ysmclient load 会在后台线程读取它们，且跨同步存活；单次同步的状态字段
     // （syncStep/密钥/索引缓冲/计数器/看门狗时间戳）在 SyncState 内。
     private static byte[] serverKey;
     private static byte[] clientKey;

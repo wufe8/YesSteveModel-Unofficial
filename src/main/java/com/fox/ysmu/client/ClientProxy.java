@@ -58,11 +58,13 @@ public class ClientProxy extends CommonProxy {
         ClientRegistry.registerKeyBinding(ExtraPlayerConfigKey.EXTRA_PLAYER_RENDER_KEY);
         ClientRegistry.registerKeyBinding(PlayerModelScreenKey.PLAYER_MODEL_KEY);
 
-        // 客户端本地模型加载命令 /ysmlocal（纯客户端，纯净服/YSMU 服都可用）。
+        // 客户端本地命令 /ysmclient（纯客户端，纯净服/YSMU 服都可用）：
+        //   /ysmclient load  — 注册本地模型（原 /ysmlocal）
+        //   /ysmclient reset — 重置自己的 Molang 变量
         // 用独立命令名而非 /ysm 子命令：若在客户端注册同名 "ysm"，ClientCommandHandler
         // 会优先拦截所有 /ysm 调用，导致 reload/play 等服务端子命令无法到达服务器。
         net.minecraftforge.client.ClientCommandHandler.instance
-            .registerCommand(new com.fox.ysmu.command.CommandLoadLocal());
+            .registerCommand(new com.fox.ysmu.command.CommandYsmClient());
     }
 
     public static CustomPlayerRenderer getInstance() {
