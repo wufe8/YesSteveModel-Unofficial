@@ -6,6 +6,8 @@ import java.nio.FloatBuffer;
 import java.util.Collections;
 import java.util.concurrent.ExecutionException;
 import java.util.function.Consumer;
+import com.eliotlash.mclib.utils.Interpolations;
+import com.fox.ysmu.Config;
 import com.fox.ysmu.client.ClientProxy;
 import net.geckominecraft.client.renderer.GlStateManager;
 import net.minecraft.client.Minecraft;
@@ -17,6 +19,7 @@ import net.minecraft.client.renderer.entity.RenderManager;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.init.Blocks;
 import net.minecraft.item.ItemStack;
+import net.minecraft.util.MathHelper;
 import net.minecraft.util.ResourceLocation;
 import org.joml.Quaternionf;
 import org.lwjgl.util.vector.Quaternion;
@@ -591,14 +594,58 @@ public final class RenderUtil {
         RENDERING_IN_PAPERDOLL = true;
         GL11.glEnable(GL11.GL_COLOR_MATERIAL);
         GL11.glPushMatrix();
+
+        // ── HUD follow mode: capture real rotation fields; restore in finally ──
+        float savePrevBody = player.prevRenderYawOffset;
+        float saveBody = player.renderYawOffset;
+        float savePrevHead = player.prevRotationYawHead;
+        float saveHead = player.rotationYawHead;
         try {
             // 对 rotationYaw 做帧间插值，避免每 tick 刷新的卡顿
             float interpolatedYaw = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * partialTicks;
+            // 身体偏航（renderYawOffset）的帧间插值，与 GeoReplacedEntityRenderer 内层旋转完全一致
+            float bodyYaw = Interpolations.lerpYaw(player.prevRenderYawOffset, player.renderYawOffset, partialTicks);
+            float outerYaw = interpolatedYaw;
+
+            int mode = Config.HUD_FOLLOW_MODE;
+            ensureFollowMode(mode);
+            if (mode == Config.HUD_FOLLOW_VANILLA_SMOOTH) {
+                // 阈值区间内平滑：offset 单状态自适应低通（低速强平滑消除 20Hz 锯齿，
+                // 高速近直通保持原版手感）。外层 = realB + offset，内层 = 180 - realB 精确抵消
+                // → 屏幕身体 = 180+yawOffset+offset（平滑）。
+                // 头部：只覆写 H = B + offset（不动 B）。头骨 = B - H = -offset（平滑），
+                // 屏幕头部 = 180+yawOffset 完全固定（同 vanilla），query.head_y_rotation = offset
+                // 连续无 20Hz 抖动；query.body_y_rotation 仍为真实 B，不破坏身体动画过渡（v2/v3 教训）。
+                float offset;
+                if (!Float.isNaN(lastPolledOffset)
+                    && Minecraft.getSystemTime() - lastPolledBodyYawTime < 100L) {
+                    // pollHudDisplayBodyYaw 已在本帧推进过状态机，直接消费其结果
+                    offset = lastPolledOffset;
+                    lastPolledOffset = Float.NaN;
+                } else {
+                    // FBO 缓存关闭或配置界面直接渲染：在这里推进状态机
+                    offset = hudFollowState.update(interpolatedYaw, bodyYaw);
+                }
+                outerYaw = MathHelper.wrapAngleTo180_float(bodyYaw + offset);
+                float headDisplay = MathHelper.wrapAngleTo180_float(bodyYaw + offset);
+                player.prevRotationYawHead = headDisplay;
+                player.rotationYawHead = headDisplay;
+            } else if (mode == Config.HUD_FOLLOW_YSM) {
+                // 外层改用身体偏航：外层 (B) 与内层 (180-B) 精确抵消 → 身体锁死朝向屏幕。
+                // 头部字段覆写为 B - clamp(V-B)：管线内取反后头骨旋转 = clamp(V-B)，
+                // 即头部随视角 1:1 转动（限制 ±85°），query.head_y_rotation 语义也恢复正确。
+                outerYaw = bodyYaw;
+                float headYaw = MathHelper.clamp_float(
+                    MathHelper.wrapAngleTo180_float(interpolatedYaw - bodyYaw), -85.0F, 85.0F);
+                float headDisplay = MathHelper.wrapAngleTo180_float(bodyYaw - headYaw);
+                player.prevRotationYawHead = headDisplay;
+                player.rotationYawHead = headDisplay;
+            }
 
             GL11.glTranslatef((float) (posX + scale * 0.5), (float) (posY + scale * 2), (float) z);
             GL11.glScalef(-scale, scale, scale);
             GL11.glRotatef(180.0F, 0.0F, 0.0F, 1.0F);
-            GL11.glRotatef(interpolatedYaw + yawOffset, 0.0F, 1.0F, 0.0F);
+            GL11.glRotatef(outerYaw + yawOffset, 0.0F, 1.0F, 0.0F);
 
             GL11.glRotatef(135.0F, 0.0F, 1.0F, 0.0F);
             RenderHelper.enableStandardItemLighting();
@@ -607,6 +654,10 @@ public final class RenderUtil {
             GL11.glTranslatef(0.0F, player.yOffset, 0.0F);
             withGuiEntityLighting(() -> RenderManager.instance.renderEntityWithPosYaw(player, 0.0D, 0.0D, 0.0D, 0.0F, partialTicks));
         } finally {
+            player.prevRenderYawOffset = savePrevBody;
+            player.renderYawOffset = saveBody;
+            player.prevRotationYawHead = savePrevHead;
+            player.rotationYawHead = saveHead;
             GL11.glPopMatrix();
             RenderHelper.disableStandardItemLighting();
             GL11.glDisable(GL12.GL_RESCALE_NORMAL);
@@ -615,6 +666,134 @@ public final class RenderUtil {
             OpenGlHelper.setActiveTexture(OpenGlHelper.defaultTexUnit);
             RENDERING_IN_PAPERDOLL = false;
         }
+    }
+
+    // ── HUD paperdoll follow-mode helpers ──
+
+    /** 原版平滑模式的 offset 最大幅值（°），沿用 vanilla 的阈值（当前按用户建议取 70°）。 */
+    private static final float HUD_SMOOTH_MAX_OFFSET = 70.0F;
+    /** 原版平滑模式对 offset 的基础低通时间常数（s），消除 20Hz 锯齿。 */
+    private static final float HUD_SMOOTH_OFFSET_TC = 0.12F;
+    /** 对身体偏航 B 的低通时间常数（s）：B 只在 tick 更新（20Hz 步进），先低通 B 再算
+     *  target = V - Bs，从源头消除 offset 的 20Hz 锯齿；渲染层仍用真实 B 与内层 180-B
+     *  精确抵消（屏幕身体 = offset），因此不会引入 v3 的双低通相减振荡。 */
+    private static final float HUD_SMOOTH_BODY_TC = 0.08F;
+    /** 单帧推进的 dt 上限（s）：超过视为中等帧卡顿，本帧跳过推进（卡顿期间 B 也未推进，
+     *  无需追赶），避免 bodySmooth/offsetSmooth 一帧瞬移造成的 5-9° 跳变。 */
+    private static final float HUD_SMOOTH_MAX_DT = 0.1F;
+    /** dt 超过该值（s）视为长时间暂停（切窗口/菜单/Alt-Tab）：此时重同步到当前值，
+     *  用户不在看，瞬移无感；防止暂停期间服务器 tick 推进 B 后状态永久失配。 */
+    private static final float HUD_SMOOTH_RESYNC_DT = 1.0F;
+    /** offset 偏差达到该值（°）时低通时间常数减半（高速时接近直通，保持原版手感）。 */
+    private static final float HUD_FAST_DEVIATION_DEG = 20.0F;
+    /** 上次渲染时使用的跟随模式，用于切换模式时重置平滑状态。 */
+    private static int lastFollowMode = -1;
+    /** 最近一次 pollHudDisplayBodyYaw 的屏幕可见 offset（非原版平滑模式为 NaN）。 */
+    private static float lastPolledOffset = Float.NaN;
+    private static long lastPolledBodyYawTime = 0L;
+
+    /**
+     * 帧率无关的平滑状态机（原版平滑模式）：对「vanilla 偏航 offset = V - B」做单一状态的
+     * 偏差自适应低通。目标值 clamp(V - B, ±75) 沿用 vanilla 的 ±75° 阈值（renderYawOffset
+     * 始终被 vanilla 约束在 rotationYaw±75° 内），因此永远不会越界。单一状态低通不会出现
+     * 「两个独立低通信号相减」在反向/阈值附近产生的振荡与截断锯齿；偏差大时时间常数缩小
+     * （高速近直通，保持原版手感），偏差小时强平滑（消除 20Hz 锯齿）。
+     */
+    private static final class HudFollowState {
+        private boolean initialized;
+        private long lastTimeMs;
+        private float offsetSmooth;
+        /** 低通后的身体偏航（去除 20Hz tick 步进），仅用于计算 target，不用于渲染。 */
+        private float bodySmooth;
+
+        void reset() {
+            initialized = false;
+        }
+
+        /** 用低通后的身体偏航计算 clamp 后的目标 offset。 */
+        private float clampTarget(float rawViewYaw, float body) {
+            return MathHelper.clamp_float(
+                MathHelper.wrapAngleTo180_float(rawViewYaw - body), -HUD_SMOOTH_MAX_OFFSET, HUD_SMOOTH_MAX_OFFSET);
+        }
+
+        /**
+         * @param rawViewYaw  视角偏航 V 的原始帧间插值
+         * @param realBodyYaw 真实身体偏航 B（帧间插值，逐 tick 更新）
+         * @return 屏幕可见 offset = 低通后的 clamp(V - Bs, ±70)，其中 Bs 为低通后的身体偏航
+         */
+        float update(float rawViewYaw, float realBodyYaw) {
+            long now = Minecraft.getSystemTime();
+            if (!initialized || lastTimeMs == 0L) {
+                initialized = true;
+                lastTimeMs = now;
+                bodySmooth = realBodyYaw;
+                offsetSmooth = clampTarget(rawViewYaw, realBodyYaw);
+                return offsetSmooth;
+            }
+            float dt = (now - lastTimeMs) / 1000.0F;
+            if (dt <= 0.0F) {
+                // 同毫秒重复调用（配置界面与 HUD 双路径）：不推进状态、不重置时间戳，避免瞬移
+                return offsetSmooth;
+            }
+            lastTimeMs = now;
+            if (dt > HUD_SMOOTH_RESYNC_DT) {
+                // 长时间暂停：重同步（用户不在看，瞬移无感）
+                bodySmooth = realBodyYaw;
+                offsetSmooth = clampTarget(rawViewYaw, realBodyYaw);
+                return offsetSmooth;
+            }
+            if (dt > HUD_SMOOTH_MAX_DT) {
+                // 中等帧卡顿：本帧不推进（卡顿期间 B 也未推进），下一帧起正常平滑继续，绝不瞬移
+                return offsetSmooth;
+            }
+            // 先低通身体偏航 B（20Hz tick 步进 → 平滑），消除 target 的锯齿
+            float dB = MathHelper.wrapAngleTo180_float(realBodyYaw - bodySmooth);
+            float alphaB = 1.0F - (float) Math.exp(-dt / HUD_SMOOTH_BODY_TC);
+            bodySmooth = MathHelper.wrapAngleTo180_float(bodySmooth + dB * alphaB);
+
+            float target = clampTarget(rawViewYaw, bodySmooth);
+            float delta = MathHelper.wrapAngleTo180_float(target - offsetSmooth);
+            if (Math.abs(delta) < 0.001F) {
+                offsetSmooth = target;
+                return offsetSmooth;
+            }
+            // 偏差自适应低通：偏差越大时间常数越小（高速近直通）
+            float t = HUD_SMOOTH_OFFSET_TC / (1.0F + Math.abs(delta) / HUD_FAST_DEVIATION_DEG);
+            float alpha = 1.0F - (float) Math.exp(-dt / t);
+            offsetSmooth = MathHelper.wrapAngleTo180_float(offsetSmooth + delta * alpha);
+            return offsetSmooth;
+        }
+    }
+
+    private static final HudFollowState hudFollowState = new HudFollowState();
+
+    /** 切换跟随模式时重置平滑状态，避免旧模式的残留值造成跳变。 */
+    private static void ensureFollowMode(int mode) {
+        if (lastFollowMode != mode) {
+            lastFollowMode = mode;
+            hudFollowState.reset();
+        }
+    }
+
+    /**
+     * 每帧轮询（即使 FBO 不重渲染也调用）：推进原版平滑状态机。返回「屏幕可见的身体偏航
+     * offset = 低通后的 clamp(V - B, ±75)」供 HudPreviewCache 判断模型是否仍在转动
+     * （转动期间逐帧重渲染，静止时继续走 FBO 缓存）；非原版平滑模式返回 NaN。
+     * 结果存入 lastPolledOffset 供 renderPlayerEntity 消费（不覆写任何实体字段）。
+     */
+    public static float pollHudDisplayBodyYaw(EntityPlayer player, float partialTicks) {
+        int mode = Config.HUD_FOLLOW_MODE;
+        ensureFollowMode(mode);
+        if (mode != Config.HUD_FOLLOW_VANILLA_SMOOTH) {
+            lastPolledOffset = Float.NaN;
+            return Float.NaN;
+        }
+        float viewYaw = player.prevRotationYaw + (player.rotationYaw - player.prevRotationYaw) * partialTicks;
+        float bodyYaw = Interpolations.lerpYaw(player.prevRenderYawOffset, player.renderYawOffset, partialTicks);
+        float offset = hudFollowState.update(viewYaw, bodyYaw);
+        lastPolledOffset = offset;
+        lastPolledBodyYawTime = Minecraft.getSystemTime();
+        return offset;
     }
 
     private static Quaternion j2l(Quaternionf jomlQuat) {

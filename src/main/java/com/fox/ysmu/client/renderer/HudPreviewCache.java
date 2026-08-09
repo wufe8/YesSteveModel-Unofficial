@@ -3,6 +3,7 @@ package com.fox.ysmu.client.renderer;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.ScaledResolution;
 import net.minecraft.entity.player.EntityPlayer;
+import net.minecraft.util.MathHelper;
 
 import org.lwjgl.opengl.GL11;
 
@@ -29,6 +30,10 @@ import com.fox.ysmu.util.RenderUtil;
 public class HudPreviewCache {
 
     private static final float YAW_THRESHOLD_DEG = 3.0F;
+    /** 原版平滑模式：屏幕可见 offset 每帧变化超过该值即重渲染。
+     *  0.001° 使得转动期间几乎逐帧重渲染（offset 逐帧烘焙进 FBO，杜绝刷新间隙冻结的
+     *  离散步进）；静止时 offset 恒定、不触发重渲染，仍可走 FBO 缓存省性能。 */
+    private static final float FOLLOW_BODY_THRESHOLD_DEG = 0.001F;
     private final FboCache fboCache = new FboCache();
     private boolean needsUpdate = true;
 
@@ -36,6 +41,8 @@ public class HudPreviewCache {
     private double prevScale;
     private double prevYawOffset;
     private float prevInterpolatedYaw;
+    /** 原版平滑模式：最近一次轮询到的屏幕可见偏航 offset（模式之外为 NaN）。 */
+    private float prevDisplayYaw = Float.NaN;
     private int prevItemHash;
     private int prevArmorHash;
     // Screen dimensions (pixels) when the FBO was last rendered
@@ -92,6 +99,17 @@ public class HudPreviewCache {
         // ── Detect state changes ──
         float interpolatedYaw = player.prevRotationYaw
             + (player.rotationYaw - player.prevRotationYaw) * partialTicks;
+        // 原版平滑模式：身体每帧都在平滑变化。用每帧轮询的屏幕可见偏航（offset）判断
+        // 是否需要重渲染——转动期间逐帧重渲染（平滑），静止时继续走缓存（省性能）。
+        float displayYaw = RenderUtil.pollHudDisplayBodyYaw(player, partialTicks);
+        boolean bodyMoved = false;
+        if (!Float.isNaN(displayYaw)) {
+            bodyMoved = Float.isNaN(prevDisplayYaw)
+                || Math.abs(MathHelper.wrapAngleTo180_float(displayYaw - prevDisplayYaw)) > FOLLOW_BODY_THRESHOLD_DEG;
+            prevDisplayYaw = displayYaw;
+        } else {
+            prevDisplayYaw = Float.NaN;
+        }
         int itemHash = heldItemHash(player);
         int armorHash = armorHash(player);
         ScaledResolution res = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight);
@@ -104,7 +122,7 @@ public class HudPreviewCache {
         boolean armorChanged = armorHash != prevArmorHash;
         boolean configChanged = scale != prevScale || yawOffset != prevYawOffset;
 
-        if (resized || yawChanged || itemChanged || armorChanged || configChanged) {
+        if (resized || yawChanged || bodyMoved || itemChanged || armorChanged || configChanged) {
             needsUpdate = true;
         }
 

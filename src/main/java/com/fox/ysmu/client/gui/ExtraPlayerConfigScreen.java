@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.gui;
 
 import com.fox.ysmu.Config;
+import com.fox.ysmu.client.ClientEventHandler;
 import com.fox.ysmu.util.RenderUtil;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.resources.I18n;
@@ -67,6 +68,23 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
             ? "gui.yes_steve_model.hud_cache.on"
             : "gui.yes_steve_model.hud_cache.off");
         this.drawString(fontRendererObj, cacheStatus, 15, height - 20, Config.GUI_HUD_PREVIEW_CACHE ? 0x55FF55 : 0xFFAA00);
+
+        // HUD follow mode hint
+        String followKey;
+        switch (Config.HUD_FOLLOW_MODE) {
+            case Config.HUD_FOLLOW_VANILLA_SMOOTH:
+                followKey = "gui.yes_steve_model.hud_follow.smooth";
+                break;
+            case Config.HUD_FOLLOW_YSM:
+                followKey = "gui.yes_steve_model.hud_follow.ysm";
+                break;
+            default:
+                followKey = "gui.yes_steve_model.hud_follow.vanilla";
+                break;
+        }
+        String followStatus = I18n.format(followKey);
+        int followColor = Config.HUD_FOLLOW_MODE == Config.HUD_FOLLOW_VANILLA ? 0xFFFFFF : 0x55FF55;
+        this.drawString(fontRendererObj, followStatus, 15, height - 10, followColor);
 
         if (this.mc.thePlayer != null) {
             RenderUtil.renderPlayerEntity(this.mc.thePlayer, this.posX, this.posY, this.scale, this.yawOffset, 50, pPartialTick);
@@ -138,6 +156,12 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
         // Toggle HUD FBO cache
         if (keyCode == org.lwjgl.input.Keyboard.KEY_C) {
             Config.GUI_HUD_PREVIEW_CACHE = !Config.GUI_HUD_PREVIEW_CACHE;
+            return;
+        }
+        // Cycle HUD follow mode (0 vanilla / 1 vanilla smooth / 2 ysm)
+        if (keyCode == org.lwjgl.input.Keyboard.KEY_M) {
+            Config.HUD_FOLLOW_MODE = (Config.HUD_FOLLOW_MODE + 1) % 3;
+            ClientEventHandler.invalidateHudPreviewCache();
             return;
         }
         super.keyTyped(typedChar, keyCode);

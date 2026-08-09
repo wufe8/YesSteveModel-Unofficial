@@ -48,6 +48,11 @@ public class ClientEventHandler {
     /** Cached HUD player preview – avoids re-rendering the full GeckoLib pipeline every frame. */
     private static final HudPreviewCache hudPreviewCache = new HudPreviewCache();
 
+    /** 使 HUD 纸娃娃 FBO 缓存失效（跟随模式等状态变化后需重新渲染）。 */
+    public static void invalidateHudPreviewCache() {
+        hudPreviewCache.invalidate();
+    }
+
     /**
      * Suppressed render-event-handler errors. Render event subscribers are invoked from
      * vanilla's per-frame render try-block (EntityRenderer.updateCameraAndRender); an
