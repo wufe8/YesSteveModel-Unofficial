@@ -12,6 +12,8 @@ The current focus of work is to port OpenYSM. The OpenYSM code should be careful
 
 When writing complex features or significant refactors, use an ExecPlan (as described in .agent/PLANS.md) from design to implementation.
 
+ExecPlan working documents are kept in `local/plans/` (gitignored, never committed); only the spec `PLANS.md` lives in `.agent/`. This fork is single-developer at this time, so per-task plans stay local and only durable conventions are versioned now.
+
 ## Repository Layout
 
 - `src/main/java/com/fox/ysmu`: project-specific mod code.
