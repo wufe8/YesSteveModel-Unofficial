@@ -22,6 +22,10 @@ class ParticleMolangExpressionTest {
     @BeforeEach
     void clearGlobalVariables() {
         MolangParser.VARIABLES.clear();
+        // ysm.particle / ysm.equipped_enchantment_level 等函数由宿主 mod 通过
+        // MolangParser.ysmFunctionRegistrar 钩子注册（vendored 解析器零 mod 引用），
+        // 测试需显式注册钩子才能解析这些函数名。
+        com.fox.ysmu.client.animation.AnimationRegister.registerMolangHooks();
     }
 
     /** 三元条件 + 粒子调用：条件为真时进入 then 分支（particle 为副作用函数）。 */

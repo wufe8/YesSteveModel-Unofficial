@@ -9,10 +9,13 @@ import com.eliotlash.mclib.math.Constant;
 import com.eliotlash.mclib.math.IValue;
 import com.eliotlash.mclib.math.MathBuilder;
 import com.eliotlash.mclib.math.Variable;
+import com.eliotlash.mclib.math.functions.Function;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 
 import it.unimi.dsi.fastutil.objects.Object2ObjectOpenHashMap;
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import software.bernie.geckolib3.core.molang.expressions.MolangAssignment;
 import software.bernie.geckolib3.core.molang.expressions.MolangExpression;
 import software.bernie.geckolib3.core.molang.expressions.MolangMultiStatement;
@@ -24,17 +27,6 @@ import software.bernie.geckolib3.core.molang.functions.CosDegrees;
 import software.bernie.geckolib3.core.molang.functions.FirstOrder;
 import software.bernie.geckolib3.core.molang.functions.SecondOrder;
 import software.bernie.geckolib3.core.molang.functions.SinDegrees;
-
-import com.fox.ysmu.client.animation.molang.BonePivotAbsFunction;
-import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
-import com.fox.ysmu.client.animation.molang.EquippedEnchantmentLevelFunction;
-import com.fox.ysmu.client.animation.molang.ParticleFunction;
-import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
-import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
-import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
-import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
-import com.fox.ysmu.client.animation.molang.RelativeBlockNameFunction;
-import com.fox.ysmu.ysmu;
 
 /**
  * MoLang 解析器
@@ -52,6 +44,36 @@ public class MolangParser extends MathBuilder {
     public static final MolangExpression ZERO = new MolangValue(null, new Constant(0));
     public static final MolangExpression ONE = new MolangValue(null, new Constant(1));
     public static final String RETURN = "return ";
+
+    /**
+     * Host-mod-injected hook: registers YSMU-specific Molang functions on every
+     * newly constructed parser. Inverted control — this vendored file has no
+     * compile-time dependency on mod code (same pattern as
+     * AnimationFile.builtinFallback). Set once at mod init; read-only afterwards;
+     * null → no YSMU-specific functions are registered (graceful fallback).
+     */
+    @FunctionalInterface
+    public interface MolangFunctionRegistrar {
+        void register(Map<String, Class<? extends Function>> functions);
+    }
+
+    public static volatile MolangFunctionRegistrar ysmFunctionRegistrar = null;
+
+    /**
+     * Host-mod-injected hook: decides, for the current render frame, whether a
+     * {@code v.} variable was EXPLICITLY set (even to 0) vs merely
+     * default-initialized. Used by the {@code ??} null-coalescing operator.
+     * Receives the full variable name as written (e.g. {@code v.roaming.x}).
+     * Null → treated as "not explicitly set" (graceful fallback).
+     */
+    @FunctionalInterface
+    public interface ExplicitVariableLookup {
+        boolean isExplicitlySet(String fullVariableName);
+    }
+
+    public static volatile ExplicitVariableLookup explicitVariableLookup = null;
+
+    private static final Logger LOG = LogManager.getLogger("ysmu.molang");
 
     public MolangParser() {
         super();
@@ -78,55 +100,12 @@ public class MolangParser extends MathBuilder {
         this.functions.put("ysm.bone_scale_y", BoneScale.class);
         this.functions.put("ysm.bone_scale_z", BoneScale.class);
 
-        // 防止模型动画 Molang 表达式中使用 ctrl.* 函数时抛出
-        // "Function couldn't be found" 异常导致日志刷屏。
-        // 控制器条件中的 ctrl.* 由 OpenYsmControllerExpressionEvaluator 处理，
-        // 此处仅作为 Molang keyframe 表达式中的安全回退（始终返回 0）。
-        this.functions.put("ctrl.hold", CtrlHoldFunction.class);
-        this.functions.put("ctrl.use", CtrlHoldFunction.class);
-        this.functions.put("ctrl.swing", CtrlHoldFunction.class);
-        this.functions.put("ctrl.ride", CtrlHoldFunction.class);
-
-        // 防止模型动画 Molang 表达式中使用 query.position_delta(axis) 时
-        // 抛出 "Function couldn't be found" 异常导致日志刷屏。
-        // 变量版 query.position_delta 由 AnimationRegister.setEntityQueryValues() 提供值。
-        this.functions.put("query.position_delta", QueryPositionDeltaFunction.class);
-
-        // 防止模型动画 Molang 表达式中使用 query.position(axis) 时抛出
-        // "Function couldn't be found" 异常导致日志刷屏。
-        this.functions.put("query.position", QueryPositionFunction.class);
-
-        // 防止模型动画 Molang 表达式中使用 query.relative_block_has_any_tag 时
-        // 抛出 "Function couldn't be found" 异常导致日志刷屏。
-        // 始终返回 0 (false)，因 1.7.10 方块标签系统差异过大不便完整实现。
-        this.functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
-
-        // 防止模型动画 Molang 表达式中使用 query.is_item_name_any 时抛出异常。
-        // 始终返回 0 (false)，TODO: 待物品注册名上下文可用时实现完整匹配。
-        this.functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
-
-        // 缺失的 ysm.* 功能桩函数：防止高版本模型动画控制器每帧刷堆栈
-        this.functions.put("ysm.play_sound", CtrlHoldFunction.class);
-        // ysm.relative_block_name：返回玩家相对偏移处方块注册名（如
-        // "minecraft:campfire"），OpenYSM 语义，±5 格范围限制。字符串比较通过
-        // MolangStringPool 池化 id 实现（见 RelativeBlockNameFunction）。
-        this.functions.put("ysm.relative_block_name", RelativeBlockNameFunction.class);
-        // ysm.equipped_enchantment_level：返回指定槽位物品上给定附魔的等级之和。
-        this.functions.put("ysm.equipped_enchantment_level", EquippedEnchantmentLevelFunction.class);
-        // ysm.particle / particle / abs_particle：OpenYSM 粒子 Molang 函数。
-        // ParticleFunction 通过 MolangStringPool 还原字符串参数（粒子 id），
-        // 实体上下文由 ParticleEffectUtil.setCurrentEntity 每帧写入
-        // （AnimationRegister.setParserValue），在 get() 时刻读取。
-        this.functions.put("ysm.particle", ParticleFunction.class);
-        this.functions.put("particle", ParticleFunction.class);
-        this.functions.put("abs_particle", ParticleFunction.class);
-        // ysm.bone_pivot_abs：骨骼绝对枢轴（模型单位），沿父链应用完整变换，
-        // 语义对齐 OpenYSM（见 MolangPhysicsRuntime.bonePivot）。
-        // .x/.y/.z 后缀由 rewriteVectorFunction 重写为 _x/_y/_z 注册名。
-        this.functions.put("ysm.bone_pivot_abs_x", BonePivotAbsFunction.class);
-        this.functions.put("ysm.bone_pivot_abs_y", BonePivotAbsFunction.class);
-        this.functions.put("ysm.bone_pivot_abs_z", BonePivotAbsFunction.class);
-        this.functions.put("ysm.keyboard", CtrlHoldFunction.class);
+        // YSMU 特有的 ysm.* / ctrl.* / query.* 函数由宿主 mod 通过
+        // ysmFunctionRegistrar 钩子注入（反向控制，本文件不引用 mod 类）。
+        MolangFunctionRegistrar registrar = ysmFunctionRegistrar;
+        if (registrar != null) {
+            registrar.register(this.functions);
+        }
 
         remap("abs", "math.abs");
         remap("acos", "math.acos");
@@ -334,15 +313,9 @@ public class MolangParser extends MathBuilder {
                     // PENDING_ROAMING but NOT in EXPLICIT_ROAMING, so they still fall
                     // through to the default when their value is 0.
                     boolean userSet = false;
-                    String lookupName = leftExpr.startsWith("v.") ? leftExpr.substring(2) : leftExpr;
-                    if (com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.containsKey(leftExpr)) {
-                        // 按"当前渲染模型"判断用户显式设置，避免模型 A 设置的变量
-                        // 让模型 B 的 `v.X ?? 默认` 误判为 userSet（跨模型污染）。
-                        // 无模型上下文时回退为全局显式标记判定。
-                        userSet = com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
-                            .isRoamingExplicit(
-                                com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.getCurrentModelId(),
-                                lookupName);
+                    ExplicitVariableLookup lookup = explicitVariableLookup;
+                    if (lookup != null) {
+                        userSet = lookup.isExplicitlySet(leftExpr);
                     }
                     double result = userSet ? l : (l != 0 ? l : r);
                     return result;
@@ -384,8 +357,8 @@ public class MolangParser extends MathBuilder {
         try {
             return this.parseSymbols(symbols);
         } catch (Exception e) {
-            if (ysmu.LOG.isDebugEnabled()) {
-                ysmu.LOG.debug("Molang parse error: {}", e.getMessage());
+            if (LOG.isDebugEnabled()) {
+                LOG.debug("Molang parse error: {}", e.getMessage());
             }
             throw new MolangException("Couldn't parse an expression!");
         }

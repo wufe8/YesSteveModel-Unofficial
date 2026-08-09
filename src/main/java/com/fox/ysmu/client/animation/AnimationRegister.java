@@ -15,7 +15,17 @@ import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
+import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
+import com.fox.ysmu.client.animation.molang.BonePivotAbsFunction;
+import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
+import com.fox.ysmu.client.animation.molang.EquippedEnchantmentLevelFunction;
+import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
+import com.fox.ysmu.client.animation.molang.ParticleFunction;
+import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
+import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
+import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
+import com.fox.ysmu.client.animation.molang.RelativeBlockNameFunction;
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
 import net.minecraft.world.EnumSkyBlock;
 
@@ -23,6 +33,7 @@ import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangParser;
+import software.bernie.geckolib3.core.molang.ScopedMolangVariable;
 import software.bernie.geckolib3.model.provider.data.EntityModelData;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 import software.bernie.geckolib3.util.MolangUtils;
@@ -86,6 +97,80 @@ public class AnimationRegister {
         MolangParser parser = GeckoLibCache.getInstance().parser;
         registerQueryVariables(parser);
         registerYsmVariables(parser);
+    }
+
+    /**
+     * 注册 vendored GeckoLib/Molang 的反向控制钩子（MolangParser / ScopedMolangVariable），
+     * 让 vendored 代码零引用 mod 类（与 YsmBuiltinAnimations.registerHooks 同模式）。
+     * 仅需在 ClientProxy.init 调用一次（幂等），运行时只读；必须在任何模型/动画加载前执行
+     * （ClientProxy.init 在 FML init 阶段，早于模型加载）。
+     */
+    public static void registerMolangHooks() {
+        // 1) YSMU 特有 Molang 函数注册（每构造一个新 MolangParser 都会执行一次）。
+        // ctrl.* / query.* / ysm.* 说明见原 vendored doCoreRemaps()（已迁移至此）。
+        MolangParser.ysmFunctionRegistrar = functions -> {
+            // 防止 keyframe 表达式中使用 ctrl.* 时抛 "Function couldn't be found"；
+            // 控制器条件中的 ctrl.* 由 OpenYsmControllerExpressionEvaluator 处理。
+            functions.put("ctrl.hold", CtrlHoldFunction.class);
+            functions.put("ctrl.use", CtrlHoldFunction.class);
+            functions.put("ctrl.swing", CtrlHoldFunction.class);
+            functions.put("ctrl.ride", CtrlHoldFunction.class);
+            // query.position_delta(axis)：函数版按轴返回位移分量；变量版由 setEntityQueryValues 提供。
+            functions.put("query.position_delta", QueryPositionDeltaFunction.class);
+            // query.position(axis)：stub（恒 0），P3 待实现（见第三方库审计）。
+            functions.put("query.position", QueryPositionFunction.class);
+            // query.relative_block_has_any_tag：stub（恒 0），1.7.10 无方块标签系统。
+            functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
+            // query.is_item_name_any：stub（恒 0），P3 待实现物品注册名匹配。
+            functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
+            // 缺失的 ysm.* 功能桩函数：防止高版本模型动画控制器每帧刷堆栈。
+            functions.put("ysm.play_sound", CtrlHoldFunction.class);
+            // ysm.relative_block_name：返回玩家相对偏移处方块注册名（OpenYSM 语义，±5 格）。
+            functions.put("ysm.relative_block_name", RelativeBlockNameFunction.class);
+            // ysm.equipped_enchantment_level：返回指定槽位物品上给定附魔的等级之和。
+            functions.put("ysm.equipped_enchantment_level", EquippedEnchantmentLevelFunction.class);
+            // ysm.particle / particle / abs_particle：OpenYSM 粒子 Molang 函数。
+            // ParticleFunction 通过 MolangStringPool 还原字符串参数（粒子 id），
+            // 实体上下文由 ParticleEffectUtil.setCurrentEntity 每帧写入。
+            functions.put("ysm.particle", ParticleFunction.class);
+            functions.put("particle", ParticleFunction.class);
+            functions.put("abs_particle", ParticleFunction.class);
+            // ysm.bone_pivot_abs：骨骼绝对枢轴（模型单位），沿父链应用完整变换。
+            // .x/.y/.z 后缀由 MolangParser.rewriteVectorFunction 重写为 _x/_y/_z 注册名。
+            functions.put("ysm.bone_pivot_abs_x", BonePivotAbsFunction.class);
+            functions.put("ysm.bone_pivot_abs_y", BonePivotAbsFunction.class);
+            functions.put("ysm.bone_pivot_abs_z", BonePivotAbsFunction.class);
+            functions.put("ysm.keyboard", CtrlHoldFunction.class);
+        };
+
+        // 2) `??` 运算符的"显式设置"判定（按当前渲染模型，防跨模型污染）。
+        MolangParser.explicitVariableLookup = fullName -> {
+            if (!MolangPhysicsRuntime.containsKey(fullName)) {
+                return false;
+            }
+            String lookupName = fullName.startsWith("v.") ? fullName.substring(2) : fullName;
+            return OpenYsmPlayerControllerRuntime.isRoamingExplicit(
+                MolangPhysicsRuntime.getCurrentModelId(), lookupName);
+        };
+
+        // 3) v.* 变量的 (player, model) 作用域存储。无帧上下文时各方法优雅降级
+        //    （contains=false / get 返回 fallback / set 返回 false → 回退全局 VARIABLES）。
+        ScopedMolangVariable.store = new ScopedMolangVariable.ScopedVariableStore() {
+            @Override
+            public boolean contains(String name) {
+                return MolangPhysicsRuntime.containsKey(name);
+            }
+
+            @Override
+            public double get(String name, double fallback) {
+                return MolangPhysicsRuntime.getVariable(name, fallback);
+            }
+
+            @Override
+            public boolean set(String name, double value) {
+                return MolangPhysicsRuntime.setVariable(name, value);
+            }
+        };
     }
 
     private static void registerQueryVariables(MolangParser parser) {

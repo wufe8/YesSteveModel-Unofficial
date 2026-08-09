@@ -25,6 +25,10 @@ public class ClientProxy extends CommonProxy {
     @Override
     public void init(FMLInitializationEvent event) {
         super.init(event);
+        // 必须先注册 Molang 钩子：GeckoLibCache.getInstance() 首次调用即构造
+        // MolangParser（new MolangParser() 内执行 doCoreRemaps），ysm.*/ctrl.*/query.*
+        // 函数注册必须在该构造之前就位，否则运行时解析器缺失这些函数。
+        AnimationRegister.registerMolangHooks();
         AnimationRegister.registerAnimationState();
         AnimationRegister.registerVariables();
         // 注册内置 empty 动画的兜底/过滤钩子（vendored AnimationFile 无反向依赖）。
