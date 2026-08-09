@@ -13,6 +13,10 @@ class MolangParserOpenYsmPhysicsTest {
     @BeforeEach
     void clearGlobalVariables() {
         MolangParser.VARIABLES.clear();
+        // ysm.first_order / second_order / bone_rot / bone_pos 等物理函数经
+        // MolangPhysicsBridge 钩子由宿主 mod 注入（vendored 零 mod 引用），
+        // 测试需显式注册钩子；无帧上下文时 first/secondOrder 返回 input、bone* 返回 0。
+        com.fox.ysmu.client.animation.AnimationRegister.registerMolangHooks();
     }
 
     @Test

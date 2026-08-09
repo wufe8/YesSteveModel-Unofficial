@@ -2,7 +2,6 @@ package software.bernie.geckolib3.core.molang.functions;
 
 import com.eliotlash.mclib.math.IValue;
 import com.eliotlash.mclib.math.functions.Function;
-import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 
 public class SecondOrder extends Function {
 
@@ -22,6 +21,7 @@ public class SecondOrder extends Function {
         double frequency = this.args.length >= 3 ? this.getArg(2) : 1.0D;
         double coefficient = this.args.length >= 4 ? this.getArg(3) : 1.0D;
         double response = this.args.length >= 5 ? this.getArg(4) : 1.0D;
-        return MolangPhysicsRuntime.secondOrder(nameId, input, frequency, coefficient, response);
+        MolangPhysicsBridge.Physics physics = MolangPhysicsBridge.physics;
+        return physics == null ? 0.0D : physics.secondOrder(nameId, input, frequency, coefficient, response);
     }
 }

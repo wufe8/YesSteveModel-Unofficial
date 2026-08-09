@@ -7,16 +7,13 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 import org.lwjgl.util.vector.Quaternion;
 
-import com.fox.ysmu.compat.Axis;
-import com.fox.ysmu.compat.Utils;
-
 import software.bernie.geckolib3.geo.render.built.GeoBone;
 import software.bernie.geckolib3.geo.render.built.GeoCube;
 
 /**
  * YSMU: Replaced GeckoLib's original LWJGL-only RenderUtils with JOML-based
- * matrix operations via com.fox.ysmu.compat.Axis/Utils. Added convenience
- * methods: prepMatrixForBone(), invertAndMultiplyMatrices().
+ * matrix operations (self-contained, no dependency on mod code). Added
+ * convenience methods: prepMatrixForBone(), invertAndMultiplyMatrices().
  */
 public final class RenderUtils {
 
@@ -26,13 +23,13 @@ public final class RenderUtils {
 
     public static void rotateMatrixAroundBone(GeoBone bone) {
         if (bone.getRotationZ() != 0.0F) {
-            GlStateManager.rotate(j2l(Axis.ZP.rotation(bone.getRotationZ())));
+            GlStateManager.rotate(j2l(new Quaternionf().rotationZ(bone.getRotationZ())));
         }
         if (bone.getRotationY() != 0.0F) {
-            GlStateManager.rotate(j2l(Axis.YP.rotation(bone.getRotationY())));
+            GlStateManager.rotate(j2l(new Quaternionf().rotationY(bone.getRotationY())));
         }
         if (bone.getRotationX() != 0.0F) {
-            GlStateManager.rotate(j2l(Axis.XP.rotation(bone.getRotationX())));
+            GlStateManager.rotate(j2l(new Quaternionf().rotationX(bone.getRotationX())));
         }
     }
 
@@ -86,6 +83,8 @@ public final class RenderUtils {
     }
 
     private static Quaternion j2l(Quaternionf jomlQuat) {
-        return Utils.j2l(jomlQuat);
+        Quaternion lwjglQuat = new Quaternion();
+        lwjglQuat.set(jomlQuat.x, jomlQuat.y, jomlQuat.z, jomlQuat.w);
+        return lwjglQuat;
     }
 }

@@ -2,7 +2,6 @@ package software.bernie.geckolib3.core.molang.functions;
 
 import com.eliotlash.mclib.math.IValue;
 import com.eliotlash.mclib.math.functions.Function;
-import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 
 public class BoneRotation extends Function {
 
@@ -17,7 +16,8 @@ public class BoneRotation extends Function {
 
     @Override
     public double get() {
-        return MolangPhysicsRuntime.boneRotation((int) getArg(0), axis());
+        MolangPhysicsBridge.Physics physics = MolangPhysicsBridge.physics;
+        return physics == null ? 0.0D : physics.boneRotation((int) getArg(0), axis());
     }
 
     private char axis() {

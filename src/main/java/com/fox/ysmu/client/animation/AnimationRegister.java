@@ -34,6 +34,7 @@ import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangParser;
 import software.bernie.geckolib3.core.molang.ScopedMolangVariable;
+import software.bernie.geckolib3.core.molang.functions.MolangPhysicsBridge;
 import software.bernie.geckolib3.model.provider.data.EntityModelData;
 import software.bernie.geckolib3.resource.GeckoLibCache;
 import software.bernie.geckolib3.util.MolangUtils;
@@ -117,7 +118,7 @@ public class AnimationRegister {
             functions.put("ctrl.ride", CtrlHoldFunction.class);
             // query.position_delta(axis)：函数版按轴返回位移分量；变量版由 setEntityQueryValues 提供。
             functions.put("query.position_delta", QueryPositionDeltaFunction.class);
-            // query.position(axis)：stub（恒 0），P3 待实现（见第三方库审计）。
+            // query.position(axis)：按轴返回当前渲染实体绝对位置（BE wiki 语义，Y=脚底）。
             functions.put("query.position", QueryPositionFunction.class);
             // query.relative_block_has_any_tag：stub（恒 0），1.7.10 无方块标签系统。
             functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
@@ -169,6 +170,35 @@ public class AnimationRegister {
             @Override
             public boolean set(String name, double value) {
                 return MolangPhysicsRuntime.setVariable(name, value);
+            }
+        };
+
+        // 4) vendored 物理函数桥（ysm.first_order / second_order / bone_rot / bone_pos / bone_scale）。
+        // 无帧上下文时 MolangPhysicsRuntime 各方法优雅降级（first/secondOrder 返回 input，bone* 返回 0）。
+        MolangPhysicsBridge.physics = new MolangPhysicsBridge.Physics() {
+            @Override
+            public double bonePosition(int nameId, char axis) {
+                return MolangPhysicsRuntime.bonePosition(nameId, axis);
+            }
+
+            @Override
+            public double boneRotation(int nameId, char axis) {
+                return MolangPhysicsRuntime.boneRotation(nameId, axis);
+            }
+
+            @Override
+            public double boneScale(int nameId, char axis) {
+                return MolangPhysicsRuntime.boneScale(nameId, axis);
+            }
+
+            @Override
+            public double firstOrder(int nameId, double input, double response) {
+                return MolangPhysicsRuntime.firstOrder(nameId, input, response);
+            }
+
+            @Override
+            public double secondOrder(int nameId, double input, double frequency, double coefficient, double response) {
+                return MolangPhysicsRuntime.secondOrder(nameId, input, frequency, coefficient, response);
             }
         };
     }
