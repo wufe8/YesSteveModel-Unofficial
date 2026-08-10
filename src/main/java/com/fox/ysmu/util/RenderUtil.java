@@ -657,6 +657,24 @@ public final class RenderUtil {
                 float headDisplay = MathHelper.wrapAngleTo180_float(bodyYaw - headYaw);
                 player.prevRotationYawHead = headDisplay;
                 player.rotationYawHead = headDisplay;
+            } else if (mode == Config.HUD_FOLLOW_YSM_NATURAL) {
+                // ysm natural：身体锁死朝向屏幕（同 ysm），头部参照真实身体 B——连续差值
+                // V−B 直接 clamp ±85（不经 wrap180 → 永不翻转，无需方向锁）。不自动归中：
+                // 站立时头部停在限位；前进时原版 renderYawOffset 追赶镜头方向，头部随之归中。
+                float headYaw;
+                if (!Float.isNaN(lastPolledFollow)
+                    && Minecraft.getSystemTime() - lastPolledFollowTime < 100L) {
+                    // pollHudDisplayBodyYaw 已在本帧推进过状态机，直接消费其结果
+                    headYaw = lastPolledFollow;
+                    lastPolledFollow = Float.NaN;
+                } else {
+                    // FBO 缓存关闭或配置界面直接渲染：在这里推进状态机
+                    headYaw = ysmNaturalState.update(interpolatedYaw, bodyYaw);
+                }
+                outerYaw = bodyYaw;
+                float headDisplay = MathHelper.wrapAngleTo180_float(bodyYaw - headYaw);
+                player.prevRotationYawHead = headDisplay;
+                player.rotationYawHead = headDisplay;
             }
 
             GL11.glTranslatef((float) (posX + scale * 0.5), (float) (posY + scale * 2), (float) z);
@@ -827,9 +845,93 @@ public final class RenderUtil {
         }
     }
 
+    /**
+     * YSM Natural 状态机：身体锁屏（同 ysm），头部参照**真实身体 B**（与 ysm 相同的
+     * 「头部相对身体区间转动」语义）。归中不靠任何人工机制：站立时 B 不动 → 头部停在限位；
+     * 前进时原版 renderYawOffset 追赶镜头方向（30%/tick）→ V−B 回落 → 头部归中。
+     * <p>
+     * 高速旋转天然免翻转：直接用**连续差值** V−B（V 与 B 都是连续累积角度，不经 wrap180）
+     * 做 clamp ±maxOffset。wrap180 在 |V−B| 瞬态越过 ±180°（快速甩动、B 追赶前）时会把
+     * 差值翻到另一侧（+85 → −85）——那是方向锁（{@link FollowYawLimiter}）要解决的核心；
+     * 连续差值上 clamp 是单调的，只会钳在 ±85，永不会翻转，因此**不需要方向锁定**。
+     * <p>
+     * 已知极限：站立时单帧甩动 >360° 时 renderYawOffset 按 mod 360 对齐，连续差值 V−B
+     * 可能停在 >85 处（头部保持限位），需回头转动才能归中——属「无人工归中」的刻意取舍。
+     */
+    private static final class YsmNaturalState {
+        private final float maxOffset;
+        /** 低通后的连续身体偏航（去除 20Hz tick 步进，不 wrap180，与 V 同参考系）。 */
+        private float bodySmooth;
+        /** 低通后的头部偏航（屏幕可见角）。 */
+        private float headSmooth;
+        private boolean initialized;
+        private long lastTimeMs;
+
+        YsmNaturalState(float maxOffset) {
+            this.maxOffset = maxOffset;
+        }
+
+        void reset() {
+            initialized = false;
+        }
+
+        /**
+         * @param rawViewYaw  视角偏航 V 的原始帧间插值（连续累积）
+         * @param realBodyYaw 真实身体偏航 B（连续线性插值，逐 tick 更新）
+         * @return 低通后的头部偏航（恒 ∈ [−maxOffset, maxOffset]，不翻转）
+         */
+        float update(float rawViewYaw, float realBodyYaw) {
+            long now = Minecraft.getSystemTime();
+            if (!initialized || lastTimeMs == 0L) {
+                initialized = true;
+                lastTimeMs = now;
+                bodySmooth = realBodyYaw;
+                headSmooth = MathHelper.clamp_float(rawViewYaw - bodySmooth, -maxOffset, maxOffset);
+                return headSmooth;
+            }
+            float dt = (now - lastTimeMs) / 1000.0F;
+            if (dt < HUD_SMOOTH_DUP_DT) {
+                // 同一渲染帧内重复调用（renderPlayerEntity 与 pollHudDisplayBodyYaw 双路径）：跳过
+                return headSmooth;
+            }
+            lastTimeMs = now;
+            if (dt > HUD_SMOOTH_RESYNC_DT) {
+                // 长时间暂停：重同步（用户不在看，瞬移无感）
+                bodySmooth = realBodyYaw;
+                headSmooth = MathHelper.clamp_float(rawViewYaw - bodySmooth, -maxOffset, maxOffset);
+                return headSmooth;
+            }
+            if (dt > HUD_SMOOTH_MAX_DT) {
+                // 中等帧卡顿：本帧不推进
+                return headSmooth;
+            }
+            // ── 低通身体偏航（去除 20Hz tick 步进）──
+            float dB = realBodyYaw - bodySmooth;
+            float alphaB = 1.0F - (float) Math.exp(-dt / HUD_SMOOTH_BODY_TC);
+            bodySmooth += dB * alphaB;
+            // ── 连续差值 V − Bs 直接 clamp（不 wrap180 → 永不翻转，无需方向锁）──
+            float target = MathHelper.clamp_float(rawViewYaw - bodySmooth, -maxOffset, maxOffset);
+            // ── 输出低通（同款偏差自适应低通，消除 V 的 20Hz 锯齿；大幅反向跳变走慢追）──
+            float delta = target - headSmooth;
+            if (Math.abs(delta) < 0.001F) {
+                headSmooth = target;
+                return headSmooth;
+            }
+            float dev = Math.abs(delta);
+            float t = dev > HUD_SMOOTH_SLOW_FLIP_DEG
+                ? HUD_SMOOTH_SLOW_FLIP_TC
+                : HUD_SMOOTH_OFFSET_TC / (1.0F + dev / HUD_FAST_DEVIATION_DEG);
+            float alpha = 1.0F - (float) Math.exp(-dt / t);
+            headSmooth = headSmooth + delta * alpha;
+            return headSmooth;
+        }
+    }
+
     private static final HudFollowState hudFollowState = new HudFollowState(HUD_SMOOTH_MAX_OFFSET);
     /** ysm 平滑模式的头部状态机：身体锁屏，头部随视角平滑转动（±85°）。 */
     private static final HudFollowState ysmHeadState = new HudFollowState(HUD_YSM_HEAD_MAX_OFFSET);
+    /** ysm natural 模式的头部状态机：身体锁屏，头部参照真实身体 B（±85°，无自动归中，天然免翻转）。 */
+    private static final YsmNaturalState ysmNaturalState = new YsmNaturalState(HUD_YSM_HEAD_MAX_OFFSET);
 
     /** 切换跟随模式时重置平滑状态，避免旧模式的残留值造成跳变。 */
     private static void ensureFollowMode(int mode) {
@@ -837,6 +939,7 @@ public final class RenderUtil {
             lastFollowMode = mode;
             hudFollowState.reset();
             ysmHeadState.reset();
+            ysmNaturalState.reset();
         }
     }
 
@@ -858,6 +961,9 @@ public final class RenderUtil {
         } else if (mode == Config.HUD_FOLLOW_YSM_SMOOTH) {
             // ysm 平滑：平滑后的头部随视角偏航
             follow = ysmHeadState.update(viewYaw, bodyYaw);
+        } else if (mode == Config.HUD_FOLLOW_YSM_NATURAL) {
+            // ysm natural：平滑后的头部随视角偏航（参照真实身体 B，归中靠原版身体追赶）
+            follow = ysmNaturalState.update(viewYaw, bodyYaw);
         } else {
             lastPolledFollow = Float.NaN;
             return Float.NaN;

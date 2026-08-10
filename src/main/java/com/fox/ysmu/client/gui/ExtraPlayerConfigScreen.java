@@ -81,6 +81,9 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
             case Config.HUD_FOLLOW_YSM_SMOOTH:
                 followKey = "gui.yes_steve_model.hud_follow.ysm_smooth";
                 break;
+            case Config.HUD_FOLLOW_YSM_NATURAL:
+                followKey = "gui.yes_steve_model.hud_follow.ysm_natural";
+                break;
             default:
                 followKey = "gui.yes_steve_model.hud_follow.vanilla";
                 break;
@@ -161,9 +164,9 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
             Config.GUI_HUD_PREVIEW_CACHE = !Config.GUI_HUD_PREVIEW_CACHE;
             return;
         }
-        // Cycle HUD follow mode (0 vanilla / 1 vanilla smooth / 2 ysm / 3 ysm smooth)
+        // Cycle HUD follow mode (0 vanilla / 1 vanilla smooth / 2 ysm / 3 ysm smooth / 4 ysm natural)
         if (keyCode == org.lwjgl.input.Keyboard.KEY_M) {
-            Config.HUD_FOLLOW_MODE = (Config.HUD_FOLLOW_MODE + 1) % 4;
+            Config.HUD_FOLLOW_MODE = (Config.HUD_FOLLOW_MODE + 1) % 5;
             ClientEventHandler.invalidateHudPreviewCache();
             return;
         }

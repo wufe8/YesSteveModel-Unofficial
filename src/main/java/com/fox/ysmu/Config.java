@@ -25,11 +25,12 @@ public class Config {
     public static double PLAYER_YAW_OFFSET = 5.0;
     public static boolean SWAP_CONFIG_SIDES = false;
 
-    /** HUD paperdoll follow mode: 0 = vanilla (current), 1 = vanilla smooth, 2 = ysm (body locked, head follows view), 3 = ysm smooth (body locked, smoothed head follows view). */
+    /** HUD paperdoll follow mode: 0 = vanilla (current), 1 = vanilla smooth, 2 = ysm (body locked, head follows view), 3 = ysm smooth (body locked, smoothed head follows view), 4 = ysm natural (body locked, head references real body yaw, no auto-center, fast-turn immune without lock). */
     public static final int HUD_FOLLOW_VANILLA = 0;
     public static final int HUD_FOLLOW_VANILLA_SMOOTH = 1;
     public static final int HUD_FOLLOW_YSM = 2;
     public static final int HUD_FOLLOW_YSM_SMOOTH = 3;
+    public static final int HUD_FOLLOW_YSM_NATURAL = 4;
     public static int HUD_FOLLOW_MODE = HUD_FOLLOW_YSM_SMOOTH;
 
     // GUI Config
@@ -202,7 +203,7 @@ public class Config {
         PLAYER_SCALE = syncDouble("PlayerScale", "extra_player_render", PLAYER_SCALE, "Player scale in screen", 8.0, 360.0, load);
         PLAYER_YAW_OFFSET = syncDouble("PlayerYawOffset", "extra_player_render", PLAYER_YAW_OFFSET, "Player yaw offset in screen", load);
         SWAP_CONFIG_SIDES = syncBoolean("SwapConfigSides", "extra_player_render", SWAP_CONFIG_SIDES, "Swap wheel config panel and preview sides", load);
-        HUD_FOLLOW_MODE = syncInt("HudFollowMode", "extra_player_render", HUD_FOLLOW_MODE, "HUD paperdoll follow mode: 0 = vanilla, 1 = vanilla smooth (smoothed offset, no abrupt snap), 2 = ysm (body locked, head follows view), 3 = ysm smooth (body locked, smoothed head follows view, default)", HUD_FOLLOW_VANILLA, HUD_FOLLOW_YSM_SMOOTH, load);
+        HUD_FOLLOW_MODE = syncInt("HudFollowMode", "extra_player_render", HUD_FOLLOW_MODE, "HUD paperdoll follow mode: 0 = vanilla, 1 = vanilla smooth (smoothed offset, no abrupt snap), 2 = ysm (body locked, head follows view), 3 = ysm smooth (body locked, smoothed head follows view, default), 4 = ysm natural (body locked, head references real body yaw, no auto-center, fast-turn immune without lock)", HUD_FOLLOW_VANILLA, HUD_FOLLOW_YSM_NATURAL, load);
 
         // GUI config values
         GUI_ENHANCEMENTS = syncBoolean("GuiEnhancements", "gui", GUI_ENHANCEMENTS, "Enable model selection GUI enhancements (foreground/background textures and GUI animations)", load);
