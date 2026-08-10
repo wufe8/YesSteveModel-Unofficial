@@ -79,7 +79,6 @@ gui.yes_steve_model.hud_follow.vanilla=HUD 跟随模式：原版 [M]
 gui.yes_steve_model.hud_follow.smooth=HUD 跟随模式：原版 平滑 [M]
 gui.yes_steve_model.hud_follow.ysm=HUD 跟随模式：ysm [M]
 gui.yes_steve_model.hud_follow.ysm_smooth=HUD 跟随模式：ysm 平滑 [M]
-gui.yes_steve_model.hud_follow.ysm_natural=HUD 跟随模式：ysm 自然 [M]
 gui.yes_steve_model.texture.button.animation_name=动画名称：%s
 gui.yes_steve_model.texture.button.attacked=被攻击
 gui.yes_steve_model.texture.button.attacked.desc=当玩家被攻击时的动画
