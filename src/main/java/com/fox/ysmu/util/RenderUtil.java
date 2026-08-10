@@ -706,18 +706,6 @@ public final class RenderUtil {
     private static final float HUD_SMOOTH_RESYNC_DT = 1.0F;
     /** offset 偏差达到该值（°）时低通时间常数减半（高速时接近直通，保持原版手感）。 */
     private static final float HUD_FAST_DEVIATION_DEG = 20.0F;
-    /** 视角增量低于该值（°/帧）视为视角静止：锁定期内 norm 回中（阈值内）且视角静止时，
-     *  说明真实相对角回中是身体/系统旋转（出生 renderYawOffset 收敛、B 追上 V）造成的，
-     *  而非视角快速转头跨 ±180°——此时方向锁定让位（解锁），头部回到视角方向。 */
-    private static final float HUD_FOLLOW_VIEW_STILL_DEG = 2.0F;
-    /** 方向锁定阈值迟滞（°）：未锁定时出 maxOffset（85）才锁定；锁定时回 maxOffset - 迟滞
-     *  （75）才解锁。避免快速转头（V-B 在 ±85 与 ±180 附近波动）时 norm 反复进出阈值导致
-     *  方向锁定反复「解锁-重锁反方向」→ 头部锁侧来回跳（闪半圈）。 */
-    private static final float HUD_FOLLOW_HYST_DEG = 10.0F;
-    /** 视角静止判定所需连续帧数：|dV| 连续小于 HUD_FOLLOW_VIEW_STILL_DEG 达该帧数才视为静止。
-     *  区分「spawn（玩家一直没动视角）」与「快速转头后停住（刚动过）」——后者 B 追过头期间
-     *  不触发视角静止解锁，等 B 追完、norm 回中再解锁，避免半圈。 */
-    private static final int HUD_FOLLOW_VIEW_STILL_FRAMES = 6;
     /** target 与 offsetSmooth 偏差超过该值（°）视为「大幅反向跳变」：方向锁定解锁/身体大步
      *  追使 target 从一侧（±85）跳到另一侧（∓85）。此时改用慢追时间常数，让头部平滑转回，
      *  避免一帧快追 160°+（屏幕上身体锁死时即头部猛甩的「闪」）。 */
@@ -753,142 +741,29 @@ public final class RenderUtil {
      */
     private static final class HudFollowState {
         private final float maxOffset;
+        /** 防快速转圈限制器：连续差值 + 方向锁定，输入镜头/朝向输出不溢出的限制值。 */
+        private final FollowYawLimiter limiter;
         private boolean initialized;
         private long lastTimeMs;
         private float offsetSmooth;
         /** 低通后的连续身体偏航（去除 20Hz tick 步进，不 wrap180，与 V 同参考系），
          *  仅用于计算 target，不用于渲染。 */
         private float bodySmooth;
-        /** 方向锁定：0 = 未锁定（差值在阈值内）；+1 = 右侧（正方向）锁定；-1 = 左侧锁定。
-         *  上升沿（阈值内→阈值外）更新并锁定；下降沿（阈值外→阈值内）解除（不影响正常跟随）。 */
-        private int direction;
-        /** 上一帧差值是否在阈值内，用于检测上升沿/下降沿。 */
-        private boolean lastInside;
-        /** 连续差值（锚定值 + 逐帧增量）：跨 ±180°、跨整圈、单帧快速甩动都正确。 */
-        private float signedDiff;
-        /** 上一帧连续差值，用于检测玩家反向转头（signedDiff 跨过 0）。 */
-        private float lastSignedDiff;
-        /** 上一帧视角偏航 V（连续累积），用于计算 V 增量。 */
-        private float lastRawViewYaw;
-        /** 上一帧身体偏航 body（连续累积），用于计算 body 增量。 */
-        private float lastBodySmooth;
-        /** 视角连续静止帧数（|dV| < 阈值累计），用于区分 spawn/挂机与快速转头后停住。 */
-        private int viewStillFrames;
 
         HudFollowState(float maxOffset) {
             this.maxOffset = maxOffset;
+            this.limiter = new FollowYawLimiter(maxOffset);
         }
 
         void reset() {
             initialized = false;
-            resetLock();
+            limiter.reset();
         }
 
-        /** 重置方向锁定状态（模式切换/初始化/长时间暂停时）。 */
-        private void resetLock() {
-            direction = 0;
-            lastInside = true;
-            signedDiff = 0.0F;
-            lastSignedDiff = 0.0F;
-            lastRawViewYaw = 0.0F;
-            lastBodySmooth = 0.0F;
-            viewStillFrames = 0;
-        }
-
-        /** 用低通后的身体偏航计算 clamp 后的目标跟随角，并维护方向锁定。
-         *  @param anchor 是否为重新锚定（初始化/重同步）：直接用当前 wrap180 差值；
-         *    否则用增量维护连续差值——V 与 body 都是连续累积角度，增量 dV / dBody
-         *    直接相减无 ±180° 歧义，跨 ±180°、跨整圈、单帧快速甩动以及回中都正确。 */
+        /** 计算目标跟随角：初始化/重同步锚定，其余增量维护连续差值并做方向锁定。
+         *  连续差与方向锁定都在 {@link FollowYawLimiter} 中完成，返回不溢出的限制值。 */
         private float clampTarget(float rawViewYaw, float body, boolean anchor) {
-            float dV = 0.0F;
-            if (anchor) {
-                // 初始化/重同步：直接锚定到当前差值（wrap180 消除 V/body 可能的整圈参考差）
-                signedDiff = MathHelper.wrapAngleTo180_float(rawViewYaw - body);
-                ysmu.LOG.info("[YSMU-FOLLOW] INIT V=" + rawViewYaw + " B=" + body + " Bs=" + bodySmooth
-                    + " signedDiff=" + signedDiff + " max=" + maxOffset);
-            } else {
-                // 增量：V 与 body 都连续累积，直接求差无歧义
-                dV = rawViewYaw - lastRawViewYaw;
-                signedDiff += dV - (body - lastBodySmooth);
-                // 未锁定时防累积漂移：与当前差值的 wrap180 偏差过大则重新锚定
-                if (direction == 0) {
-                    float staticDiff = MathHelper.wrapAngleTo180_float(rawViewYaw - body);
-                    if (Math.abs(MathHelper.wrapAngleTo180_float(signedDiff - staticDiff)) > 30.0F) {
-                        signedDiff = staticDiff;
-                    }
-                }
-            }
-            lastRawViewYaw = rawViewYaw;
-            lastBodySmooth = body;
-            // 视角运动统计：|dV| 连续小于阈值 → 静止帧计数；|dV| 大 → 清零。
-            // 用于区分「spawn（一直没动视角，静止多帧）」与「快速转头后停住（刚动过，静止帧少）」，
-            // 也用于区分「玩家反向转头（视角在动）」与「B 追过头（视角静止）导致的 signedDiff 跨 0」。
-            if (Math.abs(dV) < HUD_FOLLOW_VIEW_STILL_DEG) {
-                viewStillFrames++;
-            } else {
-                viewStillFrames = 0;
-            }
-            boolean viewStill = viewStillFrames >= HUD_FOLLOW_VIEW_STILL_FRAMES;
-            // 玩家反向转头：signedDiff 跨过 0（连续差值符号翻转）且 V 增量与跨零方向一致
-            // （视角真的反向运动）→ 解除方向锁定，让 norm 按新方向重新判断。否则锁定时从
-            // 一侧转向另一侧，norm 与 direction 反向导致解锁条件永远不满足，头部卡在锁定侧
-            // （日志：signedDiff +84.72 但仍锁左）。排除「B 追过头」（视角静止/未反向，dV
-            // 与跨零方向不一致）导致的 signedDiff 跨 0——那种 norm 翻转是身体旋转的物理结果，
-            // 方向锁定应保持，否则会锁到反方向、头部转半圈（日志：快速右转时 LOCK dir=±1 交替）。
-            if (direction != 0
-                && ((lastSignedDiff > 0.0F && signedDiff < 0.0F && dV < -HUD_FOLLOW_VIEW_STILL_DEG)
-                    || (lastSignedDiff < 0.0F && signedDiff > 0.0F && dV > HUD_FOLLOW_VIEW_STILL_DEG))) {
-                direction = 0;
-            }
-            lastSignedDiff = signedDiff;
-            // 归一化到 [-180,180]：signedDiff 是连续值（锚定后增量累积，可超 ±180，与真实
-            // 差值可能差 360° 整数倍）。方向/阈值判断必须基于真实头部差 wrap180(signedDiff)。
-            float norm = MathHelper.wrapAngleTo180_float(signedDiff);
-            // 阈值迟滞：未锁定时出 maxOffset 才锁定；锁定时回 maxOffset - 迟滞 才解锁。
-            // 避免快速转头（V-B 在 ±85 与 ±180 附近波动）时 norm 反复进出阈值 → 方向锁定
-            // 反复「解锁-重锁反方向」→ 头部锁侧来回跳（闪半圈）。锁定后 norm 在
-            // [maxOffset-迟滞, maxOffset] 区间保持锁，头部稳定，B 追完回中再解锁。
-            boolean inside = Math.abs(norm) < (direction == 0 ? maxOffset : maxOffset - HUD_FOLLOW_HYST_DEG);
-            // 视角静止回中失效：视角静止多帧（出生 renderYawOffset 收敛、B 追上 V 时玩家没转
-            // 鼠标）且 norm 已回中（阈值内）——此时 norm 翻转到反向是「身体旋转导致真实相对角
-            // 回中」的物理结果，方向锁定让位（解锁），让 norm 驱动 target 使头部回到视角方向
-            // （而不是锁在 ±85 跟随身体旋转）。快速转头后停住（刚动过视角、静止帧数不足）
-            // 不触发：等 B 追完、norm 回中后再解锁，避免 B 追过头期间半圈。
-            if (direction != 0 && inside && viewStill) {
-                direction = 0;
-            }
-            // 方向锁定：上升沿（阈值内→阈值外）/下降沿（阈值外→阈值内）都必须满足
-            // norm 与锁定方向「同向」才更新/解锁——快速旋转跨 ±180° 时 wrap180 把差值翻转
-            // 到另一侧（norm 与 direction 反向），此时保持锁定（钳制在锁定方向）而不是翻转
-            // 或解锁；只有真正回中（norm 回到阈值内且与方向同向）才解锁。
-            if (!inside && lastInside) {
-                if (direction == 0 || (direction == 1 && norm > 0.0F) || (direction == -1 && norm < 0.0F)) {
-                    direction = norm > 0.0F ? 1 : -1;
-                }
-                ysmu.LOG.info("[YSMU-FOLLOW] LOCK V=" + rawViewYaw + " B=" + body + " Bs=" + bodySmooth
-                    + " signedDiff=" + signedDiff + " norm=" + norm + " dir=" + direction + " max=" + maxOffset);
-            } else if (inside && !lastInside) {
-                if (direction == 0 || (direction == 1 && norm >= 0.0F) || (direction == -1 && norm <= 0.0F)) {
-                    direction = 0;
-                }
-                ysmu.LOG.info("[YSMU-FOLLOW] UNLOCK V=" + rawViewYaw + " B=" + body + " Bs=" + bodySmooth
-                    + " signedDiff=" + signedDiff + " norm=" + norm + " dir=" + direction + " max=" + maxOffset);
-            }
-            lastInside = inside;
-            float target = MathHelper.clamp_float(norm, -maxOffset, maxOffset);
-            // 方向锁定钳制：norm 与锁定方向反向（跨 ±180° 翻转）时钳回锁定方向
-            if (direction == 1 && norm < 0.0F) {
-                target = maxOffset;
-            } else if (direction == -1 && norm > 0.0F) {
-                target = -maxOffset;
-            }
-            // 闪烁检测（临时，验证修复）：输出与目标符号相反且幅度都大
-            if (offsetSmooth * target < 0.0F && Math.abs(offsetSmooth) > 40.0F && Math.abs(target) > 40.0F) {
-                ysmu.LOG.info("[YSMU-FOLLOW] FLICKER V=" + rawViewYaw + " B=" + body + " Bs=" + bodySmooth
-                    + " signedDiff=" + signedDiff + " norm=" + norm + " inside=" + inside
-                    + " dir=" + direction + " offS=" + offsetSmooth + " target=" + target + " max=" + maxOffset);
-            }
-            return target;
+            return anchor ? limiter.anchor(rawViewYaw, body) : limiter.limit(rawViewYaw, body);
         }
 
         /**
@@ -903,7 +778,7 @@ public final class RenderUtil {
                 initialized = true;
                 lastTimeMs = now;
                 bodySmooth = realBodyYaw;
-                resetLock();
+                limiter.reset();
                 offsetSmooth = clampTarget(rawViewYaw, realBodyYaw, true);
                 return offsetSmooth;
             }
@@ -918,7 +793,7 @@ public final class RenderUtil {
             if (dt > HUD_SMOOTH_RESYNC_DT) {
                 // 长时间暂停：重同步（用户不在看，瞬移无感）
                 bodySmooth = realBodyYaw;
-                resetLock();
+                limiter.reset();
                 offsetSmooth = clampTarget(rawViewYaw, realBodyYaw, true);
                 return offsetSmooth;
             }
