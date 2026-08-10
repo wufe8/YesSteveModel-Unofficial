@@ -633,16 +633,17 @@ public final class RenderUtil {
             } else if (mode == Config.HUD_FOLLOW_YSM) {
                 // 外层改用身体偏航：外层 (B) 与内层 (180-B) 精确抵消 → 身体锁死朝向屏幕。
                 // 头部字段覆写为 B - clamp(V-B)：管线内取反后头骨旋转 = clamp(V-B)，
-                // 即头部随视角 1:1 转动（限制 ±85°），query.head_y_rotation 语义也恢复正确。
+                // 即头部随视角 1:1 转动（限制 ±60°，同 YSM 2.6.5 纸娃娃），query.head_y_rotation 语义也恢复正确。
                 outerYaw = bodyYaw;
                 float headYaw = MathHelper.clamp_float(
-                    MathHelper.wrapAngleTo180_float(interpolatedYaw - bodyYaw), -85.0F, 85.0F);
+                    MathHelper.wrapAngleTo180_float(interpolatedYaw - bodyYaw),
+                    -HUD_YSM_HEAD_MAX_OFFSET, HUD_YSM_HEAD_MAX_OFFSET);
                 float headDisplay = MathHelper.wrapAngleTo180_float(bodyYaw - headYaw);
                 player.prevRotationYawHead = headDisplay;
                 player.rotationYawHead = headDisplay;
             } else if (mode == Config.HUD_FOLLOW_YSM_SMOOTH) {
                 // ysm 平滑：身体锁死朝向屏幕（同 ysm），头部参照真实身体 B——连续差值
-                // V−B 直接 clamp ±85（不经 wrap180 → 永不翻转，无需方向锁）。不自动归中：
+                // V−B 直接 clamp ±60（不经 wrap180 → 永不翻转，无需方向锁）。不自动归中：
                 // 站立时头部停在限位；前进时原版 renderYawOffset 追赶镜头方向，头部随之归中。
                 float headYaw;
                 if (!Float.isNaN(lastPolledFollow)
@@ -691,14 +692,21 @@ public final class RenderUtil {
     /** 原版平滑模式的 offset 最大幅值（°），沿用 vanilla 的 ±75° 阈值
      *  （renderYawOffset 始终被 vanilla 约束在 rotationYaw±75° 内）。 */
     private static final float HUD_SMOOTH_MAX_OFFSET = 75.0F;
-    /** ysm 平滑模式的头部随视角最大幅值（°），沿用 ysm 的 ±85° 头部限制。 */
-    private static final float HUD_YSM_HEAD_MAX_OFFSET = 85.0F;
+    /** ysm 平滑模式的头部随视角最大幅值（°）。YSM 2.6.5 纸娃娃已从 ±85 改为 ±60
+     *  （±85 在大幅转向时屏幕旋转过大）。 */
+    private static final float HUD_YSM_HEAD_MAX_OFFSET = 60.0F;
     /** 原版平滑模式对 offset 的基础低通时间常数（s），消除 20Hz 锯齿。 */
     private static final float HUD_SMOOTH_OFFSET_TC = 0.12F;
     /** 对身体偏航 B 的低通时间常数（s）：B 只在 tick 更新（20Hz 步进），先低通 B 再算
      *  target = V - Bs，从源头消除 offset 的 20Hz 锯齿；渲染层仍用真实 B 与内层 180-B
-     *  精确抵消（屏幕身体 = offset），因此不会引入 v3 的双低通相减振荡。 */
+     *  精确抵消（屏幕身体 = offset），因此不会引入「两个独立低通信号相减」导致的振荡。 */
     private static final float HUD_SMOOTH_BODY_TC = 0.08F;
+    /** B 偏离 bodySmooth 超过该值（°）视为「身体实际在转动」（侧移/转向/走位），此时改用
+     *  HUD_SMOOTH_BODY_FAST_TC 快速跟踪，避免纸娃娃身体转向明显迟滞；仅 tick 步进抖动
+     * （偏离小）时仍走 HUD_SMOOTH_BODY_TC 强平滑消除 20Hz 锯齿。 */
+    private static final float HUD_SMOOTH_BODY_FAST_DEG = 2.0F;
+    /** 身体快速转动时 bodySmooth 的低通时间常数（s）。 */
+    private static final float HUD_SMOOTH_BODY_FAST_TC = 0.03F;
     /** 单帧推进的 dt 上限（s）：超过视为中等帧卡顿，本帧跳过推进（卡顿期间 B 也未推进，
      *  无需追赶），避免 bodySmooth/offsetSmooth 一帧瞬移造成的 5-9° 跳变。 */
     private static final float HUD_SMOOTH_MAX_DT = 0.1F;
@@ -708,8 +716,8 @@ public final class RenderUtil {
     /** offset 偏差达到该值（°）时低通时间常数减半（高速时接近直通，保持原版手感）。 */
     private static final float HUD_FAST_DEVIATION_DEG = 20.0F;
     /** target 与 offsetSmooth 偏差超过该值（°）视为「大幅反向跳变」：快速反向甩动使
-     *  target 从一侧（±85）跳到另一侧（∓85）。此时改用慢追时间常数，让头部平滑转回，
-     *  避免一帧快追 160°+（屏幕上身体锁死时即头部猛甩的「闪」）。 */
+     *  target 从一侧限位跳到另一侧限位（如 +60 → -60）。此时改用慢追时间常数，让头部平滑转回，
+     *  避免一帧快追 120°+（屏幕上身体锁死时即头部猛甩的「闪」）。 */
     private static final float HUD_SMOOTH_SLOW_FLIP_DEG = 90.0F;
     /** 大幅反向跳变时的慢追时间常数（s）：正常快速转头（偏差 <90°）仍用 HUD_SMOOTH_OFFSET_TC
      *  快追保持跟手手感；跨侧跳变用此值平滑转回。 */
@@ -792,15 +800,20 @@ public final class RenderUtil {
                 return offsetSmooth;
             }
             // 先低通身体偏航 B（20Hz tick 步进 → 平滑）：V 与 B 均为连续累积角度，直接差值
-            // 无 wrap180 路径歧义（甩动后 B 连续追上 V 时差值自然回落，跟随角归中）
+            // 无 wrap180 路径歧义（甩动后 B 连续追上 V 时差值自然回落，跟随角归中）。
+            // 自适应：B 实际转动（侧移/走位，|dB| 大）时用小时间常数快速跟踪，身体转向不迟滞；
+            // 仅 tick 步进抖动（|dB| 小）时用大时间常数强平滑，消除 20Hz 锯齿。
             float dB = realBodyYaw - bodySmooth;
-            float alphaB = 1.0F - (float) Math.exp(-dt / HUD_SMOOTH_BODY_TC);
+            float bodyTC = Math.abs(dB) > HUD_SMOOTH_BODY_FAST_DEG
+                ? HUD_SMOOTH_BODY_FAST_TC
+                : HUD_SMOOTH_BODY_TC;
+            float alphaB = 1.0F - (float) Math.exp(-dt / bodyTC);
             bodySmooth += dB * alphaB;
             // 连续差值 V − Bs 直接 clamp（单调，不 wrap180 → 永不翻转，无需方向锁）
             float target = MathHelper.clamp_float(rawViewYaw - bodySmooth, -maxOffset, maxOffset);
             // 偏差自适应低通：偏差越大时间常数越小（高速近直通），正常快速转头跟手。
             // 例外：偏差超过 HUD_SMOOTH_SLOW_FLIP_DEG（快速反向甩动使 target 从一侧跳到
-            // 另一侧，如 +85 → -85）时改用大时间常数慢追，避免一两帧内猛甩 160°+ 的「闪」。
+            // 另一侧，如 +60 → -60）时改用大时间常数慢追，避免一两帧内猛甩 120°+ 的「闪」。
             float delta = target - offsetSmooth;
             if (Math.abs(delta) < 0.001F) {
                 offsetSmooth = target;
@@ -817,7 +830,7 @@ public final class RenderUtil {
     }
 
     private static final HudFollowState hudFollowState = new HudFollowState(HUD_SMOOTH_MAX_OFFSET);
-    /** ysm 平滑模式的头部状态机：身体锁屏，头部参照真实身体 B（±85°，无自动归中，天然免翻转）。 */
+    /** ysm 平滑模式的头部状态机：身体锁屏，头部参照真实身体 B（±60°，无自动归中，天然免翻转）。 */
     private static final HudFollowState ysmHeadState = new HudFollowState(HUD_YSM_HEAD_MAX_OFFSET);
 
     /** 切换跟随模式时重置平滑状态，避免旧模式的残留值造成跳变。 */
