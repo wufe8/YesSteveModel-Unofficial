@@ -10,6 +10,7 @@ import com.eliotlash.mclib.math.IValue;
 import com.eliotlash.mclib.math.MathBuilder;
 import com.eliotlash.mclib.math.Variable;
 import com.eliotlash.mclib.math.functions.Function;
+import com.eliotlash.mclib.math.functions.classic.MinAngle;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonPrimitive;
 
@@ -119,6 +120,8 @@ public class MolangParser extends MathBuilder {
         this.functions.put("math.die_roll", this.functions.get("roll"));
         this.functions.put("math.die_roll_integer", this.functions.get("rolli"));
         this.functions.put("math.hermite_blend", this.functions.get("hermite"));
+        // math.min_angle：Bedrock/OpenYSM 单参数角度归一化（mclib 原版没有）。
+        this.functions.put("math.min_angle", MinAngle.class);
         remap("exp", "math.exp");
         remap("floor", "math.floor");
         remap("lerp", "math.lerp");

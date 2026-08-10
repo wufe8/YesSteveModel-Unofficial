@@ -18,6 +18,7 @@ import org.apache.commons.lang3.StringUtils;
 import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
 import com.fox.ysmu.client.animation.condition.InnerClassify;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
+import com.fox.ysmu.client.animation.molang.PerlinNoiseFunction;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
 import com.fox.ysmu.compat.BackhandCompat;
@@ -656,12 +657,16 @@ public final class OpenYsmControllerExpressionEvaluator {
             if ("ctrl.ride".equals(name)) {
                 return player.isRiding() ? TRUE : FALSE;
             }
+            if ("ctrl.armor".equals(name)) {
+                return armorMatch(arguments);
+            }
             // --- math 单参数函数 ---
             if (("math.floor".equals(name) || "math.round".equals(name) || "math.ceil".equals(name)
                 || "math.trunc".equals(name) || "math.abs".equals(name) || "math.sqrt".equals(name)
                 || "math.exp".equals(name) || "math.ln".equals(name) || "math.hermite_blend".equals(name)
                 || "math.hermite".equals(name)
-                || "math.sin".equals(name) || "math.cos".equals(name) || "math.atan".equals(name))
+                || "math.sin".equals(name) || "math.cos".equals(name) || "math.atan".equals(name)
+                || "math.min_angle".equals(name))
                 && arguments.size() >= 1) {
                 double v = arguments.get(0).asNumber();
                 if ("math.floor".equals(name)) return Math.floor(v);
@@ -676,10 +681,17 @@ public final class OpenYsmControllerExpressionEvaluator {
                 if ("math.sin".equals(name)) return Math.sin(Math.toRadians(v));
                 if ("math.cos".equals(name)) return Math.cos(Math.toRadians(v));
                 if ("math.atan".equals(name)) return Math.toDegrees(Math.atan(v));
+                // Bedrock/OpenYSM 单参数语义：归一化到 (-180, 180]
+                if ("math.min_angle".equals(name)) {
+                    double angle = v % 360.0d;
+                    if (angle >= 180.0d) return angle - 360.0d;
+                    if (angle < -180.0d) return angle + 360.0d;
+                    return angle;
+                }
             }
             // --- math 双参数函数 ---
             if (("math.mod".equals(name) || "math.max".equals(name) || "math.min".equals(name)
-                || "math.pow".equals(name) || "math.atan2".equals(name) || "math.min_angle".equals(name))
+                || "math.pow".equals(name) || "math.atan2".equals(name))
                 && arguments.size() >= 2) {
                 double a = arguments.get(0).asNumber();
                 double b = arguments.get(1).asNumber();
@@ -693,12 +705,6 @@ public final class OpenYsmControllerExpressionEvaluator {
                 if ("math.min".equals(name)) return Math.min(a, b);
                 if ("math.pow".equals(name)) return Math.pow(a, b);
                 if ("math.atan2".equals(name)) return Math.toDegrees(Math.atan2(a, b));
-                if ("math.min_angle".equals(name)) {
-                    double diff = (b - a) % 360;
-                    if (diff > 180) diff -= 360;
-                    if (diff <= -180) diff += 360;
-                    return diff;
-                }
             }
             // --- math 三参数函数 ---
             if (("math.clamp".equals(name) || "math.lerp".equals(name) || "math.lerprotate".equals(name)
@@ -781,6 +787,30 @@ public final class OpenYsmControllerExpressionEvaluator {
                 boolean abs = name.startsWith("abs_") || name.startsWith("ysm.abs_");
                 return ParticleEffectUtil.handleParticle(player, id,
                     ox, oy, oz, dx, dy, dz, speed, count, lifetime, abs) ? TRUE : FALSE;
+            }
+            // --- ysm.* 音效函数（对齐 OpenYSM 2.5.3 参数布局；flags 位标志在 1.7.10 部分不适用） ---
+            if ("ysm.play_sound".equals(name) && arguments.size() >= 2) {
+                String soundName = arguments.get(1).asString();
+                float volume = arguments.size() > 3 ? (float) arguments.get(3).asNumber() : 1.0f;
+                float pitch = arguments.size() > 4 ? (float) arguments.get(4).asNumber() : 1.0f;
+                com.fox.ysmu.client.audio.YSMSoundManager.playSound(player, soundName, null, volume, pitch);
+                return TRUE;
+            }
+            if ("ysm.stop_sound".equals(name) && arguments.size() >= 1) {
+                com.fox.ysmu.client.audio.YSMSoundManager.stopSound(arguments.get(0).asString());
+                return TRUE;
+            }
+            if ("ysm.stop_all_sounds".equals(name)) {
+                com.fox.ysmu.client.audio.YSMSoundManager.stopAll();
+                return TRUE;
+            }
+            // --- ysm.perlin_noise(seed, x, y, z)：0-1 3D 柏林噪声 ---
+            if ("ysm.perlin_noise".equals(name) && arguments.size() >= 4) {
+                return PerlinNoiseFunction.noise(
+                    (int) arguments.get(0).asNumber(),
+                    arguments.get(1).asNumber(),
+                    arguments.get(2).asNumber(),
+                    arguments.get(3).asNumber());
             }
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "func:" + name,
@@ -980,6 +1010,17 @@ public final class OpenYsmControllerExpressionEvaluator {
 
         private double ysmValue(String name) {
             if (player == null) return FALSE;
+            if ("entity_type".equals(name)) {
+                // 控制器路径字符串比较（== 'player'）受 NaN 语义限制不可用（同 ctrl.tac_gun_type），
+                // 返回 NaN 表示"非空字符串"（玩家），避免 == '' 误判；检测分支请用 ysm.is_player。
+                return Double.NaN;
+            }
+            if ("is_player".equals(name)) {
+                return TRUE; // 控制器路径当前渲染对象恒为玩家
+            }
+            if ("is_maid".equals(name)) {
+                return FALSE; // 1.7.10 无车万女仆（TLM），恒 false
+            }
             if ("is_fishing".equals(name)) {
                 return player.fishEntity != null ? TRUE : FALSE;
             }
@@ -1071,6 +1112,10 @@ public final class OpenYsmControllerExpressionEvaluator {
             }
             if ("attack_time".equals(name)) {
                 return player.isSwingInProgress ? 1.0d : 0.0d;
+            }
+            if ("mod_version".equals(name)) {
+                // 1.7.10 模组版本是字符串、无统一数字语义（OpenYSM 亦未实现），恒 0 防警告刷屏。
+                return 0.0d;
             }
             if ("arrow_count".equals(name)) {
                 return player.getArrowCountInEntity();
@@ -1250,6 +1295,39 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return isOnGround() && event.getLimbSwingAmount() > 0.05f && !player.isSneaking();
             }
             return false;
+        }
+
+        /** ctrl.armor('chest'|'feet'|'legs'|'head', '$物品ID'|'empty'|'#tag')。
+         *  1.7.10 无物品 tag 系统，'#tag' 恒 false（对齐 OpenYSM 语义）。 */
+        private double armorMatch(List<Argument> arguments) {
+            String slot = arguments.size() > 0 ? arguments.get(0).asString() : "";
+            String matcher = arguments.size() > 1 ? arguments.get(1).asString() : "";
+            if (StringUtils.isBlank(matcher)) {
+                return FALSE; // OpenYSM：id 为空返回 0
+            }
+            int armorIndex;
+            if ("head".equals(slot)) {
+                armorIndex = 3;
+            } else if ("chest".equals(slot)) {
+                armorIndex = 2;
+            } else if ("legs".equals(slot)) {
+                armorIndex = 1;
+            } else if ("feet".equals(slot)) {
+                armorIndex = 0;
+            } else {
+                return FALSE; // mainhand/offhand 不属于 ctrl.armor
+            }
+            ItemStack stack = player.inventory.armorInventory[armorIndex];
+            if ("empty".equals(matcher)) {
+                return stack == null ? TRUE : FALSE;
+            }
+            if (stack == null || stack.getItem() == null) {
+                return FALSE;
+            }
+            if (matcher.startsWith("$")) {
+                return itemId(stack).equals(matcher.substring(1).toLowerCase(Locale.ROOT)) ? TRUE : FALSE;
+            }
+            return FALSE; // '#tag'：1.7.10 无物品标签系统
         }
 
         private double handMatch(List<Argument> arguments, boolean requireUse, boolean requireSwing) {

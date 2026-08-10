@@ -21,6 +21,8 @@ import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
 import com.fox.ysmu.client.animation.molang.EquippedEnchantmentLevelFunction;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.animation.molang.ParticleFunction;
+import com.fox.ysmu.client.animation.molang.PerlinNoiseFunction;
+import com.fox.ysmu.client.animation.molang.YsmSoundFunction;
 import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
@@ -33,6 +35,7 @@ import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangParser;
+import software.bernie.geckolib3.core.molang.MolangStringPool;
 import software.bernie.geckolib3.core.molang.ScopedMolangVariable;
 import software.bernie.geckolib3.core.molang.functions.MolangPhysicsBridge;
 import software.bernie.geckolib3.model.provider.data.EntityModelData;
@@ -124,8 +127,17 @@ public class AnimationRegister {
             functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
             // query.is_item_name_any：stub（恒 0），P3 待实现物品注册名匹配。
             functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
-            // 缺失的 ysm.* 功能桩函数：防止高版本模型动画控制器每帧刷堆栈。
-            functions.put("ysm.play_sound", CtrlHoldFunction.class);
+            // ysm.play_sound / stop_sound / stop_all_sounds：模型 Molang 音效播放（走 YSMSoundManager）。
+            functions.put("ysm.play_sound", YsmSoundFunction.class);
+            functions.put("ysm.stop_sound", YsmSoundFunction.class);
+            functions.put("ysm.stop_all_sounds", YsmSoundFunction.class);
+            // ysm.mod_version：1.7.10 模组版本是字符串、无统一数字语义，注册桩函数防报错刷屏。
+            functions.put("ysm.mod_version", CtrlHoldFunction.class);
+            // ysm.perlin_noise：3D 柏林噪声（返回 [0,1]），自实现。
+            functions.put("ysm.perlin_noise", PerlinNoiseFunction.class);
+            // ctrl.armor：keyframe 路径桩（恒 0），真实现仅在控制器条件路径
+            // （OpenYsmControllerExpressionEvaluator.functionValue）。
+            functions.put("ctrl.armor", CtrlHoldFunction.class);
             // ysm.relative_block_name：返回玩家相对偏移处方块注册名（OpenYSM 语义，±5 格）。
             functions.put("ysm.relative_block_name", RelativeBlockNameFunction.class);
             // ysm.equipped_enchantment_level：返回指定槽位物品上给定附魔的等级之和。
@@ -303,6 +315,11 @@ public class AnimationRegister {
         parser.register(new LazyVariable("ysm.block_light", 0));
         parser.register(new LazyVariable("ysm.sky_light", 0));
         parser.register(new LazyVariable("ysm.texture_name", 0));
+        // 渲染实体类型：字符串池 id（0=空串，非玩家渲染）。
+        parser.register(new LazyVariable("ysm.entity_type", 0));
+        parser.register(new LazyVariable("ysm.is_player", MolangUtils.FALSE));
+        // 1.7.10 无车万女仆（TLM），恒 false。
+        parser.register(new LazyVariable("ysm.is_maid", MolangUtils.FALSE));
 
         // parser.register(new LazyVariable("ysm.first_person_mod_hide", MolangUtils.FALSE));
     }
@@ -465,6 +482,12 @@ public class AnimationRegister {
             MathHelper.floor_double(player.posY),
             MathHelper.floor_double(player.posZ)));
         parser.setValue("ysm.texture_name", 0);
+        // 玩家渲染路径：渲染对象必为玩家模型（CustomPlayerRenderer）。
+        // entity_type 用字符串池 id，使 keyframe（mclib）里 ysm.entity_type=='player'
+        // 经 MolangParser.replaceStringLiterals 池化后可以数字比较命中。
+        parser.setValue("ysm.entity_type", () -> MolangStringPool.intern("player"));
+        parser.setValue("ysm.is_player", () -> MolangUtils.booleanToFloat(true));
+        parser.setValue("ysm.is_maid", () -> MolangUtils.booleanToFloat(false));
     }
 
     private static boolean hasCape(EntityPlayer player) {
