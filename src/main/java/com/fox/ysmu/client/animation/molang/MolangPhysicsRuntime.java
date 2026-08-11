@@ -38,6 +38,12 @@ public final class MolangPhysicsRuntime {
      */
     private static Map<String, Double> lastFrameVariables = java.util.Collections.emptyMap();
 
+    /** 全局 MolangParser.VARIABLES 中 v.* 变量的写入来源（模型显示名）。
+     *  debug overlay 用：重名变量（如 v.roaming.a）可看到当前值由哪个模型
+     *  注入/写入（残留来源 = 跨模型串变量的元凶）。读取隔离
+     *  {@link #getGlobalScopedValue} 也用它在全局 fallback 时按模型过滤。 */
+    private static final Map<String, String> GLOBAL_VAR_OWNER = new java.util.HashMap<>();
+
     /** 渲染路径骨骼绝对位置追踪（bone_pivot_abs 与几何渲染走同一矩阵路径）。
      *  每帧在 MatrixStack.transformBone 里按 模型+骨名 记录骨链累计后的完整 4×4 矩阵
      *  （blocks，含模型缩放，预 yaw / 预玩家位移）。bone_pivot_abs 用该矩阵计算
@@ -120,12 +126,14 @@ public final class MolangPhysicsRuntime {
                 String varKey = "v." + roamingEntry.getKey();
                 MolangParser.VARIABLES.computeIfAbsent(varKey,
                     k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
+                GLOBAL_VAR_OWNER.put(varKey, getModelDisplayName(modelId));
                 // Strip "roaming." prefix so v.roaming.bq_eye also sets v.bq_eye
                 String roamingKey = roamingEntry.getKey();
                 if (roamingKey.startsWith("roaming.")) {
                     String plainKey = "v." + roamingKey.substring("roaming.".length());
                     MolangParser.VARIABLES.computeIfAbsent(plainKey,
                         k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
+                    GLOBAL_VAR_OWNER.put(plainKey, getModelDisplayName(modelId));
                 }
             }
         }
@@ -163,6 +171,7 @@ public final class MolangPhysicsRuntime {
         CAPTURED_BONE_MATRIX.clear();
         lastFrameVariables = java.util.Collections.emptyMap();
         currentFrameContext = null;
+        GLOBAL_VAR_OWNER.clear();
         OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
     }
 
@@ -584,6 +593,68 @@ public final class MolangPhysicsRuntime {
     public static ResourceLocation getCurrentModelId() {
         FrameContext context = currentFrameContext;
         return context == null ? null : context.modelId;
+    }
+
+    /** debug overlay 用：全局 MolangParser.VARIABLES 中该 v.* 变量的写入来源
+     *  （模型显示名）。返回 null 表示当前无全局写入记录（可能来自 ScopeState /
+     *  PENDING_ROAMING / 当前模型注入）。 */
+    public static String getGlobalVarSource(String name) {
+        return GLOBAL_VAR_OWNER.get(name);
+    }
+
+    /** timeline 指令（MolangInstructionExecutor）写入全局 VARIABLES 时记录来源
+     *  模型，供 debug overlay 显示跨模型残留来源。 */
+    public static void noteGlobalVarOwner(String varName) {
+        FrameContext context = currentFrameContext;
+        if (context != null && context.modelId != null) {
+            GLOBAL_VAR_OWNER.put(varName, getModelDisplayName(context.modelId));
+        }
+    }
+
+    /** ScopedMolangVariable 的全局 fallback 读取拦截：当前模型 scope 无该变量
+     *  时，只允许读回“当前模型自己写入”的全局 v.*（begin() 注入的 roaming 或
+     *  当前模型 timeline 写入的）；其他模型写入的残留（GLOBAL_VAR_OWNER 记录的
+     *  来源 != 当前模型，如 14_momo 读别的模型的 v.roaming.a）返回 0，实现
+     *  跨模型隔离。不删除任何 VARIABLES 条目，因此不会破坏系统注册变量，也
+     *  没有并发遍历风险。无来源记录的变量（系统注册等）不隔离。 */
+    public static double getGlobalScopedValue(String name, double fallback) {
+        String owner = GLOBAL_VAR_OWNER.get(name);
+        double result = fallback;
+        if (owner != null) {
+            FrameContext ctx = currentFrameContext;
+            if (ctx != null && ctx.modelId != null) {
+                String cur = getModelDisplayName(ctx.modelId);
+                if (cur == null || !cur.equals(owner)) {
+                    result = 0.0;
+                }
+            }
+        }
+        return result;
+    }
+
+    /** 模型的可读显示名，用于 debug overlay 来源列（与模型预览页面一致）：
+     *  1. 优先 MODEL_DISPLAY_NAMES（lang 文件 > ysm.json metadata.name，如 "MoMo Wine Fox"）；
+     *  2. 否则解码 hex 编码的路径并取最后一段（如 wine_fox_fold/14_momo → 14_momo）。
+     *  接受 main id（带 /main）或 base id，内部统一。 */
+    public static String getModelDisplayName(ResourceLocation modelId) {
+        if (modelId == null) {
+            return null;
+        }
+        try {
+            // base id（去掉 /main 等子段），与 MODEL_DISPLAY_NAMES 的 key 一致；
+            // 也避免 hex 解码时被 "/main" 后缀中的 '/' 打断（getModelDisplayName
+            // 遇非 hex 字符会返回原 path，导致显示成 _name_77696e655f666...）。
+            ResourceLocation baseId = com.fox.ysmu.util.ModelIdUtil.getModelIdFromSubId(modelId);
+            String meta = com.fox.ysmu.client.ClientModelManager.MODEL_DISPLAY_NAMES.get(baseId);
+            if (meta != null && !meta.isEmpty()) {
+                return meta;
+            }
+            String decoded = com.fox.ysmu.util.ModelIdUtil.getModelDisplayName(baseId.getResourcePath());
+            int sep = decoded.lastIndexOf('/');
+            return sep >= 0 ? decoded.substring(sep + 1) : decoded;
+        } catch (RuntimeException e) {
+            return modelId.getResourcePath();
+        }
     }
 
     private static final class ScopeState {

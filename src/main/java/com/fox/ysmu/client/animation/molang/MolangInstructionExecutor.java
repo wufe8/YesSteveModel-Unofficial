@@ -137,6 +137,9 @@ public final class MolangInstructionExecutor {
                 // (if it exists) sees the change.
                 MolangParser.VARIABLES.computeIfAbsent(target,
                     k -> new software.bernie.geckolib3.core.molang.LazyVariable(k, 0)).set(d);
+                // 记录该全局变量的写入来源模型（debug overlay 显示 @模型来源，
+                // 定位跨模型残留——其他模型 timeline 写的 v.* 会残留到新模型）。
+                com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.noteGlobalVarOwner(target);
                 // Also write directly to MolangPhysicsRuntime so that
                 // syncToRuntimeState() can see the value even when no
                 // ScopedMolangVariable was previously registered for this key

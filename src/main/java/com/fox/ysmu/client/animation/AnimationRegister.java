@@ -185,6 +185,13 @@ public class AnimationRegister {
             }
         };
 
+        // 3.5) v.* 全局 fallback 的模型隔离：当前模型 scope 无该变量时，
+        // 只读回当前模型自己写入的全局值；其他模型写入的残留（如某模型
+        // timeline 写的 v.roaming.a 被 14_momo 读到）返回 0。无来源记录
+        // 的系统注册变量不受影响。
+        ScopedMolangVariable.globalFallback = (name, fallback) ->
+            MolangPhysicsRuntime.getGlobalScopedValue(name, fallback);
+
         // 4) vendored 物理函数桥（ysm.first_order / second_order / bone_rot / bone_pos / bone_scale）。
         // 无帧上下文时 MolangPhysicsRuntime 各方法优雅降级（first/secondOrder 返回 input，bone* 返回 0）。
         MolangPhysicsBridge.physics = new MolangPhysicsBridge.Physics() {

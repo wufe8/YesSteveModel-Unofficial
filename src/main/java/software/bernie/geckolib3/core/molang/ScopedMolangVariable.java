@@ -38,7 +38,22 @@ public class ScopedMolangVariable extends LazyVariable {
         boolean set(String name, double value);
     }
 
+    /**
+     * Host-mod-injected hook: model-isolated fallback for {@link #get()} when
+     * the current model scope has no such variable. The host records which
+     * model wrote each global {@code v.} entry; a value written by a *different*
+     * model (cross-model residue, e.g. 14_momo reading another model's
+     * {@code v.roaming.a}) must return 0 instead of the stale global value.
+     * Set once at mod init; {@code null} → plain global fallback (no isolation).
+     */
+    public interface GlobalFallback {
+        double get(String name, double fallback);
+    }
+
     public static volatile ScopedVariableStore store = null;
+
+    /** Model-isolated global fallback (see {@link GlobalFallback}). */
+    public static volatile GlobalFallback globalFallback = null;
 
     public ScopedMolangVariable(String name, double value) {
         super(name, () -> value);
@@ -65,14 +80,21 @@ public class ScopedMolangVariable extends LazyVariable {
     public double get() {
         // During a render frame, read from the per-(player, model) scope to
         // keep v. variables isolated across models. If the variable has not
-        // been set in this model's scope yet, fall through to super.get()
-        // which returns the global VARIABLES value (set by an earlier set()
-        // outside a frame context, e.g. model init or test evaluation).
+        // been set in this model's scope yet, fall through to the global
+        // VARIABLES value (set by an earlier set() outside a frame context,
+        // e.g. model init or test evaluation), but only if it was written by
+        // the *current* model — values written by another model's timeline
+        // (cross-model residue, e.g. 14_momo reading another model's
+        // v.roaming.a) are filtered out to 0 by the GlobalFallback hook.
         // Roaming/wheel variables are injected into the scope every frame by
         // the host mod, so they always take the frame path.
         ScopedVariableStore s = store;
         if (s != null && s.contains(getName())) {
             return s.get(getName(), 0.0);
+        }
+        GlobalFallback g = globalFallback;
+        if (g != null) {
+            return g.get(getName(), super.get());
         }
         return super.get();
     }
