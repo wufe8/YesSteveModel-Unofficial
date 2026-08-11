@@ -171,15 +171,26 @@ public class HudPreviewCache {
         int guiW = res.getScaledWidth();
         int guiH = res.getScaledHeight();
 
-        // FboCache.draw() always disables depth, lighting, colour-material and enables blend.
-        // We know the expected post-state — no need to query via expensive glIsEnabled JNI calls.
+        // FboCache.draw() disables depth/lighting/colour-material, enables blend,
+        // resets the texture matrix and binds the FBO texture. Save the pre-draw
+        // state and restore it EXACTLY afterwards: an unconditional "enable" left
+        // GL_LIGHTING on, which darkens the vanilla hotbar background (GUI quads
+        // get lighting-modulated by the fixed pipeline), and GL_BLEND on for the
+        // rest of the HUD frame (regression since 1.9a1-05 — "hotbar stays darker
+        // whenever YSMU is loaded").
+        boolean depthWasOn = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+        boolean lightWasOn = GL11.glIsEnabled(GL11.GL_LIGHTING);
+        boolean colorMatWasOn = GL11.glIsEnabled(GL11.GL_COLOR_MATERIAL);
+        boolean blendWasOn = GL11.glIsEnabled(GL11.GL_BLEND);
+
         GL11.glDepthMask(false);
         fboCache.draw(0, 0, guiW, guiH);
 
-        // Unconditional restore (avoids glIsEnabled which is ~1 % of this profile under LWJGL3)
-        GL11.glEnable(GL11.GL_DEPTH_TEST);
-        GL11.glEnable(GL11.GL_LIGHTING);
-        GL11.glEnable(GL11.GL_COLOR_MATERIAL);
+        // Restore GL state exactly as it was before the draw
+        if (depthWasOn) GL11.glEnable(GL11.GL_DEPTH_TEST); else GL11.glDisable(GL11.GL_DEPTH_TEST);
+        if (lightWasOn) GL11.glEnable(GL11.GL_LIGHTING); else GL11.glDisable(GL11.GL_LIGHTING);
+        if (colorMatWasOn) GL11.glEnable(GL11.GL_COLOR_MATERIAL); else GL11.glDisable(GL11.GL_COLOR_MATERIAL);
+        if (!blendWasOn) GL11.glDisable(GL11.GL_BLEND);
         GL11.glDepthMask(true);
     }
 
