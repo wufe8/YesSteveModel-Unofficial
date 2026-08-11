@@ -41,3 +41,6 @@ https://github.com/user-attachments/assets/17047470-7ab2-40a6-a1df-54a233c9099b
 
 https://github.com/user-attachments/assets/3c03d026-4715-431b-a086-ab43fa203930
 
+
+未压缩的原视频：通过网盘分享的文件：ysmu issue反馈视频
+链接: https://pan.baidu.com/s/1gNoRbN69GbSS_QEsjSrqfw?pwd=issu 提取码: issu 
