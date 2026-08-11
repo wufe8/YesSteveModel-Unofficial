@@ -24,6 +24,7 @@ import com.fox.ysmu.data.NPCData;
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.event.api.SpecialPlayerRenderEvent;
 import com.fox.ysmu.util.ModelIdUtil;
+import com.fox.ysmu.ysmu;
 
 import it.unimi.dsi.fastutil.Pair;
 import software.bernie.geckolib3.geo.GeoReplacedEntityRenderer;
@@ -35,6 +36,8 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
     private GeoModel geoModel;
     /** Tracks which model locations have already been logged as missing (throttle). */
     private final Set<String> missingGeoModelLogged = Collections.synchronizedSet(new HashSet<>());
+    /** 诊断（DEBUG_MODEL_LOAD 门控）：本地玩家每个模型「首次实际渲染」已打印过（防刷屏）。 */
+    private static final Set<String> FIRST_LOCAL_RENDER_LOGGED = ConcurrentHashMap.newKeySet();
     /** Tracks the last main model per player to detect model switches. */
     private final Map<UUID, ResourceLocation> lastPlayerModel = new ConcurrentHashMap<>();
 
@@ -132,6 +135,18 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         if (geoModel != null) {
             this.geoModel = geoModel;
             if (mainModelId != null) {
+                // 诊断（DEBUG_MODEL_LOAD 门控）：本地玩家模型「真正以自定义模型渲染」的
+                // 首次时间（geo 可用 = apply 已完成），applyDoneMsAgo 即 apply → 真正显示
+                // 的延迟；-1 表示尚未 apply（防御性记录，正常不应出现）。
+                if (entityObj instanceof EntityPlayer p
+                    && p.equals(net.minecraft.client.Minecraft.getMinecraft().thePlayer)
+                    && com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+                    if (FIRST_LOCAL_RENDER_LOGGED.add(p.getUniqueID() + "|" + mainModelId)) {
+                        Long appliedAt = com.fox.ysmu.client.ClientModelManager.MODEL_APPLY_TIME.get(mainModelId);
+                        ysmu.LOG.info("[YSMU-RENDER] first custom render local player model: id={}, applyDoneMsAgo={}",
+                            mainModelId, appliedAt != null ? (System.currentTimeMillis() - appliedAt) : -1L);
+                    }
+                }
                 // Keep geo/anim warm via the framework and ensure textures are uploaded
                 // (raw bytes stay in RAM, so upload is cheap and synchronous).
                 com.fox.ysmu.client.asset.AssetManager.geo(mainModelId).touch();

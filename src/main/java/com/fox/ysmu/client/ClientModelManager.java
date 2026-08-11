@@ -238,6 +238,44 @@ public class ClientModelManager {
     }
 
     /**
+     * Apply 优先模型集合（base id）：同步期间这些模型的 bundle 排到
+     * {@link #PENDING_APPLY_DEFAULT}（优先队列）最前面，使进存档后本地玩家
+     * 自己的模型尽快完整注册（几何/纹理/extra wheel/MODELS），不必等整批模型
+     * 全部 apply 完才显示（默认模型恒优先，见 {@link #isModelPriority}）。
+     * 进服时由同步入口 / SyncModelInfo 标记；reload / 清缓存时清空。
+     */
+    private static final java.util.Set<ResourceLocation> PRIORITY_MODEL_IDS =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** B1-4 诊断：模型 apply 完成时间戳（主线程 applyPreParsed 记录，base id），
+     *  用于与本地玩家模型首次实际渲染时间对比，定位「apply 完成 → 真正显示」的延迟。 */
+    public static final java.util.Map<ResourceLocation, Long> MODEL_APPLY_TIME =
+        new java.util.concurrent.ConcurrentHashMap<>();
+
+    /** 标记一个模型为 apply 优先（进服时本地玩家选中模型）。base/main id 均可。 */
+    public static void markModelPriority(ResourceLocation modelOrBaseId) {
+        if (modelOrBaseId == null) {
+            return;
+        }
+        PRIORITY_MODEL_IDS.add(ModelIdUtil.getModelIdFromSubId(modelOrBaseId));
+    }
+
+    /** 清空 apply 优先标记（同步重载 / 清缓存时调用）。 */
+    public static void clearModelPriority() {
+        PRIORITY_MODEL_IDS.clear();
+    }
+
+    /** 是否应进 apply 优先队列（default 恒优先；其余看是否被 {@link #markModelPriority} 标记）。
+     *  base/main id 均可；供同步路径的解析/apply 优先级判断。 */
+    public static boolean isModelPriority(ResourceLocation modelOrBaseId) {
+        if (modelOrBaseId == null) {
+            return false;
+        }
+        ResourceLocation baseId = ModelIdUtil.getModelIdFromSubId(modelOrBaseId);
+        return isDefaultModelBundle(baseId) || PRIORITY_MODEL_IDS.contains(baseId);
+    }
+
+    /**
      * Backpressure cap: how many fully-parsed bundles may wait in
      * {@link #PENDING_APPLY} for the main thread to apply them.
      *
@@ -271,7 +309,12 @@ public class ClientModelManager {
         // classification hoisted, the acquire→enqueue window only touches the
         // two queues and the main-thread wake-up, and finally releases the
         // permit if anything still goes wrong.
-        boolean isDefault = bundle != null && isDefaultModelBundle(bundle.modelId);
+        boolean isPriority = bundle != null && isModelPriority(bundle.modelId);
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+            ysmu.LOG.info("[YSMU-MODEL] scheduleApply: id={}, priority={}, baseId={}",
+                bundle != null ? bundle.modelId : "null", isPriority,
+                bundle != null ? ModelIdUtil.getModelIdFromSubId(bundle.modelId) : "null");
+        }
         try {
             APPLY_SLOTS.acquire();
         } catch (InterruptedException e) {
@@ -280,7 +323,7 @@ public class ClientModelManager {
             // best-effort cap, not a correctness requirement).
         }
         try {
-            if (isDefault) {
+            if (isPriority) {
                 PENDING_APPLY_DEFAULT.add(bundle);
             } else {
                 PENDING_APPLY.add(bundle);
@@ -318,6 +361,10 @@ public class ClientModelManager {
                 break;
             }
             applied++;
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                ysmu.LOG.info("[YSMU-MODEL] processNextApply: applying id={} (normalLeft={}, priorityLeft={})",
+                    bundle.modelId, PENDING_APPLY.size(), PENDING_APPLY_DEFAULT.size());
+            }
             try {
                 applyPreParsed(bundle);
             } catch (Exception e) {
@@ -471,6 +518,9 @@ public class ClientModelManager {
         ResourceLocation modelId = bundle.modelId;
         SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
         MolangInstructionExecutor.clearCache();
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+            ysmu.LOG.info("[YSMU-MODEL] applyPreParsed start: id={}", modelId);
+        }
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("[YSMU-MODEL] applyPreParsed start: modelId={}", modelId);
         }
@@ -613,6 +663,7 @@ public class ClientModelManager {
         MODEL_STATS.put(ModelIdUtil.getMainId(modelId),
             new int[]{bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims});
         SYNC_LOADED++;
+        MODEL_APPLY_TIME.put(ModelIdUtil.getMainId(modelId), System.currentTimeMillis());
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
             ysmu.LOG.info("[YSMU-MODEL] applyPreParsed done: modelId={}, textures={}, bones={}, faces={}, anims={}",
                 modelId, texCount, bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims);
@@ -1795,6 +1846,9 @@ public class ClientModelManager {
         TEXTURE_LAST_USED.clear();
         // 全量清缓存时一并清空「使用中」追踪，避免旧 id 残留（5s 扫描对已清空模型做无谓 release）。
         IN_USE_MODELS.clear();
+        // 清空 apply 优先标记：新一轮同步会由同步入口重新标记本地玩家模型。
+        PRIORITY_MODEL_IDS.clear();
+        MODEL_APPLY_TIME.clear();
         // Free GPU textures + heap bytes
         for (net.minecraft.client.renderer.texture.ITextureObject tex : YSM_TEXTURE_OBJECTS.values()) {
             if (tex instanceof com.fox.ysmu.client.texture.OuterFileTexture oft) {

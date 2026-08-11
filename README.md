@@ -12,7 +12,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ## 当前状态
 
-**最新版本：`1.9a1-06`**（`perf/previewUI` 分支）
+**最新版本：`1.9a1-06.1`**（`perf/previewUI` 分支）
 
 > [NOTE]
 > 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
@@ -172,13 +172,12 @@ git checkout perf/previewUI
 - 部分控制器变量与molang函数可能存在bug
 - 未实现molnag自定义函数处理
 - 子模型(投射物/载具)可能还存在一些问题 目前仅保证默认模型投射物可用
-- [SKIP] v.roaming长期变量目前不会永久保存 可能 wont fix
-- 粒子系统：支持 `particle()` / `abs_particle()`（控制器表达式 + 动画关键帧/.molang 指令），仅限 1.7.10 内置粒子，`lifetime` 参数不生效、自定义纹理粒子暂不支持
+- [SKIP] v.roaming长期变量目前不会永久保存
+- [FIXED] 粒子系统：支持 `particle()` / `abs_particle()`（控制器表达式 + 动画关键帧/.molang 指令），仅限 1.7.10 内置粒子，`lifetime` 参数不生效、自定义纹理粒子暂不支持
 - 部分 `.ysm` 模型在服务端缓存重建时抛 `NoSuchElementException` 解析失败（每次重建均失败），会被跳过但不阻塞加载
-- [TODO] 自动化测试覆盖不足：目前仅格式解析测试，模型加载/同步等重构缺少回归测试
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
-- [SKIP] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为高阈值兜底（默认 1024 MB + 60秒后触发 强制GC），可通过配置关闭
-- [SKIP] 目前最新Angelica(angelica-2.1.50.jar)会导致ysm模型受到原版亮度设置的影响 如果觉得太暗 尝试在设置中将原版的亮度滑条设置为100(明亮) wont fix
+- [NOTE] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为高阈值兜底（默认 1024 MB + 60秒后触发 强制GC），可通过配置关闭
+- [NOTE] 目前最新Angelica(angelica-2.1.50.jar)会导致ysm模型受到原版亮度设置的影响 如果觉得太暗 尝试在设置中将原版的亮度滑条设置为100(明亮)
 
 
 

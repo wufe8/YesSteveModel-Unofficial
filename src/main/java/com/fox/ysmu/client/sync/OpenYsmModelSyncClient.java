@@ -176,6 +176,9 @@ public final class OpenYsmModelSyncClient {
             ClientModelManager.SYNC_LOADED = 0;
             ClientModelManager.SYNC_FAILED = 0;
             ClientModelManager.SYNC_IN_PROGRESS = true;
+            // 进存档：把本地玩家当前选中的模型标记为 apply 优先，使其尽早完整注册
+            // （几何/纹理/extra wheel/MODELS），不必等整批同步 apply 完才显示。
+            markLocalPlayerModelPriority();
             // 完成信号等待全部模型（缓存命中 + 下载）解析并应用完成。
             remainingTasks.set(serverModelCount);
             syncStartTimeMs = System.currentTimeMillis();
@@ -186,6 +189,11 @@ public final class OpenYsmModelSyncClient {
                     serverModelCount, localCacheMap.size());
             }
 
+            // 先读完整索引条目，再处理：把优先模型（本地玩家自身/默认）排到最前面，
+            // 使它们在进度条最开头就 apply，不必等索引循环走到其靠后位置。此前
+            // cacheHit 路径虽"同步立即解析"，但受限于索引顺序——靠后模型（如
+            // GUMI2.6.2）解析/apply 落在进度条后半，导致"进度条后半才显示模型"。
+            java.util.List<ServerModelContext> indexModels = new java.util.ArrayList<>(serverModelCount);
             for (int i = 0; i < serverModelCount; i++) {
                 long hash1 = buf.readVarLong();
                 long hash2 = buf.readVarLong();
@@ -194,28 +202,31 @@ public final class OpenYsmModelSyncClient {
                 int version = buf.readVarInt();
                 ServerModelContext context = new ServerModelContext(hash1, hash2, modelId, customSkinModel, version);
                 serverModels.put(context.uuid, context);
+                indexModels.add(context);
+            }
+            // stable sort：优先模型排前，同组保持索引原序（default 恒在本地玩家之前）。
+            // cache miss 的优先模型也因此排在 packet04 请求最前，下载路径同样受益。
+            indexModels.sort(java.util.Comparator.comparingInt(ctx -> isPriorityModel(ctx.modelId) ? 0 : 1));
 
+            for (ServerModelContext context : indexModels) {
+                long hash1 = context.hash1;
+                long hash2 = context.hash2;
+                String modelId = context.modelId;
                 File cachedFile = localCacheMap.get(context.uuid);
                 if (YSMClientCache.verifyFileContent(cachedFile, hash1, hash2)) {
                     cacheHitCount.incrementAndGet();
                     try {
                         byte[] cachedBytes = FileUtils.readFileToByteArray(cachedFile);
                         byte[] clearBytes = YsmCrypt.read(cachedBytes, clientKey);
-                        // Pre-parsing hundreds of cache hits inline blocks the single
-                        // synchronized index loop for minutes on large libraries (progress
-                        // bar looks frozen). Defer the heavy parse/registration to the
-                        // background pool so it runs in parallel with the download path;
-                        // the cheap read+decrypt stay inline so a corrupt cache file still
-                        // falls back to download before packet04 is sent.
-                        ThreadTools.THREAD_POOL.submit(() -> {
-                            try {
-                                if (parseAndRegisterModel(clearBytes, context)) {
-                                    loadedModelsCount.incrementAndGet();
-                                }
-                            } finally {
-                                taskFinished();
-                            }
-                        });
+                        // 优先模型（本地玩家自身/默认）内联立即解析——仅阻塞本循环一个模型，
+                        // 使进存档后自身模型立刻显示；其余模型后台并行解析（与下载路径并行）。
+                        // 内联只保留廉价的 read+decrypt：损坏缓存能先回落到下载再发 packet04，
+                        // 大批缓存命中也不会拖慢索引循环。
+                        if (isPriorityModel(modelId)) {
+                            parseInline(clearBytes, context);
+                        } else {
+                            ThreadTools.THREAD_POOL.submit(() -> parseInline(clearBytes, context));
+                        }
                     } catch (Exception e) {
                         // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
                         // 避免整个同步流程因此崩溃，导致加载进度条无法显示。
@@ -287,8 +298,12 @@ public final class OpenYsmModelSyncClient {
                     // download+parse pipeline on a single pool thread. The cheap
                     // transcode + file write + decrypt stay inline so a corrupt cache
                     // still falls back to a fresh download on the next sync.
+                    //
+                    // 优先模型（本地玩家自身/默认）：下载完成后立即解析，不排队后台线程
+                    // （与 cacheHit 路径的优先分支一致）；scheduleApply 会把它的 bundle
+                    // 放进 PENDING_APPLY_DEFAULT 优先队列，主线程最先 apply。
                     final byte[] modelClearBytes = clearBytes;
-                    ThreadTools.THREAD_POOL.submit(() -> {
+                    Runnable parseTask = () -> {
                         try {
                             if (parseAndRegisterModel(modelClearBytes, context)) {
                                 loadedModelsCount.incrementAndGet();
@@ -308,7 +323,12 @@ public final class OpenYsmModelSyncClient {
                             // 该模型解析已完成（成功或失败），计入总任务数；全部完成后触发完成信号。
                             taskFinished();
                         }
-                    });
+                    };
+                    if (isPriorityModel(context.modelId)) {
+                        parseTask.run();
+                    } else {
+                        ThreadTools.THREAD_POOL.submit(parseTask);
+                    }
                 } catch (Exception e) {
                     // 转码/解密失败（如会话密钥不匹配/服务端缓存损坏）：直接跳过该模型，
                     // 不再进入后台解析，但同样计入总任务数，避免完成信号永不到达。
@@ -336,6 +356,20 @@ public final class OpenYsmModelSyncClient {
             }
             // 完成信号不再由「下载数==0」触发（全缓存命中时会提前结束），改由
             // taskFinished() → remainingTasks 全部完成 + 应用管线排空后触发。
+        }
+
+        /**
+         * 解析并注册一个模型，并在 finally 中计入任务完成信号。
+         * cacheHit 路径的「优先内联 / 后台并行」两分支共用。
+         */
+        private void parseInline(byte[] clearBytes, ServerModelContext context) {
+            try {
+                if (parseAndRegisterModel(clearBytes, context)) {
+                    loadedModelsCount.incrementAndGet();
+                }
+            } finally {
+                taskFinished();
+            }
         }
 
         /**
@@ -459,6 +493,37 @@ public final class OpenYsmModelSyncClient {
     }
 
     private OpenYsmModelSyncClient() {}
+
+    /** 把本地玩家 EEP 当前选中的模型加入 apply 优先集合（幂等；无玩家/无 EEP 时 no-op）。
+     *  在同步索引到达（packet03）时调用，使自身模型在 apply 队列最前。 */
+    private static void markLocalPlayerModelPriority() {
+        try {
+            net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+            if (mc == null || mc.thePlayer == null) {
+                return;
+            }
+            com.fox.ysmu.eep.ExtendedModelInfo eep =
+                com.fox.ysmu.eep.ExtendedModelInfo.get(mc.thePlayer);
+            if (eep == null) {
+                return;
+            }
+            ResourceLocation baseId = ModelIdUtil.getModelIdFromSubId(eep.getModelId());
+            ClientModelManager.markModelPriority(ModelIdUtil.getMainId(baseId));
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                ysmu.LOG.info("[YSMU-MODEL] mark local player model priority: baseId={} (eep.getModelId={})",
+                    baseId, eep.getModelId());
+            }
+        } catch (Exception e) {
+            ysmu.LOG.warn("[YSMU-MODEL] failed to mark local player model priority: {}", e.toString());
+        }
+    }
+
+    /** 判断一个 OpenYSM 同步索引中的模型（原始名）是否为 apply/解析优先
+     *  （default 或本地玩家自身，见 {@link ClientModelManager#isModelPriority}）。 */
+    private static boolean isPriorityModel(String modelId) {
+        return ClientModelManager.isModelPriority(
+            ModelIdUtil.getModelIdFromSubId(new ResourceLocation(ysmu.MODID, modelId)));
+    }
 
     public static void handlePayload(byte[] data) {
         ThreadTools.THREAD_POOL.submit(() -> {
@@ -641,11 +706,17 @@ public final class OpenYsmModelSyncClient {
             }
 
             // Parse geometry on background thread, only register on main thread.
-            // Lazy animation: the heavy AnimationFile is deferred to first use.
+            // 优先模型（本地玩家自身/默认）：eager 解析——真实 GeoModel/AnimationFile
+            // 立即构造，apply 时写进 GeckoLibCache，首次渲染无需后台懒加载。此前所有
+            // 同步模型都走 lazy（bundle.geoModels 为空），apply 后渲染时 getMainModel()
+            // 因 geo 不在缓存而 fallback 到 default，再等 AssetManager.geo().get() 后台
+            // 重新解密+解析（约 2-3s）才真正显示——"apply 后 applyDoneMsAgo≈2864ms" 的根因。
+            // 非优先模型保持 lazy：GeoModel/AnimationFile 延迟到首次使用（内存优化）。
+            boolean priority = isPriorityModel(context.modelId);
             com.fox.ysmu.client.model.PreParsedModelBundle bundle;
             try {
-                bundle = ClientModelManager.preParseModel(data, true);
-            bundle.previewAnimation = raw.properties.previewAnimation;
+                bundle = ClientModelManager.preParseModel(data, !priority);
+                bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
                 ClientModelManager.SYNC_FAILED++;

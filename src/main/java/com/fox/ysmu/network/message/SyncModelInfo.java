@@ -3,6 +3,7 @@ package com.fox.ysmu.network.message;
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.nbt.NBTTagCompound;
+import net.minecraft.util.ResourceLocation;
 
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.util.ModelIdUtil;
@@ -71,8 +72,12 @@ public class SyncModelInfo implements IMessage {
                                 // 进存档/进服：本地玩家自己的模型立即预暖（唯一允许的主动预暖
                                 // 目标，1 个模型无内存成本），不等第一帧渲染才触发懒加载。
                                 if (player.equals(Minecraft.getMinecraft().thePlayer)) {
-                                    com.fox.ysmu.client.ClientModelManager.warmModel(
-                                        ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(eep.getModelId())));
+                                    ResourceLocation mainId =
+                                        ModelIdUtil.getMainId(ModelIdUtil.getModelIdFromSubId(eep.getModelId()));
+                                    // 进存档：本地玩家模型立即预暖，并标记 apply 优先（若还在
+                                    // apply 队列中则提前到最前），避免整批模型 apply 完才显示。
+                                    com.fox.ysmu.client.ClientModelManager.warmModel(mainId);
+                                    com.fox.ysmu.client.ClientModelManager.markModelPriority(mainId);
                                 }
                             }
                         }
