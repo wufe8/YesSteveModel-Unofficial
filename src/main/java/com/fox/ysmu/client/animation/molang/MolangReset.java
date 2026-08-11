@@ -52,6 +52,15 @@ public final class MolangReset {
         clearParserVariablesByPrefix("v.");
         // 5. 清掉本玩家帧快照（overlay 数据源），让 overlay 立即反映重置后的状态
         MolangPhysicsRuntime.clearLastFrameSnapshot();
+        // 6. 停止 EEP 动画播放：轮盘/快捷键选择的 loop 动画（如 14_momo 的
+        //    "找不到狐找不到狐"）不会自然停止（GeckoLib loop 控制器不会进入
+        //    Stopped），且其 timeline 每循环都会重新写入变量（如 v.z_cs=1）。
+        //    若 reset 只清变量而动画继续播，下一循环变量又被写回，reset 的
+        //    效果会被覆盖。因此 reset 一并停止 EEP 动画，确保真正清干净。
+        ExtendedModelInfo eep = ExtendedModelInfo.get(player);
+        if (eep != null) {
+            eep.stopAnimation();
+        }
     }
 
     /**

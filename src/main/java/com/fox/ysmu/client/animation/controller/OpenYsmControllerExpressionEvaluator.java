@@ -104,8 +104,35 @@ public final class OpenYsmControllerExpressionEvaluator {
         }
         // Use a simple index-based parser that builds a CompiledExpr tree
         int[] idx = {0};
-        CompiledExpr result = parseOrCompiled(expr, idx);
+        CompiledExpr result = parseExpressionCompiled(expr, idx);
         return result != null ? result : ctx -> FALSE;
+    }
+
+    /**
+     * 顶层表达式入口：支持 C 风格三元运算符 (cond?a:b)。
+     * 优先级：?: 低于 ||（条件可含 ||），then/else 分支都是完整表达式（可含 ||/?:）。
+     * 此前解析器不支持三元，条件 "(v.z_d==0?1:0)&&v.z_cs" 会在 '?' 处停住、
+     * 被截断成 "v.z_d==0"（v.z_d 未定义=0 → 恒 true），导致 14_momo 的
+     * parallel_4 首帧无条件进入"出来了"遁地状态且无法用 /ysm reset 停止。
+     */
+    private static CompiledExpr parseExpressionCompiled(String expr, int[] idx) {
+        CompiledExpr condition = parseOrCompiled(expr, idx);
+        if (condition == null) {
+            return null;
+        }
+        skipWhitespace(expr, idx);
+        if (match(expr, idx, "?")) {
+            CompiledExpr thenExpr = parseExpressionCompiled(expr, idx);
+            skipWhitespace(expr, idx);
+            if (match(expr, idx, ":")) {
+                CompiledExpr elseExpr = parseExpressionCompiled(expr, idx);
+                CompiledExpr c = condition, t = thenExpr, e = elseExpr;
+                return ctx -> truthy(c.eval(ctx)) ? t.eval(ctx) : e.eval(ctx);
+            }
+            // 畸形三元（缺 ':'）——回落为仅条件部分，避免吞掉后续表达式
+            return condition;
+        }
+        return condition;
     }
 
     private static CompiledExpr parseOrCompiled(String expr, int[] idx) {
@@ -253,7 +280,7 @@ public final class OpenYsmControllerExpressionEvaluator {
         char c = expr.charAt(idx[0]);
         if (c == '(') {
             idx[0]++;
-            CompiledExpr inner = parseOrCompiled(expr, idx);
+            CompiledExpr inner = parseExpressionCompiled(expr, idx);
             match(expr, idx, ")");
             return inner;
         }
