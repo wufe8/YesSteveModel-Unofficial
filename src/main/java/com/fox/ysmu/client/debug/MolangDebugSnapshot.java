@@ -11,6 +11,7 @@ import net.minecraft.util.ChatComponentText;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
+import com.fox.ysmu.eep.ExtendedModelInfo;
 
 import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangParser;
@@ -165,6 +166,37 @@ public final class MolangDebugSnapshot {
     }
 
     // ---- 聊天输出 ----
+
+    /**
+     * 获取变量当前值的来源模型（debug overlay 最右列显示 @模型来源）。
+     * 用于定位跨模型串变量：重名 v.*（如 v.roaming.a）若被其他模型
+     * 的 timeline 写入全局 MolangParser.VARIABLES，残留来源会在这里显示。
+     * 优先级：
+     *  1. 全局 VARIABLES 的写入来源（begin() 注入 roaming / timeline 写入时记录）
+     *  2. 其余 v.*：当前玩家模型
+     * 非 v.*（query/ctrl/ysm/math 等函数与注册项）返回 null，overlay 保持类型提示。
+     */
+    public static String getVariableSource(String name) {
+        if (name == null) {
+            return null;
+        }
+        // 1. 全局写入来源（跨模型残留的来源模型）
+        String src = MolangPhysicsRuntime.getGlobalVarSource(name);
+        if (src != null && !src.isEmpty()) {
+            return src;
+        }
+        // 2. 其余 v.*：当前玩家模型（scope / roaming 均由当前模型提供）
+        if (name.startsWith("v.")) {
+            EntityPlayer p = Minecraft.getMinecraft().thePlayer;
+            if (p != null) {
+                ExtendedModelInfo eep = ExtendedModelInfo.get(p);
+                if (eep != null && eep.getModelId() != null) {
+                    return MolangPhysicsRuntime.getModelDisplayName(eep.getModelId());
+                }
+            }
+        }
+        return null;
+    }
 
     /**
      * 获取所有变量的完整快照（用于 overlay 全量显示）。

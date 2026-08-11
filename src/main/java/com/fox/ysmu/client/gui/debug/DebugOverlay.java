@@ -312,8 +312,21 @@ public final class DebugOverlay {
             double value = entry.getValue();
             font.drawStringWithShadow(formatValue(value), COL_VALUE_X, y, getValueColor(value));
 
-            // 列：简短类型提示
-            font.drawStringWithShadow(getTypeHint(name), w - 50, y, 0xFF666666);
+            // 列：变量来源（@模型）或简短类型提示。
+            // 来源列优先：重名 v.*（如 v.roaming.a）可看到当前值由哪个模型
+            // 注入/写入（残留来源 = 跨模型串变量的元凶）；无来源记录的
+            // 非 v.* 保持原类型提示。
+            String src = MolangDebugSnapshot.getVariableSource(name);
+            if (src != null && !src.isEmpty()) {
+                String srcText = "@" + src;
+                if (srcText.length() > 20) {
+                    srcText = srcText.substring(0, 20) + "\u2026";
+                }
+                font.drawStringWithShadow(srcText,
+                    w - font.getStringWidth(srcText) - 6, y, 0xFF88AAFF);
+            } else {
+                font.drawStringWithShadow(getTypeHint(name), w - 50, y, 0xFF666666);
+            }
         }
 
         // 5. 底部提示（搜索模式时显示操作提示）
