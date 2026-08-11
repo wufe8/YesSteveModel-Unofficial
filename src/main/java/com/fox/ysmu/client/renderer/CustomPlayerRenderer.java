@@ -56,6 +56,8 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         if (SUPPRESSED_RENDER_ERRORS.add(key)) {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-RENDER] {} suppressed ({}): {}",
                 tag, e.getClass().getSimpleName(), String.valueOf(e.getMessage()), e);
+            // 完整堆栈打到日志（每个 tag 只打一次），便于定位渲染被跳过的根因
+            e.printStackTrace();
         }
     }
 
@@ -101,6 +103,11 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 if (oldModel != null && !oldModel.equals(newModel)) {
                     com.fox.ysmu.client.animation.AnimationManager.getInstance().resetPlayerState(pid);
                     com.fox.ysmu.client.audio.YSMSoundManager.stopAll();
+                    // 停止 EEP 播放的动画：EEP 的 playAnimation 是 per-player 的，
+                    // 切换模型后若不清掉，旧模型选的轮盘动画（如 14_momo 的
+                    // "变身"，timeline 写 v.roaming.a/b/c）会在新模型自动播放，
+                    // 把变身状态写入新模型的 scope（串变量到 14_momo 的根因之一）。
+                    eep.stopAnimation();
                 }
                 lastPlayerModel.put(pid, newModel);
             }
@@ -245,6 +252,13 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
 
     @Override
     public float getWidthScale(Object animatable) {
+        // 优先用传入实体的 scale：预览渲染传入的是预览实体（CustomPlayerEntity），
+        // 各模型有自己 ysm.json 的 width_scale。若改用共享字段 this.animatable
+        //（当前玩家模型），选中 scale≠默认的模型（如 09_hailuo 0.6）后，所有预览
+        // 都会用上一个模型的缩放（软件矩阵 MATRIX_STACK.scale，GL 检测不到）。
+        if (animatable instanceof CustomPlayerEntity cpe) {
+            return cpe.getWidthScale();
+        }
         if (this.animatable != null) {
             return this.animatable.getWidthScale();
         }
@@ -253,6 +267,9 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
 
     @Override
     public float getHeightScale(Object animatable) {
+        if (animatable instanceof CustomPlayerEntity cpe) {
+            return cpe.getHeightScale();
+        }
         if (this.animatable != null) {
             return this.animatable.getHeightScale();
         }
