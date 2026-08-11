@@ -284,6 +284,8 @@ public final class RenderUtil {
         if (SUPPRESSED_RENDER_ERRORS.add(key)) {
             ysmu.LOG.warn("[YSMU-RENDER] {} suppressed ({}): {}",
                 tag, e.getClass().getSimpleName(), String.valueOf(e.getMessage()), e);
+            // 完整堆栈打到日志（每个 tag 只打一次），便于定位渲染被跳过的根因
+            e.printStackTrace();
         }
     }
 
