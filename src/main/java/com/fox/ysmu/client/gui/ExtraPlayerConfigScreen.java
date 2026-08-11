@@ -5,7 +5,6 @@ import com.fox.ysmu.client.ClientEventHandler;
 import com.fox.ysmu.util.RenderUtil;
 import net.minecraft.client.gui.GuiScreen;
 import net.minecraft.client.resources.I18n;
-import org.lwjgl.input.Keyboard;
 
 import java.util.List;
 

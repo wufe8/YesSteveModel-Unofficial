@@ -47,9 +47,23 @@ public class ArrowProjectileRenderer {
     private static final java.util.Set<ResourceLocation> DUMPED_TREES =
         java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
 
+    /** 每帧渲染路径的告警去重：同一内容只打一次，避免模型缺 geo/贴图时每帧刷屏
+     *  （与 RenderUtil 的 suppress 模式一致）。reload 后可通过 clearDumpedTrees 复位。 */
+    private static final java.util.Set<String> LOGGED_RENDER_WARNS =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<>());
+
     /** Reset the dedup tracker so bone trees dump again on next render (after reload). */
     public static void clearDumpedTrees() {
         DUMPED_TREES.clear();
+        LOGGED_RENDER_WARNS.clear();
+    }
+
+    /** 每帧渲染路径的 warn（去重：同一条消息只打一次）。 */
+    private static void warnOnce(String tag, String format, Object... args) {
+        String msg = String.format(java.util.Locale.ROOT, format, args);
+        if (LOGGED_RENDER_WARNS.add(tag + "|" + msg)) {
+            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] {}", msg);
+        }
     }
 
     /**
@@ -70,7 +84,7 @@ public class ArrowProjectileRenderer {
         // Find projectile entity type "minecraft:arrow" for this model
         List<String> projTypes = ClientModelManager.PROJECTILE_MODEL_IDS.get(modelId);
         if (projTypes == null) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] no PROJECTILE_MODEL_IDS for {}", modelId);
+            warnOnce("no-projectile-models", "no PROJECTILE_MODEL_IDS for {}", modelId);
             return false;
         }
         if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {
@@ -85,7 +99,7 @@ public class ArrowProjectileRenderer {
             }
         }
         if (arrowType == null) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] no arrowType found in {}", projTypes);
+            warnOnce("no-arrow-type", "no arrowType found in {}", projTypes);
             return false;
         }
 
@@ -96,7 +110,7 @@ public class ArrowProjectileRenderer {
         }
         GeoModel projModel = GeckoLibCache.getInstance().getGeoModels().get(projGeoId);
         if (projModel == null) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] GeoModel not found: {}", projGeoId);
+            warnOnce("geo-not-found", "GeoModel not found: {}", projGeoId);
             return false;
         }
         if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {
@@ -126,7 +140,7 @@ public class ArrowProjectileRenderer {
             }
         }
         if (projTexId == null) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] no texture found for {}", modelId);
+            warnOnce("no-texture", "no texture found for {}", modelId);
             return false;
         }
         if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && com.fox.ysmu.Config.DEBUG_MODEL_RENDER) {

@@ -505,7 +505,6 @@ public final class OpenYsmPlayerControllerRuntime {
             }
             ysmu.LOG.info(sb.toString());
         }
-        int preTransCount = 0;
         // Wiki 2.6.3 空状态连续跳转的循环检测：
         // 记录本次跳转链访问过的状态，若某状态想跳回已访问状态（A->B->A 循环），
         // 则停在构成循环前的状态，不再跳转回去。避免 Check<->Start_Sneak 等
@@ -524,7 +523,6 @@ public final class OpenYsmPlayerControllerRuntime {
                 ysmu.LOG.info("[YSMU-CTRL-TRANS] iter={}: {} -> {} [{}]",
                     i, prevStateName, nextState.name, geckoControllerName);
             }
-            preTransCount++;
             state = nextState;
         }
 
@@ -1187,39 +1185,39 @@ public final class OpenYsmPlayerControllerRuntime {
         int preferredIndex = getParallelIndex(geckoControllerName);
         if (preferredIndex >= 0) {
             if (geckoControllerName.startsWith("pre_parallel_")) {
-                addMatch(matches, set, "player.pre_parallel_" + preferredIndex, preferredIndex);
-                addMatch(matches, set, "pre_parallel_" + preferredIndex, preferredIndex);
+                addMatch(matches, set, "player.pre_parallel_" + preferredIndex);
+                addMatch(matches, set, "pre_parallel_" + preferredIndex);
             } else {
-                addMatch(matches, set, "player.parallel_" + preferredIndex, preferredIndex);
-                addMatch(matches, set, "parallel_" + preferredIndex, preferredIndex);
+                addMatch(matches, set, "player.parallel_" + preferredIndex);
+                addMatch(matches, set, "parallel_" + preferredIndex);
             }
         } else if (MAIN_CONTROLLER.equals(geckoControllerName)) {
-            addMatch(matches, set, "player.main", -1);
-            addMatch(matches, set, "player.base", -1);
-            addMatch(matches, set, "player.move", -1);
-            addMatch(matches, set, "main", -1);
+            addMatch(matches, set, "player.main");
+            addMatch(matches, set, "player.base");
+            addMatch(matches, set, "player.move");
+            addMatch(matches, set, "main");
         } else if (HOLD_MAINHAND_CONTROLLER.equals(geckoControllerName)) {
-            addMatch(matches, set, "player.hold_mainhand", -1);
-            addMatch(matches, set, "hold_mainhand", -1);
+            addMatch(matches, set, "player.hold_mainhand");
+            addMatch(matches, set, "hold_mainhand");
         } else if (HOLD_OFFHAND_CONTROLLER.equals(geckoControllerName)) {
-            addMatch(matches, set, "player.hold_offhand", -1);
-            addMatch(matches, set, "hold_offhand", -1);
+            addMatch(matches, set, "player.hold_offhand");
+            addMatch(matches, set, "hold_offhand");
         } else if (SWING_CONTROLLER.equals(geckoControllerName)) {
-            addMatch(matches, set, "player.swing", -1);
-            addMatch(matches, set, "swing", -1);
+            addMatch(matches, set, "player.swing");
+            addMatch(matches, set, "swing");
         } else if (USE_CONTROLLER.equals(geckoControllerName)) {
-            addMatch(matches, set, "player.use", -1);
-            addMatch(matches, set, "use", -1);
+            addMatch(matches, set, "player.use");
+            addMatch(matches, set, "use");
         } else if (CAP_CONTROLLER.equals(geckoControllerName)) {
-            addMatch(matches, set, "player.cap", -1);
-            addMatch(matches, set, "cap", -1);
+            addMatch(matches, set, "player.cap");
+            addMatch(matches, set, "cap");
         }
-        addMatch(matches, set, geckoControllerName, preferredIndex);
+        addMatch(matches, set, geckoControllerName);
         if (geckoControllerName.startsWith("player.")) {
-            addMatch(matches, set, geckoControllerName.substring("player.".length()), preferredIndex);
+            addMatch(matches, set, geckoControllerName.substring("player.".length()));
         }
         if (geckoControllerName.endsWith("_controller")) {
-            addMatch(matches, set, geckoControllerName.substring(0, geckoControllerName.length() - 11), preferredIndex);
+            addMatch(matches, set, geckoControllerName.substring(0, geckoControllerName.length() - 11));
         }
         // 模糊匹配：player.post_main → player.post_main_<anything>
         // 用于车辆动画等带后缀的槽位控制器
@@ -1228,15 +1226,14 @@ public final class OpenYsmPlayerControllerRuntime {
             String prefix = geckoControllerName + "_";
             for (String key : set.controllers.keySet()) {
                 if (key.startsWith(prefix)) {
-                    addMatch(matches, set, key, preferredIndex);
+                    addMatch(matches, set, key);
                 }
             }
         }
         return matches;
     }
 
-    private static void addMatch(List<ControllerMatch> matches, ControllerSet set, String controllerName,
-        int preferredAnimationIndex) {
+    private static void addMatch(List<ControllerMatch> matches, ControllerSet set, String controllerName) {
         Controller controller = set.controllers.get(controllerName);
         if (controller == null) {
             return;
@@ -1246,7 +1243,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 return;
             }
         }
-        matches.add(new ControllerMatch(controller, preferredAnimationIndex));
+        matches.add(new ControllerMatch(controller));
     }
 
     private static int getParallelIndex(String geckoControllerName) {
@@ -1315,11 +1312,9 @@ public final class OpenYsmPlayerControllerRuntime {
 
     private static final class ControllerMatch {
         private final Controller controller;
-        private final int preferredAnimationIndex;
 
-        private ControllerMatch(Controller controller, int preferredAnimationIndex) {
+        private ControllerMatch(Controller controller) {
             this.controller = controller;
-            this.preferredAnimationIndex = preferredAnimationIndex;
         }
     }
 

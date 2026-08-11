@@ -67,7 +67,6 @@ public final class OpenYsmModelSyncClient {
         /** Reassembly buffer for the (encrypted, possibly chunked) sync index. */
         private byte[] syncIndexChunks;
         private int syncIndexTotal;
-        private int syncIndexReceived;
         private final Map<UUID, ServerModelContext> serverModels = Maps.newConcurrentMap();
         /** 剩余待解析模型数（缓存命中 + 下载）。全部为 0 时才允许发送完成信号。 */
         private final java.util.concurrent.atomic.AtomicInteger remainingTasks =
@@ -563,13 +562,11 @@ public final class OpenYsmModelSyncClient {
             ysmu.LOG.warn("OpenYSM client rejected sync index chunk: total={}", totalLength);
             state.syncIndexChunks = null;
             state.syncIndexTotal = 0;
-            state.syncIndexReceived = 0;
             return;
         }
         if (state.syncIndexChunks == null || state.syncIndexTotal != totalLength) {
             state.syncIndexChunks = new byte[totalLength];
             state.syncIndexTotal = totalLength;
-            state.syncIndexReceived = 0;
         }
         if (offset < 0 || offset + chunk.length > state.syncIndexChunks.length) {
             ysmu.LOG.warn("OpenYSM client sync index chunk out of range: offset={}, len={}, total={}",
@@ -577,12 +574,10 @@ public final class OpenYsmModelSyncClient {
             return;
         }
         System.arraycopy(chunk, 0, state.syncIndexChunks, offset, chunk.length);
-        state.syncIndexReceived += chunk.length;
         if (last) {
             byte[] full = state.syncIndexChunks;
             state.syncIndexChunks = null;
             state.syncIndexTotal = 0;
-            state.syncIndexReceived = 0;
             handlePayload(full);
         }
     }

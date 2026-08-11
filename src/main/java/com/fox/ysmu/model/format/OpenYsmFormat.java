@@ -195,7 +195,9 @@ public final class OpenYsmFormat {
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load OpenYSM binary model {} (size={}): {}: {}",
                 file, file.toFile().length(), e.getClass().getSimpleName(), e.getMessage());
-            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN || ysmu.LOG.isDebugEnabled()) {
+            // 细节堆栈：需开 DebugModelLoad + (DebugModelScan 或 logger DEBUG 级) 才打印，
+            // 括号修正 &&/|| 优先级（原表达式在 logger DEBUG 级时无条件打印）。
+            if (Config.DEBUG_MODEL_LOAD && (Config.DEBUG_MODEL_SCAN || ysmu.LOG.isDebugEnabled())) {
                 ysmu.LOG.warn("[YSMU-MODEL] OpenYSM binary model {} load failure detail", file, e);
             }
             ModelIndexCache.mark(modelId, entryOf("ysm", fp, null, false));

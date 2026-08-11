@@ -54,10 +54,10 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
     private static void suppressRenderError(String tag, Exception e) {
         String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
         if (SUPPRESSED_RENDER_ERRORS.add(key)) {
+            // Log4j2 以 Throwable 结尾参数自动打印完整堆栈，无需再 printStackTrace
+            // （后者打到 stderr，不进日志文件且与 logger 重复）。
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-RENDER] {} suppressed ({}): {}",
                 tag, e.getClass().getSimpleName(), String.valueOf(e.getMessage()), e);
-            // 完整堆栈打到日志（每个 tag 只打一次），便于定位渲染被跳过的根因
-            e.printStackTrace();
         }
     }
 

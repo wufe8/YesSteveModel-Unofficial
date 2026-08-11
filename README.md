@@ -87,7 +87,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 - **翻页/锁定按钮**：动画轮盘锁定、多页导航
 - **`/ysm play` 命令**：在游戏中播放指定动画
 - **预览刷新频率调整**：FBO 缓存刷新频率 在模型选择(Alt+Y)的设置页面中可以调整模型预览的刷新率 能有效提升预览页面的游戏帧数 但会导致动画预览卡顿
-- **调试覆盖层**：`/ysm debug overlay`（快捷键 Ctrl+P）实时显示控制器状态/Molang 变量，支持搜索与过滤；`/ysm debug query <表达式>` 运行时查询变量值
+- **调试覆盖层**：`/ysm debug overlay`（快捷键 Ctrl+P）实时显示控制器状态/Molang 变量，支持搜索与过滤；变量右列显示其来源模型（`@模型名`），便于发现跨模型残留；`/ysm debug query <表达式>` 运行时查询变量值
 - **副手物品隐藏**：`HiddenOffhandItems` 可配置隐藏指定副手物品（默认隐藏 Extra Utilities 除叶斧），避免其错误渲染
 - **显存预算与降采样**：`TextureVramBudget`（默认 256MB）超预算按 LRU 整模型释放 GPU 纹理（字节保留在内存，重传无白模）；`TextureTargetSize`（默认关）可对超大贴图按 2 的幂降采样进一步压显存
 - **渲染路径防御**：渲染/调度异常节流抑制，单个模型问题不再导致日志刷屏或崩溃报告反复触发
@@ -122,7 +122,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-04` | 一系列性能优化、负尺寸cube修复 |
 | `1.9a1-05` | 动画预览界面、HUD FBO 缓存、深度性能优化与 Bug 修复 |
 | `1.9a1-06` | 统一模型加载、懒加载与显存优化、动画/Molang 修复、调试覆盖层 |
-| `1.9a1-07` | 粒子系统、HUD 跟随三模式、玩家模型优先加载、同步/内存优化、Molang 补全 |
+| `1.9a1-07` | 粒子系统、HUD 跟随三模式、玩家模型优先加载、同步/内存优化、Molang 补全、跨模型变量隔离与预览缩放修复 |
 
 ---
 
@@ -173,7 +173,6 @@ git checkout perf/previewUI
 - 未实现molnag自定义函数处理
 - 子模型(投射物/载具)可能还存在一些问题 目前仅保证默认模型投射物可用
 - [SKIP] v.roaming长期变量目前不会永久保存
-- [FIXED] 粒子系统：支持 `particle()` / `abs_particle()`（控制器表达式 + 动画关键帧/.molang 指令），仅限 1.7.10 内置粒子，`lifetime` 参数不生效、自定义纹理粒子暂不支持
 - 部分 `.ysm` 模型在服务端缓存重建时抛 `NoSuchElementException` 解析失败（每次重建均失败），会被跳过但不阻塞加载
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题
 - [NOTE] Java 25 + ZGC 下 Distant Horizons 等 mod 可能导致 DirectBuffer 泄漏（Cleaner 未被及时处理），YSMU 提供了 DirectBuffer Watchdog 作为高阈值兜底（默认 1024 MB + 60秒后触发 强制GC），可通过配置关闭
