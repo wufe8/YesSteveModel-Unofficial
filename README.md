@@ -1,4 +1,4 @@
-# YesSteveModel-Unofficial (YSMU)
+# YesSteveModel-Unofficial (YSMU) issue
 由于在https://github.com/wufe8/YesSteveModel-Unofficial 中无法create a new issue，该仓库用于以PR的形式向其提交issue
 <img width="1000" height="214" alt="image" src="https://github.com/user-attachments/assets/e22b98e0-de4e-46e2-97bd-a7b2a8dc532f" />
 
