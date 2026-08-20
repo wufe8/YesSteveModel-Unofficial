@@ -21,13 +21,22 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ### 环境要求
 - **Minecraft**: 1.7.10
-- **java**: java8, 17-25(with lwjgl3ify)
+- **Java**: 8，或 17-25（需安装 lwjgl3ify）
 - **Forge**: 10.13.4.1614
-- **必需 Mod**:
-  - [UniMixins](https://github.com/LegacyModdingMC/UniMixins)
-  - [GTNHLib](https://github.com/GTNewHorizons/GTNHLib)
-- **测试兼容性**: +unimixins-all-1.7.10-0.3.1.jar, angelica-2.1.42.jar, gtnhlib-0.10.9.jar, lwjgl3ify-3.0.25.jar, backhand-1.7.7.jar, modularui2-2.2.18-1.7.10.jar
-- **GTNH测试版本**: 2.8.4, 2.9.0beta2
+- **必需 Mod**（缺少会崩溃）:
+  - [UniMixins](https://github.com/LegacyModdingMC/UniMixins) — Mixin 框架支持
+  - [GTNHLib](https://github.com/GTNewHorizons/GTNHLib) ≥ 0.5.14 — 提供 `@EventBusSubscriber` 自动事件注册；更早版本缺少此类，启动时会 `NoClassDefFoundError`
+- **可选 Mod**（缺失时自动降级，不影响启动）:
+  - [Backhand](https://github.com/GTNewHorizons/Backhand) — 副手持物支持
+  - [Angelica](https://github.com/GTNewHorizons/Angelica) — 光影兼容
+  - Battlegear2 — 盾牌格挡检测
+  - Et Futurum — 鞘翅飞行检测
+  - Tinkers' Construct — 十字弩状态检测
+- **GTNH 兼容性**:
+  - ✅ GTNH 2.8.4 — 已测试
+  - ✅ GTNH 2.9.0-beta2 — 已测试
+  - ⚠️ GTNH 2.7.3 — 理论兼容（GTNHLib 0.5.23 ≥ 0.5.14），未实际测试
+  - ❌ GTNH ≤ 2.6.x — 不兼容（GTNHLib < 0.5.14 缺少 `EventBusSubscriber`）
 
 ### 安装步骤
 1. 安装 Forge 1.7.10（推荐 10.13.4.1614）
