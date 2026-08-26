@@ -1,6 +1,8 @@
 package com.fox.ysmu.client.sync;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.security.SecureRandom;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -22,6 +24,7 @@ import com.fox.ysmu.model.format.OpenYsmFormat;
 import com.fox.ysmu.model.format.OpenYsmSyncInfo;
 import com.fox.ysmu.model.resource.RawYsmModelAdapter;
 import com.fox.ysmu.model.resource.YSMBinaryDeserializer;
+import com.fox.ysmu.model.resource.YSMFolderDeserializer;
 import com.fox.ysmu.model.resource.pojo.RawYsmModel;
 import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.sync.OpenYsmModelSyncServer;
@@ -660,37 +663,51 @@ public final class OpenYsmModelSyncClient {
             }
 
             if (!RawYsmModelAdapter.isBridgeable(raw)) {
-                // Even when the model can't be bridged to legacy ModelData, we still
-                // register its extra wheel data and projectile sub-entity models (so
-                // arrow rendering works). Extra wheel is cheap and scheduled here;
-                // projectile geo/anims are PARSED on the background thread (we are
-                // already on THREAD_POOL) and only applied on the main thread.
-                Minecraft.getMinecraft().func_152344_a(() -> {
-                    try {
-                        ClientModelManager.registerExtraWheel(modelId, raw);
+                ysmu.LOG.info("[YSMU-MODEL] Model {} is NOT bridgeable (mainModel={}, armModel={}, textures={})",
+                    context.modelId,
+                    raw.mainEntity != null && raw.mainEntity.mainModel != null,
+                    raw.mainEntity != null && raw.mainEntity.armModel != null,
+                    raw.mainEntity != null ? raw.mainEntity.textures.size() : 0);
+                // OpenYSM binary deserialization produced a model that can't be bridged
+                // (common for builtin folder models: YSMBinaryDeserializer produces
+                // non-legacy-compatible textures or missing geometry). Fall back to
+                // loading from the local filesystem (BUILT/CUSTOM), which uses
+                // FolderFormat/YSMFolderDeserializer and handles these models correctly.
+                // This mirrors how loadDefaultModel() loads the default model.
+                // Decode the encoded model ID (e.g. _name_6d6973632f → misc/2_steve)
+                // back to the original name for filesystem lookup.
+                String decodedModelId = ModelIdUtil.getModelDisplayName(context.modelId);
+                Path localDir = resolveLocalModelDir(decodedModelId);
+                if (localDir != null) {
+                    try (YSMFolderDeserializer folderDeser = new YSMFolderDeserializer(localDir)) {
+                        RawYsmModel folderRaw = folderDeser.deserialize();
+                        folderRaw.modelId = context.modelId;
+                        if (RawYsmModelAdapter.isBridgeable(folderRaw)) {
+                            ModelData fallbackData = RawYsmModelAdapter.toLegacyModelData(folderRaw, context.modelId);
+                            // Register extra wheel data (if any)
+                            registerExtraWheelAndProjectiles(folderRaw, modelId, context.modelId);
+                            ysmu.LOG.info("[YSMU-MODEL] Non-bridgeable model {} loaded from local folder fallback",
+                                context.modelId);
+                            // Register on main thread via registerAll (same path as loadDefaultModel)
+                            final ModelData fd = fallbackData;
+                            Minecraft.getMinecraft().func_152344_a(() -> {
+                                try {
+                                    ClientModelManager.registerAll(fd);
+                                } catch (Exception e) {
+                                    ysmu.LOG.warn("Failed to register fallback model {}: {}", context.modelId, e.getMessage());
+                                }
+                            });
+                            return true;
+                        }
                     } catch (Exception e) {
-                        ysmu.LOG.warn("Failed to register extra wheel data for {}: {}",
+                        ysmu.LOG.info("[YSMU-MODEL] Local folder fallback failed for {}: {}",
                             context.modelId, e.getMessage());
                     }
-                });
-                if (raw.projectiles != null && !raw.projectiles.isEmpty()) {
-                    ResourceLocation baseModelId = ModelIdUtil.getModelIdFromMainId(modelId);
-                    java.util.List<ProjectileMatch> projectileMatches = parseProjectileResources(raw, baseModelId);
-                    if (!projectileMatches.isEmpty()) {
-                        Minecraft.getMinecraft().func_152344_a(() -> {
-                            try {
-                                applyProjectileResources(projectileMatches);
-                            } catch (Exception e) {
-                                ysmu.LOG.warn("Failed to register projectile models for non-bridgeable model {}",
-                                    context.modelId, e);
-                            }
-                        });
-                    }
                 }
-                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-                    ysmu.LOG.info("[YSMU-MODEL] OpenYSM synced model {} is not bridgeable, but projectiles registered",
-                        context.modelId);
-                }
+                // Local fallback also failed — register only extra wheel and projectiles
+                registerExtraWheelAndProjectiles(raw, modelId, context.modelId);
+                ysmu.LOG.info("[YSMU-MODEL] OpenYSM synced model {} is not bridgeable, no local fallback available",
+                    context.modelId);
                 return false;
             }
             ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, context.modelId);
@@ -713,7 +730,7 @@ public final class OpenYsmModelSyncClient {
                 bundle = ClientModelManager.preParseModel(data, !priority);
                 bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
-                ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage());
+                ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage(), e);
                 ClientModelManager.SYNC_FAILED++;
                 return false;
             }
@@ -729,9 +746,13 @@ public final class OpenYsmModelSyncClient {
                 new ResourceLocation(ysmu.MODID, context.modelId),
                 currentCacheFolderName + "/" + YSMClientCache.generateCacheFileName(context.hash1, context.hash2, clientKey));
             ClientModelManager.scheduleApply(bundle);
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                ysmu.LOG.info("[YSMU-MODEL] parseAndRegisterModel OK: {} (bridgeable=true, bundle scheduled)",
+                    context.modelId);
+            }
             return true;
         } catch (Exception e) {
-            ysmu.LOG.warn("Failed to parse OpenYSM synced model " + context.modelId, e);
+            ysmu.LOG.warn("Failed to parse OpenYSM synced model {}: {}", context.modelId, e.getMessage(), e);
             return false;
         }
     }
@@ -1033,6 +1054,45 @@ public final class OpenYsmModelSyncClient {
     private static File getCacheDir() {
         String folder = currentCacheFolderName == null ? "0" : currentCacheFolderName;
         return ServerModelManager.CACHE_CLIENT.resolve(folder).toFile();
+    }
+
+    /**
+     * Resolves the local filesystem directory for a model by checking BUILT then CUSTOM.
+     * Returns null if the model directory doesn't exist locally.
+     */
+    private static Path resolveLocalModelDir(String modelId) {
+        Path built = ServerModelManager.BUILT.resolve(modelId);
+        if (Files.isDirectory(built)) return built;
+        Path custom = ServerModelManager.CUSTOM.resolve(modelId);
+        if (Files.isDirectory(custom)) return custom;
+        return null;
+    }
+
+    /**
+     * Registers extra wheel data and projectile sub-entity models for a model
+     * (used by both the normal bridgeable path and the non-bridgeable fallback).
+     */
+    private static void registerExtraWheelAndProjectiles(RawYsmModel rawModel, ResourceLocation modelId, String contextModelId) {
+        Minecraft.getMinecraft().func_152344_a(() -> {
+            try {
+                ClientModelManager.registerExtraWheel(modelId, rawModel);
+            } catch (Exception e) {
+                ysmu.LOG.warn("Failed to register extra wheel data for {}: {}", contextModelId, e.getMessage());
+            }
+        });
+        if (rawModel.projectiles != null && !rawModel.projectiles.isEmpty()) {
+            ResourceLocation baseModelId = ModelIdUtil.getModelIdFromMainId(modelId);
+            java.util.List<ProjectileMatch> projectileMatches = parseProjectileResources(rawModel, baseModelId);
+            if (!projectileMatches.isEmpty()) {
+                Minecraft.getMinecraft().func_152344_a(() -> {
+                    try {
+                        applyProjectileResources(projectileMatches);
+                    } catch (Exception e) {
+                        ysmu.LOG.warn("Failed to register projectile models for {}", contextModelId);
+                    }
+                });
+            }
+        }
     }
 
     private static void sendPayload(byte[] payload) {
