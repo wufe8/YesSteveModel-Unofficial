@@ -157,6 +157,44 @@ public class ClientModelManager {
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     // ── Texture GPU memory management ─────────────────────────────────────
+
+    // ── GUI-aware idle suppression ────────────────────────────────────────
+    /**
+     * Whether the model preview GUI (PlayerModelScreen) is currently open.
+     * While true, all idle resource eviction (geo/anim/texture GPU + heap bytes)
+     * is suppressed to prevent re-load thrash when the user briefly closes and
+     * reopens the preview.
+     */
+    private static volatile boolean GUI_OPEN = false;
+    /**
+     * Timestamp (System.currentTimeMillis) of the last GUI close.
+     * Used with {@link Config#GUI_POST_CLOSE_GRACE_SECONDS} to suppress eviction
+     * for a grace period after the GUI closes.
+     */
+    private static volatile long GUI_CLOSE_TIME = 0L;
+
+    /**
+     * Called by {@link com.fox.ysmu.client.gui.PlayerModelScreen} on open/close.
+     */
+    public static void setGuiOpen(boolean open) {
+        GUI_OPEN = open;
+        if (!open) {
+            GUI_CLOSE_TIME = System.currentTimeMillis();
+        }
+    }
+
+    /**
+     * Returns true if idle eviction should be suppressed right now: either the
+     * GUI is currently open, or it was closed within the configured grace period.
+     */
+    public static boolean isIdleEvictionSuppressed() {
+        if (GUI_OPEN) return true;
+        long graceMs = (long) Config.GUI_POST_CLOSE_GRACE_SECONDS * 1000L;
+        if (graceMs <= 0L) return false;
+        return System.currentTimeMillis() - GUI_CLOSE_TIME < graceMs;
+    }
+
+    // ── Texture GPU memory management ─────────────────────────────────────
     /**
      * Timestamp (System.currentTimeMillis) of the last access to a texture.
      * Keyed by texture id (e.g. "ysmu:model_id/main"), refreshed on every bind or
@@ -1618,6 +1656,9 @@ public class ClientModelManager {
      * 主线程调用。
      */
     public static void sweepInUseModels() {
+        // Suppress in-use model sweep while the preview GUI is open or within
+        // the post-close grace period — keeps browsed models resident.
+        if (isIdleEvictionSuppressed()) return;
         long now = System.currentTimeMillis();
         ResourceLocation ownModel = getLocalPlayerMainModelId();
         for (java.util.Map.Entry<ResourceLocation, Long> e : IN_USE_MODELS.entrySet()) {
@@ -1659,6 +1700,9 @@ public class ClientModelManager {
      * bytes matches the pre-optimization baseline and keeps rendering robust.
      */
     public static void unloadIdleTextures(long now) {
+        // Suppress idle texture eviction while the preview GUI is open or within
+        // the post-close grace period — prevents re-load thrash on reopen.
+        if (isIdleEvictionSuppressed()) return;
         // TEXTURE_LAST_USED keys are texture ids (e.g. "ysmu:model_id/main").
         // MODELS keys are base model ids (e.g. "ysmu:model_id").
         for (Map.Entry<ResourceLocation, List<ResourceLocation>> entry : MODELS.entrySet()) {

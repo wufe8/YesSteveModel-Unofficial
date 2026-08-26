@@ -113,6 +113,8 @@ public class PlayerModelScreen extends GuiScreen {
 
     @Override
     public void initGui() {
+        // Signal that the model preview GUI is open — suppresses idle eviction.
+        ClientModelManager.setGuiOpen(true);
         // Release off-screen FBOs of old preview buttons before clearing, otherwise
         // page flips leak VRAM (each ModelButton owns a Framebuffer).
         disposePreviewButtons();
@@ -453,6 +455,8 @@ public class PlayerModelScreen extends GuiScreen {
 
     @Override
     public void onGuiClosed() {
+        // Signal that the model preview GUI is closed — starts the grace period.
+        ClientModelManager.setGuiOpen(false);
         disposePreviewButtons();
         super.onGuiClosed();
     }

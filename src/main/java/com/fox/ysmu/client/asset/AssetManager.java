@@ -68,14 +68,22 @@ public final class AssetManager {
     /**
      * 主线程周期回收：空闲几何/动画（框架核心）+ 空闲 GPU 纹理。
      * 由 {@link ClientModelManager#unloadUnusedCaches()} 触发（客户端 tick，每 60s）。
+     * 当模型预览 GUI 打开或刚关闭（宽限期内），跳过所有资源回收。
      */
     public static void tick() {
-        long now = System.currentTimeMillis();
         // 内置兜底模型（default）必须常驻：若被闲置释放，GUI 预览 fallback 到它时
         // GeckoLib 的 getModel() 会抛 GeoModelException "Could not find model" 崩溃。
         // 每次回收前 touch 刷新其活跃时间，evict 便不会释放它。
         GEO.touch(com.fox.ysmu.client.model.CustomPlayerModel.DEFAULT_MAIN_MODEL);
         ANIM.touch(com.fox.ysmu.client.model.CustomPlayerModel.DEFAULT_MAIN_MODEL);
+
+        // Suppress all resource eviction while the preview GUI is open or within
+        // the post-close grace period.
+        if (com.fox.ysmu.client.ClientModelManager.isIdleEvictionSuppressed()) {
+            return;
+        }
+
+        long now = System.currentTimeMillis();
         GEO.evict(now, IDLE_UNLOAD_MS, MAX_WEIGHT);
         ANIM.evict(now, IDLE_UNLOAD_MS, MAX_WEIGHT);
         ClientModelManager.unloadIdleTextures(now);
