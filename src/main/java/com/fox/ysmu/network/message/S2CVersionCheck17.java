@@ -48,6 +48,11 @@ public class S2CVersionCheck17 implements IMessage {
                 // 否则加载期间 reload 时旧任务会继续空转到解析排空/60s 停滞。新同步在
                 // packet03 处重新置 true。
                 ClientModelManager.SYNC_IN_PROGRESS = false;
+                // 清空所有客户端模型注册状态（MODELS/几何/纹理/动画等），确保
+                // /ysm reload 后已删除的模型不会残留在客户端。与 legacy 同步路径
+                // （sendSyncModelMessage）的清空逻辑对等。清空调度在主线程异步执行，
+                // 在收到 packet03 并解析完首个模型之前必定完成（网络往返 + 解析时间）。
+                ClientModelManager.prepareForNewSync();
                 NetworkHandler.CHANNEL.sendToServer(new C2SVersionCheck17(NetworkHandler.PROTOCOL_VERSION));
             }
             return null;

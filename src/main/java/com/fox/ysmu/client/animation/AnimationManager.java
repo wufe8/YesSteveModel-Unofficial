@@ -358,17 +358,34 @@ public final class AnimationManager {
                 }
                 return controllerState;
             }
-            // No matching OpenYSM controller — fall back to legacy animation.
+            // No matching OpenYSM controller. Only fall back to the raw legacy
+            // animation when the model declares NO parallel controller at all.
+            // A model that ships parallel controllers drives those animations
+            // itself, frequently merging several raw pre_parallelN animations
+            // into one state (yomon's player.pre_parallel_0 plays
+            // pre_parallel1..7). Replaying the raw animation on this per-slot
+            // controller duplicates it on a second controller whose clock never
+            // advances, and because this controller is processed after the
+            // merged one it overwrites it — that pinned ysmGlowSword* /
+            // ysmGlowSwordLight* to their tick-0 pose whatever the merged
+            // animation produced.
+            // This is safe because OpenYsmAnimationControllerRegistry gives every
+            // pre_parallelN/parallelN animation the model defines its own implicit
+            // controller (mirroring OpenYSM's ParallelProcessor), so a model that
+            // owns pre_parallelN — e.g. rok, which only declares player.parallel_0..7
+            // and drives v.roaming.* visibility from pre_parallel3/6/7 — still plays
+            // those animations through the OpenYSM runtime above.
             // Skip if the animation doesn't exist in the model's file to avoid
             // GeckoLib's System.out.printf spam ("Could not load animation: ...").
-            if (animationExistsInFile(animId, animationName)) {
+            if (!com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry
+                .hasParallelController(animId) && animationExistsInFile(animId, animationName)) {
                 if (Config.DEBUG_CONTROLLER && geckoName != null && geckoName.startsWith("parallel_")) {
                     ysmu.LOG.info("[YSMU-PAR] {} fallback -> playLoopAnimation('{}')", geckoName, animationName);
                 }
                 return playLoopAnimation(event, animationName);
             }
             if (Config.DEBUG_CONTROLLER && geckoName != null && geckoName.startsWith("parallel_")) {
-                ysmu.LOG.info("[YSMU-PAR] {} fallback MISS: '{}' not in file", geckoName, animationName);
+                ysmu.LOG.info("[YSMU-PAR] {} suppressed (model declares parallel controllers)", geckoName);
             }
             return PlayState.STOP;
         }

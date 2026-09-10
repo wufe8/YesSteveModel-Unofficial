@@ -905,6 +905,56 @@ public final class OpenYsmPlayerControllerRuntime {
             if (excludeRoot) {
                 mergedBones.removeIf(ba -> "Root".equals(ba.boneName));
             }
+            // Playback period of the flattened animation. In OpenYSM every
+            // animation of a state is an independent timeline that loops on its
+            // own length; YSMU flattens them into one, so the copy has to span
+            // the LONGEST contributor. Copying the primary's length instead lets
+            // the shortest contributor become the clock: yomon's
+            // player.pre_parallel_0 starts with hair_physics (0.0202 s, a
+            // per-frame physics driver), which pinned the whole state to
+            // tick ~0 and froze pre_parallel6's 4 s lightning flash.
+            double mergedLength = 0.0d;
+            java.util.List<software.bernie.geckolib3.core.builder.Animation> contributors =
+                new java.util.ArrayList<>(animationNames.size());
+            for (int i = 0; i < animationNames.size(); i++) {
+                software.bernie.geckolib3.core.builder.Animation a;
+                if (i == 0) {
+                    a = primaryAnim;
+                } else {
+                    a = animFile != null ? animFile.getAnimation(animationNames.get(i)) : null;
+                }
+                if (a == null) {
+                    a = lookupAnimation(animationNames.get(i));
+                }
+                contributors.add(a);
+                double len = playbackLengthTicks(a);
+                if (len > mergedLength) {
+                    mergedLength = len;
+                }
+            }
+            // A contributor shorter than the merged period must keep firing on
+            // its own schedule, otherwise a per-frame driver such as
+            // hair_physics (whose timeline maintains the v.HP_* deltas consumed
+            // by the hair springs) would only tick once per merged loop. Repeat
+            // its instructions; its bone channels are all constant Molang values
+            // and therefore clock-independent.
+            for (software.bernie.geckolib3.core.builder.Animation a : contributors) {
+                double len = playbackLengthTicks(a);
+                if (a == null || len <= 0.0d || len >= mergedLength - 0.001d
+                    || a.loop != ILoopType.EDefaultLoopTypes.LOOP
+                    || a.customInstructionKeyframes == null
+                    || a.customInstructionKeyframes.isEmpty()) {
+                    continue;
+                }
+                for (double offset = len; offset < mergedLength - 0.001d; offset += len) {
+                    for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : a.customInstructionKeyframes) {
+                        mergedTimeline.add(
+                            new software.bernie.geckolib3.core.keyframe.EventKeyFrame<>(
+                                kf.getStartTick() + offset,
+                                kf.getEventData()));
+                    }
+                }
+            }
             String mergedName = "__ysm_merged__" + primaryName;
             software.bernie.geckolib3.core.builder.Animation mergedAnim = null;
             software.bernie.geckolib3.file.AnimationFile cachedFile =
@@ -929,7 +979,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 mergedAnim.soundKeyFrames = new java.util.ArrayList<>();
             }
             if (primaryAnim != null) {
-                mergedAnim.animationLength = primaryAnim.animationLength;
+                mergedAnim.animationLength = mergedLength > 0.0d ? mergedLength : primaryAnim.animationLength;
                 mergedAnim.animTimeUpdate = primaryAnim.animTimeUpdate;
                 mergedAnim.animSpeed = primaryAnim.animSpeed;
                 // When the animation file has no explicit loop field (null),
@@ -986,6 +1036,26 @@ public final class OpenYsmPlayerControllerRuntime {
             runtimeState.lastActiveAnimations.clear();
             runtimeState.enteredTick = event.getAnimationTick();
         }
+        // TEMP PROBE (remove): is the controller clock actually advancing?
+        // if (ctrlName != null && allowDebugLog("TICK-" + ctrlName)) {
+            // software.bernie.geckolib3.core.builder.Animation playingAnim = event.getController()
+                // .getCurrentAnimation();
+            // double ctrlTick = event.getController().animationSpeed
+                // * Math.max(event.getAnimationTick() - event.getController().tickOffset, 0.0d);
+            // ysmu.LOG.info(
+                // "[YSMU-CTRL-TICK] {} state='{}' ctrlTick={} rawTick={} offset={} speed={} sameAnim={} sameState={} final='{}' playing='{}' playingLen={}",
+                // ctrlName,
+                // state.name,
+                // ctrlTick,
+                // event.getAnimationTick(),
+                // event.getController().tickOffset,
+                // event.getController().animationSpeed,
+                // sameAnim,
+                // sameState,
+                // finalName,
+                // playingAnim != null ? playingAnim.animationName : "<none>",
+                // playingAnim != null ? playingAnim.animationLength : null);
+        // }
         if (sameAnim) {
             // Same state + same animation → skip setAnimation to preserve
             // keyframe tracking (sound/particle keyframes already executed
@@ -1062,6 +1132,46 @@ public final class OpenYsmPlayerControllerRuntime {
             event.getController().markNeedsReload();
             event.getController().setAnimation(builder);
         }
+    }
+
+    /** Playback period of one animation in ticks, or {@code <= 0} when it has no
+     *  time-based content at all (every channel is a constant Molang value) or
+     *  when its clock is driven by {@code anim_time_update}.
+     *  <p>{@code calculateLength} returns {@link Double#MAX_VALUE} as a sentinel
+     *  for "no keyframe timing", which must not be treated as a real period. */
+    private static double playbackLengthTicks(software.bernie.geckolib3.core.builder.Animation animation) {
+        if (animation == null) {
+            return 0.0d;
+        }
+        if (animation.animTimeUpdate != null && !animation.animTimeUpdate.isEmpty()) {
+            return 0.0d;
+        }
+        Double declared = animation.animationLength;
+        if (declared != null && declared > 0.0d && declared < Double.MAX_VALUE) {
+            return declared;
+        }
+        double longest = 0.0d;
+        if (animation.boneAnimations != null) {
+            for (software.bernie.geckolib3.core.keyframe.BoneAnimation bone : animation.boneAnimations) {
+                longest = Math.max(longest, channelLengthTicks(bone.rotationKeyFrames));
+                longest = Math.max(longest, channelLengthTicks(bone.positionKeyFrames));
+                longest = Math.max(longest, channelLengthTicks(bone.scaleKeyFrames));
+            }
+        }
+        return longest;
+    }
+
+    /** Total duration of a keyframe channel in ticks (the axes share lengths). */
+    private static double channelLengthTicks(
+        software.bernie.geckolib3.core.keyframe.VectorKeyFrameList<software.bernie.geckolib3.core.keyframe.KeyFrame<com.eliotlash.mclib.math.IValue>> channel) {
+        if (channel == null || channel.xKeyFrames == null || channel.xKeyFrames.isEmpty()) {
+            return 0.0d;
+        }
+        double total = 0.0d;
+        for (software.bernie.geckolib3.core.keyframe.KeyFrame<com.eliotlash.mclib.math.IValue> frame : channel.xKeyFrames) {
+            total += frame.getLengthPrimitive();
+        }
+        return total;
     }
 
     /** Merges {@code source} bone animations into {@code target}, channel by channel.

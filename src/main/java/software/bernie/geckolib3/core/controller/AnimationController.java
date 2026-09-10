@@ -901,11 +901,42 @@ public class AnimationController<T extends IAnimatable> {
                 boneAnimationQueue.scaleZQueue
                     .add(getAnimationPointAtTick(scaleKeyFrames.zKeyFrames, tick, false, Axis.Z));
             }
+
+            // probeBoneKeyFrames(currentAnimation.animationName, boneAnimation, tick, boneAnimationQueue); // TEMP PROBE (remove)
         }
         if (this.transitionLengthTicks == 0 && shouldResetTick && this.animationState == AnimationState.Transitioning) {
             this.currentAnimation = animationQueue.poll();
         }
     }
+
+    // ---- TEMP PROBE (remove) -------------------------------------------------
+    // /** Logs, every frame, the keyframe point produced for the two bones we are
+     // *  chasing. Must be called AFTER the queues are filled. */
+    // private void probeBoneKeyFrames(String animName, BoneAnimation bone, double tick,
+        // BoneAnimationQueue queue) {
+        // String name = bone.boneName;
+        // if (!("ysmGlowSword1".equals(name) || "ysmGlowSwordLight1".equals(name))) {
+            // return;
+        // }
+        // AnimationPoint p = queue.positionXQueue.peekLast();
+        // AnimationPoint s = queue.scaleXQueue.peekLast();
+        // com.fox.ysmu.ysmu.LOG.info(
+            // "[YSMU-KF] bone={} tick={} anim={} posN={} posTick={} posLen={} posStart={} posEnd={} scaleN={} sTick={} sLen={} sStart={} sEnd={}",
+            // name,
+            // tick,
+            // animName,
+            // bone.positionKeyFrames == null ? -1 : bone.positionKeyFrames.xKeyFrames.size(),
+            // p == null ? null : p.currentTick,
+            // p == null ? null : p.animationEndTick,
+            // p == null ? null : p.animationStartValue,
+            // p == null ? null : p.animationEndValue,
+            // bone.scaleKeyFrames == null ? -1 : bone.scaleKeyFrames.xKeyFrames.size(),
+            // s == null ? null : s.currentTick,
+            // s == null ? null : s.animationEndTick,
+            // s == null ? null : s.animationStartValue,
+            // s == null ? null : s.animationEndValue);
+    // }
+    // ---- end TEMP PROBE ------------------------------------------------------
 
     private double wrapLoopTick(double actualTick, double tick, double animationLength) {
         if (animationLength <= 0.0D) {

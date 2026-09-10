@@ -99,7 +99,19 @@ public class JsonAnimationUtils {
                     .isJsonObject()) {
                     JsonObject valueObject = entrySet.getValue()
                         .getAsJsonObject();
-                    if (valueObject.has("post")) {
+                    if (valueObject.has("pre")) {
+                        // Bedrock step keyframe (the value changes between `pre` and
+                        // `post`, i.e. the bone jumps at this time). Hand the raw
+                        // object to JsonKeyFrameUtils, which emits the two frames
+                        // GeckoLib needs to reproduce the jump. Wrapping it into a
+                        // single vector here used to drop `pre` entirely, which
+                        // turned every step into a linear ramp AND, worse, made the
+                        // interval *before* a channel's first keyframe use that
+                        // keyframe's `post` value instead of its `pre` value — so
+                        // one-shot effect bones (e.g. yomon's ysmGlowSwordLight*
+                        // lightning) stayed visible long before they should flash.
+                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
+                    } else if (valueObject.has("post")) {
                         JsonElement postValue = valueObject.get("post");
                         JsonObject wrapped = new JsonObject();
                         if (postValue.isJsonPrimitive()) {
@@ -151,7 +163,19 @@ public class JsonAnimationUtils {
                     .isJsonObject()) {
                     JsonObject valueObject = entrySet.getValue()
                         .getAsJsonObject();
-                    if (valueObject.has("post")) {
+                    if (valueObject.has("pre")) {
+                        // Bedrock step keyframe (the value changes between `pre` and
+                        // `post`, i.e. the bone jumps at this time). Hand the raw
+                        // object to JsonKeyFrameUtils, which emits the two frames
+                        // GeckoLib needs to reproduce the jump. Wrapping it into a
+                        // single vector here used to drop `pre` entirely, which
+                        // turned every step into a linear ramp AND, worse, made the
+                        // interval *before* a channel's first keyframe use that
+                        // keyframe's `post` value instead of its `pre` value — so
+                        // one-shot effect bones (e.g. yomon's ysmGlowSwordLight*
+                        // lightning) stayed visible long before they should flash.
+                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
+                    } else if (valueObject.has("post")) {
                         JsonElement postValue = valueObject.get("post");
                         JsonObject wrapped = new JsonObject();
                         if (postValue.isJsonPrimitive()) {
@@ -203,7 +227,19 @@ public class JsonAnimationUtils {
                     .isJsonObject()) {
                     JsonObject valueObject = entrySet.getValue()
                         .getAsJsonObject();
-                    if (valueObject.has("post")) {
+                    if (valueObject.has("pre")) {
+                        // Bedrock step keyframe (the value changes between `pre` and
+                        // `post`, i.e. the bone jumps at this time). Hand the raw
+                        // object to JsonKeyFrameUtils, which emits the two frames
+                        // GeckoLib needs to reproduce the jump. Wrapping it into a
+                        // single vector here used to drop `pre` entirely, which
+                        // turned every step into a linear ramp AND, worse, made the
+                        // interval *before* a channel's first keyframe use that
+                        // keyframe's `post` value instead of its `pre` value — so
+                        // one-shot effect bones (e.g. yomon's ysmGlowSwordLight*
+                        // lightning) stayed visible long before they should flash.
+                        output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
+                    } else if (valueObject.has("post")) {
                         JsonElement postValue = valueObject.get("post");
                         JsonObject wrapped = new JsonObject();
                         if (postValue.isJsonPrimitive()) {

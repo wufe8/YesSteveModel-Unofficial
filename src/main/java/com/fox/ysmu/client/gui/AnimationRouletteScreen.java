@@ -689,11 +689,11 @@ public class AnimationRouletteScreen extends GuiScreen {
     private void handleRadioChange(int formIndex, String expression) {
         ConfigForm form = currentConfigGroup.forms.get(formIndex);
         if (StringUtils.isNotBlank(expression)) {
-            // Handle semicolon-separated multiple assignments (e.g., "v.value_kuzi=0;v.ha=1;...")
-            String[] parts = expression.split(";");
-            for (String part : parts) {
+            // Apply every assignment in the label to the current model scope.
+            for (String part : expression.split(";")) {
                 setMolangVar(part.trim());
             }
+            OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
         }
     }
 

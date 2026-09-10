@@ -217,9 +217,7 @@ public class JsonKeyFrameUtils {
 
                 if (entryObj.has("pre")) {
                     JsonElement postElement = entryObj.get("pre");
-                    JsonArray array = postElement.isJsonArray() ? postElement.getAsJsonArray()
-                        : postElement.getAsJsonObject()
-                            .getAsJsonArray("vector");
+                    JsonArray array = getKeyFrameVector(postElement);
                     JsonObject object = new JsonObject();
                     object.add("vector", array);
                     if (entryObj.has("lerp_mode")) {
@@ -230,9 +228,7 @@ public class JsonKeyFrameUtils {
 
                 if (entryObj.has("post")) {
                     JsonElement postElement = entryObj.get("post");
-                    JsonArray array = postElement.isJsonArray() ? postElement.getAsJsonArray()
-                        : postElement.getAsJsonObject()
-                            .getAsJsonArray("vector");
+                    JsonArray array = getKeyFrameVector(postElement);
                     JsonObject object = new JsonObject();
                     object.add("vector", array);
                     if (entryObj.has("lerp_mode")) {
@@ -269,9 +265,7 @@ public class JsonKeyFrameUtils {
 
                 if (entryObj.has("pre")) {
                     JsonElement postElement = entryObj.get("pre");
-                    JsonArray array = postElement.isJsonArray() ? postElement.getAsJsonArray()
-                        : postElement.getAsJsonObject()
-                            .getAsJsonArray("vector");
+                    JsonArray array = getKeyFrameVector(postElement);
                     JsonObject object = new JsonObject();
                     object.add("vector", array);
                     if (entryObj.has("lerp_mode")) {
@@ -282,9 +276,7 @@ public class JsonKeyFrameUtils {
 
                 if (entryObj.has("post")) {
                     JsonElement postElement = entryObj.get("post");
-                    JsonArray array = postElement.isJsonArray() ? postElement.getAsJsonArray()
-                        : postElement.getAsJsonObject()
-                            .getAsJsonArray("vector");
+                    JsonArray array = getKeyFrameVector(postElement);
                     JsonObject object = new JsonObject();
                     object.add("vector", array);
                     if (entryObj.has("lerp_mode")) {

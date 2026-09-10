@@ -653,7 +653,11 @@ public class ClientModelManager {
         }
         // Register controller files
         if (!bundle.controllerFiles.isEmpty()) {
-            OpenYsmAnimationControllerRegistry.register(ModelIdUtil.getMainId(modelId), bundle.controllerFiles.values());
+            // animationNames lets the registry synthesise the implicit
+            // player.pre_parallel_N / player.parallel_N controllers that OpenYSM
+            // derives from the animation list (see synthesizeImplicitParallelControllers).
+            OpenYsmAnimationControllerRegistry.register(ModelIdUtil.getMainId(modelId),
+                bundle.controllerFiles.values(), bundle.animationNames);
         }
         // Post-registration: expand mod dependency detection to controllers whose
         // animation keyframe Molang expressions reference mod-specific variables
@@ -1304,6 +1308,35 @@ public class ClientModelManager {
         }
     }
 
+    /**
+     * Prepares the client for a new model sync by clearing all runtime model
+     * caches and draining the apply pipeline. Called at the start of both the
+     * legacy and OpenYSM sync paths so that deleted/renamed models are properly
+     * removed from the client before the new sync index is processed.
+     *
+     * <p>This method is safe to call from any thread: apply-queue drain is
+     * lock-free, and the heavy cache clear is scheduled on the main thread.
+     */
+    public static void prepareForNewSync() {
+        // Drop any bundles still queued from a previous sync (both the normal and
+        // the default-priority queue) so a fresh sync starts from an empty apply
+        // pipeline. Permits for dropped bundles are released so the semaphore
+        // cap doesn't leak across worlds.
+        PreParsedModelBundle dropped;
+        while ((dropped = PENDING_APPLY.poll()) != null) {
+            APPLY_SLOTS.release();
+        }
+        while ((dropped = PENDING_APPLY_DEFAULT.poll()) != null) {
+            APPLY_SLOTS.release();
+        }
+        // Schedule the heavy cache clear (GPU textures, GeckoLibCache, all model
+        // maps) on the main thread. This must complete before any new models are
+        // applied — network round-trips before the first applyPreParsed guarantee
+        // enough time.
+        Minecraft.getMinecraft()
+            .func_152344_a(ClientModelManager::clearRuntimeModelCaches);
+    }
+
     public static void sendSyncModelMessage() {
         ysmu.LOG.info(
             "YSM client starting model sync: currentModels={}, rememberedCachedModels={}",
@@ -1316,19 +1349,7 @@ public class ClientModelManager {
         SYNC_LOADED = 0;
         SYNC_FAILED = 0;
         SYNC_IN_PROGRESS = true;
-        // Drop any bundles still queued from a previous sync (both the normal and
-        // the default-priority queue) so a fresh sync starts from an empty apply
-        // pipeline. Permits for dropped bundles are released so the semaphore
-        // cap doesn't leak across worlds.
-        PreParsedModelBundle dropped;
-        while ((dropped = PENDING_APPLY.poll()) != null) {
-            APPLY_SLOTS.release();
-        }
-        while ((dropped = PENDING_APPLY_DEFAULT.poll()) != null) {
-            APPLY_SLOTS.release();
-        }
-        Minecraft.getMinecraft()
-            .func_152344_a(ClientModelManager::clearRuntimeModelCaches);
+        prepareForNewSync();
         String[] md5Info = getMd5Info();
         ysmu.LOG.info("YSM client sending model sync md5 list: count={}, values={}", md5Info.length, Lists.newArrayList(md5Info));
         SyncModelFiles syncModelFiles = new SyncModelFiles(md5Info);
@@ -1939,6 +1960,26 @@ public class ClientModelManager {
                 if (StringUtils.isBlank(varName)) continue;
                 com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
                     .registerModelRoamingVar(modelId, varName);
+                // Radio labels may assign additional variables which are not
+                // present in the form's value field (for example
+                // v.value_main_sword also assigns v.roaming.main_sword).
+                // Register those variables in the same model namespace so the
+                // controller/runtime sees the values written by the wheel.
+                for (String labelExpression : form.labels.values()) {
+                    if (labelExpression == null) continue;
+                    java.util.regex.Matcher assignment = java.util.regex.Pattern
+                        .compile("(?:^|;)\\s*(?:v\\.)?([A-Za-z_][A-Za-z0-9_.]*?)\\s*=(?!=)")
+                        .matcher(labelExpression);
+                    while (assignment.find()) {
+                        String labelVar = assignment.group(1);
+                        if (!StringUtils.isBlank(labelVar)) {
+                            com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                                .registerModelRoamingVar(modelId, labelVar);
+                            com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime
+                                .setModelRoamingDefault(modelId, labelVar, 0.0);
+                        }
+                    }
+                }
                 // Compute and store per-model default (overrides global PENDING_ROAMING).
                 double initVal;
                 if ("range".equals(form.type) && form.min < form.max) {

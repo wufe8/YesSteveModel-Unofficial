@@ -13,6 +13,13 @@ final class OpenYsmControllerDefinitions {
 
     static final class ControllerSet {
         final Map<String, Controller> controllers = new LinkedHashMap<>();
+        /** Every controller name declared by the model's controller JSON, including
+         *  entries that carry no states at all. OpenYSM's CompositeAnimationController
+         *  prefers a declared animation entry over the implicit named-animation
+         *  predicate, so a declared-but-empty entry has to shadow the implicit
+         *  controller instead of falling back to the raw animation
+         *  (smx/yomon declare empty player.pre_parallel_1..7 placeholders). */
+        final Set<String> declaredNames = new LinkedHashSet<>();
     }
 
     static final class Controller {

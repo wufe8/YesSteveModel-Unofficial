@@ -31,6 +31,19 @@ public final class OpenYsmAnimationControllerRegistry {
     private OpenYsmAnimationControllerRegistry() {}
 
     public static void register(ResourceLocation animationId, Iterable<byte[]> controllerFiles) {
+        register(animationId, controllerFiles, null);
+    }
+
+    /**
+     * @param animationNames every animation defined by the model (light name scan,
+     *                       available in both eager and lazy animation mode). Used to
+     *                       synthesise the implicit parallel controllers that OpenYSM
+     *                       builds from the animation list rather than from
+     *                       {@code controller/*.json}. Pass {@code null} for
+     *                       non-player/sub-model registrations (e.g. projectiles).
+     */
+    public static void register(ResourceLocation animationId, Iterable<byte[]> controllerFiles,
+        Iterable<String> animationNames) {
         if (animationId == null || controllerFiles == null) {
             return;
         }
@@ -47,6 +60,15 @@ public final class OpenYsmAnimationControllerRegistry {
                 ysmu.LOG.warn("Failed to parse OpenYSM animation controller for {}", animationId, e);
             }
         }
+        // OpenYSM's ParallelProcessor also emits a controller for every animation
+        // named pre_parallel0..7 / parallel0..7 that the model does not declare an
+        // entry for: CompositeAnimationController then falls back to a
+        // NamedAnimationPredicate that plays that raw animation. Without this,
+        // rok (which declares only player.parallel_0..7) never plays
+        // pre_parallel1..7 — the animations that scale MHat/MCape/LeftShoes/
+        // Left_Sword/face effects from v.roaming.* — so every 轮盘 checkbox and
+        // radio silently did nothing and the parts stayed visible.
+        synthesizeImplicitParallelControllers(set, animationNames);
         if (set.controllers.isEmpty()) {
             CONTROLLERS.remove(animationId);
             return;
@@ -66,10 +88,77 @@ public final class OpenYsmAnimationControllerRegistry {
         return CONTROLLERS.get(animationId);
     }
 
+    /** {@code pre_parallelN} / {@code parallelN} — OpenYSM's ParallelProcessor
+     *  animation-name matcher ({@code ^(pre_)?parallel[0-7]$}). */
+    private static final java.util.regex.Pattern IMPLICIT_PARALLEL_ANIMATION =
+        java.util.regex.Pattern.compile("^(pre_parallel|parallel)([0-7])$");
+
+    /**
+     * Creates {@code player.pre_parallel_N} / {@code player.parallel_N} controllers
+     * for parallel animations that have no declared controller entry, mirroring
+     * OpenYSM's {@code ParallelProcessor}. A declared entry always wins
+     * ({@code CompositeAnimationController.init} prefers the animation entry), so
+     * an existing controller with the same name is left untouched.
+     */
+    private static void synthesizeImplicitParallelControllers(ControllerSet set, Iterable<String> animationNames) {
+        if (animationNames == null) {
+            return;
+        }
+        for (String animationName : animationNames) {
+            if (animationName == null) {
+                continue;
+            }
+            java.util.regex.Matcher matcher = IMPLICIT_PARALLEL_ANIMATION.matcher(animationName);
+            if (!matcher.matches()) {
+                continue;
+            }
+            String controllerName = "player." + matcher.group(1) + "_" + matcher.group(2);
+            String shortName = matcher.group(1) + "_" + matcher.group(2);
+            if (set.controllers.containsKey(controllerName) || set.controllers.containsKey(shortName)
+                || set.declaredNames.contains(controllerName) || set.declaredNames.contains(shortName)) {
+                continue;
+            }
+            State state = new State();
+            state.name = "default";
+            state.animations.add(new AnimationEntry(animationName, ""));
+            Controller controller = new Controller();
+            controller.name = controllerName;
+            controller.initialState = state.name;
+            controller.states.put(state.name, state);
+            set.controllers.put(controllerName, controller);
+            if (Config.DEBUG_CONTROLLER) {
+                ysmu.LOG.info("[YSMU-CTRL] implicit parallel controller {} -> '{}'",
+                    controllerName, animationName);
+            }
+        }
+    }
+
     /** Returns true if the model has an OpenYSM controller with the given name. */
     public static boolean hasController(ResourceLocation animationId, String controllerName) {
         ControllerSet set = CONTROLLERS.get(animationId);
         return set != null && set.controllers.containsKey(controllerName);
+    }
+
+    /** True when the model declares any parallel controller
+     *  ({@code player.pre_parallel_*} / {@code player.parallel_*}).
+     *  <p>A model that ships parallel controllers owns those animations: it
+     *  commonly merges several raw {@code pre_parallelN} animations into one
+     *  state (yomon's {@code player.pre_parallel_0} plays {@code pre_parallel1..7}),
+     *  so the legacy per-slot controllers must not replay them as well. Every
+     *  {@code pre_parallelN}/{@code parallelN} animation the model actually defines
+     *  gets its own controller from {@link #synthesizeImplicitParallelControllers},
+     *  so nothing is lost by suppressing the raw per-slot fallback. */
+    public static boolean hasParallelController(ResourceLocation animationId) {
+        ControllerSet set = CONTROLLERS.get(animationId);
+        if (set == null) {
+            return false;
+        }
+        for (String name : set.controllers.keySet()) {
+            if (name != null && name.contains("parallel")) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -188,6 +277,7 @@ public final class OpenYsmAnimationControllerRegistry {
                 continue;
             }
             Controller controller = parseController(entry.getKey(), entry.getValue().getAsJsonObject());
+            set.declaredNames.add(controller.name);
             if (!controller.states.isEmpty()) {
                 set.controllers.put(controller.name, controller);
             }
