@@ -330,6 +330,13 @@ public class AnimationController<T extends IAnimatable> {
         if (encounteredError.get() || animations.isEmpty()) {
             return false;
         }
+        // YSMU: remember what was playing and how far it actually got before this
+        // swap. The incoming variant may only skip the sound keyframes the outgoing
+        // animation really played (see carrySoundKeyFramesPassed).
+        Animation outgoing = this.currentAnimation;
+        double outgoingPosition = this.animationSpeed == 0.0D
+            ? 0.0D
+            : this.animationSpeed * Math.max(0.0D, absoluteTick - this.tickOffset);
         this.animationQueue = animations;
         this.currentAnimationBuilder = builder;
         this.currentAnimation = this.animationQueue.poll();
@@ -347,7 +354,54 @@ public class AnimationController<T extends IAnimatable> {
         // even though the playback position is already past them.  New Animation
         // objects create distinct EventKeyFrame instances, so old keyframes in the
         // set do not prevent new ones from executing at their appropriate ticks.
+        // Those fresh instances are the remaining hole: the incoming variant's own
+        // tick-0 sound keyframe is not in the set either, so it fires immediately
+        // even though this swing already played its sound.
+        carrySoundKeyFramesPassed(outgoing, outgoingPosition);
         return this.currentAnimation != null;
+    }
+
+    /**
+     * YSMU: carries the "this sound already played" state across a preserved-tick
+     * variant switch.
+     * <p>{@link #setAnimationPreservingTick} keeps the playback position when a
+     * controller state swaps between its conditional animation entries — an attack
+     * state moving from its standing entry to its walking or running entry
+     * ({@code sword_idle_attack_01} → {@code sword_attack_run1}), all of which
+     * author the swing sound at tick 0.0. The incoming animation owns fresh
+     * {@code EventKeyFrame} instances, so nothing in {@code executedKeyFrames}
+     * stops its tick-0 sound from firing again mid-swing.
+     * <p>Only sound keyframes the <em>outgoing</em> animation actually executed
+     * behind the kept position are carried over. Two cases must not be suppressed:
+     * the frame after a state entry, where the runtime re-enters this path because
+     * its "active animation list" bookkeeping was not updated on the entry frame
+     * (there the outgoing animation never got to run its keyframes), and a variant
+     * whose predecessor had no sound at all (then the incoming sound has not been
+     * heard yet and should play).
+     */
+    private void carrySoundKeyFramesPassed(Animation outgoing, double position) {
+        if (this.currentAnimation == null || outgoing == null || position <= 0.0D
+            || this.currentAnimation.soundKeyFrames == null
+            || this.currentAnimation.soundKeyFrames.isEmpty()
+            || outgoing.soundKeyFrames == null) {
+            return;
+        }
+        boolean outgoingSoundPlayed = false;
+        for (EventKeyFrame<String> soundKeyFrame : outgoing.soundKeyFrames) {
+            if (soundKeyFrame.getStartTick() < position
+                && this.executedKeyFrames.contains(soundKeyFrame)) {
+                outgoingSoundPlayed = true;
+                break;
+            }
+        }
+        if (!outgoingSoundPlayed) {
+            return;
+        }
+        for (EventKeyFrame<String> soundKeyFrame : this.currentAnimation.soundKeyFrames) {
+            if (soundKeyFrame.getStartTick() < position) {
+                this.executedKeyFrames.add(soundKeyFrame);
+            }
+        }
     }
 
     /**

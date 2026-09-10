@@ -493,7 +493,10 @@ public class AnimationRouletteScreen extends GuiScreen {
             if (fy + fh < 10 || fy > height - 30) continue;
             if ("checkbox".equals(form.type) && pButton == 0) {
                 int cbY = fy + 22;
-                if (pMouseX >= panelX && pMouseX <= panelX + 14 && pMouseY >= cbY && pMouseY <= cbY + 14) {
+                // Whole row is clickable: the 14x14 box alone was easy to miss
+                // (the title/description text next to it did nothing).
+                if (pMouseX >= panelX && pMouseX <= panelX + panelW
+                    && pMouseY >= fy && pMouseY <= cbY + 14) {
                     handleCheckboxChange(i, -1);
                     mc.getSoundHandler().playSound(PositionedSoundRecord.func_147674_a(new ResourceLocation("gui.button.press"), 1.0F));
                 }
@@ -546,8 +549,14 @@ public class AnimationRouletteScreen extends GuiScreen {
 
         // Strip "v." prefix for the roaming variable name
         String roamingName = varName.startsWith("v.") ? varName.substring(2) : varName;
-        double oldValue = OpenYsmPlayerControllerRuntime.PENDING_ROAMING
-            .getOrDefault(roamingName, 0.0);
+        // Toggle source: the variable's *effective* value for this model, not the
+        // global PENDING_ROAMING entry. The global map is keyed by bare variable
+        // name and is shared by every model, so a same-named variable on another
+        // model (or a value written by the animation runtime/timeline) made the
+        // first click of a 隐藏X checkbox look like a no-op.
+        double oldValue = Double.isNaN(value)
+            ? getMolangVar(expression)
+            : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault(roamingName, 0.0);
         double newValue = Double.isNaN(value) ? (oldValue > 0 ? 0 : 1) : value;
         OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(roamingName, newValue);
         // 按当前轮盘所属模型标记显式设置，避免模型 A 的设置串到模型 B
@@ -773,7 +782,9 @@ public class AnimationRouletteScreen extends GuiScreen {
 
             if ("checkbox".equals(form.type)) {
                 int cbY = fy + 22;
-                boolean hovered = mouseX >= panelX && mouseX <= panelX + 14 && mouseY >= cbY && mouseY <= cbY + 14;
+                // Highlight the whole clickable row, matching the hit box above.
+                boolean hovered = mouseX >= panelX && mouseX <= panelX + panelW
+                    && mouseY >= fy && mouseY <= cbY + 14;
                 int boxColor = hovered ? 0xFFFFFF00 : 0xAAFFFFFF;
                 drawRect(panelX, cbY, panelX + 14, cbY + 14, boxColor);
                 boolean checked = getMolangVar(form.defaultValue) > 0;

@@ -1,5 +1,15 @@
 # YesSteveModel-Unofficial
 
+> **历史文档（阶段计划，已基本执行完毕）。**
+> 本文写于 `1.9-alpha1` 之前，用于规划从 1.7.10 基线到 OpenYSM 新格式的移植；阶段 0–9 的
+> 绝大部分内容已经落地。此后新增的功能（粒子系统、HUD 跟随/FBO 缓存、几何/动画/贴图懒加载、
+> 调试覆盖层、跨模型变量隔离等）不在本文范围内。
+>
+> 现行口径见 `AGENTS.md` 的 **Reference Sources and Authority**（行为基准是 YSM wiki +
+> 基岩版规范 + 官方客户端实机表现，而不是任何一份 Java 实现）。`Port.md` 之所以保留，是因为
+> **模块映射表**和 **1.20.1 → 1.7.10 的改写约束**（Capability → EEP、`PoseStack` → GL、
+> JVM 8 限制）依然是阅读 `OpenYSM/src` 时最好的导航。
+
 ## 现状分析
 
 ### 1.7.10 侧已具备的基础
@@ -172,19 +182,37 @@
 
 验收标准：`.\gradlew.bat build` 成功；单人、局域网、专用服务器和带/不带可选兼容 Mod 的环境都通过基本模型加载与渲染检查。
 
+## 阶段完成情况
+
+下表是回填的状态（判断依据是当前源码与 `src/test`；阶段编号见下面的「分阶段移植计划」原文）。
+
+| 阶段 | 内容 | 状态 |
+| --- | --- | --- |
+| 0 | 建立基线和样本 | ✅ 已完成（基线早已迭代到 `1.9a1-07.x`） |
+| 1 | 移植纯格式与安全基础 | ✅ 已完成（`rip/ysm/*`；`YsmFoundationTest`、`YsmResourceFormatTest`） |
+| 2 | 统一模型中间表示 | ✅ 已完成（`RawYsmModel` + `YSMFolderDeserializer` / `YSMBinaryDeserializer` / `YSMBinarySerializer`） |
+| 3 | 客户端注册桥接 | ✅ 已完成，走的是"转换为 GeoModel"路线（`RawYsmModelAdapter`），未移植 baked mesh renderer；此后另加了懒加载与显存预算 |
+| 4 | 新版模型同步协议 | ✅ 已完成（`OpenYsmModelSync{Client,Server}`、`server_index`、分块下发、突破 1.7.10 32KB 包限制） |
+| 5 | 动画控制器与 Molang | ✅ 已完成并超出计划（状态机/过渡/`on_entry`/`on_exit`、`.molang` 函数桥接、粒子函数、调试覆盖层） |
+| 6 | 玩家渲染增强 | ✅ 基本完成（第一人称手臂 + Angelica 分流、护甲、手持物、定位骨骼），细节仍随模型反馈迭代 |
+| 7 | GUI、配置、元数据与导出 | ✅ 已完成（模型/纹理选择页、配置面板、动画轮盘、`.ysm` 导出、多语言） |
+| 8 | 投射物、载具、音效和高级资源 | ⚠️ 部分完成：投射物可用、OGG 音效与 WebP 解码已接入；**载具动画控制器未移植**（README 的「已知问题」有记录） |
+| 9 | 清理、兼容与发布准备 | 🔄 持续进行（可选模组兼容、日志节流、性能与显存优化） |
+
 ## 关键风险与处理
 
-- **不要整包覆盖 GeckoLib。** 当前 `software/bernie/geckolib3` 已为 1.7.10 做了大量适配；OpenYSM 的 GeckoLib 管线依赖现代渲染 API。应以补丁方式移植缺失能力。
-- **新版 binary `.ysm` 几何不是简单旧 JSON。** OpenYSM 反序列化后得到 baked face 数据。若不能无损转换为当前 GeoModel，就必须单独移植 OpenYSM mesh renderer 的核心，而不是继续堆转换脚本。
+- **不要整包覆盖 GeckoLib。** 当前 `software/bernie/geckolib3` 已为 1.7.10 做了大量适配；参考实现的 GeckoLib 管线依赖现代渲染 API。应以补丁方式移植缺失能力。
+- **新版 binary `.ysm` 几何不是简单旧 JSON。** 反序列化后得到 baked face 数据；本项目选择转换为 GeoModel 而不是移植 mesh renderer（阶段 3 的决定），转换有损时再看是否需要补 mesh 路径。
 - **Capabilities 必须重写。** 1.7.10 不存在现代 Capability 生命周期；玩家持久状态用 EEP，客户端临时状态用 manager/map，实体扩展按需求拆分。
 - **Java 17 语法和 Java 9+ API 要分开处理。** Jabel 可以保留部分现代语法，但不能在 JVM 8 上调用不存在的标准库方法。
-- **OpenYSM ImageStream 依赖不在当前源码树中，暂不应打包进 1.7.10 产物。** 在确认 1.7.10 客户端能稳定加载解码器前，非 PNG 图片仍应作为降级能力处理。
 - **网络协议不能阻塞 Netty/主线程。** 新版加密、zstd、模型解析和大文件 IO 都必须异步，并在客户端线程只做最终资源注册。
 - **1.20.1 物品标签无法直接搬到 1.7.10。** `data/yes_steve_model/tags/items` 只能作为分类参考，实际判断要使用 1.7.10 item、ore dictionary 或兼容 Mod 包装。
 
 ## 验证命令
 
-本仓库的 Gradle 需要宿主机缓存和网络访问，自动化代理环境不要直接运行 Gradle。需要构建、测试或启动时，请在仓库根目录手动运行并粘贴输出：
+工具链可用（Java 25 → JVM 8 产物），agent 可以直接跑构建与测试；但这个模组没有前端闭环，
+渲染/模型/轮盘的行为只能由作者在客户端里验收（详见 `AGENTS.md` 的 *Gradle and Verification*）。
+在仓库根目录运行：
 
 ```powershell
 .\gradlew.bat build

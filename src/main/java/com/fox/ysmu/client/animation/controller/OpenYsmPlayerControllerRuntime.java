@@ -632,12 +632,21 @@ public final class OpenYsmPlayerControllerRuntime {
         // controller's sound so it doesn't linger from the previous animation.
         String prevAnim = StringUtils.isBlank(runtimeState.lastSelectedAnimation)
             ? null : runtimeState.lastSelectedAnimation;
+        // ...unless this is only a conditional variant switch inside the same
+        // state (an attack state moving between its standing and walking entry),
+        // which keeps the playback position via setAnimationPreservingTick. That
+        // is still the same logical attack, so the one-shot swing sound it started
+        // must not be stopped half way; stopping it and then letting the new
+        // variant's tick-0 keyframe fire is what made the swing sound repeat when
+        // the player started or stopped moving mid-swing.
+        boolean sameControllerState = animationId.equals(runtimeState.lastAnimationId)
+            && state.name.equals(runtimeState.lastSelectedAnimationState);
         // 防滑步（stride matching）：按真实水平速度缩放移动类动画的播放倍速。
         // 只作用于主身体控制器（main_controller / player.pre_main），
         // player==null（GUI 预览实体）时跳过，避免覆盖预览页的暂停/冻结倍速。
         applyPlaybackSpeed(event, player, geckoControllerName, existing);
         applyAnimations(event, runtimeState, state, existing, animationId);
-        if (prevAnim == null || !prevAnim.equals(existing.get(0))) {
+        if (!sameControllerState && (prevAnim == null || !prevAnim.equals(existing.get(0)))) {
             com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
         }
         return PlayState.CONTINUE;

@@ -2,40 +2,70 @@
 
 ## Project Snapshot
 
-YSMU is a Minecraft Forge 1.7.10 mod that ports Yes Steve Model/OpenYSM-style player models back to 1.7.10. The mod id is `ysmu`, the root package is `com.fox.ysmu`, and the Forge entry point is `src/main/java/com/fox/ysmu/ysmu.java`.
+YSMU is a Minecraft Forge 1.7.10 mod that ports Yes Steve Model (YSM) player models back to 1.7.10. The mod id is `ysmu`, the root package is `com.fox.ysmu`, and the Forge entry point is `src/main/java/com/fox/ysmu/ysmu.java`.
 
 The build uses the GTNH Gradle convention plugin through `settings.gradle.kts` and `build.gradle.kts`. `gradle.properties` targets Minecraft `1.7.10`, Forge `10.13.4.1614`, MCP stable `12`, enables Mixins, enables Jabel modern Java syntax while still targeting JVM 8, and shades/relocates Jackson. Runtime/development dependencies are declared in `dependencies.gradle`.
 
-The current focus of work is to port OpenYSM. The OpenYSM code should be carefully analyzed and the implementation should be closely followed.
+YSMU already implements more of YSM than the in-repo `OpenYSM/` reference tree does (animation controllers, Molang, model sync, lazy loading, particles, debug overlay). Do not treat that tree as the specification — see the next section.
+
+## Reference Sources and Authority
+
+The target is the behaviour of YSM itself: whether a model works in game — parts shown or hidden as authored, animations playing, 轮盘 settings taking effect. The target is **not** code-level equivalence with any implementation. Prefer the higher entry when sources disagree:
+
+1. The YSM documentation site, `https://ysm.cfpa.team/wiki/intro/` (English: `/en/wiki/intro/`) — YSM-specific semantics: 轮盘 (`/wiki/roulette/`, `/wiki/animation/extra/`), animation controllers (`/wiki/controller/`), parallel animations (`/wiki/animation/parallel/`), model structure (`/wiki/struct/`, `/wiki/type/`, `/wiki/ysm-uv-standard/`), Molang variables and functions (`/wiki/molang/var/`, `/wiki/molang/common/`, `/wiki/molang/script/`). The per-version changelogs (`/wiki/log/265/` …) say which release changed what.
+2. Bedrock documentation and the Bedrock Wiki — the underlying format and Molang semantics: `https://bedrock.dev/docs/stable/Animations` (keyframes, `animation_length` default, loop types), `https://bedrock.dev/docs/stable/Molang`, `https://wiki.bedrock.dev/animation-controllers/animation-controllers-intro`, `https://wiki.bedrock.dev/concepts/molang`, `https://wiki.bedrock.dev/visuals/bedrock-modeling`.
+3. The official YSM 2.6.5 client (1.20.1 Forge, 1.20.1/1.21.1 Fabric, NeoForge) as the oracle: when neither wiki answers the question, reproduce the case there and treat the screenshot or log as the spec.
+
+When YSMU deliberately deviates from the reference tree, say so in one comment line: `// YSM-wiki: <page>` or `// Bedrock: <topic>`, plus why.
+
+## Versioning and Release
+
+The build derives its version from **git**: `gradle.properties` generates `com.fox.ysmu.Tags.VERSION` from the tag/describe, `ysmu.java` uses it in `@Mod(...)`, the jar name carries it (`+<hash>-dirty`), and `CommonProxy.preInit` logs `I am ysmu at version …`. Nothing in the source needs editing for a version bump, and `-dirty` only means "uncommitted changes", not "stale jar" — to identify the running build, compare the logged version/hash with `git log`.
+
+The hand-written places that carry time-sensitive text and must be revisited on a release are deliberately few:
+
+- `README.md` line with `**最新版本：…**`.
+- The `## 变更历史` table in `README.md` — add one row per tagged release.
+- `README.md` `## 已知问题` — drop entries that the release fixed and add new ones.
+- The `git checkout <branch>` line in the README build section and the branch name next to the version — both name the currently active development branch.
+
+Version numbers quoted inside code comments (for example "regression since 1.9a1-05") are historical markers, not state to maintain. If a new time-sensitive statement is added anywhere else, list it here so the next release does not miss it.
+
+## Diagnostics, Logs and Local Tools
+
+`logs/latest.log` is only the **most recent game session**; a relaunch overwrites it. Before asking the user to restart, or immediately after anything interesting happens, preserve the log (the launcher already keeps `logs_<date>_<jar>.zip`; the user may also rename `latest.log` to something like `latest_<date>_<topic>.log`) and analyse every preserved log that matters, not just `latest.log`.
+
+Before writing a new analysis script, look for one that already exists: `tools/` (tracked) and `local/tools/` (gitignored working scripts). `tools/README.md` lists what each does and collects the analysis pitfalls learned so far; read it before designing a probe. New one-off or environment-specific scripts belong in `local/tools/`; only generally useful, path-independent tools should be promoted to `tools/` and listed in `tools/README.md`.
+
+Diagnostics convention: the user runs the client, so keep probes at `info` level (the `debug` config level needs launch arguments they will not change), rate-limit or flag them so they can be turned off, and prefer temporary probes that get removed or commented out again with a note.
 
 ## ExecPlans
 
-When writing complex features or significant refactors, use an ExecPlan (as described in .agent/PLANS.md) from design to implementation.
-
-ExecPlan working documents are kept in `local/plans/` (gitignored, never committed); only the spec `PLANS.md` lives in `.agent/`. This fork is single-developer at this time, so per-task plans stay local and only durable conventions are versioned now.
+`.agent/PLANS.md` is an **optional** template for writing a long, fully self-contained design or migration document. This project does not follow an ExecPlan-per-task workflow: the day-to-day habit is a short plan or findings note in `local/plans/<topic>.md` (gitignored) that is kept up to date while the work is in progress. Use an ExecPlan when the work genuinely needs one (multi-milestone refactor, hand-off to another environment); do not demand one for ordinary fixes.
 
 ## Repository Layout
 
 - `src/main/java/com/fox/ysmu`: project-specific mod code.
 - `src/main/java/com/fox/ysmu/client`: client-only rendering, GUI, keybinds, animation predicates, texture/model registration, and upload state.
-- `src/main/java/com/fox/ysmu/model`: server-side model discovery, built-in model copying, cache generation, and folder/`.ysm` model format handling.
+- `src/main/java/com/fox/ysmu/model`: server-side model discovery, built-in model extraction, cache generation, and folder/`.ysm` model format handling.
 - `src/main/java/com/fox/ysmu/network`: Forge `SimpleNetworkWrapper` setup and packet classes.
 - `src/main/java/com/fox/ysmu/eep`: 1.7.10 `IExtendedEntityProperties` state for selected model/texture, active animation, and starred models.
 - `src/main/java/com/fox/ysmu/event`: GTNHLib event subscribers for common player sync and client rendering events.
 - `src/main/java/com/fox/ysmu/compat`: optional-mod compatibility wrappers. Keep Backhand and similar direct calls behind these wrappers.
 - `src/main/java/com/fox/ysmu/mixin`: Mixins only. `gradle.properties` restricts Mixins to package `com.fox.ysmu.mixin`.
 - `src/main/java/software/bernie`, `src/main/java/com/eliotlash`, and `src/main/java/net/geckominecraft`: vendored/ported GeckoLib, Molang/math, and legacy adapter code. Treat these as third-party compatibility code and keep edits narrow.
-- `src/main/resources/assets/ysmu/custom`: built-in model assets copied into `config/ysmu/custom` during reload.
+- `src/main/resources/assets/ysmu/builtin`: built-in model packs (`default`, `misc`, and the locally distributed `wine_fox` pack). Extracted into `config/ysmu/builtin` on every start.
+- `src/main/resources/assets/ysmu/custom`: legacy built-in model location, now empty — the copy code that used it is commented out in `ServerModelManager`.
 - `src/main/resources/assets/ysmu/lang`: `en_US.lang` and `zh_CN.lang`. Keep new translation keys in sync.
-- `src/main/resources/mixins.ysmu.json`: Mixin config. Currently only `MixinItemRenderer` is listed as a client Mixin.
+- `src/main/resources/mixins.ysmu.json`: Mixin config; five client Mixins are registered (`MixinItemRenderer`, `MixinEntityArrow`, `client.MixinRenderArrow`, `MixinMinecraft`, `MixinEffectRenderer`).
 - `src/main/resources/META-INF/*_at.cfg`: access transformers for Minecraft/GeckoLib internals.
-- `tools/convert_new_ysm.py` and `tools/convert.md`: conversion utility and documentation for newer OpenYSM-style model directories.
+- `tools/`: Python utilities for model conversion, `.ysm` dumping and log analysis; see `tools/README.md`.
 
 ## Runtime Flow
 
 Startup begins in `ysmu.java`. `CommonProxy.preInit` loads `Config`, calls `ServerModelManager.reloadPacks()`, and logs the version. `CommonProxy.init` registers network packets through `NetworkHandler.init()`. `ClientProxy.init` additionally registers animation states/Molang variables, the custom player renderer, and key bindings.
 
-`ServerModelManager.reloadPacks()` creates `config/ysmu`, `custom`, `export`, and `cache` directories, force-copies built-in models into `config/ysmu/custom`, initializes `cache/server/PASSWORD`, and rebuilds encrypted server cache files for both folder models and `.ysm` files.
+`ServerModelManager.reloadPacks()` creates `config/ysmu` with `builtin`, `custom`, `export` and `cache`, clears and re-extracts the built-in packs into `config/ysmu/builtin`, initializes `cache/server/PASSWORD`, and rebuilds encrypted server cache files for both folder models and `.ysm` files. Model scanning covers both `custom` and `builtin`.
 
 Model sync starts with the server sending `RequestSyncModel`. The client replies with cached MD5 names via `SyncModelFiles`. The server sends an encrypted password (`SendModelPassword`), asks the client to load cache hits (`RequestLoadModel`), and sends missing cache files (`SendModelFile`). The client decrypts and registers models through `ClientModelManager.registerAll()`.
 
@@ -43,13 +73,15 @@ Client rendering cancels vanilla `RenderPlayerEvent.Pre` in `ClientEventHandler`
 
 ## Model and Resource Rules
 
-Folder models live under `config/ysmu/custom/<model name>` and must include `main.json`, `arm.json`, and at least one `.png`. Optional animation files are `main.animation.json`, `arm.animation.json`, and `extra.animation.json`; missing animation files fall back to the built-in default animations.
+Folder models live under `config/ysmu/custom/<model name>` (or a built-in pack under `config/ysmu/builtin`) and must include `main.json`, `arm.json`, and at least one `.png`. A `ysm.json` describes a modern pack: geometry under `models/`, animations under `animations/`, controllers under `controller/`, Molang functions under `functions/`. Optional animation files are `main.animation.json`, `arm.animation.json`, and `extra.animation.json`; missing animation files fall back to the built-in default animations.
 
 `.ysm` files in `config/ysmu/custom` are also scanned. Only files containing `main.json`, `arm.json`, and at least one `.png` are cached.
 
 `ModelIdUtil` normalizes model names for `ResourceLocation`. Safe ids match `[a-z0-9._-]+`; unsafe names are encoded as `_name_` plus UTF-8 hex. Use `ModelIdUtil` helpers instead of hand-building model, main, arm, or texture ids.
 
-Built-in model assets in `src/main/resources/assets/ysmu/custom` are copied into the runtime config directory on reload. Be careful when changing these assets because the runtime reload path intentionally overwrites the built-in copies.
+Built-in model assets in `src/main/resources/assets/ysmu/builtin` are extracted into `config/ysmu/builtin` on reload, and the runtime extraction intentionally overwrites what is there — never treat `config/ysmu/builtin` as a place to keep edits.
+
+Runtime models come from two different sources when debugging: the repository copies under `res/` (reference material, gitignored) and the game's `config/ysmu/{custom,builtin}` plus its client cache. Editing `res/` does not change what the running client renders.
 
 ## Network and Threading Rules
 
@@ -67,6 +99,8 @@ Use `@EventBusSubscriber` from GTNHLib for event subscribers following the exist
 
 Use `BackhandCompat` and `AngelicaCompat` rather than scattering optional-mod API calls through core logic. Keep compatibility checks resilient when the optional mod is absent.
 
+1.7.10 has no offhand slot, no data-driven item tags and no modern capability lifecycle; map 1.20.1 checks onto vanilla/GTNH behaviour or an existing compat wrapper instead of copying them.
+
 ## Coding Conventions
 
 Follow `.editorconfig`: UTF-8, LF line endings, 4-space Java indentation, 2-space Markdown/JSON/YAML indentation, final newline, and no trailing whitespace except in `.lang` files.
@@ -81,15 +115,19 @@ When adding user-facing text, update both `en_US.lang` and `zh_CN.lang`. When ad
 
 When adding model animation states, register names and priorities through `AnimationRegister`/`AnimationManager`, and ensure `ConditionManager.addTest` can classify conditional animation names.
 
+Reference third-party models generically in code comments and commit messages. A concrete model name is fine when it ships with the mod (e.g. the built-in `wine_fox` pack) or is a fixture under `src/test`; otherwise describe the shape of the problem ("a model that declares only `player.parallel_0..7` and drives visibility from `pre_parallel6`") instead of naming a downloaded pack.
+
+Terminology: "YSM" names the product and the behaviour being targeted; "OpenYSM" stays for the reference implementation, its in-repo tree, and the model/sync format it defined — `OpenYsmFormat` sits next to the legacy `FolderFormat`, and the `OPENYSM_*` constants name the controller slots of that format.
+
 ## Gradle and Verification
 
-Do not run Gradle commands from the sandbox. This environment cannot reliably execute the wrapper because Gradle needs host cache/network access outside the workspace. When a change needs build, test, or run verification, ask the user to execute the exact command and paste the output.
+The toolchain works: Java 25 compiles to a JVM 8 target via Jabel, and `gradlew build` / `gradlew test` can be run from the repository root. Agents may run build and test commands, but the **normal workflow is that the author compiles and tests**: this mod has no front-end closed loop, so model assembly, rendering and 轮盘 behaviour can only be accepted in a running client. For anything visual, ask the user to run and report, and give them the exact command plus what to look for.
 
-Useful commands for the user to run from the repository root:
+Useful commands from the repository root:
 
 - `.\gradlew.bat build`
 - `.\gradlew.bat test`
 - `.\gradlew.bat runClient`
 - `.\gradlew.bat runServer`
 
-There are currently no `src/test` Java test sources, although JUnit 5 dependencies are configured. CI delegates build/test and tagged releases to reusable GTNH workflows in `.github/workflows`.
+`src/test/java` holds JUnit 5 sources (`YsmResourceFormatTest`, `OpenYsmSyncProtocolTest`, `YsmFoundationTest`, `MolangParserOpenYsmPhysicsTest`, `NestedAssignmentRegressionTest`, `ParticleMolangExpressionTest`); extend them when touching parsers, the sync protocol or Molang. CI delegates build/test and tagged releases to reusable GTNH workflows in `.github/workflows`.
