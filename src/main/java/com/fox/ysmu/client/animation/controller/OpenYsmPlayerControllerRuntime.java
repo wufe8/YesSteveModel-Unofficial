@@ -824,7 +824,11 @@ public final class OpenYsmPlayerControllerRuntime {
         if (primaryAnim != null && primaryAnim.boneAnimations != null) {
             mergedBones = new ArrayList<>(primaryAnim.boneAnimations);
         }
-        // Merge additional animations' bones on top (for multi-animation states)
+        // Merge additional animations' bones on top (for multi-animation states).
+        // `ownedBones` tracks the bone names whose BoneAnimation we have already
+        // copied away from the shared GeckoLib cache, so a later merge may write
+        // into our copy but never into a cache-owned object.
+        java.util.Set<String> ownedBones = new java.util.HashSet<>();
         for (int i = 1; i < animationNames.size(); i++) {
             software.bernie.geckolib3.core.builder.Animation a = null;
             if (animFile != null) {
@@ -837,7 +841,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 if (mergedBones == null) {
                     mergedBones = new ArrayList<>(a.boneAnimations);
                 } else {
-                    mergeBones(mergedBones, a.boneAnimations);
+                    mergeBones(mergedBones, a.boneAnimations, ownedBones);
                 }
             }
         }
@@ -1060,23 +1064,107 @@ public final class OpenYsmPlayerControllerRuntime {
         }
     }
 
+    /** Merges {@code source} bone animations into {@code target}, channel by channel.
+     *  <p>Two invariants are load-bearing here, and both used to be violated:
+     *  <ol>
+     *   <li><b>Never mutate cache-owned objects.</b> The {@code BoneAnimation} /
+     *       {@code VectorKeyFrameList} instances handed out by the animation cache are
+     *       shared by every controller and every later frame. The previous version
+     *       wrote straight into them, so one merge permanently erased a sibling
+     *       animation's channel for the rest of the session.</li>
+     *   <li><b>Only overwrite a channel the source actually animates.</b> Overwriting
+     *       all three channels let a {@code position}-only sibling erase another
+     *       animation's {@code scale} channel. That is exactly what happened to
+     *       yomon's 幻影剑 bones: {@code pre_parallel2} carries the hide-scale
+     *       ({@code !v.roaming.yinglou} / {@code !v.roaming.yingbai}) while
+     *       {@code pre_parallel6} only repositions the same bones — merging
+     *       {@code pre_parallel6} last wiped the scale, so 隐藏后排/前排幻影剑
+     *       toggles changed nothing but their own checkbox.</li>
+     *  </ol>
+     */
     private static void mergeBones(List<software.bernie.geckolib3.core.keyframe.BoneAnimation> target,
-        List<software.bernie.geckolib3.core.keyframe.BoneAnimation> source) {
-        for (software.bernie.geckolib3.core.keyframe.BoneAnimation ba : source) {
-            boolean exists = false;
-            for (software.bernie.geckolib3.core.keyframe.BoneAnimation existing : target) {
-                if (existing.boneName.equals(ba.boneName)) {
-                    existing.rotationKeyFrames = ba.rotationKeyFrames;
-                    existing.positionKeyFrames = ba.positionKeyFrames;
-                    existing.scaleKeyFrames = ba.scaleKeyFrames;
-                    exists = true;
+        List<software.bernie.geckolib3.core.keyframe.BoneAnimation> source,
+        java.util.Set<String> ownedBones) {
+        for (software.bernie.geckolib3.core.keyframe.BoneAnimation incoming : source) {
+            int hit = -1;
+            for (int i = 0; i < target.size(); i++) {
+                if (target.get(i).boneName.equals(incoming.boneName)) {
+                    hit = i;
                     break;
                 }
             }
-            if (!exists) {
-                target.add(ba);
+            if (hit < 0) {
+                // Not merged into anything yet, so the shared object is safe to reference.
+                target.add(incoming);
+                continue;
+            }
+            software.bernie.geckolib3.core.keyframe.BoneAnimation merged = target.get(hit);
+            if (ownedBones.add(incoming.boneName)) {
+                // First time we write to this bone — take a private shallow copy.
+                // Channel lists are only ever re-pointed (never mutated in place),
+                // so a shallow copy is enough to protect the cache.
+                software.bernie.geckolib3.core.keyframe.BoneAnimation copy =
+                    new software.bernie.geckolib3.core.keyframe.BoneAnimation();
+                copy.boneName = merged.boneName;
+                copy.rotationKeyFrames = merged.rotationKeyFrames;
+                copy.positionKeyFrames = merged.positionKeyFrames;
+                copy.scaleKeyFrames = merged.scaleKeyFrames;
+                merged = copy;
+                target.set(hit, copy);
+            }
+            if (hasKeyFrames(incoming.rotationKeyFrames)) {
+                merged.rotationKeyFrames = incoming.rotationKeyFrames;
+            }
+            if (hasKeyFrames(incoming.positionKeyFrames)) {
+                merged.positionKeyFrames = incoming.positionKeyFrames;
+            }
+            if (hasKeyFrames(incoming.scaleKeyFrames)
+                && !(isIdentityScale(incoming.scaleKeyFrames) && hasKeyFrames(merged.scaleKeyFrames))) {
+                // Scale is the one channel Bedrock/YSM blend multiplicatively, so a
+                // constant 1 is the neutral element ("I don't care about visibility")
+                // rather than an override. Letting it win would erase an explicit
+                // hide/scale toggle contributed by a sibling animation — e.g.
+                // yomon's follow_animation ends with soul scale=1, which erased
+                // pre_parallel2's `v.roaming.soul` and broke 显示半灵.
+                merged.scaleKeyFrames = incoming.scaleKeyFrames;
             }
         }
+    }
+
+    /** True when the channel carries at least one keyframe, i.e. the animation
+     *  actually drives that channel. A missing/empty channel must be treated as
+     *  "this animation says nothing about it", not as "reset it". */
+    private static boolean hasKeyFrames(
+        software.bernie.geckolib3.core.keyframe.VectorKeyFrameList<software.bernie.geckolib3.core.keyframe.KeyFrame<com.eliotlash.mclib.math.IValue>> channel) {
+        return channel != null && channel.xKeyFrames != null && !channel.xKeyFrames.isEmpty();
+    }
+
+    /** True when the scale channel is the identity transform (constant 1 on every
+     *  axis, start and end of every keyframe). Under multiplicative scale blending
+     *  such a channel is a no-op and must not overwrite another animation's scale. */
+    private static boolean isIdentityScale(
+        software.bernie.geckolib3.core.keyframe.VectorKeyFrameList<software.bernie.geckolib3.core.keyframe.KeyFrame<com.eliotlash.mclib.math.IValue>> channel) {
+        if (channel == null || channel.xKeyFrames.isEmpty() || channel.yKeyFrames.isEmpty()
+            || channel.zKeyFrames.isEmpty()) {
+            return false;
+        }
+        return allValuesAreOne(channel.xKeyFrames) && allValuesAreOne(channel.yKeyFrames)
+            && allValuesAreOne(channel.zKeyFrames);
+    }
+
+    private static boolean allValuesAreOne(
+        List<software.bernie.geckolib3.core.keyframe.KeyFrame<com.eliotlash.mclib.math.IValue>> frames) {
+        for (software.bernie.geckolib3.core.keyframe.KeyFrame<com.eliotlash.mclib.math.IValue> f : frames) {
+            // Expressions are re-evaluated here; if one is Molang-driven this
+            // returns false and we fall back to plain "later animation wins".
+            if (Math.abs(f.getStartValueDouble() - 1.0d) > 1e-6d) {
+                return false;
+            }
+            if (Math.abs(f.getEndValueDouble() - 1.0d) > 1e-6d) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static software.bernie.geckolib3.core.builder.Animation lookupAnimation(String name) {
