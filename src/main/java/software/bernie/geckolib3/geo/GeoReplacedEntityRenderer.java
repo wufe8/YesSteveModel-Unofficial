@@ -167,6 +167,20 @@ public abstract class GeoReplacedEntityRenderer<T extends IAnimatable> extends R
                 Minecraft.getMinecraft().renderEngine.bindTexture(getEntityTexture(entity));
                 Color renderColor = getRenderColor(entity, partialTicks);
 
+                // YSM properties.render_layers_first：模型要求渲染层（手持物品层）在本体之前
+                // 提交，让本体把它盖住。官方客户端是"本体 pass1 → 层 → 本体 renderType pass"；
+                // 1.7.10 没有 renderType 的二次本体绘制，等价做法就是把层放到本体之前——
+                // 两边都是立即模式提交（IGeoRenderer.render 末尾 Tessellator.draw()），
+                // 调用顺序即绘制顺序。
+                boolean renderLayers = entity instanceof EntityPlayer;
+                boolean layersFirst = model != null && model.properties != null
+                    && model.properties.isRenderLayersFirst();
+
+                if (renderLayers && layersFirst) {
+                    renderGeoLayers(entity, limbSwing, limbSwingAmount, partialTicks, f7, netHeadYaw, headPitch,
+                        renderColor);
+                }
+
                 if (!entity.isInvisibleToPlayer(Minecraft.getMinecraft().thePlayer)) render(
                     model,
                     entity,
@@ -176,11 +190,9 @@ public abstract class GeoReplacedEntityRenderer<T extends IAnimatable> extends R
                     (float) renderColor.getBlue() / 255f,
                     (float) renderColor.getAlpha() / 255);
 
-                if (entity instanceof EntityPlayer) {
-                    for (GeoLayerRenderer layerRenderer : this.layerRenderers) {
-                        layerRenderer.render(entity, limbSwing, limbSwingAmount, partialTicks, f7, netHeadYaw,
-                            headPitch, renderColor);
-                    }
+                if (renderLayers && !layersFirst) {
+                    renderGeoLayers(entity, limbSwing, limbSwingAmount, partialTicks, f7, netHeadYaw, headPitch,
+                        renderColor);
                 }
                 if (entity instanceof EntityLiving) {
                     Entity leashHolder = ((EntityLiving) entity).getLeashedToEntity();
@@ -205,6 +217,17 @@ public abstract class GeoReplacedEntityRenderer<T extends IAnimatable> extends R
         }
 
         this.passSpecialRender(entity, x, y, z);
+    }
+
+    /** 绘制挂在渲染器上的所有 Geo 层（手持物品层等）。抽出来是因为
+     *  {@code properties.render_layers_first} 会把它挪到本体之前。 */
+    @SuppressWarnings("rawtypes")
+    private void renderGeoLayers(EntityLivingBase entity, float limbSwing, float limbSwingAmount, float partialTicks,
+        float ageInTicks, float netHeadYaw, float headPitch, Color renderColor) {
+        for (Object layerRenderer : this.layerRenderers) {
+            ((GeoLayerRenderer) layerRenderer).render(entity, limbSwing, limbSwingAmount, partialTicks, ageInTicks,
+                netHeadYaw, headPitch, renderColor);
+        }
     }
 
     protected void preRenderCallback(EntityLivingBase entitylivingbaseIn, float partialTickTime) {}

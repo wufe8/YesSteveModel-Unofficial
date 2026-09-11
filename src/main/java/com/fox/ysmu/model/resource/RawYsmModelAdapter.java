@@ -822,6 +822,9 @@ public final class RawYsmModelAdapter {
     private static void applyOpenYsmModelInfo(RawYsmModel raw, JsonObject description) {
         description.addProperty("ysm_height_scale", (double) raw.properties.heightScale);
         description.addProperty("ysm_width_scale", (double) raw.properties.widthScale);
+        // YSM-wiki: 项目结构 / properties.render_layers_first — 渲染层先于本体绘制，
+        // 使本体可以遮住手持物品（官方客户端里是"本体 pass1 → 层 → 本体 renderType pass"）。
+        description.addProperty("ysm_render_layers_first", raw.properties.renderLayersFirst);
 
         JsonObject extraInfo = new JsonObject();
         extraInfo.addProperty("name", raw.metadata.name);

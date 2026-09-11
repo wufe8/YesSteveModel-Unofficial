@@ -26,6 +26,10 @@ public class ModelProperties implements Serializable {
     private Double visibleBoundsWidth;
     private Double heightScale = 0.7D;
     private Double widthScale = 0.7D;
+    /** YSM 的 {@code properties.render_layers_first}：渲染层（手持物品层）在本体之前提交，
+     *  让本体把物品盖住。由 {@code RawYsmModelAdapter.applyOpenYsmModelInfo} 注入 geometry
+     *  的 description。 */
+    private Boolean renderLayersFirst;
     private ExtraInfo extraInfo = null;
 
     @JsonProperty("animationArmsDown")
@@ -242,5 +246,21 @@ public class ModelProperties implements Serializable {
     @JsonProperty("ysm_extra_info")
     public void setExtraInfo(ExtraInfo extraInfo) {
         this.extraInfo = extraInfo;
+    }
+
+    @JsonProperty("ysm_render_layers_first")
+    public Boolean getRenderLayersFirst() {
+        return renderLayersFirst;
+    }
+
+    @JsonProperty("ysm_render_layers_first")
+    public void setRenderLayersFirst(Boolean renderLayersFirst) {
+        this.renderLayersFirst = renderLayersFirst;
+    }
+
+    /** 便捷读取：字段缺失（旧模型/未注入）按 false 处理。 */
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    public boolean isRenderLayersFirst() {
+        return Boolean.TRUE.equals(renderLayersFirst);
     }
 }
