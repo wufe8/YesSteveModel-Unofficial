@@ -1045,26 +1045,6 @@ public final class OpenYsmPlayerControllerRuntime {
             runtimeState.lastActiveAnimations.clear();
             runtimeState.enteredTick = event.getAnimationTick();
         }
-        // TEMP PROBE (remove): is the controller clock actually advancing?
-        // if (ctrlName != null && allowDebugLog("TICK-" + ctrlName)) {
-            // software.bernie.geckolib3.core.builder.Animation playingAnim = event.getController()
-                // .getCurrentAnimation();
-            // double ctrlTick = event.getController().animationSpeed
-                // * Math.max(event.getAnimationTick() - event.getController().tickOffset, 0.0d);
-            // ysmu.LOG.info(
-                // "[YSMU-CTRL-TICK] {} state='{}' ctrlTick={} rawTick={} offset={} speed={} sameAnim={} sameState={} final='{}' playing='{}' playingLen={}",
-                // ctrlName,
-                // state.name,
-                // ctrlTick,
-                // event.getAnimationTick(),
-                // event.getController().tickOffset,
-                // event.getController().animationSpeed,
-                // sameAnim,
-                // sameState,
-                // finalName,
-                // playingAnim != null ? playingAnim.animationName : "<none>",
-                // playingAnim != null ? playingAnim.animationLength : null);
-        // }
         if (sameAnim) {
             // Same state + same animation → skip setAnimation to preserve
             // keyframe tracking (sound/particle keyframes already executed

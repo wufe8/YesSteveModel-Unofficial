@@ -24,55 +24,6 @@ import software.bernie.geckolib3.model.provider.data.EntityModelData;
 
 public class AnimationProcessor<T extends IAnimatable> {
 
-    // ---- TEMP PROBE (remove) -------------------------------------------------
-    // /** Bones whose effective transform is logged every frame.
-     // *  Override with {@code -Dysmu.watchBones=a,b}. */
-    // public static volatile java.util.Set<String> WATCH_BONES = new java.util.HashSet<>(
-        // java.util.Arrays.asList(
-            // System.getProperty("ysmu.watchBones", "ysmGlowSwordLight1,ysmGlowSword1,ysmGlowSwordLight9")
-                // .split(",")));
-// 
-    // /** Logs what the processor actually POLLED, next to what the controller
-     // *  produced (the [YSMU-KF] probe reads peekLast). */
-    // private static void probePolled(String name, double rawTick, BoneAnimationQueue q,
-        // AnimationPoint px, AnimationPoint sx) {
-        // if (!("ysmGlowSword1".equals(name) || "ysmGlowSwordLight1".equals(name))) {
-            // return;
-        // }
-        // com.fox.ysmu.ysmu.LOG.info(
-            // "[YSMU-POLL] bone={} raw={} posQ={} pTick={} pLen={} pStart={} pEnd={} scaleQ={} sTick={} sLen={} sStart={} sEnd={}",
-            // name,
-            // rawTick,
-            // q.positionXQueue.size(),
-            // px == null ? null : px.currentTick,
-            // px == null ? null : px.animationEndTick,
-            // px == null ? null : px.animationStartValue,
-            // px == null ? null : px.animationEndValue,
-            // q.scaleXQueue.size(),
-            // sx == null ? null : sx.currentTick,
-            // sx == null ? null : sx.animationEndTick,
-            // sx == null ? null : sx.animationStartValue,
-            // sx == null ? null : sx.animationEndValue);
-    // }
-// 
-    // private static void watchBone(IBone bone, double rawTick) {
-        // String name = bone.getName();
-        // if (name == null || !WATCH_BONES.contains(name)) {
-            // return;
-        // }
-        // com.fox.ysmu.ysmu.LOG.info(
-            // "[YSMU-BONE] bone={} raw={} sx={} sy={} sz={} px={} py={} pz={}",
-            // name,
-            // rawTick,
-            // bone.getScaleX(),
-            // bone.getScaleY(),
-            // bone.getScaleZ(),
-            // bone.getPositionX(),
-            // bone.getPositionY(),
-            // bone.getPositionZ());
-    // }
-    // ---- end TEMP PROBE ------------------------------------------------------
-
     public boolean reloadAnimations = false;
     private List<IBone> modelRendererList = new ArrayList();
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
@@ -149,7 +100,6 @@ public class AnimationProcessor<T extends IAnimatable> {
                 AnimationPoint sXPoint = boneAnimation.scaleXQueue.poll();
                 AnimationPoint sYPoint = boneAnimation.scaleYQueue.poll();
                 AnimationPoint sZPoint = boneAnimation.scaleZQueue.poll();
-                // probePolled(bone.getName(), seekTime, boneAnimation, pXPoint, sXPoint); // TEMP PROBE (remove)
 
                 // If there's any rotation points for this bone
                 DirtyTracker dirtyTracker = modelTracker.get(bone.getName());
@@ -229,7 +179,6 @@ public class AnimationProcessor<T extends IAnimatable> {
         double resetTickLength = manager.getResetSpeed();
         for (Map.Entry<String, DirtyTracker> tracker : modelTracker.entrySet()) {
             IBone model = tracker.getValue().model;
-            // watchBone(model, seekTime); // TEMP PROBE (remove)
             BoneSnapshot initialSnapshot = model.getInitialSnapshot();
             BoneSnapshot saveSnapshot = boneSnapshots.get(tracker.getKey())
                 .getRight();

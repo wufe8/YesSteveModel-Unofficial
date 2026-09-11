@@ -20,11 +20,15 @@
 | [`analysis/animation-stride-matching.md`](analysis/animation-stride-matching.md) | 防滑步：动画播放倍速的算法、为什么不改 `query.ground_speed`、验证方法、配置项 |
 | [`analysis/controller-mod-dependencies.md`](analysis/controller-mod-dependencies.md) | 控制器与动画的模组依赖标记、并行控制器的槽位与隐式控制器机制、排查方法 |
 | [`analysis/animation-variant-switch.md`](analysis/animation-variant-switch.md) | 同一状态内换动画（条件变体）时的位置保留语义：为什么 t=0 音效会重播/被砍半，以及两条修法 |
+| [`analysis/sound-playback.md`](analysis/sound-playback.md) | 音效查找链路；不要用字面量反射 MC 内部字段（reobf 改名 → 有音效却听不到 + WARN）；SoundSystem 句柄在资源重载后失效的隐患；探针现状 |
 | [`analysis/molang-identifier-parsing.md`](analysis/molang-identifier-parsing.md) | 自研 Molang 解析器里"标识符允许数字续接"的必要性，以及一个被静默忽略的连带效应 |
+| [`analysis/crash-report-log-spam.md`](analysis/crash-report-log-spam.md) | `Negative index in crash report handler` 刷屏的含义（每帧一份 `CrashReport`，不是崩溃）、定位方法与"每帧入口不许抛异常 / `catch (Throwable)`"的修法原则 |
 
 ## 尚未提炼（仍在 `local/analysis/`，需要先剔除模型信息）
 
 - `sneak-implementations.md` —— 潜行动画的四条降级路径与判定树（模型名密度高，需重写）。
-- `ysmu-negative-index-spam-diagnosis.md` —— 负索引导致的日志刷屏诊断（0 处模型名，可直接提炼）。
 - `debug-overlay-design.md` —— 调试覆盖层设计（部分已实现，需补"已实现/未实现"状态）。
 - `performance-analysis.md` —— 性能剖析（数值与模型强相关，只适合提炼方法论）。
+- `ysmu-negative-index-spam-diagnosis.md` —— 已提炼为 `analysis/crash-report-log-spam.md`；
+  原始文档保留完整证据、逐会话统计与 bisect 顺序，再次出现该刷屏时先读它。
+

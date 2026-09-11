@@ -42,6 +42,11 @@ public final class YSMSoundManager {
     /** Lazily cached SoundSystem reflection handle */
     private static Object sndSystem = null;
     private static boolean sndSystemSearched = false;
+    /** Reflection handles for SoundHandler's SoundManager and SoundManager's
+     *  SoundSystem field, cached once so resolveSndSystem() can re-read the value
+     *  cheaply (vanilla swaps the SoundSystem instance on every resource reload). */
+    private static java.lang.reflect.Field sndManagerField = null;
+    private static java.lang.reflect.Field sndSystemField = null;
     /** Lazily cached setPosition reflection handle (per-tick position updates). */
     private static java.lang.reflect.Method sndSetPosition = null;
     /**
@@ -105,16 +110,38 @@ public final class YSMSoundManager {
                     break;
                 }
             }
-            if (sndMgrFd == null) return true;
+            if (sndMgrFd == null) return false;
             sndMgrFd.setAccessible(true);
             Object sndMgr = sndMgrFd.get(handler);
-            java.lang.reflect.Field regFd = sndMgr.getClass().getDeclaredField("soundRegistry");
+            // The registry field must be found by its generic type, not by name:
+            // mods are reobfuscated, so the literal "soundRegistry" does not exist
+            // at runtime (SRG renames it) and the old name lookup always threw —
+            // the catch then returned true, which pushed EVERY sound name into the
+            // vanilla handler and made it log "Unable to play unknown
+            // soundEvent" for high-version names that 1.7.10 does not have.
+            java.lang.reflect.Field regFd = null;
+            for (java.lang.reflect.Field f : sndMgr.getClass().getDeclaredFields()) {
+                if (!java.util.Map.class.isAssignableFrom(f.getType())) continue;
+                java.lang.reflect.Type generic = f.getGenericType();
+                if (generic instanceof java.lang.reflect.ParameterizedType) {
+                    java.lang.reflect.Type[] args =
+                        ((java.lang.reflect.ParameterizedType) generic).getActualTypeArguments();
+                    if (args.length == 2 && args[0] == String.class
+                        && args[1].getTypeName().contains("SoundList")) {
+                        regFd = f;
+                        break;
+                    }
+                }
+            }
+            if (regFd == null) return false;
             regFd.setAccessible(true);
             @SuppressWarnings("unchecked")
             java.util.Map<String, ?> reg = (java.util.Map<String, ?>) regFd.get(sndMgr);
-            return reg.containsKey(soundId);
+            return reg != null && reg.containsKey(soundId);
         } catch (Exception e) {
-            return true; // On error, behave conservatively — let SoundHandler decide
+            // Unreadable registry: do not claim the sound exists — pushing an
+            // unknown name at the vanilla handler only produces a WARN.
+            return false;
         }
     }
 
@@ -281,7 +308,13 @@ public final class YSMSoundManager {
     /** 停止指定控制器触发的音效（动画停止时调用） */
     public static void stopController(String controllerName) {
         String soundName = CONTROLLER_SOUNDS.remove(controllerName);
-        if (soundName != null) stopSound(soundName);
+        if (soundName != null) {
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopController '{}' -> '{}'", probeStamp(), controllerName,
+                    soundName);
+            }
+            stopSound(soundName);
+        }
         // 清除该控制器的防抖记录，确保下次重新触发时能正常播放。
         // 防抖 key 在带 modelId 时为 modelId::controller::sound（onSoundKeyframe
         // 拼装），仅按 startsWith(controllerName::) 匹配不到，需同时匹配
@@ -293,11 +326,20 @@ public final class YSMSoundManager {
     /** 停止指定名称的音效 */
     public static void stopSound(String soundName) {
         String src = ACTIVE_SOURCES.remove(soundName);
-        if (src != null) stopSource(src);
+        if (src != null) {
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopSound '{}' (src={})", probeStamp(), soundName, src);
+            }
+            stopSource(src);
+        }
     }
 
     /** 停止所有 YSM 发出的音效 */
     public static void stopAll() {
+        if (Config.DEBUG_SOUND && !ACTIVE_SOURCES.isEmpty()) {
+            ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopAll ({} active: {})", probeStamp(), ACTIVE_SOURCES.size(),
+                new java.util.ArrayList<>(ACTIVE_SOURCES.keySet()));
+        }
         for (String src : new HashSet<>(ACTIVE_SOURCES.values())) {
             stopSource(src);
         }
@@ -318,6 +360,7 @@ public final class YSMSoundManager {
         if (mc == null || mc.thePlayer == null) return;
         Object ss = resolveSndSystem();
         if (ss == null) return;
+        probeActiveSources(ss);
         if (sndSetPosition == null) {
             try {
                 sndSetPosition = ss.getClass().getMethod(
@@ -393,6 +436,8 @@ public final class YSMSoundManager {
         SOUND_FILES.clear();
         sndSystem = null;
         sndSystemSearched = false;
+        sndManagerField = null;
+        sndSystemField = null;
         sndSetPosition = null;
     }
 
@@ -418,46 +463,126 @@ public final class YSMSoundManager {
         }
     }
 
-    /** 查找并缓存 SoundSystem 反射句柄 */
+    /**
+     * Returns the SoundSystem to drive, re-reading the field vanilla owns on every
+     * call.
+     * <p>This must not be cached blindly: {@code SoundManager.loadSoundSystem()}
+     * assigns a brand new {@code SoundSystemStarterThread} on every resource reload
+     * while {@code unloadSoundSystem()} only calls {@code cleanup()} and leaves the
+     * field pointing at the old object. A handle cached before a reload (F3+T, a
+     * resource-pack change, anything that triggers a resource reload) therefore
+     * keeps accepting {@code newSource}/{@code play} into a cleaned-up library:
+     * both calls succeed, nothing is logged, and no sound is ever heard again — it
+     * cannot heal itself either. Re-reading the field is cheap (one reflective
+     * get per call) and rebinds as soon as vanilla swaps the instance.
+     */
     private static Object resolveSndSystem() {
-        if (sndSystem != null) return sndSystem;
-        if (sndSystemSearched) return null;
-        sndSystemSearched = true;
-        try {
-            Minecraft mc = Minecraft.getMinecraft();
-            SoundHandler sh = mc.getSoundHandler();
-            java.lang.reflect.Field sndF = null;
-            for (java.lang.reflect.Field f : SoundHandler.class.getDeclaredFields()) {
-                if (SoundManager.class.isAssignableFrom(f.getType())) { sndF = f; break; }
+        Object current = readVanillaSndSystem();
+        if (current != null) {
+            if (sndSystem != null && current != sndSystem) {
+                ysmu.LOG.info("[YSMU-SOUND] SoundSystem was replaced (resource reload) — rebinding");
             }
-            if (sndF == null) return null;
-            sndF.setAccessible(true);
-            SoundManager sndMgr = (SoundManager) sndF.get(sh);
+            sndSystem = current;
+            return sndSystem;
+        }
+        // Field not readable (unexpected mapping) or temporarily null: keep using
+        // whatever was resolved before rather than going silent.
+        return sndSystem;
+    }
 
-            // Try known field names
-            String[] names = {"field_148620_e", "sndSystem", "field_148617_c", "field_148614_b", "sndManager"};
-            for (String name : names) {
-                try {
-                    java.lang.reflect.Field f = SoundManager.class.getDeclaredField(name);
-                    f.setAccessible(true);
-                    Object val = f.get(sndMgr);
-                    if (val != null) { sndSystem = val; return sndSystem; }
-                } catch (NoSuchFieldException ignored) {}
-            }
-            // Fallback: type search
-            for (java.lang.reflect.Field f : SoundManager.class.getDeclaredFields()) {
-                f.setAccessible(true);
-                Object val = f.get(sndMgr);
-                if (val != null && val.getClass().getName().contains("SoundSystem")) {
-                    sndSystem = val;
-                    return sndSystem;
+    /** Reads the SoundSystem instance vanilla's SoundManager currently holds, or
+     *  {@code null} when the reflecting fields cannot be located/read. The two
+     *  fields are cached on first success. */
+    private static Object readVanillaSndSystem() {
+        try {
+            if (sndManagerField == null) {
+                if (sndSystemSearched) return null;
+                sndSystemSearched = true;
+                Minecraft mc = Minecraft.getMinecraft();
+                if (mc == null) return null;
+                SoundHandler sh = mc.getSoundHandler();
+                for (java.lang.reflect.Field f : SoundHandler.class.getDeclaredFields()) {
+                    if (SoundManager.class.isAssignableFrom(f.getType())) {
+                        f.setAccessible(true);
+                        sndManagerField = f;
+                        break;
+                    }
                 }
+                if (sndManagerField == null) return null;
             }
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc == null) return null;
+            Object sndMgr = sndManagerField.get(mc.getSoundHandler());
+            if (sndMgr == null) return null;
+            if (sndSystemField == null) {
+                sndSystemField = findSoundSystemField(sndMgr.getClass());
+                if (sndSystemField == null) {
+                    // Give up on discovery instead of rescanning on every call:
+                    // this runs once per tick while any source is active.
+                    sndManagerField = null;
+                    return null;
+                }
+                sndSystemField.setAccessible(true);
+            }
+            return sndSystemField.get(sndMgr);
         } catch (Exception e) {
             ysmu.LOG.warn("[YSMU-SOUND] Failed to resolve SoundSystem: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /** Locates SoundManager's SoundSystem field: known MCP/SRG names first, then any
+     *  field whose declared type is a SoundSystem (class names are not obfuscated in
+     *  1.7.10, so this works under either naming scheme). */
+    private static java.lang.reflect.Field findSoundSystemField(Class<?> soundManagerClass) {
+        String[] names = {"field_148620_e", "sndSystem", "field_148617_c", "field_148614_b", "sndManager"};
+        for (String name : names) {
+            try {
+                return soundManagerClass.getDeclaredField(name);
+            } catch (NoSuchFieldException ignored) {}
+        }
+        for (java.lang.reflect.Field f : soundManagerClass.getDeclaredFields()) {
+            if (f.getType().getName().contains("SoundSystem")) {
+                return f;
+            }
         }
         return null;
     }
+
+    // ---- DebugSound diagnostics ---------------------------------------------
+    // Kept (unlike the temporary animation probes): paulscode's SoundSystem is the
+    // only place in 1.7.10 that can answer "is this source actually playing?", and
+    // the lookup chain in docs/analysis/sound-playback.md is exactly the one that
+    // needed it.  Both gates must be on to produce output: DebugSound (off by
+    // default) and, for the active-source dump, once per 20 ticks.
+    private static int probeTickCounter;
+    private static final long PROBE_T0 = System.currentTimeMillis();
+
+    /** Minecraft log lines only carry second resolution, so probe lines carry
+     *  elapsed milliseconds and the client tick to keep intra-second ordering readable. */
+    private static String probeStamp() {
+        Minecraft mc = Minecraft.getMinecraft();
+        int tick = mc != null && mc.thePlayer != null ? mc.thePlayer.ticksExisted : -1;
+        return "+" + (System.currentTimeMillis() - PROBE_T0) + "ms t=" + tick;
+    }
+
+    /** Rate-limited dump of the sources still tracked as active. */
+    private static void probeActiveSources(Object ss) {
+        if (!Config.DEBUG_SOUND) return;
+        if (++probeTickCounter % 20 != 0) return;
+        StringBuilder sb = new StringBuilder();
+        for (Map.Entry<String, String> e : ACTIVE_SOURCES.entrySet()) {
+            String state = "?";
+            try {
+                state = String.valueOf(
+                    ss.getClass().getMethod("playing", String.class).invoke(ss, e.getValue()));
+            } catch (Exception ignored) {}
+            sb.append(e.getKey()).append("->").append(e.getValue()).append('(').append(state).append(") ");
+        }
+        ysmu.LOG.info("[YSMU-SOUND-PROBE] {} active={} {}", probeStamp(),
+            ACTIVE_SOURCES.size(), sb.toString().trim());
+    }
+    // ---- end DebugSound diagnostics -----------------------------------------
 
     /** Check that the file is an OGG container with Vorbis audio.
      *  Reads the OGG page header + segment table, then looks for "vorbis"

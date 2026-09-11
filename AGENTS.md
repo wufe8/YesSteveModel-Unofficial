@@ -37,7 +37,7 @@ Version numbers quoted inside code comments (for example "regression since 1.9a1
 
 Before writing a new analysis script, look for one that already exists: `tools/` (tracked) and `local/tools/` (gitignored working scripts). `tools/README.md` lists what each does and collects the analysis pitfalls learned so far; read it before designing a probe. New one-off or environment-specific scripts belong in `local/tools/`; only generally useful, path-independent tools should be promoted to `tools/` and listed in `tools/README.md`.
 
-Diagnostics convention: the user runs the client, so keep probes at `info` level (the `debug` config level needs launch arguments they will not change), rate-limit or flag them so they can be turned off, and prefer temporary probes that get removed or commented out again with a note.
+Diagnostics convention: the user runs the client, so keep probes at `info` level (the `debug` config level needs launch arguments they will not change). A probe is **temporary**: it exists in the working tree only while one specific question is being chased, and it is deleted once that question is answered (`git show <sha>:<path>` recovers it). The only diagnostics that stay in the source permanently are the ones that are both behind a `Config.DEBUG_*` switch and rate-limited — for example `allowDebugLog(tag)` in the controller runtime, the `[YSMU-SOUND-PROBE]` stop-path lines, and the 20-tick active-source dump.
 
 ## ExecPlans
 

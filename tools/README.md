@@ -14,7 +14,7 @@
 | `ysm_dump.py` | 解析/导出 `.ysm` 二进制模型（含 `_debug_*` 中间文件），排查模型解析问题用 |
 | `filter_ysmu_log.py` | **YSMU 专用**日志筛选：按 `[YSMU-*]` 标签分类、去重、分组，支持 `--model` / `--tag` / `--level` / `--context` |
 | `dedupe_mc_log.py` | **通用**日志"行形状"折叠：把只差时间戳/线程/数字的重复行合并计数，并可列出某个标签实际产生过的**所有不同取值**（判断"变量根本没变"时最有用） |
-| `plot_anim_probe.py` | 解析临时探针 `[YSMU-KF]` / `[YSMU-BONE]`，输出文本统计 + ASCII 图 + CSV + 无依赖 SVG（`--png` 需要 matplotlib） |
+| `plot_anim_probe.py` | 解析 `[YSMU-KF]` / `[YSMU-BONE]` 探针行（探针本身已从源码移除，只能用留档日志；需要重跑就用 `git show c5f3cbb:<文件>` 取回），输出文本统计 + ASCII 图 + CSV + 无依赖 SVG（`--png` 需要 matplotlib） |
 | `vendor_imagestream.py` | 生成 ImageStream/WebP 解码相关的 vendored 代码 |
 
 典型用法：
@@ -29,7 +29,7 @@
     python tools/filter_ysmu_log.py --tag YSMU-CTRL --context 2 < latest.log
 
     # 骨骼轨迹
-    python tools/plot_anim_probe.py probe.log --bone ysmGlowSword1
+    python tools/plot_anim_probe.py probe.log --bone <bone-name>
 
 ## 排查坑（踩过的，别再踩）
 
@@ -69,3 +69,6 @@
     会超时；用 Python 逐文件解析，或限定 `--include`。
 12. javac 的 `@argfile` 遇到超长 `-cp` 行会解析失败；要快速做编译检查，
     直接对着上一次构建的 `build/libs/*-dev.jar` + 少量依赖编译改动文件即可。
+13. 探针是**临时**的：问题查清就删掉，源码里只留 `Config.DEBUG_*` 开关 + 频率限制的诊断
+    （`[YSMU-SOUND-PROBE]`、`allowDebugLog(tag)`）。骨骼/关键帧类探针写死了具体模型的骨骼名，
+    留着只会误导后来人；要重跑用 `git show <sha>:<path>` 取回。
