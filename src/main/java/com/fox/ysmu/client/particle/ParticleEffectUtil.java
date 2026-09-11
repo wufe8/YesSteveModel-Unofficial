@@ -152,7 +152,7 @@ public final class ParticleEffectUtil {
             double x = entity.posX + spawn[0];
             // 1.7.10 玩家 posY = 脚底 + yOffset(1.62)（Entity.posY = boundingBox.minY + yOffset），
             // 而 OpenYSM(1.20.1) 的 entity.getY() = 脚底。直接用 posY 会让粒子系统性偏高约一个
-            // 眼睛高度（rossi 火焰剑 / mingf 火把都偏高 ~1.6）。用 boundingBox.minY（脚底）与
+            // 眼睛高度（模型的粒子生成点普遍偏高 ~1.6）。用 boundingBox.minY（脚底）与
             // OpenYSM 语义对齐。
             double y = entity.boundingBox.minY + spawn[1];
             double z = entity.posZ + spawn[2];

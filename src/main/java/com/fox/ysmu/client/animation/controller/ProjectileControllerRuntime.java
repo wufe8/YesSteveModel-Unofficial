@@ -83,7 +83,7 @@ public final class ProjectileControllerRuntime {
      *
      * @param entityId  the projectile entity's ID (for state isolation)
      * @param animId    the projectile's animation ResourceLocation
-     *                  (e.g. {@code ysmu:mingf/projectile_#arrow})
+     *                  (e.g. {@code ysmu:<model>/projectile_#arrow})
      * @param ageInTicks current animation time in ticks
      * @return active animation names; empty if no controllers or no active animations
      */

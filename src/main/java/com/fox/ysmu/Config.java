@@ -71,7 +71,7 @@ public class Config {
     public static boolean DEBUG_SOUND = false;
     public static boolean DEBUG_PARTICLE = false;
     /** 调试/测试用：粒子生成时从 Y 偏移额外减去的值（格）。默认 0。
-     *  用于临时校正模型粒子高度偏差（如 mingf 火焰偏高约 2 格）。 */
+     *  用于临时校正模型粒子高度偏差（有的模型粒子偏高约 2 格）。 */
     public static double PARTICLE_Y_ADJUST = 0.0;
     /** 调试/测试用：粒子 xyz 偏移全部置 0（直接生成在实体位置）。 */
     public static boolean PARTICLE_ZERO_OFFSET = false;
@@ -101,7 +101,7 @@ public class Config {
      *  and anything under 2048 passes through. Bound VRAM on large model libraries;
      *  GeckoLib samples with normalized UVs, so an aspect-preserving resize never
      *  shifts the mapped content. Default 0 (off): downscaling still has visual
-     *  artifacts on some models (e.g. GUMI2.6.2), so it is opt-in until a better
+     *  artifacts on some models, so it is opt-in until a better
      *  downscale strategy lands. */
     public static int TEXTURE_TARGET_SIZE = 0;
 
@@ -110,7 +110,7 @@ public class Config {
      *  least-recently-used models' GPU textures are freed (raw bytes stay in RAM, so
      *  re-upload is a cheap GPU upload — never a white model). Bounds the VRAM peak
      *  on large model libraries instead of per-texture downscaling, which still has
-     *  visual artifacts (e.g. GUMI2.6.2). Roughly 24-36 typical models fit in
+     *  visual artifacts. Roughly 24-36 typical models fit in
      *  128-256 MB; raise it if on-screen demand regularly exceeds the budget. */
     public static int TEXTURE_VRAM_BUDGET_MB = 256;
 

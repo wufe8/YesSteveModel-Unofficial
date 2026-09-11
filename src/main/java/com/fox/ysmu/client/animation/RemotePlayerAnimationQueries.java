@@ -65,8 +65,8 @@ public final class RemotePlayerAnimationQueries {
      * 并非真实速度的线性函数；本地 motionX 的 0.546 倍恰好落在同一量级，
      * 近似 wiki 基准。模型按现代 YSM 的 query.ground_speed 标定，因此刻意保留
      * motionX 取值——若改成真实速度（pos 差值），本地玩家数值会放大 ~1.83 倍
-     * （walk 2.36→4.32），破坏模型作者标定的阈值/表达式（如 GUMI 的
-     * query.ground_speed>10）。需要真实速度时请用 ysm.ground_speed2
+     * （walk 2.36→4.32），破坏模型作者标定的阈值/表达式（例如有的模型用
+     * query.ground_speed>10 分流）。需要真实速度时请用 ysm.ground_speed2
      * （= pos 差值 ×20）或控制器 ground_speed 查询。
      */
     private static float getGroundSpeed(EntityPlayer player) {

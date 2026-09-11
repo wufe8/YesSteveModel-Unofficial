@@ -54,8 +54,8 @@ Diagnostics convention: the user runs the client, so keep probes at `info` level
 - `src/main/java/com/fox/ysmu/compat`: optional-mod compatibility wrappers. Keep Backhand and similar direct calls behind these wrappers.
 - `src/main/java/com/fox/ysmu/mixin`: Mixins only. `gradle.properties` restricts Mixins to package `com.fox.ysmu.mixin`.
 - `src/main/java/software/bernie`, `src/main/java/com/eliotlash`, and `src/main/java/net/geckominecraft`: vendored/ported GeckoLib, Molang/math, and legacy adapter code. Treat these as third-party compatibility code and keep edits narrow.
-- `src/main/resources/assets/ysmu/builtin`: built-in model packs (`default`, `misc`, and the locally distributed `wine_fox` pack). Extracted into `config/ysmu/builtin` on every start.
-- `src/main/resources/assets/ysmu/custom`: legacy built-in model location, now empty — the copy code that used it is commented out in `ServerModelManager`.
+- `src/main/resources/assets/ysmu/builtin`: built-in models, extracted into `config/ysmu/builtin` on every start. `default` is a modern `ysm.json` pack; `misc` is a pack manifest (`ysm-pack.json`) whose `1_alex` … `6_wine_fox` sub-directories are still the **legacy flat format** (`main.json` + `arm.json` + `*.png`), so the legacy loader path stays load-bearing.
+- `src/main/resources/assets/ysmu/custom`: legacy built-in model location, empty (0 tracked files); the code that copied models from it is a commented-out block in `ServerModelManager`. Old installs still have `config/ysmu/custom/{default,default_boy,steve,alex,qingluka,wine_fox}` in the legacy format, and `ClientModelManager.loadDefaultModel()` prefers a legacy `custom/default` over the built-in modern one.
 - `src/main/resources/assets/ysmu/lang`: `en_US.lang` and `zh_CN.lang`. Keep new translation keys in sync.
 - `src/main/resources/mixins.ysmu.json`: Mixin config; five client Mixins are registered (`MixinItemRenderer`, `MixinEntityArrow`, `client.MixinRenderArrow`, `MixinMinecraft`, `MixinEffectRenderer`).
 - `src/main/resources/META-INF/*_at.cfg`: access transformers for Minecraft/GeckoLib internals.
@@ -130,4 +130,4 @@ Useful commands from the repository root:
 - `.\gradlew.bat runClient`
 - `.\gradlew.bat runServer`
 
-`src/test/java` holds JUnit 5 sources (`YsmResourceFormatTest`, `OpenYsmSyncProtocolTest`, `YsmFoundationTest`, `MolangParserOpenYsmPhysicsTest`, `NestedAssignmentRegressionTest`, `ParticleMolangExpressionTest`); extend them when touching parsers, the sync protocol or Molang. CI delegates build/test and tagged releases to reusable GTNH workflows in `.github/workflows`.
+`src/test/java` holds JUnit 5 sources (`YsmResourceFormatTest`, `OpenYsmSyncProtocolTest`, `YsmFoundationTest`, `MolangParserOpenYsmPhysicsTest`, `NestedAssignmentRegressionTest`, `ParticleMolangExpressionTest`, `ImplicitParallelControllerTest`); extend them when touching parsers, the sync protocol or Molang. CI is effectively dormant: `.github/workflows/build-and-test.yml` triggers on `master, main`, while this repository's default branch is `1.0` and development happens on `perf/previewUI`, so pushes do not run it. `.github/workflows/release-tags.yml` triggers on any tag and does run. Do not spend effort designing automated gameplay tests — rendering, model assembly and 轮盘 behaviour can only be judged in a running client (and would need a vision model to automate).

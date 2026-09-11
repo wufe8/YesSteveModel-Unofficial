@@ -64,7 +64,7 @@ public final class MovementSpeedMatcher {
     // ---- 方案 A：动画名 → 设计速度 (blocks/s) 名称表（仅作回退） ----
     // 参考 vanilla 1.7.10 玩家速度：行走 4.317、冲刺 5.612（×1.3）、
     // 潜行 1.295（×0.3）、游泳 1.727（×0.4）。fly 无"腿地接触"不参与。
-    // 现代 OpenYSM 模型（如乐魂）的动画名是模型自定义的（如"行走"/"疾跑"），
+    // 现代 OpenYSM 模型的动画名可以是模型自定义的（如"行走"/"疾跑"），
     // 不在表中 —— 由 SpeedProvider 返回 -1 表示不缩放，等待方案 B/C 覆盖。
     private static final String[] LOCOMOTION_NAMES = {
         "walk", "walking", "walk_loop",

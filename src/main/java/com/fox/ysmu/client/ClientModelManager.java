@@ -977,7 +977,7 @@ public class ClientModelManager {
             // keyframe values reference mod-specific variables like ctrl.tac_hold_gun.
             //
             // 逐动画扫描：只标记自身内容真正引用模组变量的动画。
-            // 之前是"文件内任一动画匹配就标记文件内所有动画"——smx 的 main.animation.json
+            // 之前是"文件内任一动画匹配就标记文件内所有动画"——某个模型的 main.animation.json
             // 里仅 sneak/sneaking 引用 ctrl.tac_，却把 pre_parallel0-7/表情/衣服 全部误标为
             // tacz 依赖，导致 pre_parallel_0 控制器在 tacz 未加载时被整体跳过（衣服/表情
             // 永不播放、备用表情悬浮）。

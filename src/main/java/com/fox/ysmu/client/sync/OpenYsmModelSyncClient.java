@@ -193,8 +193,8 @@ public final class OpenYsmModelSyncClient {
 
             // 先读完整索引条目，再处理：把优先模型（本地玩家自身/默认）排到最前面，
             // 使它们在进度条最开头就 apply，不必等索引循环走到其靠后位置。此前
-            // cacheHit 路径虽"同步立即解析"，但受限于索引顺序——靠后模型（如
-            // GUMI2.6.2）解析/apply 落在进度条后半，导致"进度条后半才显示模型"。
+            // cacheHit 路径虽"同步立即解析"，但受限于索引顺序——大模型解析/apply
+            // 落在进度条后半，导致"进度条后半才显示模型"。
             java.util.List<ServerModelContext> indexModels = new java.util.ArrayList<>(serverModelCount);
             for (int i = 0; i < serverModelCount; i++) {
                 long hash1 = buf.readVarLong();

@@ -47,8 +47,8 @@ public final class MolangPhysicsRuntime {
     /** 渲染路径骨骼绝对位置追踪（bone_pivot_abs 与几何渲染走同一矩阵路径）。
      *  每帧在 MatrixStack.transformBone 里按 模型+骨名 记录骨链累计后的完整 4×4 矩阵
      *  （blocks，含模型缩放，预 yaw / 预玩家位移）。bone_pivot_abs 用该矩阵计算
-     *  枢轴点的世界位置（M×pivot），避免骨骼自身缩放/旋转污染平移列（如 mingf 火把
-     *  locator 的 scale [1.25, 2.5, 1.5] 会让平移列 z 虚增约 2 倍）。 */
+     *  枢轴点的世界位置（M×pivot），避免骨骼自身缩放/旋转污染平移列（如一个火把 locator
+     *  的 scale [1.25, 2.5, 1.5] 会让平移列 z 虚增约 2 倍）。 */
     private static final Map<String, float[]> CAPTURED_BONE_MATRIX = new java.util.HashMap<>();
     private static boolean trackingEnabled = false;
     private static ResourceLocation trackingModelId = null;
@@ -404,7 +404,7 @@ public final class MolangPhysicsRuntime {
      *  优先读取渲染路径追踪到的骨骼矩阵（与几何渲染同一矩阵路径）；
      *  未追踪到（首帧/预览等）时回退为沿父链矩阵重算。
      *  <p>三轴都用 M×pivot（枢轴点世界位置）——平移列会被目标骨骼自身 scale/rotation
-     *  污染（如 mingf 火把 locator 的 scale [1.25,2.5,1.5]：平移列 z 虚增~2 倍、
+     *  污染（如某个火把 locator 的 scale [1.25,2.5,1.5]：平移列 z 虚增~2 倍、
      *  x/y 抖动），M×pivot 稳定且正确。
      *  <p><b>X 轴取负</b>：GeoBuilder 对 pivot.x/cube.x 取负（GeckoLib 内部约定），
      *  捕获矩阵在 GeoBone 空间（左手 X 为负）；而模型粒子公式

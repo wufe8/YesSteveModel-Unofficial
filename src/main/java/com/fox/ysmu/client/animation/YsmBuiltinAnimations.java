@@ -21,7 +21,7 @@ import software.bernie.geckolib3.file.AnimationFile;
  * YSMU 内置硬编码动画。
  *
  * <p>「empty」是 mod 提供的一个默认空操作动画（不改变任何骨骼），供模型控制器引用
- * 但模型文件未定义该动画时兜底使用（例如 Endfield_Rossi 的 空闲 状态引用 "empty"
+ * 但模型文件未定义该动画时兜底使用（例如某个模型的 空闲 状态引用 "empty"
  * 但动画文件缺失，导致 setAnimation 加载失败、currentAnimation 为 null，进而触发
  * all_animations_finished 误判为 true 的落地翻滚 bug）。
  *

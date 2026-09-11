@@ -108,8 +108,8 @@ public class JsonAnimationUtils {
                         // turned every step into a linear ramp AND, worse, made the
                         // interval *before* a channel's first keyframe use that
                         // keyframe's `post` value instead of its `pre` value — so
-                        // one-shot effect bones (e.g. yomon's ysmGlowSwordLight*
-                        // lightning) stayed visible long before they should flash.
+                        // one-shot effect bones (a lightning bone meant to flash for
+                        // one frame) stayed visible long before they should.
                         output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
                     } else if (valueObject.has("post")) {
                         JsonElement postValue = valueObject.get("post");
@@ -172,8 +172,8 @@ public class JsonAnimationUtils {
                         // turned every step into a linear ramp AND, worse, made the
                         // interval *before* a channel's first keyframe use that
                         // keyframe's `post` value instead of its `pre` value — so
-                        // one-shot effect bones (e.g. yomon's ysmGlowSwordLight*
-                        // lightning) stayed visible long before they should flash.
+                        // one-shot effect bones (a lightning bone meant to flash for
+                        // one frame) stayed visible long before they should.
                         output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
                     } else if (valueObject.has("post")) {
                         JsonElement postValue = valueObject.get("post");
@@ -236,8 +236,8 @@ public class JsonAnimationUtils {
                         // turned every step into a linear ramp AND, worse, made the
                         // interval *before* a channel's first keyframe use that
                         // keyframe's `post` value instead of its `pre` value — so
-                        // one-shot effect bones (e.g. yomon's ysmGlowSwordLight*
-                        // lightning) stayed visible long before they should flash.
+                        // one-shot effect bones (a lightning bone meant to flash for
+                        // one frame) stayed visible long before they should.
                         output.add(new AbstractMap.SimpleEntry<>(entrySet.getKey(), entrySet.getValue()));
                     } else if (valueObject.has("post")) {
                         JsonElement postValue = valueObject.get("post");

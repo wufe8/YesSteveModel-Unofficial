@@ -56,7 +56,7 @@ public class AnimationRegister {
 
     private static void registerHighPriorityStates() {
         register("death", ILoopType.EDefaultLoopTypes.PLAY_ONCE, Priority.HIGHEST, (player, event) -> player.isDead);
-        // TODO 睡觉站着睡——床的方向旋转与动画叠加可能不对，目前 applyRotations 已做 -90° 旋转
+        // 睡觉：床朝向的旋转由 applyRotations 处理（-90°），sleep 状态只负责选动画。
         register("sleep", Priority.HIGHEST, (player, event) -> player.isPlayerSleeping());
         register("swim", Priority.HIGHEST, (player, event) -> player.isInWater() && Math.abs(event.getLimbSwingAmount()) > MIN_SPEED);
         // 注意：climb/climbing 动画定义 Root rotation = [90,0,0]（水平爬行/游泳姿态），

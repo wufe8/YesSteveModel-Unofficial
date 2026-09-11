@@ -588,7 +588,7 @@ public class AnimationRouletteScreen extends GuiScreen {
             // mirroring the animation runtime (MolangPhysicsRuntime /
             // OpenYsmPlayerControllerRuntime) which injects both cases — otherwise
             // the GUI read-back returns 0 and the slider thumb / radio selection
-            // never reflects the actual value (Endfield_Rossi v.CBody etc.).
+            // never reflects the actual value (e.g. a v.* written by a body-type preset).
             String lcKey = "v." + entry.getKey().toLowerCase(java.util.Locale.ROOT);
             if (!lcKey.equals(key)) {
                 software.bernie.geckolib3.core.molang.MolangParser.VARIABLES
@@ -614,7 +614,7 @@ public class AnimationRouletteScreen extends GuiScreen {
     /** Determines which radio label is currently selected.
      *  When the form has a non-blank `value`, OpenYSM convention is that the
      *  variable's value IS the 0-based label index.  When `value` is blank (e.g.
-     *  Endfield_Rossi's 体型预设, whose labels assign several variables at once),
+     *  a 体型预设 whose labels assign several variables at once),
      *  derive the selection by matching each label's assignment expression
      *  against the current roaming variable state. */
     private int getSelectedRadioIndex(ConfigForm form) {

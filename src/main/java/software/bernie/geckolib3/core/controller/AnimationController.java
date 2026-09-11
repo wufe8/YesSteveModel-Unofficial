@@ -260,7 +260,7 @@ public class AnimationController<T extends IAnimatable> {
                         .map((rawAnimation) -> {
                             Animation animation = model.getAnimation(rawAnimation.animationName, animatable);
                             // YSMU: Fallback removed — scanning ALL files in GeckoLibCache
-                            // leaks per-model custom animations (e.g. rok's attack_1)
+                            // leaks per-model custom animations (e.g. another model's attack_1)
                             // into unrelated models, causing bone name mismatches.
                             // Each model must provide its own animations; the default
                             // model's animations are injected by YSMU's AnimationManager

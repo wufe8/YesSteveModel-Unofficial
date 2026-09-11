@@ -362,17 +362,17 @@ public final class AnimationManager {
             // animation when the model declares NO parallel controller at all.
             // A model that ships parallel controllers drives those animations
             // itself, frequently merging several raw pre_parallelN animations
-            // into one state (yomon's player.pre_parallel_0 plays
+            // into one state (a player.pre_parallel_0 plays
             // pre_parallel1..7). Replaying the raw animation on this per-slot
             // controller duplicates it on a second controller whose clock never
             // advances, and because this controller is processed after the
-            // merged one it overwrites it — that pinned ysmGlowSword* /
-            // ysmGlowSwordLight* to their tick-0 pose whatever the merged
+            // merged one it overwrites it — that pinned the merged state's
+            // one-shot effect bones to their tick-0 pose whatever the merged
             // animation produced.
             // This is safe because OpenYsmAnimationControllerRegistry gives every
             // pre_parallelN/parallelN animation the model defines its own implicit
             // controller (mirroring OpenYSM's ParallelProcessor), so a model that
-            // owns pre_parallelN — e.g. rok, which only declares player.parallel_0..7
+            // owns pre_parallelN — e.g. one that only declares player.parallel_0..7
             // and drives v.roaming.* visibility from pre_parallel3/6/7 — still plays
             // those animations through the OpenYSM runtime above.
             // Skip if the animation doesn't exist in the model's file to avoid
@@ -608,18 +608,18 @@ public final class AnimationManager {
         AnimationFile animFile = animId == null ? null
             : GeckoLibCache.getInstance().getAnimations().get(animId);
         // OpenYSM 模型：潜行动画可能由 player.pre_main 控制器负责
-        // （乐魂：移动潜行→行走/后退1，站立潜行→sneaking_Control）。
+        // （例如把移动潜行接到 行走/后退1、站立潜行接到 sneaking_Control）。
         // main_controller 的 legacy 潜行（sneak/sneaking）会与 pre_main 同时
         // 播放并覆盖其 Root 位移（sneaking 的 Root [0,-7.625,0] 覆盖行走的
         // [0,3,0]），导致移动潜行显示成站立潜行蹲姿。
         // 因此仅当模型自身提供了身体控制器（player.pre_main / player.main /
         // player.base / player.move）时才跳过 legacy 的 sneak/sneaking 状态；
-        // 只有 post_main/post_swing 等非身体控制器的 OpenYSM 模型（如
-        // Endfield Rossi）没有自带的潜行处理，必须依赖 legacy 状态机播放
+        // 只有 post_main/post_swing 等非身体控制器的 OpenYSM 模型
+        // 没有自带的潜行处理，必须依赖 legacy 状态机播放
         // sneak/sneaking 动画，不能跳过。
         // 仅当模型身体控制器（pre_main/main/base/move）真正引用潜行逻辑
         // （sneak/sneaking 动画名或 ctrl.sneaking/ctrl.sneak/q.is_sneaking 条件）
-        // 时才跳过 legacy 的 sneak/sneaking 状态。mingf 虽有 player.main 但只
+        // 时才跳过 legacy 的 sneak/sneaking 状态。有的模型虽有 player.main 但只
         // 处理待机（无潜行状态），潜行时必须由 legacy 状态机播放 sneak/sneaking。
         boolean openYsmHandlesSneak = animId != null
             && OpenYsmAnimationControllerRegistry.hasControllerSneakHandling(animId,

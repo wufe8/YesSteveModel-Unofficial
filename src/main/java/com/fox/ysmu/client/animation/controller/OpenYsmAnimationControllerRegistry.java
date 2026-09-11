@@ -64,7 +64,7 @@ public final class OpenYsmAnimationControllerRegistry {
         // named pre_parallel0..7 / parallel0..7 that the model does not declare an
         // entry for: CompositeAnimationController then falls back to a
         // NamedAnimationPredicate that plays that raw animation. Without this,
-        // rok (which declares only player.parallel_0..7) never plays
+        // a model that only declares player.parallel_0..7 never plays
         // pre_parallel1..7 — the animations that scale MHat/MCape/LeftShoes/
         // Left_Sword/face effects from v.roaming.* — so every 轮盘 checkbox and
         // radio silently did nothing and the parts stayed visible.
@@ -143,7 +143,7 @@ public final class OpenYsmAnimationControllerRegistry {
      *  ({@code player.pre_parallel_*} / {@code player.parallel_*}).
      *  <p>A model that ships parallel controllers owns those animations: it
      *  commonly merges several raw {@code pre_parallelN} animations into one
-     *  state (yomon's {@code player.pre_parallel_0} plays {@code pre_parallel1..7}),
+     *  state (one {@code player.pre_parallel_0} plays {@code pre_parallel1..7}),
      *  so the legacy per-slot controllers must not replay them as well. Every
      *  {@code pre_parallelN}/{@code parallelN} animation the model actually defines
      *  gets its own controller from {@link #synthesizeImplicitParallelControllers},
@@ -166,9 +166,9 @@ public final class OpenYsmAnimationControllerRegistry {
      * i.e. references sneak in its state animations, transition/animation
      * conditions or entry/exit statements.  Used to decide whether the legacy
      * sneak/sneaking states on the main_controller should be skipped: only models
-     * whose own body controller drives sneak (e.g. 乐魂's player.pre_main with
+     * whose own body controller drives sneak (e.g. a player.pre_main with
      * Start_Sneak/Sneak/Sneaking states) should suppress the legacy fallback.
-     * A model may own a player.main controller that only handles idle (e.g. mingf)
+     * A model may own a player.main controller that only handles idle
      * — in that case legacy sneak must keep playing.
      */
     public static boolean hasControllerSneakHandling(ResourceLocation animationId, String... controllerNames) {

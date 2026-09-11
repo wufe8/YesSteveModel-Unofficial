@@ -1436,7 +1436,7 @@ public final class OpenYsmControllerExpressionEvaluator {
             Animation current = event.getController() == null ? null : event.getController().getCurrentAnimation();
             // 若当前状态是"本帧刚进入"的（多级过渡循环里 applyAnimations 在循环之后
             // 才执行，新动画尚未开始播），绝不能判定为"已播完"——否则 空闲→起跳 会在
-            // 同一帧内被 all_animations_finished=true 直接跳过到 下落（Endfield_Rossi
+            // 同一帧内被 all_animations_finished=true 直接跳过到 下落（
             // 跳 1 格方块/原地跳总是播"落地翻滚"、永远播不出"落地小"的根因）。
             boolean justEnteredThisFrame = event.getAnimationTick() - state.enteredTick <= 0.0d;
             if (current == null || current.animationLength == null || current.animationLength <= 0.0d) {

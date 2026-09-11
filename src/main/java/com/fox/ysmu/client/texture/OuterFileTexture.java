@@ -168,7 +168,7 @@ public class OuterFileTexture extends AbstractTexture {
      * introduces a half-texel offset: the downscaled texel grid is no longer
      * aligned with the source, so GL_NEAREST sampling of the reduced texture
      * lands on neighbor pixels. That shows up as random "white/off-color"
-     * patches on models with many small UV faces (e.g. GUMI2.6.2's 3×2-px faces)
+     * patches on models with many tiny UV faces (down to a few pixels)
      * while other models look fine. The box average keeps every output texel
      * exactly aligned to its source block, so nearest sampling is 1:1 correct.
      */

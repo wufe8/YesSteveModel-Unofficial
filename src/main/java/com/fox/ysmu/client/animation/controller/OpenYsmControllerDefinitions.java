@@ -18,7 +18,7 @@ final class OpenYsmControllerDefinitions {
          *  prefers a declared animation entry over the implicit named-animation
          *  predicate, so a declared-but-empty entry has to shadow the implicit
          *  controller instead of falling back to the raw animation
-         *  (smx/yomon declare empty player.pre_parallel_1..7 placeholders). */
+         *  (models commonly declare empty player.pre_parallel_1..7 placeholders). */
         final Set<String> declaredNames = new LinkedHashSet<>();
     }
 

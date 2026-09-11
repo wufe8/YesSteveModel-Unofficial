@@ -496,7 +496,7 @@ public final class OpenYsmPlayerControllerRuntime {
                     sb.append(" | ").append(t.targetState).append("=").append(condMet).append("[").append(condStr).append("]");
                 }
             }
-            // 附加实际输入/移动值：方便定位潜行状态机（乐魂 Sneak/Sneaking 依赖
+            // 附加实际输入/移动值：方便定位潜行状态机（有模型的 Sneak/Sneaking 依赖
             // ctrl.sneak/ctrl.sneaking + ysm.input_vertical）。
             if (player != null) {
                 sb.append(" | input_vertical=").append(String.format(java.util.Locale.ROOT, "%.3f", player.moveForward))
@@ -808,7 +808,7 @@ public final class OpenYsmPlayerControllerRuntime {
         // designed for blended parallel animation (e.g. attack combos that
         // need full-body movement).
         // player.pre_main is the PRIMARY body controller in modern YSM models
-        // (smx/乐魂 have no player.main) — it plays idle/walk/run/sneak and must
+        // (many models have no player.main) — it plays idle/walk/run/sneak and must
         // keep Root so sneaking_Control's crouch lowering [0,-7.625,0] and the
         // walk body bob are not silently stripped.
         String ctrlName = event.getController().getName();
@@ -918,8 +918,8 @@ public final class OpenYsmPlayerControllerRuntime {
             // animation of a state is an independent timeline that loops on its
             // own length; YSMU flattens them into one, so the copy has to span
             // the LONGEST contributor. Copying the primary's length instead lets
-            // the shortest contributor become the clock: yomon's
-            // player.pre_parallel_0 starts with hair_physics (0.0202 s, a
+            // the shortest contributor become the clock: a
+            // player.pre_parallel_0 that starts with hair_physics (0.0202 s, a
             // per-frame physics driver), which pinned the whole state to
             // tick ~0 and froze pre_parallel6's 4 s lightning flash.
             double mergedLength = 0.0d;
@@ -1174,7 +1174,7 @@ public final class OpenYsmPlayerControllerRuntime {
      *   <li><b>Only overwrite a channel the source actually animates.</b> Overwriting
      *       all three channels let a {@code position}-only sibling erase another
      *       animation's {@code scale} channel. That is exactly what happened to
-     *       yomon's 幻影剑 bones: {@code pre_parallel2} carries the hide-scale
+     *       幻影剑 bones: {@code pre_parallel2} carries the hide-scale
      *       ({@code !v.roaming.yinglou} / {@code !v.roaming.yingbai}) while
      *       {@code pre_parallel6} only repositions the same bones — merging
      *       {@code pre_parallel6} last wiped the scale, so 隐藏后排/前排幻影剑
@@ -1223,8 +1223,8 @@ public final class OpenYsmPlayerControllerRuntime {
                 // constant 1 is the neutral element ("I don't care about visibility")
                 // rather than an override. Letting it win would erase an explicit
                 // hide/scale toggle contributed by a sibling animation — e.g.
-                // yomon's follow_animation ends with soul scale=1, which erased
-                // pre_parallel2's `v.roaming.soul` and broke 显示半灵.
+                // a follow_animation ending with scale=1 erased pre_parallel2's
+                // `v.roaming.soul` and broke the part it was hiding.
                 merged.scaleKeyFrames = incoming.scaleKeyFrames;
             }
         }
