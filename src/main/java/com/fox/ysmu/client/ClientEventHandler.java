@@ -64,7 +64,7 @@ public class ClientEventHandler {
     private static final java.util.Set<String> SUPPRESSED_HANDLER_ERRORS =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    private static void suppressHandlerError(String tag, Exception e) {
+    private static void suppressHandlerError(String tag, Throwable e) {
         String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
         if (SUPPRESSED_HANDLER_ERRORS.add(key)) {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-RENDER] {} handler suppressed ({}): {}",
@@ -166,7 +166,7 @@ public class ClientEventHandler {
                 ResourceLocation location = clientPlayer.getLocationSkin();
                 animatable.setTexture(location);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             suppressHandlerError("onRenderPlayer", e);
         }
     }
@@ -200,7 +200,7 @@ public class ClientEventHandler {
                     player.rotationYaw,
                     partialTicks);
             }
-        } catch (Exception e) {
+        } catch (Throwable e) {
             suppressHandlerError("onRender", e);
         }
     }
@@ -230,7 +230,7 @@ public class ClientEventHandler {
                 return;
             }
             FirstPersonHandRenderer.tryRender(event, mc, player, itemRenderer);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             suppressHandlerError("onRenderHand", e);
         }
     }
@@ -291,7 +291,7 @@ public class ClientEventHandler {
             int textX = (screenWidth - mc.fontRenderer.getStringWidth(text)) / 2;
             int textY = barY - mc.fontRenderer.FONT_HEIGHT - 2;
             mc.fontRenderer.drawStringWithShadow(text, textX, textY, 0xFFFFFF);
-        } catch (Exception e) {
+        } catch (Throwable e) {
             suppressHandlerError("onRenderOverlay", e);
         }
     }
@@ -313,7 +313,7 @@ public class ClientEventHandler {
             // Use the cached HUD preview instead of rendering the full pipeline every frame.
             hudPreviewCache.render(player, posX, posY, scale, yawOffset, event.partialTicks);
             EXTRA_PLAYER = false;
-        } catch (Exception e) {
+        } catch (Throwable e) {
             suppressHandlerError("onRenderScreen", e);
         }
     }

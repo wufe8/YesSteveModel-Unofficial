@@ -365,6 +365,13 @@ public final class MolangDebugSnapshot {
         // 本次新建的条目（未知变量按 Molang 语义求值为 0，但不应残留变量表）。
         java.util.Set<String> keysBefore =
             new java.util.HashSet<>(software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.keySet());
+        // 实体上下文：渲染路径每帧写入 ParticleEffectUtil.currentEntity，聊天框里求值时没有渲染，
+        // 于是 query.* / ysm.* 里依赖实体的那批函数（is_item_name_any、relative_block_has_any_tag、
+        // equipped_enchantment_level、position …）都会拿到 null 而返回 0，看起来像"功能没实现"。
+        // 求值期间借用本地玩家，结束后还原，让 /ysm debug eval 成为这些函数的验证入口。
+        net.minecraft.entity.Entity previousEntity =
+            com.fox.ysmu.client.particle.ParticleEffectUtil.getCurrentEntity();
+        com.fox.ysmu.client.particle.ParticleEffectUtil.setCurrentEntity(player);
         try {
             software.bernie.geckolib3.core.molang.MolangParser parser =
                 software.bernie.geckolib3.resource.GeckoLibCache.getInstance().parser;
@@ -378,6 +385,7 @@ public final class MolangDebugSnapshot {
                 CHAT_PREFIX + " §cError evaluating: §f" + sanitize(expression)
                     + "§c — " + sanitize(String.valueOf(e.getMessage()))));
         } finally {
+            com.fox.ysmu.client.particle.ParticleEffectUtil.setCurrentEntity(previousEntity);
             java.util.List<String> added = new java.util.ArrayList<>();
             for (String key : software.bernie.geckolib3.core.molang.MolangParser.VARIABLES.keySet()) {
                 if (!keysBefore.contains(key)) {

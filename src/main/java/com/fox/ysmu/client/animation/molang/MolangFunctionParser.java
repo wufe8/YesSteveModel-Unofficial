@@ -36,13 +36,25 @@ public final class MolangFunctionParser {
     private static final Pattern CTRL_STATE_PATTERN =
         Pattern.compile("ctrl\\.(\\w+)(?:\\([^)]*\\))?");
 
-    /** 匹配 ctrl.set_animation('<name>') 调用（支持单引号或双引号） */
+    /** 匹配 ctrl.set_animation('<name>')（也接受第二个参数，如 ctrl.loop，见 wiki 自定义函数页） */
     private static final Pattern SET_ANIM_PATTERN =
-        Pattern.compile("ctrl\\.set_animation\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)");
+        Pattern.compile("ctrl\\.set_animation\\s*\\(\\s*['\"]([^'\"]+)['\"](?:\\s*,[^)]*)?\\s*\\)");
 
     /** 匹配条件守卫后的 set_animation: 如 v.show_car ? { ctrl.set_animation('开车_待命'); } */
     private static final Pattern CONDITIONAL_SET_ANIM_PATTERN =
-        Pattern.compile("([^;{]+)\\s*\\?\\s*\\{[^}]*ctrl\\.set_animation\\s*\\(\\s*['\"]([^'\"]+)['\"]\\s*\\)[^}]*\\}");
+        Pattern.compile("([^;{]+)\\s*\\?\\s*\\{[^}]*ctrl\\.set_animation\\s*\\(\\s*['\"]([^'\"]+)['\"](?:\\s*,[^)]*)?\\s*\\)[^}]*\\}");
+
+    /** 依次匹配每个 ctrl.set_animation('name')，用于提取它前后的其他 ctrl.* 调用。 */
+    private static final Pattern ANY_SET_ANIM_PATTERN =
+        Pattern.compile("ctrl\\.set_animation\\s*\\(\\s*['\"]([^'\"]+)['\"]");
+
+    /** 匹配 ctrl.set_beginning_transition_length(<秒>) */
+    private static final Pattern SET_TRANSITION_PATTERN =
+        Pattern.compile("ctrl\\.set_beginning_transition_length\\s*\\(\\s*([0-9]*\\.?[0-9]+)\\s*\\)");
+
+    /** 匹配 ctrl.indicate_reload（无参数，允许空括号） */
+    private static final Pattern INDICATE_RELOAD_PATTERN =
+        Pattern.compile("ctrl\\.indicate_reload\\s*(?:\\(\\s*\\))?");
 
     /** 查找下一个 ctrl.<state>(...) 后最近的 ? { 块，返回 {blockStart, blockEnd, stateEnd, qmarkPos} 或 null */
     private static int[] findNextCtrlBlock(String script, int searchFrom) {
@@ -214,5 +226,65 @@ public final class MolangFunctionParser {
         if (data == null || data.length == 0) return false;
         String content = new String(data, StandardCharsets.UTF_8);
         return content.contains("ctrl.") && content.contains("set_animation");
+    }
+
+    /**
+     * {@code ctrl.set_animation('x')} 附近的其他 ctrl.* 调用（wiki 自定义函数页的动画控制部分）：
+     * <ul>
+     *   <li>{@code ctrl.set_beginning_transition_length(秒)} —— 切到该动画时的过渡时长，
+     *       不写就用控制器默认值；</li>
+     *   <li>{@code ctrl.indicate_reload} —— 即使目标动画与当前相同也要重新加载。</li>
+     * </ul>
+     * 两者都按**动画名**记录：同一个动画名在多个状态里给了不同数值时以最后一次为准
+     * （脚本里同一动画重复出现且数值不同的情况在实践中不存在）。
+     */
+    public static final class AnimationHints {
+
+        /** 动画名 → 过渡时长（tick）。 */
+        public final Map<String, Double> transitionTicks = new LinkedHashMap<>();
+        /** 声明了 indicate_reload 的动画名。 */
+        public final java.util.Set<String> reloadAnimations = new java.util.LinkedHashSet<>();
+
+        public void mergeFrom(AnimationHints other) {
+            if (other == null) return;
+            transitionTicks.putAll(other.transitionTicks);
+            reloadAnimations.addAll(other.reloadAnimations);
+        }
+    }
+
+    /**
+     * 提取 {@link AnimationHints}。
+     * <p>每个 {@code set_animation} 只与它**自己前面**（到上一个 {@code set_animation} 为止）
+     * 的 ctrl.* 调用配对，这样同一个块里有多段动画时不会串味。
+     */
+    public static AnimationHints parseAnimationHints(byte[] data) {
+        AnimationHints hints = new AnimationHints();
+        if (data == null || data.length == 0) {
+            return hints;
+        }
+        String script = new String(data, StandardCharsets.UTF_8);
+        Matcher matcher = ANY_SET_ANIM_PATTERN.matcher(script);
+        int previousEnd = 0;
+        while (matcher.find()) {
+            String animName = matcher.group(1);
+            if (StringUtils.isBlank(animName)) {
+                previousEnd = matcher.end();
+                continue;
+            }
+            String segment = script.substring(Math.min(previousEnd, matcher.start()), matcher.start());
+            Matcher transition = SET_TRANSITION_PATTERN.matcher(segment);
+            Double seconds = null;
+            while (transition.find()) {
+                seconds = Double.valueOf(transition.group(1));
+            }
+            if (seconds != null) {
+                hints.transitionTicks.put(animName, seconds * 20.0d);
+            }
+            if (INDICATE_RELOAD_PATTERN.matcher(segment).find()) {
+                hints.reloadAnimations.add(animName);
+            }
+            previousEnd = matcher.end();
+        }
+        return hints;
     }
 }

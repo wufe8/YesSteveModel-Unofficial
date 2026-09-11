@@ -48,6 +48,10 @@ public class PreParsedModelBundle {
     public final Map<String, byte[]> controllerFiles = new LinkedHashMap<>();
     public final Map<String, String> molangMapping = new LinkedHashMap<>();
     public final Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> molangConditional = new LinkedHashMap<>();
+    /** {@code ctrl.set_beginning_transition_length} / {@code ctrl.indicate_reload}
+     *  提取出来的按动画名的提示（见 MolangFunctionParser.parseAnimationHints）。 */
+    public final com.fox.ysmu.client.animation.molang.MolangFunctionParser.AnimationHints molangHints =
+        new com.fox.ysmu.client.animation.molang.MolangFunctionParser.AnimationHints();
 
     // Texture data (for main-thread OpenGL upload)
     public final Map<ResourceLocation, byte[]> texturesToRegister = new LinkedHashMap<>();

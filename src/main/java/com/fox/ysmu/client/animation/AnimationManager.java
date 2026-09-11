@@ -66,6 +66,16 @@ public final class AnimationManager {
      */
     public static final Map<ResourceLocation, Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>>>
         MOLANG_CONDITIONAL_MAP = new ConcurrentHashMap<>();
+    /**
+     * .molang 动画控制脚本里的 {@code ctrl.set_beginning_transition_length(秒)}：
+     * key=模型, value=动画名→过渡 tick 数。脚本没写就保持控制器的默认过渡。
+     */
+    public static final Map<ResourceLocation, Map<String, Double>> MOLANG_TRANSITION_MAP = new ConcurrentHashMap<>();
+    /**
+     * .molang 动画控制脚本里声明了 {@code ctrl.indicate_reload} 的动画名：
+     * 即使目标动画与当前相同也要重新加载（YSMU 侧 = {@code markNeedsReload()}）。
+     */
+    public static final Map<ResourceLocation, java.util.Set<String>> MOLANG_RELOAD_MAP = new ConcurrentHashMap<>();
     private final Int2ObjectOpenHashMap<LinkedList<AnimationState>> data = new Int2ObjectOpenHashMap<>();
     private final Map<UUID, Integer> swingProgressByPlayer = new ConcurrentHashMap<>();
     private final Map<UUID, Integer> useDurationByPlayer = new ConcurrentHashMap<>();
@@ -263,6 +273,7 @@ public final class AnimationManager {
         // 播放倍速（stride × anim_speed）：所有 legacy 控制器共用入口统一生效；
         // 预览（player==null）在 applyPlaybackSpeed 内跳过，不覆盖预览冻结。
         applyPlaybackSpeed(event, animationName);
+        applyMolangPlaybackHints(event, animationName);
         if (animationName != null && (animationName.equals("gui") || animationName.startsWith("extra"))) {
             EntityPlayer p = event.getAnimatable() instanceof CustomPlayerEntity
                 ? ((CustomPlayerEntity) event.getAnimatable()).getPlayer() : null;
@@ -279,9 +290,59 @@ public final class AnimationManager {
     @NotNull
     private static <P extends IAnimatable> PlayState playAnimation(AnimationEvent<P> event, String animationName) {
         applyPlaybackSpeed(event, animationName);
+        applyMolangPlaybackHints(event, animationName);
         event.getController()
             .setAnimation(new AnimationBuilder().addAnimation(animationName));
         return PlayState.CONTINUE;
+    }
+
+    /**
+     * 应用 .molang 动画控制脚本里 {@code ctrl.set_animation(...)} 前后的提示：
+     * <ul>
+     *   <li>{@code ctrl.set_beginning_transition_length(秒)} —— 覆盖这次切换的过渡时长；</li>
+     *   <li>{@code ctrl.indicate_reload} —— 目标动画与当前相同时也要重新加载。</li>
+     * </ul>
+     * 映射只对声明了 .molang 控制脚本的模型存在，其他模型两次 map 查询即返回。
+     */
+    private static <P extends IAnimatable> void applyMolangPlaybackHints(AnimationEvent<P> event,
+        String animationName) {
+        if (event == null || event.getController() == null || animationName == null) return;
+        if (!(event.getAnimatable() instanceof CustomPlayerEntity animatable)) return;
+        ResourceLocation animId = animatable.getAnimation();
+        if (animId == null) return;
+        Map<String, Double> transitions = MOLANG_TRANSITION_MAP.get(animId);
+        if (transitions != null) {
+            Double ticks = transitions.get(animationName);
+            // 脚本没给这段动画写过渡时长时恢复控制器的默认值，避免上一段的自定义值泄漏过来。
+            double defaultTicks = ControllerUtils.MAIN_CONTROLLER.equals(event.getController().getName())
+                ? Config.ANIMATION_TRANSITION_TICKS : 0.0d;
+            event.getController().transitionLengthTicks = ticks != null ? ticks : defaultTicks;
+            // 过渡时长只靠肉眼很难确认，DebugController 下为每个 (模型, 动画) 打一条一次性日志，
+            // 至少能证明脚本提取与注入这一整条链路是通的。
+            if (Config.DEBUG_CONTROLLER && ticks != null
+                && LOGGED_MOLANG_HINTS.add(animId + "|" + animationName)) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-MOLANG] {} transition {} ticks (from .molang, default {}) for '{}'", animId, ticks,
+                    defaultTicks, animationName);
+            }
+        }
+        java.util.Set<String> reloads = MOLANG_RELOAD_MAP.get(animId);
+        if (reloads != null && reloads.contains(animationName)) {
+            event.getController()
+                .markNeedsReload();
+            if (Config.DEBUG_CONTROLLER && LOGGED_MOLANG_HINTS.add(animId + "|reload|" + animationName)) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-MOLANG] {} indicate_reload for '{}'", animId, animationName);
+            }
+        }
+    }
+
+    /** 一次性日志去重（DEBUG_CONTROLLER 下的 .molang 提示），换模型/重载时随缓存一起清。 */
+    private static final java.util.Set<String> LOGGED_MOLANG_HINTS =
+        java.util.Collections.newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
+    /** 清空 .molang 提示日志的去重表（模型缓存全量清理时调用）。 */
+    public static void clearMolangHintLog() {
+        LOGGED_MOLANG_HINTS.clear();
     }
 
     /**

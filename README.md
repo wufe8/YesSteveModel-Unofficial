@@ -12,7 +12,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ## 当前状态
 
-**最新版本：`1.9a1-07.2`**（`perf/previewUI` 分支）
+**最新版本：`1.9a1-08`**（`perf/previewUI` 分支）
 
 > mod 版本号与 jar 名由 git tag 自动生成（`Tags.VERSION`），启动日志里会打印
 > `I am ysmu at version …`。需要人工维护的时效信息只有三处：本行、下面的变更历史表、
@@ -137,7 +137,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-06` | 统一模型加载、懒加载与显存优化、动画/Molang 修复、调试覆盖层 |
 | `1.9a1-07` | 粒子系统、HUD 跟随三模式、玩家模型优先加载、同步/内存优化、Molang 补全、跨模型变量隔离与预览缩放修复 |
 | `1.9a1-07.1` | 不可桥接的二进制模型的内置模型回退、预览 GUI 打开期间抑制闲置资源卸载 |
-| `1.9a1-07.2` | 并行动画按通道合并；**隐式并行控制器**（按动画表为 `pre_parallelN`/`parallelN` 生成控制器）修复部件该隐藏却显示、轮盘选项无效；Bedrock `pre` 阶梯关键帧解析、合成状态周期取最长贡献动画；旧槽位控制器不再重复回放并行动画；挥剑音效在动画中途切换移动状态（站立↔行走变体）时重复播放；高版本音效名不再被误推给 vanilla 音效系统（曾导致音效"有播放动作却听不到"并刷 `Unable to play unknown soundEvent` WARN）；轮盘单选框变量注册与勾选框交互修复；客户端模型注册表在握手时清理；资源重载(F3+T/换资源包)后 SoundSystem 句柄自动重绑，不再永久静音；模型属性 `render_layers_first` 生效（渲染层先于本体提交，本体可以遮住手持物品） |
+| `1.9a1-08` | 并行动画按通道合并；**隐式并行控制器**（按动画表为 `pre_parallelN`/`parallelN` 生成控制器）修复部件该隐藏却显示、轮盘选项无效；Bedrock `pre` 阶梯关键帧解析、合成状态周期取最长贡献动画；旧槽位控制器不再重复回放并行动画；挥剑音效在动画中途切换移动状态（站立↔行走变体）时重复播放；高版本音效名不再被误推给 vanilla 音效系统（曾导致音效"有播放动作却听不到"并刷 `Unable to play unknown soundEvent` WARN）；轮盘单选框变量注册与勾选框交互修复；客户端模型注册表在握手时清理；资源重载(F3+T/换资源包)后 SoundSystem 句柄自动重绑，不再永久静音；模型属性 `render_layers_first` 生效（渲染层先于本体提交，本体可以遮住手持物品）；`.molang` 动画控制脚本的 `ctrl.set_beginning_transition_length`/`ctrl.indicate_reload`/两参数 `set_animation` 生效；`query.is_item_name_any` 实现、`query.relative_block_has_any_tag` 支持 `minecraft:replaceable`；渲染/手持/覆盖层等每帧入口改为接住 `Throwable` 并去重告警 |
 
 ---
 
@@ -185,7 +185,8 @@ git checkout perf/previewUI
 - [SKIP] battlegear2的盾牌位置不正确 目前会以物品的位置来握持(实际上就是物品而非工具)
 - [SKIP] WebP 解码器基于外部实现, 没搞定纯ImageIO
 - 部分控制器变量与molang函数可能存在bug
-- 未实现 molang 自定义函数处理
+- molang 自定义函数(`functions/*.molang`)只实现了动画控制脚本的子集：`ctrl.set_animation`(含循环类型)、`ctrl.set_beginning_transition_length`、`ctrl.indicate_reload`，以及简单变量条件(`v.*`)。`fn.*` 自定义函数、`args[]`/`t.*` 临时变量、`loop`/`for_each`、以及 `@player_init`/`@player_update`/`@sync` 事件订阅尚未实现
+- 方块/物品标签类查询(`query.relative_block_has_any_tag` 除 `minecraft:replaceable` 外、`equipped_item_any_tag`、`biome_has_*_tag`)在 1.7.10 无法真正实现，恒返回 false（打开 `DebugController` 会打印模型实际用到但未实现的标签名）
 - 子模型(投射物/载具)可能还存在一些问题 目前仅保证默认模型投射物可用
 - 并行动画只支持数字槽位(`pre_parallel0..7` / `parallel0..7`)；模型自己命名的并行控制器(如 `player.pre_parallel_名字`, 由 `controller/*.json` 声明)目前不会播放, 其中的 molang 也不会执行
 - [SKIP] v.roaming长期变量目前不会永久保存

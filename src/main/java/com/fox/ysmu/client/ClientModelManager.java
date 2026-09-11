@@ -651,6 +651,13 @@ public class ClientModelManager {
         if (!bundle.molangConditional.isEmpty()) {
             AnimationManager.MOLANG_CONDITIONAL_MAP.put(ModelIdUtil.getMainId(modelId), bundle.molangConditional);
         }
+        if (!bundle.molangHints.transitionTicks.isEmpty()) {
+            AnimationManager.MOLANG_TRANSITION_MAP.put(ModelIdUtil.getMainId(modelId), bundle.molangHints.transitionTicks);
+        }
+        if (!bundle.molangHints.reloadAnimations.isEmpty()) {
+            AnimationManager.MOLANG_RELOAD_MAP.put(ModelIdUtil.getMainId(modelId),
+                new java.util.HashSet<>(bundle.molangHints.reloadAnimations));
+        }
         // Register controller files
         if (!bundle.controllerFiles.isEmpty()) {
             // animationNames lets the registry synthesise the implicit
@@ -946,6 +953,8 @@ public class ClientModelManager {
                 for (Map.Entry<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> ce : condParsed.entrySet()) {
                     bundle.molangConditional.merge(ce.getKey(), ce.getValue(), (a, b) -> { a.addAll(b); return a; });
                 }
+                bundle.molangHints.mergeFrom(
+                    com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseAnimationHints(animData));
                 continue;
             }
             // Projectile controller keys: registered under the projectile's own animation ID
@@ -1906,6 +1915,9 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.MovementSpeedMatcher.clearAll();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_CONDITIONAL_MAP.clear();
+        com.fox.ysmu.client.animation.AnimationManager.MOLANG_TRANSITION_MAP.clear();
+        com.fox.ysmu.client.animation.AnimationManager.MOLANG_RELOAD_MAP.clear();
+        com.fox.ysmu.client.animation.AnimationManager.clearMolangHintLog();
         CACHED_MODEL_MD5.clear();
         OPENYSM_CACHE_FORMAT.clear();
         TEXTURE_LAST_USED.clear();

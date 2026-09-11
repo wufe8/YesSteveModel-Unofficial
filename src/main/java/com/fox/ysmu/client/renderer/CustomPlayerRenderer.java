@@ -40,6 +40,8 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
     private static final Set<String> FIRST_LOCAL_RENDER_LOGGED = ConcurrentHashMap.newKeySet();
     /** Tracks the last main model per player to detect model switches. */
     private final Map<UUID, ResourceLocation> lastPlayerModel = new ConcurrentHashMap<>();
+    /** 一次性日志：哪些模型开了 render_layers_first（DEBUG_MODEL_LOAD 门控）。 */
+    private static final Set<String> LOGGED_LAYERS_FIRST = ConcurrentHashMap.newKeySet();
 
     /**
      * Suppressed in-world render errors, keyed by tag|exceptionClass|message.
@@ -51,7 +53,7 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
      */
     private static final Set<String> SUPPRESSED_RENDER_ERRORS = ConcurrentHashMap.newKeySet();
 
-    private static void suppressRenderError(String tag, Exception e) {
+    private static void suppressRenderError(String tag, Throwable e) {
         String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
         if (SUPPRESSED_RENDER_ERRORS.add(key)) {
             // Log4j2 以 Throwable 结尾参数自动打印完整堆栈，无需再 printStackTrace
@@ -163,6 +165,14 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
             com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setBoneTracking(true,
                 getWidthScale(animatable), getHeightScale(animatable), getWidthScale(animatable),
                 mainModelId);
+            GeoModel renderedModel = getGeoModel();
+            if (renderedModel != null && renderedModel.properties != null
+                && renderedModel.properties.isRenderLayersFirst()
+                && com.fox.ysmu.Config.DEBUG_MODEL_LOAD
+                && LOGGED_LAYERS_FIRST.add(String.valueOf(mainModelId))) {
+                ysmu.LOG.info("[YSMU-RENDER] {} draws render layers before the body (render_layers_first=true)",
+                    mainModelId);
+            }
             try {
                 super.doRender(entityObj, x, y, z, entityYaw, partialTicks);
                 // 渲染 AdventureBackpack2 背部可穿戴物品（直升机背包等）
@@ -171,7 +181,7 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                     com.fox.ysmu.compat.AdventureBackpackCompat.renderWearable(
                         player, x, y, z, partialTicks);
                 }
-            } catch (Exception e) {
+            } catch (Throwable e) {
                 suppressRenderError("doRender[" + location + "]", e);
             } finally {
                 com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.setBoneTracking(false,

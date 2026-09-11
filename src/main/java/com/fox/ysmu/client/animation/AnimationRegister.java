@@ -123,9 +123,10 @@ public class AnimationRegister {
             functions.put("query.position_delta", QueryPositionDeltaFunction.class);
             // query.position(axis)：按轴返回当前渲染实体绝对位置（BE wiki 语义，Y=脚底）。
             functions.put("query.position", QueryPositionFunction.class);
-            // query.relative_block_has_any_tag：stub（恒 0），1.7.10 无方块标签系统。
+            // query.relative_block_has_any_tag：只支持能原生回答的标签（minecraft:replaceable），
+            // 其余返回 false —— 1.7.10 没有数据驱动的方块标签。
             functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
-            // query.is_item_name_any：stub（恒 0），P3 待实现物品注册名匹配。
+            // query.is_item_name_any：按槽位取物品注册名匹配（物品标签类查询仍不支持）。
             functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
             // ysm.play_sound / stop_sound / stop_all_sounds：模型 Molang 音效播放（走 YSMSoundManager）。
             functions.put("ysm.play_sound", YsmSoundFunction.class);

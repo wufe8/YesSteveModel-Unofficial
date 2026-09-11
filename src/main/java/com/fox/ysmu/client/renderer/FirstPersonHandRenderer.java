@@ -52,7 +52,7 @@ public final class FirstPersonHandRenderer {
     private static final java.util.Set<String> SUPPRESSED_HAND_ERRORS =
         java.util.concurrent.ConcurrentHashMap.newKeySet();
 
-    private static void suppressHandError(String tag, Exception e) {
+    private static void suppressHandError(String tag, Throwable e) {
         String key = tag + '|' + e.getClass().getName() + '|' + e.getMessage();
         if (SUPPRESSED_HAND_ERRORS.add(key)) {
             com.fox.ysmu.ysmu.LOG.warn("[YSMU-RENDER] {} suppressed ({}): {}",
@@ -98,7 +98,7 @@ public final class FirstPersonHandRenderer {
             event.setCanceled(true);
             render(event, mc, player, itemRenderer, context.renderer, context.geoModel, context.customPlayer);
             return true;
-        } catch (Exception e) {
+        } catch (Throwable e) {
             suppressHandError("tryRender", e);
             return false;
         }
@@ -123,7 +123,7 @@ public final class FirstPersonHandRenderer {
                 partialTicks,
                 renderOffhand);
             return true;
-        } catch (Exception e) {
+        } catch (Throwable e) {
             suppressHandError("tryRenderInActiveFirstPersonPass", e);
             return false;
         }

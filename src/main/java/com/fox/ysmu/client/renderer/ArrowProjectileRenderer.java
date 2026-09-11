@@ -186,8 +186,12 @@ public class ArrowProjectileRenderer {
                     .renderRecursively(tess, entity, bone, 1.0F, 1.0F, 1.0F, 1.0F);
             }
             tess.draw();
-        } catch (Exception e) {
-            com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] Model render failed", e);
+        } catch (Throwable e) {
+            // 每帧路径：Error 也要接住（否则 vanilla 会每帧构造一份 CrashReport），并按内容去重。
+            String key = "render|" + e.getClass().getName() + '|' + e.getMessage();
+            if (LOGGED_RENDER_WARNS.add(key)) {
+                com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] Model render failed", e);
+            }
         } finally {
             GL11.glPopMatrix();
         }
