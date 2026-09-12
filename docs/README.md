@@ -18,7 +18,7 @@
 | --- | --- |
 | [`analysis/particle-system.md`](analysis/particle-system.md) | 粒子系统架构：`particle()`/`abs_particle()` 参数语义、行为表、高版本资产回退、已知限制 |
 | [`analysis/animation-stride-matching.md`](analysis/animation-stride-matching.md) | 防滑步：动画播放倍速的算法、为什么不改 `query.ground_speed`、验证方法、配置项 |
-| [`analysis/controller-mod-dependencies.md`](analysis/controller-mod-dependencies.md) | 控制器与动画的模组依赖标记、并行控制器的槽位与隐式控制器机制、排查方法 |
+| [`analysis/controller-mod-dependencies.md`](analysis/controller-mod-dependencies.md) | 控制器与动画的模组依赖标记、并行控制器的槽位与隐式控制器机制、具名并行槽位的固定备用池与路由、排查方法 |
 | [`analysis/animation-variant-switch.md`](analysis/animation-variant-switch.md) | 同一状态内换动画（条件变体）时的位置保留语义：为什么 t=0 音效会重播/被砍半，以及两条修法 |
 | [`analysis/sound-playback.md`](analysis/sound-playback.md) | 音效查找链路；不要用字面量反射 MC 内部字段（reobf 改名 → 有音效却听不到 + WARN）；SoundSystem 句柄在资源重载后失效的隐患；探针现状 |
 | [`analysis/molang-identifier-parsing.md`](analysis/molang-identifier-parsing.md) | 自研 Molang 解析器里"标识符允许数字续接"的必要性，以及一个被静默忽略的连带效应 |

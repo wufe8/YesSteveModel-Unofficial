@@ -40,13 +40,46 @@ shadow 隐式控制器（否则会把模型故意留空的占位条目变成"直
 `pre_parallelN`/`parallelN` 动画都有隐式控制器兜住，否则依赖这些动画做
 `v.roaming.*` 可见性判断的模型会整体失效。
 
+## 具名并行槽位（非数字后缀）
+
+wiki 只定义数字槽位，但官方对**非数字后缀**也发控制器：参考实现的 `ParallelProcessor`
+用 `allowExtraSlots` 区分，player 与第一人称手臂传 `true`（动画条目匹配
+`^<prefix>.<槽位名>_.+`、控制器条目匹配 `^<prefix>_ctrl_<槽位名>_.+`），弹射物/载具传 `false`。
+于是模型可以把一整块状态机挂在一个具名槽位上（`player.pre_parallel_<名字>`），
+其中的 `on_entry`/`on_exit` 与 Molang 全靠这个控制器执行。
+
+**不能按当前模型动态注册控制器**：`AnimationFactory.getOrCreateAnimationData(uniqueId)` 对每个
+animatable 只调用一次 `registerControllers`，而 `CustomPlayerEntity.mainModel` 是可变的（换模型时
+渲染器直接 `setMainModel`，不重建实体）。动态注册要么在换模型后失效，要么得去改
+`AnimationData`，生命周期很脆（曾试过并回退）。
+
+因此用**固定备用池 + 运行时路由**：
+
+1. `CustomPlayerEntity.registerControllers` 在数字 `pre_parallel_0..7` 之后追加
+   `pre_parallel_extra_0..N-1_controller`，在数字 `parallel_0..7` 之后追加
+   `parallel_extra_0..N-1_controller`（N = `ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS`）。
+   谓词用 `predicateOpenYsmSlot`（走模型自己的状态机），**不是** `predicateParallel`
+   （那是"直接播同名动画"的兜底，具名槽位没有同名动画）。插入位置即优先级：
+   `AnimationData` 内部是 `LinkedHashMap`，后执行的覆盖先执行的。
+2. `OpenYsmPlayerControllerRuntime.resolveControllers` 先认出池名
+   `(player\.)?<族>_extra_<i>_controller`（必须先分流，否则会掉进数字槽位解析），
+   再取该族第 i 个具名槽位并 `addMatch`。
+3. 槽位表 `OpenYsmAnimationControllerRegistry.namedParallelSlots()` 取自
+   `controllers ∪ declaredNames` 并按槽位名排序：**只声明了空 states 的占位槽位也必须占一个
+   位置**，否则它后面的槽位会整体前移、错播别人的动画。`player.` 前缀与短名视为同一个槽位。
+   结果缓存在 `ControllerSet` 上（池谓词每帧都要问一次；注册时整个 set 被替换，不会过期）。
+4. 模型的具名槽位比池子多时，多出来的没有池控制器承载、永远不会播放 —— 此时打一条一次性
+   `warnOnce`，不静默截断（提高 `NAMED_PARALLEL_EXTRA_SLOTS` 即可）。
+
+池名的 `pre_parallel_extra_*`/`parallel_extra_*` 前缀会被既有的"这是并行控制器"判断
+（`excludeRoot`、漫游变量优化、音效归属等）自然覆盖，与数字槽位同一条路径。
+
 ## 已知限制
 
-- 只覆盖数字槽位 `pre_parallel_0..7` / `parallel_0..7`。模型若声明**带名字**的并行控制器
-  （例如 `player.pre_parallel_表情`），YSMU 没有对应的 GeckoLib 槽位，`resolveControllers`
-  永远匹配不到它 ⇒ 该控制器的状态不会被播放。参考实现因为按动画条目建控制器，不存在这个限制。
-  若后续遇到依赖命名并行控制器的模型，需要动态注册控制器（注意 GeckoLib 的
-  `AnimationData.uniqueID` 必须与渲染使用的那一份一致，否则注册了也不生效——曾试过并回退）。
+- 具名槽位只在 player（与第一人称手臂，若将来有专用实体）上有意义；参考实现的
+  弹射物/载具是 `allowExtraSlots=false`，YSMU 的池也只注册在 `CustomPlayerEntity` 上。
+- `state_pause`/`state_stop` 之间的播放方式差异、以及 `ctrl.reset` 仍未实现（见
+  `analysis/molang-custom-functions.md`）。
 
 ## 排查方法
 
@@ -61,3 +94,6 @@ shadow 隐式控制器（否则会把模型故意留空的占位条目变成"直
 - `[YSMU-CTRL-ANIM] <ctrl> state='…' animations=[…] mergedBones=N`：状态实际合并播放了哪些动画。
 - 刚同步完的前几帧会看到 `missing animation` / `no active animations`，那是懒加载暖机，
   下一帧就绪即正常。
+- 具名并行槽位：`DebugController=true` 时，若模型声明的具名槽位超过池子大小，会有一条
+  `warnOnce`（`... declares N named <族> slots but only ... extra pool controllers exist`）。
+  槽位表本身可用 JUnit 断言（`NamedParallelSlotsTest`），不需要开游戏。

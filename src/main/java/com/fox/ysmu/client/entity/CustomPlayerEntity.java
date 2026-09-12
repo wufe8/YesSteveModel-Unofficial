@@ -59,6 +59,15 @@ public class CustomPlayerEntity implements IAnimatable {
             data.addAnimationController(
                 new AnimationController<>(this, controllerName, 0, e -> manager.predicateParallel(e, animationName)));
         }
+        // 具名并行槽位（player.pre_parallel_<非数字后缀>）的备用池：wiki 只定义数字槽位，
+        // 但官方对非数字后缀也发控制器，模型会把整块状态机挂在上面。池子固定 + 运行时路由
+        // （见 OpenYsmPlayerControllerRuntime.resolveControllers），因为 registerControllers
+        // 对每个 animatable 只跑一次，而模型可以随时切换，动态注册会在换模型后失效。
+        // 谓词用 predicateOpenYsmSlot（走状态机），不是 predicateParallel（直接播同名动画）。
+        for (int i = 0; i < NAMED_PARALLEL_EXTRA_SLOTS; i++) {
+            data.addAnimationController(new AnimationController(this,
+                String.format("pre_parallel_extra_%d_controller", i), 0, manager::predicateOpenYsmSlot));
+        }
         data.addAnimationController(
             new AnimationController(this, OPENYSM_PRE_MAIN_CONTROLLER, 0, manager::predicateOpenYsmSlot));
         data.addAnimationController(
@@ -90,6 +99,12 @@ public class CustomPlayerEntity implements IAnimatable {
             String animationName = String.format("parallel%d", i);
             data.addAnimationController(
                 new AnimationController<>(this, controllerName, 0, e -> manager.predicateParallel(e, animationName)));
+        }
+        // 高优先级并行族的具名槽位，同样的固定池（parallel_* 有旋转叠加语义，
+        // 池控制器走同一条 predicateOpenYsmSlot → tryApplyController 混合路径）。
+        for (int i = 0; i < NAMED_PARALLEL_EXTRA_SLOTS; i++) {
+            data.addAnimationController(new AnimationController(this,
+                String.format("parallel_extra_%d_controller", i), 0, manager::predicateOpenYsmSlot));
         }
         // 为每个盔甲槽位注册控制器，使用1-4的索引值
         for (int slotIndex = 1; slotIndex <= 4; slotIndex++) {

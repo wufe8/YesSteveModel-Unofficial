@@ -20,6 +20,12 @@ final class OpenYsmControllerDefinitions {
          *  controller instead of falling back to the raw animation
          *  (models commonly declare empty player.pre_parallel_1..7 placeholders). */
         final Set<String> declaredNames = new LinkedHashSet<>();
+        /** 懒计算的具名并行槽位表（key = 族名 pre_parallel / parallel），见
+         *  {@link OpenYsmAnimationControllerRegistry#namedParallelSlots}。
+         *  缓存挂在 ControllerSet 上而不是静态 map 里：注册时整个 set 被替换、clear() 时被移除，
+         *  所以不可能读到过期结果；同时池控制器的谓词每帧都要问一次，不能每帧重建集合。 */
+        final Map<String, List<String>> namedParallelSlotCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     }
 
     static final class Controller {

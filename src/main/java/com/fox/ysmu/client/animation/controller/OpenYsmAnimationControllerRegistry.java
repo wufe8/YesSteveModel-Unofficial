@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.animation.controller;
 
 import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -159,6 +160,76 @@ public final class OpenYsmAnimationControllerRegistry {
             }
         }
         return false;
+    }
+
+    /**
+     * 具名（非数字后缀）并行槽位的**有序槽位名**列表，例如 {@code ["表情"]}。
+     * <p>
+     * wiki 只定义数字槽位 {@code pre_parallel0..7} / {@code parallel0..7}，但官方对非数字后缀
+     * 也发控制器，于是模型会把整块状态机挂在一个具名槽位上。YSMU 用固定的备用池
+     * （{@code *_extra_<i>_controller}）承载它们：第 i 个池控制器 = 这份列表的第 i 项。
+     * <p>
+     * 列表取自 {@code controllers ∪ declaredNames}（按槽位名排序）：
+     * <ul>
+     *   <li>用 declaredNames 是为了**索引稳定** —— 只声明了空 states 的占位槽位也必须占一个
+     *       位置，否则它后面的槽位会整体前移、错播别人的动画；</li>
+     *   <li>{@code player.} 前缀与短名视为同一个槽位（按槽位名去重），前缀写法优先。</li>
+     * </ul>
+     *
+     * @param animationId 模型的动画 id
+     * @param family      族名，{@code pre_parallel} 或 {@code parallel}
+     */
+    public static List<String> namedParallelSlots(ResourceLocation animationId, String family) {
+        ControllerSet set = animationId == null ? null : CONTROLLERS.get(animationId);
+        if (set == null || family == null) {
+            return Collections.emptyList();
+        }
+        // 池控制器的谓词每帧都会问一次，所以结果缓存在 ControllerSet 上
+        // （注册即整体替换，因此不会过期）。
+        return set.namedParallelSlotCache.computeIfAbsent(family, key -> computeNamedParallelSlots(set, key));
+    }
+
+    private static List<String> computeNamedParallelSlots(ControllerSet set, String family) {
+        java.util.TreeSet<String> slots = new java.util.TreeSet<>();
+        collectNamedParallelSlots(set.controllers.keySet(), family, slots);
+        collectNamedParallelSlots(set.declaredNames, family, slots);
+        return slots.isEmpty() ? Collections.emptyList() : new ArrayList<>(slots);
+    }
+
+    /**
+     * 把 {@link #namedParallelSlots} 给出的槽位名解析成 ControllerSet 里的实际键名；
+     * 该槽位不存在时返回 null（池控制器分到它就只能不出动画）。
+     */
+    public static String resolveParallelSlotKey(ResourceLocation animationId, String family, String slot) {
+        ControllerSet set = animationId == null ? null : CONTROLLERS.get(animationId);
+        if (set == null || family == null || slot == null) {
+            return null;
+        }
+        String prefixed = "player." + family + "_" + slot;
+        if (set.controllers.containsKey(prefixed) || set.declaredNames.contains(prefixed)) {
+            return prefixed;
+        }
+        String shortName = family + "_" + slot;
+        if (set.controllers.containsKey(shortName) || set.declaredNames.contains(shortName)) {
+            return shortName;
+        }
+        return null;
+    }
+
+    /** 收集形如 {@code (player.)?<family>_<非数字开头>} 的槽位名（取 {@code <family>_} 之后的部分）。 */
+    private static void collectNamedParallelSlots(Iterable<String> controllerNames, String family,
+        java.util.Set<String> out) {
+        java.util.regex.Pattern pattern =
+            java.util.regex.Pattern.compile("^(?:player\\.)?" + java.util.regex.Pattern.quote(family) + "_([^0-9].*)$");
+        for (String name : controllerNames) {
+            if (name == null) {
+                continue;
+            }
+            java.util.regex.Matcher matcher = pattern.matcher(name);
+            if (matcher.matches()) {
+                out.add(matcher.group(1));
+            }
+        }
     }
 
     /**

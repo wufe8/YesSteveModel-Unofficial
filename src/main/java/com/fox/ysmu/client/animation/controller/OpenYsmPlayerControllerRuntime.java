@@ -4,6 +4,7 @@ import static com.fox.ysmu.util.ControllerUtils.CAP_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_MAINHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_OFFHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.MAIN_CONTROLLER;
+import static com.fox.ysmu.util.ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS;
 import static com.fox.ysmu.util.ControllerUtils.OPENYSM_PRE_MAIN_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
@@ -13,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.regex.Matcher;
 
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.util.ResourceLocation;
@@ -313,7 +315,7 @@ public final class OpenYsmPlayerControllerRuntime {
         }
 
         String geckoControllerName = event.getController().getName();
-        for (ControllerMatch match : resolveControllers(set, geckoControllerName)) {
+        for (ControllerMatch match : resolveControllers(set, animationId, geckoControllerName)) {
             PlayState result = tryApplyController(event, player, animationId, geckoControllerName, match);
             if (result != null) {
                 return result;
@@ -1367,8 +1369,18 @@ public final class OpenYsmPlayerControllerRuntime {
         }
     }
 
-    private static List<ControllerMatch> resolveControllers(ControllerSet set, String geckoControllerName) {
+    /** 具名并行槽位的备用池控制器名：{@code (player.)?<族>_extra_<序号>_controller}。 */
+    private static final java.util.regex.Pattern PARALLEL_EXTRA_CONTROLLER =
+        java.util.regex.Pattern.compile("^(?:player\\.)?(pre_parallel|parallel)_extra_(\\d+)_controller$");
+
+    private static List<ControllerMatch> resolveControllers(ControllerSet set, ResourceLocation animationId,
+        String geckoControllerName) {
         List<ControllerMatch> matches = new ArrayList<>();
+        // 具名并行槽位的备用池必须先分流：它的名字也带 pre_parallel_/parallel_ 前缀，
+        // 落到下面的数字槽位解析会得到一个 -1 然后什么都不匹配。
+        if (routeNamedParallelSlot(matches, animationId, set, geckoControllerName)) {
+            return matches;
+        }
         int preferredIndex = getParallelIndex(geckoControllerName);
         if (preferredIndex >= 0) {
             if (geckoControllerName.startsWith("pre_parallel_")) {
@@ -1418,6 +1430,61 @@ public final class OpenYsmPlayerControllerRuntime {
             }
         }
         return matches;
+    }
+
+    /**
+     * 具名并行槽位的备用池：{@code (player.)?<族>_extra_<i>_controller} 的第 i 个池控制器
+     * 承载该族第 i 个具名槽位（见
+     * {@link OpenYsmAnimationControllerRegistry#namedParallelSlots(ResourceLocation, String)}）。
+     *
+     * @return true 表示这个名字归池子管（已处理完毕）；false 表示不是池控制器
+     */
+    private static boolean routeNamedParallelSlot(List<ControllerMatch> matches, ResourceLocation animationId,
+        ControllerSet set, String geckoControllerName) {
+        String[] pool = parseNamedParallelPoolController(geckoControllerName);
+        if (pool == null) {
+            return false;
+        }
+        String family = pool[0];
+        int index = Integer.parseInt(pool[1]);
+        java.util.List<String> slots = OpenYsmAnimationControllerRegistry.namedParallelSlots(animationId, family);
+        if (slots.size() > NAMED_PARALLEL_EXTRA_SLOTS) {
+            // 模型声明的具名槽位比池子大：多出来的那些没有池控制器承载，永远不会播放。
+            // 只警告一次、不静默截断（提高 ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS 即可解决）。
+            OpenYsmAnimationControllerRegistry.warnOnce(
+                "parallel-extra-overflow:" + animationId + ":" + family,
+                animationId + " declares " + slots.size() + " named " + family + " slots but only "
+                    + NAMED_PARALLEL_EXTRA_SLOTS + " extra pool controllers exist; raise"
+                    + " ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS (slots=" + slots + ")");
+        }
+        if (index >= slots.size()) {
+            // 该模型没有这么多具名槽位：这个池控制器本帧什么都不做。
+            return true;
+        }
+        String slotKey = OpenYsmAnimationControllerRegistry
+            .resolveParallelSlotKey(animationId, family, slots.get(index));
+        if (slotKey != null) {
+            addMatch(matches, set, slotKey);
+        }
+        return true;
+    }
+
+    /**
+     * 从 GeckoLib 控制器名里解析出备用池槽位 {族名, 序号字符串}；不是池控制器返回 null。
+     * <p>
+     * 池名也带 {@code pre_parallel_} / {@code parallel_} 前缀，所以必须先认出它，
+     * 否则会掉进 {@link #getParallelIndex} 的数字槽位解析（对 {@code extra_0} 抛
+     * NumberFormatException 后返回 -1，什么都不匹配）。
+     */
+    static String[] parseNamedParallelPoolController(String geckoControllerName) {
+        if (geckoControllerName == null) {
+            return null;
+        }
+        Matcher matcher = PARALLEL_EXTRA_CONTROLLER.matcher(geckoControllerName);
+        if (!matcher.matches()) {
+            return null;
+        }
+        return new String[] { matcher.group(1), matcher.group(2) };
     }
 
     private static void addMatch(List<ControllerMatch> matches, ControllerSet set, String controllerName) {

@@ -16,4 +16,12 @@ public final class ControllerUtils {
     public static final String OPENYSM_POST_SWING_CONTROLLER = "player.post_swing";
     public static final String OPENYSM_PRE_USE_CONTROLLER = "player.pre_use";
     public static final String OPENYSM_POST_USE_CONTROLLER = "player.post_use";
+
+    /**
+     * 具名并行槽位（{@code player.pre_parallel_<非数字后缀>} / {@code player.parallel_<...>}）
+     * 的备用池大小。wiki 只定义数字槽位，但官方对非数字后缀也发控制器；池子固定是为了不受
+     * "模型切换而 {@code registerControllers} 只跑一次"的影响，路由见
+     * {@code OpenYsmPlayerControllerRuntime.resolveControllers()}。
+     */
+    public static final int NAMED_PARALLEL_EXTRA_SLOTS = 4;
 }
