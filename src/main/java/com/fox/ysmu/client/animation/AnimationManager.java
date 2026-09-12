@@ -312,11 +312,13 @@ public final class AnimationManager {
         if (animId == null) return;
         Map<String, Double> transitions = MOLANG_TRANSITION_MAP.get(animId);
         if (transitions != null) {
-            Double ticks = transitions.get(animationName);
-            // 脚本没给这段动画写过渡时长时恢复控制器的默认值，避免上一段的自定义值泄漏过来。
             double defaultTicks = ControllerUtils.MAIN_CONTROLLER.equals(event.getController().getName())
                 ? Config.ANIMATION_TRANSITION_TICKS : 0.0d;
-            event.getController().transitionLengthTicks = ticks != null ? ticks : defaultTicks;
+            Double ticks = transitions.get(animationName);
+            Double resolved = resolveMolangTransition(transitions, animationName, defaultTicks);
+            if (resolved != null) {
+                event.getController().transitionLengthTicks = resolved;
+            }
             // 过渡时长只靠肉眼很难确认，DebugController 下为每个 (模型, 动画) 打一条一次性日志，
             // 至少能证明脚本提取与注入这一整条链路是通的。
             if (Config.DEBUG_CONTROLLER && ticks != null
@@ -334,6 +336,19 @@ public final class AnimationManager {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-MOLANG] {} indicate_reload for '{}'", animId, animationName);
             }
         }
+    }
+
+    /**
+     * .molang 过渡时长的取值规则（纯函数，便于测试）：
+     * 模型没有该过渡映射 → {@code null}（不要动控制器默认值）；该动画在脚本里写了值 → 用它；
+     * 脚本没写这段动画 → 回控制器默认值，避免上一段动画的自定义值泄漏过来。
+     */
+    static Double resolveMolangTransition(Map<String, Double> transitions, String animationName, double defaultTicks) {
+        if (transitions == null) {
+            return null;
+        }
+        Double scripted = transitions.get(animationName);
+        return scripted != null ? scripted : defaultTicks;
     }
 
     /** 一次性日志去重（DEBUG_CONTROLLER 下的 .molang 提示），换模型/重载时随缓存一起清。 */

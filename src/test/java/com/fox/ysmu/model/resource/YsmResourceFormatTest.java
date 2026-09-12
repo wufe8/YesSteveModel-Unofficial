@@ -566,6 +566,55 @@ class YsmResourceFormatTest {
         return animationFile;
     }
 
+    /**
+     * {@code properties.render_layers_first} 整条链路（不含真正画）：解析 → 注入 geometry 的
+     * description → 走游戏同一条 Jackson 解析路径 → 二进制同步缓存往返。
+     * 视口里的绘制顺序无法单测，但"标志有没有活着到达渲染器读的那份 geometry"可以。
+     */
+    @Test
+    void renderLayersFirstSurvivesInjectionAndGeometryParse() throws Exception {
+        RawYsmModel source = new RawYsmModel();
+        source.formatVersion = 32;
+        source.properties.sha256 = "0123456789abcdef";
+        source.properties.defaultTexture = "default";
+        source.properties.renderLayersFirst = true;
+        source.metadata.name = "Layers First";
+        source.mainEntity.mainModel = geometryWithFlatCube(1, "geometry.layers.main");
+        source.mainEntity.armModel = geometryWithFlatCube(2, "geometry.layers.arm");
+        RawYsmModel.RawTexture texture = new RawYsmModel.RawTexture();
+        texture.name = "default";
+        texture.sourceFileName = "default.png";
+        texture.hash = "texture-hash";
+        texture.width = 1;
+        texture.height = 1;
+        texture.imageFormat = 2;
+        texture.unknownFlag = 1;
+        texture.data = PNG_1X1;
+        source.mainEntity.textures.put(texture.name, texture);
+
+        ModelData data = RawYsmModelAdapter.toLegacyModelData(source, "layers_first");
+        JsonObject description = getDescription(data.getModel().get("main"));
+        assertTrue(
+            description.get("ysm_render_layers_first")
+                .getAsBoolean(),
+            "render_layers_first 没有注入 geometry 的 description");
+
+        software.bernie.geckolib3.geo.raw.pojo.RawGeoModel parsed = software.bernie.geckolib3.geo.raw.pojo.Converter
+            .fromJsonString(new String(data.getModel().get("main"), StandardCharsets.UTF_8));
+        assertTrue(
+            software.bernie.geckolib3.geo.raw.tree.RawGeometryTree.parseHierarchy(parsed).properties
+                .isRenderLayersFirst(),
+            "geometry JSON 解析成 ModelProperties 后 render_layers_first 丢失");
+
+        byte[] bytes;
+        try (YSMByteBuf serialized = YSMBinarySerializer.serialize(source, 32, false)) {
+            bytes = serialized.toArray();
+        }
+        try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(bytes, 32)) {
+            assertTrue(deserializer.deserialize().properties.renderLayersFirst, "二进制缓存往返丢失了该属性");
+        }
+    }
+
     private static JsonObject getDescription(byte[] geometryJson) {
         return new JsonParser().parse(new String(geometryJson, StandardCharsets.UTF_8))
             .getAsJsonObject()

@@ -7,6 +7,7 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import net.minecraft.block.Block;
 import net.minecraft.entity.Entity;
+import net.minecraft.world.IBlockAccess;
 
 import com.eliotlash.mclib.math.IValue;
 import com.eliotlash.mclib.math.functions.Function;
@@ -74,7 +75,7 @@ public class QueryBlockTagFunction extends Function {
                 if (tag == null || tag.isEmpty()) {
                     continue;
                 }
-                if (matchesTag(tag, block, entity, x, y, z)) {
+                if (matchesTag(tag, block, entity.worldObj, x, y, z)) {
                     return 1.0d;
                 }
                 reportUnsupported(tag);
@@ -85,11 +86,15 @@ public class QueryBlockTagFunction extends Function {
         }
     }
 
-    /** 把标签名映射到 1.7.10 能原生回答的方块属性上；不认识的标签返回 false。 */
-    private static boolean matchesTag(String tag, Block block, Entity entity, int x, int y, int z) {
+    /** 把标签名映射到 1.7.10 能原生回答的方块属性上；不认识的标签返回 false。
+     *  包内可见 + 只依赖 {@link IBlockAccess}（可为 null，空气/石头等实现不会解引用），便于单测。 */
+    static boolean matchesTag(String tag, Block block, IBlockAccess world, int x, int y, int z) {
+        if (block == null) {
+            return false;
+        }
         String name = stripNamespace(tag.toLowerCase(Locale.ROOT));
         if ("replaceable".equals(name)) {
-            return block.isReplaceable(entity.worldObj, x, y, z) || block.isAir(entity.worldObj, x, y, z);
+            return block.isReplaceable(world, x, y, z) || block.isAir(world, x, y, z);
         }
         return false;
     }
