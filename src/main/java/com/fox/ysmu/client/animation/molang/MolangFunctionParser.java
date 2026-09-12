@@ -27,6 +27,19 @@ import org.apache.commons.lang3.tuple.Pair;
  * </pre>
  * 解析器从这些块中提取出 "idle" → "正常_待命" 等映射，
  * 并识别有条件分支的替代动画（如 v.show_car 时的开车动画）。
+ * <p>
+ * 三条容易漏掉的规则（见 wiki「自定义函数」页）：
+ * <ul>
+ *   <li><b>注释</b>：脚本支持 C 风格注释，而且注释里常带 {@code ? } ;} 之类的字符。
+ *       不先剥掉注释，条件里就会混进 {@code // 某说明}，表达式求值必然失败。</li>
+ *   <li><b>复合条件守卫</b>：{@code (ctrl.walk && ysm.input_vertical < 0.1) ? { ... }} 既不是
+ *       纯 {@code ctrl.<state>} 条件（进不了状态映射），块内通常也没有嵌套三元（条件提取也抓不到）。
+ *       它应该成为该状态的**条件替代动画**，且比状态本身更窄、要先判。</li>
+ *   <li><b>{@code ctrl.state_bypass}</b>："当前控制逻辑无操作，交回内置控制逻辑"。写在某个
+ *       {@code ctrl.<state>} 块**自己那一层**时，表示这个状态不由脚本接管 → 不出默认映射
+ *       （块内条件分支里的替代动画仍然有效）。脚本**结尾**的 bypass 是整段脚本的兜底，
+ *       含义就是"没提到的状态用内置逻辑"，而这一点已经由"没有映射条目"表达了，不需要额外处理。</li>
+ * </ul>
  */
 public final class MolangFunctionParser {
 
@@ -55,6 +68,9 @@ public final class MolangFunctionParser {
     /** 匹配 ctrl.indicate_reload（无参数，允许空括号） */
     private static final Pattern INDICATE_RELOAD_PATTERN =
         Pattern.compile("ctrl\\.indicate_reload\\s*(?:\\(\\s*\\))?");
+
+    /** 状态级"交回内置逻辑"标记（wiki：ctrl.state_bypass）。只认名字，允许 return 后的空格写法差异。 */
+    private static final String STATE_BYPASS = "state_bypass";
 
     /** 查找下一个 ctrl.<state>(...) 后最近的 ? { 块，返回 {blockStart, blockEnd, stateEnd, qmarkPos} 或 null */
     private static int[] findNextCtrlBlock(String script, int searchFrom) {
@@ -139,9 +155,88 @@ public final class MolangFunctionParser {
     }
 
     /**
+     * 剥掉 C 风格注释（{@code //} 行注释与块注释），字符串常量原样保留。
+     * <p>
+     * 必须先做这一步：脚本里的注释写了什么都有可能（问号、分号、大括号、中文说明），
+     * 而条件提取是纯文本匹配，注释混进条件后表达式求值一律失败 —— 表现为
+     * "脚本里明明写了这个分支，动画却永远走默认那条"。
+     */
+    static String stripComments(String script) {
+        StringBuilder out = new StringBuilder(script.length());
+        int i = 0;
+        while (i < script.length()) {
+            char c = script.charAt(i);
+            if (c == '\'' || c == '"') {
+                int end = skipQuoted(script, i);
+                out.append(script, i, Math.min(end + 1, script.length()));
+                i = end + 1;
+                continue;
+            }
+            if (c == '/' && i + 1 < script.length() && script.charAt(i + 1) == '/') {
+                i += 2;
+                while (i < script.length() && script.charAt(i) != '\n') {
+                    i++;
+                }
+                continue;
+            }
+            if (c == '/' && i + 1 < script.length() && script.charAt(i + 1) == '*') {
+                int end = script.indexOf("*/", i + 2);
+                i = end < 0 ? script.length() : end + 2;
+                continue;
+            }
+            out.append(c);
+            i++;
+        }
+        return out.toString();
+    }
+
+    /** 返回 s 中 quoteIndex 处引号的**闭合**引号下标；没有闭合则返回最后一个字符下标。 */
+    private static int skipQuoted(String s, int quoteIndex) {
+        char quote = s.charAt(quoteIndex);
+        for (int i = quoteIndex + 1; i < s.length(); i++) {
+            if (s.charAt(i) == quote) return i;
+        }
+        return s.length() - 1;
+    }
+
+    /**
+     * 块内容里**自己那一层**（不在任何嵌套 {@code {}} 内）有没有 {@code ctrl.state_bypass}。
+     * 嵌套在条件分支里的 bypass 只是一个分支，不能作废该状态在整个脚本里的覆盖。
+     */
+    private static boolean hasUnconditionalStateBypass(String blockContent) {
+        int depth = 0;
+        for (int i = 0; i < blockContent.length(); i++) {
+            char c = blockContent.charAt(i);
+            if (c == '\'' || c == '"') {
+                i = skipQuoted(blockContent, i);
+            } else if (c == '{') {
+                depth++;
+            } else if (c == '}') {
+                depth--;
+            } else if (depth == 0 && blockContent.startsWith(STATE_BYPASS, i)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 条件表达式的起点：从 ? 往前找最近的语句边界（{@code ; } { }}）或脚本开头。 */
+    private static int statementStart(String script, int qmarkPos) {
+        for (int i = qmarkPos - 1; i >= 0; i--) {
+            char c = script.charAt(i);
+            if (c == ';' || c == '}' || c == '{') {
+                return i + 1;
+            }
+        }
+        return 0;
+    }
+
+    /**
      * 从 .molang 函数文件的原始字节中解析出 ctrl.<state> → 动画名 的映射。
      * <p>
-     * 只提取每个 ctrl.<state> 块中的第一个 ctrl.set_animation() 调用作为默认映射。
+     * 只提取每个 ctrl.<state> 块中的第一个 ctrl.set_animation() 调用作为默认映射；
+     * 块自己那一层 {@code return ctrl.state_bypass} 的状态不出映射（交回内置逻辑，
+     * 见类注释）。
      *
      * @param data .molang 文件原始字节
      * @return state → animationName 的映射，不会为 null
@@ -151,7 +246,7 @@ public final class MolangFunctionParser {
         if (data == null || data.length == 0) {
             return result;
         }
-        String script = new String(data, StandardCharsets.UTF_8);
+        String script = stripComments(new String(data, StandardCharsets.UTF_8));
         int searchFrom = 0;
         while (true) {
             int[] block = findNextCtrlBlock(script, searchFrom);
@@ -161,12 +256,15 @@ public final class MolangFunctionParser {
             int stateEnd = block[2];
             int qmarkPos = block[3];
             searchFrom = blockEnd + 1;
-            // 只提取纯 ctrl.<state> ? { 条件（state 名到 ? 之间只有空白）
+            // 只提取纯 ctrl.<state> ? { 条件（state 名到 ? 之间只有空白）；
+            // 复合条件守卫走 parseConditionalAnimations 的替代动画路径。
             if (!isSimpleCtrlCondition(script, stateEnd, qmarkPos)) continue;
             String state = extractCtrlStateName(script, blockOpen);
             if (state == null || result.containsKey(state)) continue;
-            // 在块内容中找到第一个 ctrl.set_animation('name')
             String blockContent = script.substring(blockOpen + 1, blockEnd);
+            // 脚本在这个状态上明确说了"我不管" —— 不要拿块里第一条 set_animation 冒充默认动画。
+            if (hasUnconditionalStateBypass(blockContent)) continue;
+            // 在块内容中找到第一个 ctrl.set_animation('name')
             Matcher animMatcher = SET_ANIM_PATTERN.matcher(blockContent);
             if (animMatcher.find()) {
                 String animName = animMatcher.group(1);
@@ -181,9 +279,16 @@ public final class MolangFunctionParser {
     /**
      * 从 .molang 函数文件的原始字节中解析条件动画映射。
      * <p>
-     * 对于每个 ctrl.<state> 块，提取所有有条件守卫的 ctrl.set_animation() 调用。
+     * 对每个 ctrl.<state> 块，提取所有有条件守卫的 ctrl.set_animation() 调用。
      * 例如 v.show_car ? { ctrl.set_animation('开车_待命'); } 会生成
      * ("idle", "v.show_car") → "开车_待命" 的映射。
+     * <p>
+     * 两类守卫都会收集，并且**块自己的守卫排在前面**（它比状态本身更窄，脚本也是先判它）：
+     * <ol>
+     *   <li>块自己那一层的守卫，但只在它不是纯 {@code ctrl.<state>} 时收集，例如
+     *       {@code (ctrl.walk && ysm.input_vertical < 0.1) ? { ctrl.set_animation('walkBack'); }}；</li>
+     *   <li>块内部嵌套的条件分支，例如 {@code v.show_car ? { ctrl.set_animation('开车_行走'); }}。</li>
+     * </ol>
      *
      * @param data .molang 文件原始字节
      * @return state → (condition, animationName) 列表，不会为 null
@@ -193,19 +298,33 @@ public final class MolangFunctionParser {
         if (data == null || data.length == 0) {
             return result;
         }
-        String script = new String(data, StandardCharsets.UTF_8);
+        String script = stripComments(new String(data, StandardCharsets.UTF_8));
         int searchFrom = 0;
         while (true) {
             int[] block = findNextCtrlBlock(script, searchFrom);
             if (block == null) break;
             int blockOpen = block[0];
             int blockEnd = block[1];
+            int stateEnd = block[2];
+            int qmarkPos = block[3];
             searchFrom = blockEnd + 1;
             String state = extractCtrlStateName(script, blockOpen);
             if (state == null) continue;
             // 块内容
             String blockContent = script.substring(blockOpen + 1, blockEnd);
-            // 在这个块中找所有条件守卫的 set_animation
+            // 1) 块自己的守卫（复合条件）：整块就是"这个状态下、满足该条件时播这个动画"。
+            if (!isSimpleCtrlCondition(script, stateEnd, qmarkPos)) {
+                String guard = script.substring(statementStart(script, qmarkPos), qmarkPos).trim();
+                Matcher guardAnim = SET_ANIM_PATTERN.matcher(blockContent);
+                if (StringUtils.isNoneBlank(guard) && guardAnim.find()) {
+                    String animName = guardAnim.group(1);
+                    if (StringUtils.isNoneBlank(animName)) {
+                        result.computeIfAbsent(state, k -> new ArrayList<>())
+                            .add(Pair.of(guard, animName));
+                    }
+                }
+            }
+            // 2) 在这个块中找所有条件守卫的 set_animation
             Matcher condMatcher = CONDITIONAL_SET_ANIM_PATTERN.matcher(blockContent);
             while (condMatcher.find()) {
                 String condition = condMatcher.group(1).trim();
@@ -262,7 +381,7 @@ public final class MolangFunctionParser {
         if (data == null || data.length == 0) {
             return hints;
         }
-        String script = new String(data, StandardCharsets.UTF_8);
+        String script = stripComments(new String(data, StandardCharsets.UTF_8));
         Matcher matcher = ANY_SET_ANIM_PATTERN.matcher(script);
         int previousEnd = 0;
         while (matcher.find()) {

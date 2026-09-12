@@ -162,28 +162,33 @@ public final class AnimationManager {
     }
 
     /**
-     * 当模型提供了 .molang 函数文件（如 @player_ctrl_pre_main.molang）时，
+     * 当模型提供了 .molang 函数文件（如 @player_ctrl_main.molang）时，
      * 从中提取 ctrl.<state> → 动画名 映射。传统谓词系统应优先使用映射名。
      * 同时会检查有条件分支的替代动画（如 v.show_car → 开车动画）。
      *
      * @param animId      模型的动画 ResourceLocation
      * @param stateName   标准谓词状态名（如 "walk"、"idle"）
+     * @param event       当前求值事件；条件替代动画要靠它（玩家状态/模型上下文）才能求值
      * @return 映射的动画名（如 "正常_行走"），若无可返回 null
      */
     @Nullable
-    private static String getMolangMappedAnimation(ResourceLocation animId, String stateName) {
+    private static String getMolangMappedAnimation(ResourceLocation animId, String stateName,
+        AnimationEvent<CustomPlayerEntity> event) {
         if (animId == null) return null;
-        // 1) 检查有条件分支的替代动画
+        // 1) 检查有条件分支的替代动画（脚本顺序 = 优先级）
         Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> condMap =
             MOLANG_CONDITIONAL_MAP.get(animId);
         if (condMap != null) {
-            List<org.apache.commons.lang3.tuple.Pair<String, String>> alternatives = condMap.get(stateName);
-            if (alternatives != null) {
-                for (org.apache.commons.lang3.tuple.Pair<String, String> alt : alternatives) {
-                    if (evaluateSimpleCondition(alt.getKey())) {
-                        return alt.getValue();
-                    }
+            String alternative = pickConditionalAnimation(
+                condMap.get(stateName), condition -> evaluateSimpleCondition(condition, event));
+            if (alternative != null) {
+                // 条件分支只有求值真的成功才可能命中，所以这条一次性日志顺带证明了
+                // "复杂条件求值"这条链路在实机里是通的（每个 模型×状态 只打一条）。
+                if (Config.DEBUG_CONTROLLER && LOGGED_MOLANG_HINTS.add(animId + "|cond|" + stateName)) {
+                    com.fox.ysmu.ysmu.LOG.info("[YSMU-MOLANG] {} state '{}' -> '{}' (conditional branch)",
+                        animId, stateName, alternative);
                 }
+                return alternative;
             }
         }
         // 2) 检查默认映射
@@ -193,34 +198,67 @@ public final class AnimationManager {
     }
 
     /**
-     * 简单求值 .molang 函数文件中的条件表达式。
-     * 仅支持 v.<name> 和 !v.<name> 形式的纯变量条件。
-     * 含有 && || <= >= < > == != 的复杂条件无法处理，跳过（返回 false）。
-     * 完整条件评估需要执行完整 Molang 脚本，暂不支持。
+     * 条件替代动画的选取规则（纯函数，便于单测）：按脚本顺序取**第一个**条件成立的；
+     * 一条都不成立返回 null，由调用方回落到默认映射 / 内置谓词。
      */
-    private static boolean evaluateSimpleCondition(String condition) {
+    static String pickConditionalAnimation(List<org.apache.commons.lang3.tuple.Pair<String, String>> alternatives,
+        java.util.function.Predicate<String> conditionEval) {
+        if (alternatives == null) {
+            return null;
+        }
+        for (org.apache.commons.lang3.tuple.Pair<String, String> alternative : alternatives) {
+            if (alternative.getKey() == null || alternative.getValue() == null) {
+                continue;
+            }
+            if (conditionEval.test(alternative.getKey())) {
+                return alternative.getValue();
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 求值 .molang 函数文件中的条件表达式。
+     * <p>
+     * 纯 {@code v.<名字>} / {@code !v.<名字>} 走下面的快速路径（只查 PENDING_ROAMING，
+     * 保持历史行为）；其余交给控制器求值器
+     * （{@link com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator}），
+     * 因此 {@code !v.show_car&&!(ysm.food_level<=6)} 这类复合条件、以及
+     * {@code (ctrl.walk && ysm.input_vertical < 0.1)} 这类复合守卫都能真正求值。
+     * <p>
+     * 求值失败/没有上下文仍然是 false —— 宁可不用替代动画，也不要凭空命中一条分支。
+     */
+    private static boolean evaluateSimpleCondition(String condition, AnimationEvent<CustomPlayerEntity> event) {
         if (StringUtils.isBlank(condition)) return true;
         String trimmed = condition.trim();
-        // 拒绝含运算符的复杂条件
-        if (trimmed.contains("&&") || trimmed.contains("||")
-            || trimmed.contains("<=") || trimmed.contains(">=")
-            || trimmed.contains("==") || trimmed.contains("!=")
-            || trimmed.contains("<") || trimmed.contains(">")) {
-            return false;
-        }
-        // 取反: !v.xxx
-        if (trimmed.startsWith("!")) {
-            String varName = trimmed.substring(1).trim();
-            if (varName.startsWith("v.")) {
-                return getMolangVariable(varName) == 0;
+        if (isPureVariableCondition(trimmed)) {
+            // 取反: !v.xxx
+            if (trimmed.startsWith("!")) {
+                return getMolangVariable(trimmed.substring(1).trim()) == 0;
             }
-            return false;
-        }
-        // 正向: v.xxx
-        if (trimmed.startsWith("v.")) {
+            // 正向: v.xxx
             return getMolangVariable(trimmed) != 0;
         }
-        return false;
+        EntityPlayer player = event != null && event.getAnimatable() != null
+            ? event.getAnimatable().getPlayer() : null;
+        return com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
+            .evaluateCondition(trimmed, player, event);
+    }
+
+    /** 只有 {@code v.<名字>} 或 {@code !v.<名字>}（没有运算符、没有括号、没有函数调用）。 */
+    private static boolean isPureVariableCondition(String trimmed) {
+        String body = trimmed.startsWith("!") ? trimmed.substring(1).trim() : trimmed;
+        if (!body.startsWith("v.")) {
+            return false;
+        }
+        for (int i = 0; i < body.length(); i++) {
+            char c = body.charAt(i);
+            boolean allowed = Character.isLetterOrDigit(c) || c == '_' || c == '.' || c == '!';
+            if (!allowed) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /** 从 PENDING_ROAMING 读取 Molang 变量的当前值 */
@@ -716,7 +754,7 @@ public final class AnimationManager {
                     String animationName = state.getAnimationName();
                     // 优先检查 molang 映射：当模型提供了 .molang 函数文件时，
                     // 使用映射的动画名（如 walk → 正常_行走）替代标准名
-                    String mappedName = getMolangMappedAnimation(animId, animationName);
+                    String mappedName = getMolangMappedAnimation(animId, animationName, event);
                     String targetName = mappedName != null ? mappedName : animationName;
                     Animation anim = null;
                     if (animFile != null) {
@@ -759,7 +797,7 @@ public final class AnimationManager {
         // 3) 最后兜底取其他非空动画
         if (animFile != null && !animFile.animations.isEmpty()) {
             // 优先尝试 idle
-            String idleName = getMolangMappedAnimation(animId, "idle");
+            String idleName = getMolangMappedAnimation(animId, "idle", event);
             if (idleName == null) idleName = "idle";
             Animation idleAnim = animFile.animations.get(idleName);
             if (isAnimationNonEmpty(idleAnim)) {
@@ -783,7 +821,7 @@ public final class AnimationManager {
                 for (AnimationState state : states) {
                     String name = state.getAnimationName();
                     if ("death".equals(name)) continue;
-                    String mapped = getMolangMappedAnimation(animId, name);
+                    String mapped = getMolangMappedAnimation(animId, name, event);
                     String target = mapped != null ? mapped : name;
                     Animation anim = animFile.animations.get(target);
                     if (isAnimationNonEmpty(anim)) {

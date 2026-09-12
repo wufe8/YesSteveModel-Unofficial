@@ -74,9 +74,21 @@ public final class OpenYsmControllerExpressionEvaluator {
         return lastAllAnimationsFinished;
     }
 
+    /**
+     * 编译后的表达式所需的**最小环境**：只有"读变量"和"调函数"两个查询。
+     * <p>
+     * 抽成接口有两个好处：编译期只依赖这两个方法（不会顺手摸 event/player），
+     * 以及条件求值可以脱离 Minecraft 单测 —— 给一个假的 scope 就能跑真实脚本里的条件
+     * （见 {@code OpenYsmConditionEvaluationTest}）。{@link Context} 是它在游戏里的实现。
+     */
+    interface ConditionScope {
+        double variableValue(String name);
+        double functionValue(String name, List<Argument> arguments);
+    }
+
     @FunctionalInterface
     interface CompiledExpr {
-        double eval(Context ctx);
+        double eval(ConditionScope ctx);
     }
 
     /** Holds a compiled argument for function calls: either a string constant or a compiled expression. */
@@ -88,7 +100,7 @@ public final class OpenYsmControllerExpressionEvaluator {
         private CompiledArg(CompiledExpr e) { isString = false; stringValue = null; exprValue = e; }
         static CompiledArg ofString(String s) { return new CompiledArg(s); }
         static CompiledArg ofExpr(CompiledExpr e) { return new CompiledArg(e); }
-        Argument toArgument(Context ctx) {
+        Argument toArgument(ConditionScope ctx) {
             return isString ? Argument.string(stringValue) : Argument.number(exprValue.eval(ctx));
         }
     }
@@ -428,10 +440,45 @@ public final class OpenYsmControllerExpressionEvaluator {
     // ---- Compiled expression evaluation (cached, avoids re-parsing) ----
 
     static boolean evaluateBoolean(String expression, Context context) {
+        return evaluateCondition(expression, context);
+    }
+
+    /**
+     * 用给定环境求值条件表达式（空白 = true）。包内可见，便于在没有 Minecraft 的测试里
+     * 喂一个假 {@link ConditionScope}。
+     */
+    static boolean evaluateCondition(String expression, ConditionScope scope) {
         if (StringUtils.isBlank(expression)) {
             return true;
         }
-        return truthy(compile(expression).eval(context));
+        return truthy(compile(expression).eval(scope));
+    }
+
+    /**
+     * 求值 {@code .molang} 脚本里的条件（供 {@code AnimationManager} 的名称映射使用）。
+     * <p>
+     * 这里没有控制器状态机上下文（{@code state == null}），{@code v.*} 走共享作用域
+     * （脚本写的变量在 {@code MolangPhysicsRuntime}，轮盘/指令写的 roaming 变量在
+     * {@code PENDING_ROAMING}）。表达式里的 {@code ctrl.*} / {@code ysm.*} / {@code query.*}
+     * 照常按玩家状态求值。
+     * <p>
+     * 玩家或事件缺失时返回 false：条件无从判断，宁可不用替代动画，也不要凭空命中一条分支。
+     */
+    public static boolean evaluateCondition(String expression, EntityPlayer player, AnimationEvent<?> event) {
+        if (player == null || event == null) {
+            return false;
+        }
+        if (StringUtils.isBlank(expression)) {
+            return true;
+        }
+        try {
+            return evaluateCondition(expression, new Context(event, player, null));
+        } catch (RuntimeException e) {
+            OpenYsmAnimationControllerRegistry.warnOnce(
+                "molang-cond:" + expression,
+                "Failed to evaluate .molang condition: " + expression + " (" + e.getMessage() + ")");
+            return false;
+        }
     }
 
     static double evaluateNumber(String expression, Context context) {
@@ -624,9 +671,11 @@ public final class OpenYsmControllerExpressionEvaluator {
         return 0;
     }
 
-    static final class Context {
+    static final class Context implements ConditionScope {
         private final AnimationEvent<?> event;
         private final EntityPlayer player;
+        /** 控制器状态机上下文；{@code .molang} 名称映射的条件求值没有它（null），
+         *  此时 {@code v.*} 走共享作用域，见 {@link #sharedVariableValue(String)}。 */
         private final OpenYsmPlayerControllerRuntime.RuntimeState state;
 
         Context(AnimationEvent<?> event, EntityPlayer player, OpenYsmPlayerControllerRuntime.RuntimeState state) {
@@ -635,7 +684,8 @@ public final class OpenYsmControllerExpressionEvaluator {
             this.state = state;
         }
 
-        double variableValue(String name) {
+        @Override
+        public double variableValue(String name) {
             String normalized = normalizeVariableName(name);
             if ("true".equals(normalized)) {
                 return TRUE;
@@ -670,7 +720,8 @@ public final class OpenYsmControllerExpressionEvaluator {
             return FALSE;
         }
 
-        double functionValue(String name, List<Argument> arguments) {
+        @Override
+        public double functionValue(String name, List<Argument> arguments) {
             if (player == null) return FALSE;
             if ("ctrl.hold".equals(name)) {
                 return handMatch(arguments, false, false);
@@ -853,17 +904,43 @@ public final class OpenYsmControllerExpressionEvaluator {
             if ("jump".equals(name)) {
                 return isJumping() ? TRUE : FALSE;
             }
-            Double value = state.variables.get(name);
-            return value == null ? FALSE : value;
+            if (state != null) {
+                Double value = state.variables.get(name);
+                if (value != null) {
+                    return value;
+                }
+            }
+            return sharedVariableValue(name);
+        }
+
+        /**
+         * 没有控制器 RuntimeState 时的 {@code v.*} 来源。
+         * <p>
+         * {@code .molang} 脚本写的 {@code v.*} 落在共享作用域（{@code MolangPhysicsRuntime}，
+         * 每个 玩家×模型 一份），轮盘/指令写的 {@code v.roaming.*} 落在
+         * {@code PENDING_ROAMING}。控制器状态机自己的 {@code state.variables} 每帧也会从共享
+         * 作用域同步一次，所以对控制器路径这条兜底只是"值还没同步过来"的补充。
+         */
+        private double sharedVariableValue(String name) {
+            String scoped = "v." + name;
+            if (MolangPhysicsRuntime.containsKey(scoped)) {
+                return MolangPhysicsRuntime.getVariable(scoped, FALSE);
+            }
+            Double pending = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(name);
+            if (pending == null) {
+                pending = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(scoped);
+            }
+            return pending != null ? pending : FALSE;
         }
 
         private double queryValue(String name) {
             if (player == null) return FALSE;
             if ("anim_time".equals(name)) {
+                if (event == null || state == null) return FALSE;
                 return Math.max(0.0d, event.getAnimationTick() - state.enteredTick) / 20.0d;
             }
             if ("life_time".equals(name)) {
-                return event.getAnimationTick() / 20.0d;
+                return event == null ? FALSE : event.getAnimationTick() / 20.0d;
             }
             if ("all_animations_finished".equals(name) || "any_animation_finished".equals(name)) {
                 // 动态计算结果缓存下来，供 debug overlay / /ysm query 读取
@@ -1433,6 +1510,10 @@ public final class OpenYsmControllerExpressionEvaluator {
         }
 
         private boolean allAnimationsFinished() {
+            if (state == null) {
+                // 没有状态机上下文（.molang 名称映射的条件求值）：无法判断是否播完。
+                return false;
+            }
             Animation current = event.getController() == null ? null : event.getController().getCurrentAnimation();
             // 若当前状态是"本帧刚进入"的（多级过渡循环里 applyAnimations 在循环之后
             // 才执行，新动画尚未开始播），绝不能判定为"已播完"——否则 空闲→起跳 会在
