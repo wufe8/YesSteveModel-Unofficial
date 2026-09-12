@@ -341,6 +341,8 @@ public class ClientEventHandler {
             java.util.UUID pid = event.player.getUniqueID();
             com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.clearPlayer(pid);
             com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.clearPlayer(pid);
+            // 玩家登出：清掉"已跑过 @player_init"的标记，下次加载会重新初始化模型状态。
+            com.fox.ysmu.client.animation.controller.OpenYsmScriptRuntime.clearPlayer(pid);
             com.fox.ysmu.client.animation.MovementSpeedMatcher.clearSmoothing(event.player);
         }
     }

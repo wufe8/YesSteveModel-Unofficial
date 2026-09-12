@@ -34,26 +34,64 @@ YSM-wiki: `molang/script`（2.5.0 起）。官方把 `functions/*.molang` 当**�
    脚本**结尾**的 bypass 是整段脚本的兜底，含义正是"没提到的状态用内置逻辑"，而不提的状态
    本来就没有映射条目，所以无需额外处理。
 
+## 二期解释器核心（已落地并**接入事件订阅**）
+
+`com.fox.ysmu.client.animation.molang` 下有一个不依赖 Minecraft 的脚本解释器核心，已覆盖
+wiki「自定义函数」页除事件订阅外的语法：
+
+- `args[...]`（含 `args[t.a + 1]` 这类表达式下标，解析前改写成内部调用 `args_get(...)`）；
+- 闭包块 `{ ... }`（可作 `? :` 分支或整个函数体）与 `return` 穿透任意嵌套块；
+- `fn.*`：`fn.b;`（无参、整段就是它）与 `fn.x(a, b)`（**任意表达式里**都成立，因此递归
+  `return n * fn.fact(n - 1);` 可用；带括号的形态走 mclib 的 `fn.` 函数名机制）；
+  调用链上限 32，超过返回 0；
+- `t.*` **按调用帧隔离**（wiki：调用链每个节点各一层，只有 `v.*` 共享）；
+- `loop(n, {...})` / `for_each(t.x, args, {...})` / `break` / `continue`。
+
+表达式层仍复用 `MolangParser`，变量 / 函数 / 调用参数通过
+`MolangScriptInterpreter.MolangScriptScope` 注入。
+接入方式见 `analysis/keyframe-molang-channels.md`：`functions/<名字>.molang` 会被登记为函数
+（`fn.*` 可调用），`<名字>@player_init` / `@player_update` 会在
+`MolangPhysicsRuntime.begin()`（= GeckoLib 的 `preAnimationSetup`，「更新玩家动画之前」）触发，
+变量读写走 `OpenYsmScriptScope`（读复用控制器求值器、写与控制器的 onEntry/onExit 同一条路径）。
+`@sync` 与 `ysm.sync(...)` 仍未接入（要新网络包）；**动画控制脚本
+（`[@描述]@player_ctrl_<槽位>.molang`）仍然只做静态提取**，脚本正文不执行。
+
+**两条已知边界**（写下来是因为它们会在"接入"时才咬人）：
+
+- `args[i]` 目前**只支持数值**：叶子表达式交给 `MolangParser` 后，字符串字面量会被折成
+  `MolangStringPool` 的 int id，所以 `character` 回调拿到的是数字而不是字符串。将来要把
+  `ctrl.set_animation('x')` 这类带字符串参数的调用送进解释器，需要先解决这一层。
+- **只有块自己那一层的赋值会写回宿主**：`v.x = 1;` 这样的一条语句会走解释器的 `AssignmentNode`
+  并调 `scope.setVariableValue`；而夹在表达式里的括号赋值（`(v.x = 1) + 2`）由 `MolangParser`
+  自己处理，只落到那条叶子语句的 `MolangMultiStatement.locals`，对后面的语句与宿主都不可见
+  （这是 vendored mclib 的既有行为，不是解释器引入的）。
+
 ## 未实现（按当前库里的实际用量排序）
 
 | 特性 | 库内用量（参考模型库） | 说明 |
 | --- | --- | --- |
-| 条件里调用 `fn.*` / 读 `t.*` / `args[]` | 少量（都在自定义函数与事件订阅脚本里） | 条件求值会把这些当未定义（0）。真正需要它们是二期解释器的事 |
-| `ctrl.set_beginning_transition_length` 之外的 ctrl API | `ctrl.use`/`ctrl.swing` 各 3 次、`ctrl.indicate_reload` 2 文件 | 脚本里的 `ctrl.use(...)`/`ctrl.swing(...)` 不会被执行（控制器条件路径里的同名函数是另一套实现） |
-| `t.*` / `args[]` | 9 / 6 个文件 | 临时变量与参数只在自定义函数/事件订阅里有意义 |
-| 事件订阅 `@player_init` / `@player_update` / `@sync` | 各 1 个文件（`eventsubscriber@sync.molang`） | 需要事件总线 + `ysm.sync` 网络包 + `v.roaming` 同步，属于新功能 |
-| `fn.*`、`loop`、`for_each`、`break`/`continue`、闭包 | `fn.` 1 个文件，循环 0 | 需要真正的脚本解释器 |
+| **执行动画控制脚本**（`@player_ctrl_*.molang` 的正文） | 6+ 文件 | 目前只静态提取状态→动画映射；脚本里的赋值、`ysm.keyboard`/`ysm.sync`、控制流都不执行。这是 `ysm.keyboard` 在车辆脚本里仍然为 0 的原因 |
+| `@sync` 事件 + `ysm.sync(...)` | 1 文件 | 需要新网络包 + 每个模型的事件注册表 |
+| 条件里调用 `fn.*` / 读 `t.*` / `args[]` | 少量（都在自定义函数与事件订阅脚本里） | 条件求值（`AnimationManager` 的名称映射）走的是另一条路，会把这些当未定义（0） |
+| `ctrl.set_beginning_transition_length` 之外的 ctrl API | `ctrl.use`/`ctrl.swing` 各 3 次、`ctrl.indicate_reload` 2 文件 | 脚本里的 `ctrl.use(...)`/`ctrl.swing(...)` 不会被执行（控制器条件路径里的同名函数是另一套实现）；真要执行还需要上面那条"字符串参数"边界 |
+| `q.debug_output` 等调试输出 | wiki 示例用 | 需要宿主的 `functionValue` 自己实现，解释器不带任何输出 |
+| `fn.x` 写在更大的表达式里但不带括号 | — | 只有"整段就是 `fn.x`"才当调用；`1 + fn.x` 里的 `fn.x` 会当未定义变量（0）。需要那种写法就写 `fn.x()`（走 mclib 函数机制，任意位置都成立） |
 | `state_pause` / `state_stop` / `ctrl.reset` | `state_stop` 2 个文件 | `state_stop`/`state_pause` 仍算"脚本接管了该状态"，所以默认映射保留；它们与 `state_continue` 的**播放方式**差异（暂停时间轴 / 平滑停止）静态提取表达不了，`ctrl.reset` 同理 |
 
 `docs/README.md` 的收录原则适用：这些都是跨模型的机制说明，具体模型名只在 `local/` 里出现。
 
 ## 下一步（如果要继续补）
 
-1. **解释器核心**（二期，见 `local/plans/molang-custom-functions-execplan.md`）：`args[]`、`t.*`、
-   闭包块 `{...}`、`return` 穿透、`fn.*` 链式调用、`loop`/`for_each`/`break`/`continue`。
-   核心类不依赖 Minecraft，几乎可以全部用 JUnit 覆盖。
-2. 事件订阅 + `ysm.sync`（三期）：新网络包 + 每个模型的事件注册表，工作量大，先确认有模型真的依赖它。
-3. 条件求值第一版只覆盖纯 `v.*` 快速路径 + 控制器求值器；注意它**改变了行为**：以前永远 false 的
+1. ~~**把解释器接上**~~ **已完成**：`PreParsedModelBundle` 保留函数体 + 事件表，
+   `OpenYsmScriptRuntime` 在 `MolangPhysicsRuntime.begin()` 触发 `@player_init`/`@player_update`，
+   `OpenYsmScriptScope` 提供游戏侧读写。**必须实机确认**（见
+   `local/plans/in-game-test-checklist.md` 的脚本项）。
+2. ~~二期剩下的语言特性~~ **已完成**（`fn.*` + 每层 `t.*` + 循环）。注意参考库里
+   `fn.` 只出现在 `motorSynth.molang` 的一句注释里、`loop`/`for_each` 一次都没用，
+   所以这几条特性目前只有 wiki 示例当规格（见 `MolangScriptCallAndLoopTest`）。
+3. 三期：`@sync` + `ysm.sync(...)`（新网络包），以及**把动画控制脚本当控制器主体执行**
+   （比事件订阅更大：要决定 `@player_ctrl_<槽位>.molang` 与 `controller/*.json` 状态机谁优先）。
+4. 条件求值第一版只覆盖纯 `v.*` 快速路径 + 控制器求值器；注意它**改变了行为**：以前永远 false 的
    分支会开始命中，需要实机确认那些模型的动画切换是否符合预期（内置 `wine_fox` 包的"低电量 /
    电量过低"分支就是例子）。
 
@@ -62,7 +100,11 @@ YSM-wiki: `molang/script`（2.5.0 起）。官方把 `functions/*.molang` 当**�
 - 单元测试：`MolangFunctionParserTest`（过渡/重载提取、动画之间不串味、两参数写法）、
   `MolangRealScriptTest`（拿内置包的真实脚本当夹具：注释剥离、复合守卫、块内 `state_bypass`）、
   `OpenYsmConditionEvaluationTest`（喂真实脚本里的条件 + 假 `ConditionScope`，断言选中的动画）、
-  `AnimationManagerMolangConditionTest`（条件替代动画的选取顺序）。
+  `AnimationManagerMolangConditionTest`（条件替代动画的选取顺序）、
+  `MolangScriptInterpreterTest` / `MolangArgsRewriterTest`（解释器：块/三元/return 穿透/args 下标）、
+  `MolangScriptRealFixtureTest`（**执行**内置包的真实脚本：`halo_battery_indicator.molang` 的
+  `args[0]`×饱食度×`q.life_time`、`eventsubscriber@sync.molang` 写回宿主变量）、
+  `MolangScriptCallAndLoopTest`（`fn.*`/递归/`t.*` 隔离/循环，脚本取自 wiki 示例）。
 - **单个表达式**用 `/ysm debug eval <表达式>` 在聊天框验证，不需要任何模型。该入口现在会把本地玩家
   临时设成 `ParticleEffectUtil` 的当前实体，所以依赖实体的函数（`query.is_item_name_any`、
   `query.relative_block_has_any_tag`、`ysm.equipped_enchantment_level`、`query.position` …）

@@ -52,6 +52,13 @@ public final class MolangInstructionExecutor {
         if (StringUtils.isBlank(instructions)) {
             return;
         }
+        // 先剥注释再切语句：timeline 常整段照抄脚本，带 C 风格注释（模型甚至会把 `;`
+        // 写在注释里）。不剥的话注释会变成一条"语句"解析失败（只警告一次，但白费），
+        // 更糟的是"注释在代码前面且注释里有 `;`"会把整行代码切碎、悄悄丢掉那行赋值。
+        instructions = MolangFunctionParser.stripComments(instructions);
+        if (StringUtils.isBlank(instructions)) {
+            return;
+        }
 
         // 诊断：确认 parallel3 / swing:sword 的 timeline 指令是否真的被收到（只打一次）
         if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {

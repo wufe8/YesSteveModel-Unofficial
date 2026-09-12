@@ -154,7 +154,9 @@ public class AnimationRegister {
             functions.put("ysm.bone_pivot_abs_x", BonePivotAbsFunction.class);
             functions.put("ysm.bone_pivot_abs_y", BonePivotAbsFunction.class);
             functions.put("ysm.bone_pivot_abs_z", BonePivotAbsFunction.class);
-            functions.put("ysm.keyboard", CtrlHoldFunction.class);
+            // ysm.keyboard(键码)：关键帧/时间轴 Molang 里的按键查询。
+            // 以前和 ctrl.* 共用恒返回 0 的 CtrlHoldFunction，导致按键驱动的模型收不到输入。
+            functions.put("ysm.keyboard", com.fox.ysmu.client.animation.molang.YsmKeyboardFunction.class);
         };
 
         // 2) `??` 运算符的"显式设置"判定（按当前渲染模型，防跨模型污染）。

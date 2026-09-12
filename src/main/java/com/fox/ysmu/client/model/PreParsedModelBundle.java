@@ -52,6 +52,10 @@ public class PreParsedModelBundle {
      *  提取出来的按动画名的提示（见 MolangFunctionParser.parseAnimationHints）。 */
     public final com.fox.ysmu.client.animation.molang.MolangFunctionParser.AnimationHints molangHints =
         new com.fox.ysmu.client.animation.molang.MolangFunctionParser.AnimationHints();
+    /** {@code functions/<名字>.molang} 的函数体（名字小写），供 {@code fn.*} 调用。 */
+    public final Map<String, String> molangFunctions = new LinkedHashMap<>();
+    /** 事件订阅：{@code player_init}/{@code player_update} → 按文件顺序要执行的函数名。 */
+    public final Map<String, List<String>> molangEventHandlers = new LinkedHashMap<>();
 
     // Texture data (for main-thread OpenGL upload)
     public final Map<ResourceLocation, byte[]> texturesToRegister = new LinkedHashMap<>();

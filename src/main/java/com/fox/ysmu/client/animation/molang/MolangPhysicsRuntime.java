@@ -150,6 +150,10 @@ public final class MolangPhysicsRuntime {
         }
         prevRenderTicks = renderTicks;
         currentFrameContext = new FrameContext(modelId, state, processor);
+        // .molang 事件订阅（@player_init / @player_update）在这里触发：
+        // 漫游变量已经注入完毕（wiki 要求 roaming 同步早于 player_init），
+        // 而 setMolangQueries 正是"每次更新玩家动画之前"。
+        com.fox.ysmu.client.animation.controller.OpenYsmScriptRuntime.runFrameScripts(player, modelId);
     }
 
     public static void end() {

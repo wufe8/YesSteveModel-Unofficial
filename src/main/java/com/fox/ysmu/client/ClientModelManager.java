@@ -658,6 +658,9 @@ public class ClientModelManager {
             AnimationManager.MOLANG_RELOAD_MAP.put(ModelIdUtil.getMainId(modelId),
                 new java.util.HashSet<>(bundle.molangHints.reloadAnimations));
         }
+        // .molang 脚本函数与事件订阅（fn.* / @player_init / @player_update）。
+        com.fox.ysmu.client.animation.molang.MolangScriptRegistry.register(ModelIdUtil.getMainId(modelId),
+            bundle.molangFunctions, bundle.molangEventHandlers);
         // Register controller files
         if (!bundle.controllerFiles.isEmpty()) {
             // animationNames lets the registry synthesise the implicit
@@ -929,6 +932,29 @@ public class ClientModelManager {
     }
 
     /**
+     * 把一个 {@code functions/} 条目登记成"脚本函数"和/或"事件订阅"。
+     * 文件名的解析规则在 {@code MolangScriptRegistry}（纯函数，有单测）。
+     */
+    private static void collectMolangScript(PreParsedModelBundle bundle, String fileName, byte[] data) {
+        String functionName = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.functionNameOf(fileName);
+        if (functionName == null) {
+            // "@player_ctrl_main" 这类动画控制脚本没有函数名，只做状态→动画映射。
+            return;
+        }
+        String body = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.decode(data);
+        if (body == null || body.trim()
+            .isEmpty()) {
+            return;
+        }
+        bundle.molangFunctions.put(functionName, body);
+        String event = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.eventOf(fileName);
+        if (event != null) {
+            bundle.molangEventHandlers.computeIfAbsent(event, k -> new java.util.ArrayList<>())
+                .add(functionName);
+        }
+    }
+
+    /**
      * Parses animation files from ModelData on the background thread.
      * Stores AnimationFile, molang mappings, and controller files into the bundle.
      */
@@ -944,6 +970,9 @@ public class ClientModelManager {
             byte[] animData = entry.getValue();
 
             if (YsmControllerResources.isMolangResource(key)) {
+                // 除了静态提取状态→动画映射，还登记脚本函数体与事件订阅：
+                // functions/<名字>.molang 只会被 fn.* 调用，名字@事件 才由事件触发。
+                collectMolangScript(bundle, YsmControllerResources.molangName(key), animData);
                 Map<String, String> parsed = com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseStateToAnimationMap(animData);
                 if (!parsed.isEmpty()) {
                     bundle.molangMapping.putAll(parsed);
@@ -1918,6 +1947,8 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_TRANSITION_MAP.clear();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_RELOAD_MAP.clear();
         com.fox.ysmu.client.animation.AnimationManager.clearMolangHintLog();
+        com.fox.ysmu.client.animation.molang.MolangScriptRegistry.clear();
+        com.fox.ysmu.client.animation.controller.OpenYsmScriptRuntime.clear();
         CACHED_MODEL_MD5.clear();
         OPENYSM_CACHE_FORMAT.clear();
         TEXTURE_LAST_USED.clear();

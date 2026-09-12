@@ -27,6 +27,7 @@
 | [`analysis/animation-controller-priority.md`](analysis/animation-controller-priority.md) | 控制器注册顺序与骨骼覆盖：后执行的控制器覆盖先执行的、每帧处理链、cap/parallel/main 的优先级 |
 | [`analysis/animation-length-semantics.md`](analysis/animation-length-semantics.md) | `animation_length` 缺省语义：缺省=最后关键帧、`Double.MAX_VALUE` 哨兵、循环/防滑步/动画完成三个消费点 |
 | [`analysis/geometry-cube-sanitization.md`](analysis/geometry-cube-sanitization.md) | 几何清理：负尺寸 cube 的两趟 `CULL_FRONT` 渲染、零面积 UV 面删除、何时保留/归一化 |
+| [`analysis/keyframe-molang-channels.md`](analysis/keyframe-molang-channels.md) | 模型里 Molang 的三条通道（脚本函数 / 关键帧值 / timeline）各由哪段代码执行、事件触发顺序、以及「动画控制脚本仍未执行」这条边界 |
 | [`analysis/molang-custom-functions.md`](analysis/molang-custom-functions.md) | `.molang` 自定义函数：YSMU 只实现了动画控制脚本子集（状态→动画、过渡时长、`indicate_reload`），复杂条件/事件订阅/`fn.*` 未实现及补法 |
 | [`analysis/performance-profiling.md`](analysis/performance-profiling.md) | 性能剖析方法论：1.7.10 可用工具、单实体渲染成本模型、FBO 预览缓存与 `GUI_MODEL_PREVIEW_REFRESH`、GPU 分析局限 |
 | [`analysis/debug-overlay.md`](analysis/debug-overlay.md) | Molang 调试覆盖层：设计 vs 实现逐项状态（快捷键/数据源/布局/键盘独占），以及设计稿里没有的 `@来源` 列与动态 `ctrl.*` |
