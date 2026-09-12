@@ -431,6 +431,12 @@ public final class AnimationManager {
             .getAnimation();
     }
 
+    /** {@code pre_parallel_N_controller} / {@code parallel_N_controller} 都算并行槽位。 */
+    private static boolean isParallelSlotName(String geckoControllerName) {
+        return geckoControllerName != null && (geckoControllerName.startsWith("pre_parallel_")
+            || geckoControllerName.startsWith("parallel_"));
+    }
+
     public void register(AnimationState state) {
         if (data.containsKey(state.getPriority())) {
             data.get(state.getPriority())
@@ -491,15 +497,21 @@ public final class AnimationManager {
             // those animations through the OpenYSM runtime above.
             // Skip if the animation doesn't exist in the model's file to avoid
             // GeckoLib's System.out.printf spam ("Could not load animation: ...").
+            // 槽位名的日志两种情况都要覆盖：pre_parallel_N 也是并行槽位，只认 "parallel_" 前缀时
+            // pre_parallel_* 的回退/抑制完全没有日志（排查"并行/时间轴不生效"时就看不到任何线索）。
+            boolean parallelSlot = isParallelSlotName(geckoName);
             if (!com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry
                 .hasParallelController(animId) && animationExistsInFile(animId, animationName)) {
-                if (Config.DEBUG_CONTROLLER && geckoName != null && geckoName.startsWith("parallel_")) {
+                if (Config.DEBUG_CONTROLLER && parallelSlot) {
                     ysmu.LOG.info("[YSMU-PAR] {} fallback -> playLoopAnimation('{}')", geckoName, animationName);
                 }
                 return playLoopAnimation(event, animationName);
             }
-            if (Config.DEBUG_CONTROLLER && geckoName != null && geckoName.startsWith("parallel_")) {
-                ysmu.LOG.info("[YSMU-PAR] {} suppressed (model declares parallel controllers)", geckoName);
+            if (Config.DEBUG_CONTROLLER && parallelSlot) {
+                // 这个分支还包含"动画文件里还没有这条动画"（懒加载/惰性重载途中）——
+                // 以前它是完全静默的 STOP，正是本轮排查卡住的地方。
+                ysmu.LOG.info("[YSMU-PAR] {} suppressed (no such animation in the loaded file: '{}')", geckoName,
+                    animationName);
             }
             return PlayState.STOP;
         }

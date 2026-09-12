@@ -840,13 +840,21 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return queryPositionValue((int) arguments.get(0).asNumber());
             }
             // --- ysm.* 函数 ---
+            // 键码是 GLFW 的（wiki），1.7.10 上要经 KeyboardCompat 换算成 LWJGL2；
+            // 多参数语义是"任一按下即真"。
             if ("ysm.keyboard".equals(name) && arguments.size() >= 1) {
-                int keycode = (int) arguments.get(0).asNumber();
-                try {
-                    return org.lwjgl.input.Keyboard.isKeyDown(keycode) ? TRUE : FALSE;
-                } catch (Exception e) {
-                    return FALSE;
+                java.util.List<Double> codes = new java.util.ArrayList<>(arguments.size());
+                for (Argument argument : arguments) {
+                    codes.add(argument.asNumber());
                 }
+                return com.fox.ysmu.compat.KeyboardCompat.isAnyKeyDown(codes) ? TRUE : FALSE;
+            }
+            if ("ysm.mouse".equals(name) && arguments.size() >= 1) {
+                java.util.List<Double> buttons = new java.util.ArrayList<>(arguments.size());
+                for (Argument argument : arguments) {
+                    buttons.add(argument.asNumber());
+                }
+                return com.fox.ysmu.compat.KeyboardCompat.isAnyMouseButtonDown(buttons) ? TRUE : FALSE;
             }
             // --- particle / abs_particle 函数（副作用：生成粒子，返回 1.0/0.0） ---
             if (("particle".equals(name) || "abs_particle".equals(name)

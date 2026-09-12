@@ -1948,6 +1948,7 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_RELOAD_MAP.clear();
         com.fox.ysmu.client.animation.AnimationManager.clearMolangHintLog();
         com.fox.ysmu.client.animation.molang.MolangScriptRegistry.clear();
+        com.fox.ysmu.client.animation.molang.MolangInstructionExecutor.clearTimelineLog();
         com.fox.ysmu.client.animation.controller.OpenYsmScriptRuntime.clear();
         CACHED_MODEL_MD5.clear();
         OPENYSM_CACHE_FORMAT.clear();

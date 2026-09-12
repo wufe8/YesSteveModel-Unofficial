@@ -45,9 +45,13 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
 
 - YSM 允许写成字符串**数组**（官方 Bedrock 是单表达式）；`JsonAnimationUtils.instructionString()`
   用 `;` 拼成一条指令串。
-- 拼完后**先剥注释再切语句**。作者常把 `.molang` 整段贴进 `timeline`，里面带 C 风格注释，
-  注释里甚至可能有 `;`：不剥注释的话，注释会变成一条解析失败的"语句"（只警告一次），
-  更糟的是"注释在代码前面且注释里有 `;`"会把那行代码切碎、**悄悄丢掉一条赋值**。
+- 数组元素之间必须用 **`";
+"`** 拼接（不是 `";"`）。作者常把 `.molang` 整段贴进 `timeline`，
+  里面带 C 风格注释，而行注释是"吃到**行尾**"的：只用 `;` 拼、串里没有换行时，**第一个 `//`
+  会把后面所有语句全部吃掉**。实测一条 21959 字符的 timeline 被剥成 0 字符 ⇒ 整个模型的 Molang
+  一行都不执行（表现为"游戏完全不响应按键"）。保留换行后，注释才会在元素边界处结束。
+- 剥注释在切语句**之前**做（按上面保留的换行），这样"注释里带 `;`"不会把语句切坏，
+  注释碎片也不会变成解析失败的"语句"。
 - 例子：一个 1 tick、`loop: true` 的并行动画（`pre_parallel2` → 隐式控制器
   `player.pre_parallel_2`）每帧跑几百行 timeline，就能把整个小游戏跑起来：状态写在 `v.*`，
   骨头按 ② 读出来显示。
@@ -59,6 +63,34 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
 `analysis/molang-custom-functions.md`）。脚本里的赋值、`ysm.*` 调用、`ctrl.state_bypass` 之外的
 控制流都不会执行。文件名里槽位要从**最后一个** `@` 之后解析、忽略描述前缀
 （参考库里两种写法都有）。
+
+## 输入类函数：键码是 GLFW 的
+
+wiki 的 molang 参考表写得很明确：`ysm.keyboard(keycode1, keycode2, ...)` / `ysm.mouse(keycode)`
+的键码是 **GLFW** 的（表里直接链到 `glfw.org/docs/latest/group__keys.html`），而且
+`ysm.keyboard` **支持多个参数**、"只要有一个按键按下则返回 true"。
+
+1.7.10 用的是 LWJGL2，两套键码完全不同，而且 LWJGL2 的按键数组**只有 256 项**：
+
+| | GLFW（模型里写的） | LWJGL2（1.7.10） |
+| --- | --- | --- |
+| 上/下/左/右 | 265 / 264 / 263 / 262 | 200 / 208 / 203 / 205 |
+| Tab / Esc / Enter | 258 / 256 / 257 | 15 / 1 / 28 |
+| 字母 E / A | 69 / 65（ASCII） | 18 / 30（扫描码） |
+
+所以模型里的 `ysm.keyboard(265)` 在 LWJGL2 上会**越界**，`Keyboard.isKeyDown(265)` 抛
+`ArrayIndexOutOfBoundsException`——外层那个 `catch` 把它当成"没按下"，按键驱动的模型
+（keyframe/timeline 里做小游戏、`.molang` 脚本里用 Tab 鸣笛）就全都收不到输入。
+转换表在 `com.fox.ysmu.compat.KeyboardCompat`（硬编码的 GLFW→LWJGL2 表，`KeyboardCompatTest`
+钉住），关键帧路径（`YsmKeyboardFunction`/`YsmMouseFunction`）与控制器条件路径
+（`OpenYsmControllerConditionEvaluator` 的 `ysm.keyboard`/`ysm.mouse` 分支）都走它。
+
+排查输入问题时：
+
+- `DebugController=true` 下每次按下/松开翻转会打一条
+  `[YSMU-KEY] ysm.keyboard(265) -> LWJGL 200 (UP) = 1`（每个键码只在翻转时打，不会刷屏）；
+- 未知键码打一次 `[YSMU-KEY] … no 1.7.10 (LWJGL2) mapping for code N — expected a GLFW code`；
+- 手按着键执行 `/ysm debug eval ysm.keyboard(265)` 应当返回 1（该命令走的是关键帧解析器）。
 
 ## 排查方法
 

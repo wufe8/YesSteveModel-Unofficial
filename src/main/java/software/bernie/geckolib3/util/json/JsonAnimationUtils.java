@@ -455,11 +455,15 @@ public class JsonAnimationUtils {
 
     private static String instructionString(JsonElement element) {
         if (element instanceof JsonArray) {
+            // YSMU：YSM 允许 timeline 写成字符串数组（官方 Bedrock 是单表达式）。数组元素之间用
+            // ";" **加换行** 拼接，不能只用 ";"：元素里可以有 C 风格行注释，而"注释吃到行尾"的
+            // 语义需要换行才能终止 —— 没有换行时第一个 `//` 会把后面所有语句全部吃掉
+            // （实测一条 21959 字符的 timeline 被剥成空串，模型 Molang 一行都不执行）。
             StringBuilder out = new StringBuilder();
             JsonArray array = element.getAsJsonArray();
             for (int i = 0; i < array.size(); i++) {
                 if (i > 0) {
-                    out.append(';');
+                    out.append(";\n");
                 }
                 out.append(array.get(i).getAsString());
             }

@@ -48,14 +48,31 @@ public final class MolangInstructionExecutor {
     private static final java.util.Set<String> LOGGED_INSTRUCTION = java.util.Collections
         .newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
 
-    public static void execute(String instructions) {
-        if (StringUtils.isBlank(instructions)) {
+    /** 已经打过"该控制器的时间轴被执行过"日志的控制器名。 */
+    private static final java.util.Set<String> LOGGED_TIMELINE = java.util.Collections
+        .newSetFromMap(new java.util.concurrent.ConcurrentHashMap<String, Boolean>());
+
+    /**
+     * 诊断（{@code DebugController}，每个控制器一条）：某个控制器的**时间轴被触发了**。
+     * <p>
+     * 这是"动画在播"和"时间轴里的 Molang 真的执行了"之间的分界线。没有它的时候，只能靠
+     * 时间轴写出来的变量反推；本轮排查就因为没有这条线而多绕了一圈。
+     */
+    public static void noteTimelineExecution(String controllerName, String instructions) {
+        if (!com.fox.ysmu.Config.DEBUG_CONTROLLER || controllerName == null
+            || !LOGGED_TIMELINE.add(controllerName)) {
             return;
         }
-        // 先剥注释再切语句：timeline 常整段照抄脚本，带 C 风格注释（模型甚至会把 `;`
-        // 写在注释里）。不剥的话注释会变成一条"语句"解析失败（只警告一次，但白费），
-        // 更糟的是"注释在代码前面且注释里有 `;`"会把整行代码切碎、悄悄丢掉那行赋值。
-        instructions = MolangFunctionParser.stripComments(instructions);
+        int chars = instructions == null ? 0 : instructions.length();
+        ysmu.LOG.info("[YSMU-TL] controller '{}' fired a timeline instruction ({} chars)", controllerName, chars);
+    }
+
+    /** 模型缓存刷新时清掉一次性日志去重表。 */
+    public static void clearTimelineLog() {
+        LOGGED_TIMELINE.clear();
+    }
+
+    public static void execute(String instructions) {
         if (StringUtils.isBlank(instructions)) {
             return;
         }
@@ -85,7 +102,7 @@ public final class MolangInstructionExecutor {
         MolangParser parser = GeckoLibCache.getInstance().parser;
         Iterable<String> statements;
         try {
-            statements = MolangParser.splitStatements(instructions);
+            statements = executableStatements(instructions);
         } catch (MolangException e) {
             warnOnce(instructions, e);
             return;
@@ -128,6 +145,29 @@ public final class MolangInstructionExecutor {
             INSTRUCTION_CACHE.put(instructions, cached);
             executeCached(cached);
         }
+    }
+
+    /**
+     * 把一条 timeline 指令串切成**可执行语句**：先剥 C 风格注释，再按 {@code ;} 切开，丢掉空白。
+     * <p>
+     * 剥注释必须在切句**之前**：模型常把 {@code // 说明;} 写在语句后面，注释里的 {@code ;}
+     * 若先参与切分，会把注释碎片变成"语句"（解析失败、白打警告），甚至切坏后面的代码。
+     * <p>
+     * 而"先剥注释"能成立的前提是**指令串保留了行结构**：行注释是"吃到行尾"，
+     * {@code JsonAnimationUtils.instructionString()} 把 timeline 数组用 {@code ";
+"} 拼接，
+     * 正是为此（只用 {@code ";"} 拼时第一个 {@code //} 会把整条 timeline 吃掉）。
+     */
+    static java.util.List<String> executableStatements(String instructions) throws MolangException {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        String stripped = MolangFunctionParser.stripComments(instructions);
+        for (String statement : MolangParser.splitStatements(stripped)) {
+            String trimmed = statement.trim();
+            if (!trimmed.isEmpty()) {
+                out.add(trimmed);
+            }
+        }
+        return out;
     }
 
     /** Execute a pre-parsed instruction array — no split/parse overhead. */

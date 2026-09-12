@@ -118,8 +118,12 @@ public class CustomPlayerEntity implements IAnimatable {
         data.getAnimationControllers()
             .values()
             .forEach(controller -> {
-                controller.registerCustomInstructionListener(
-                    event -> MolangInstructionExecutor.execute(event.instructions));
+                controller.registerCustomInstructionListener(event -> {
+                    // 诊断：先记一条"这个控制器的时间轴被触发了"（每个控制器一条），
+                    // 再执行；两者分开才能区分"动画没播"和"时间轴没执行"。
+                    MolangInstructionExecutor.noteTimelineExecution(controller.getName(), event.instructions);
+                    MolangInstructionExecutor.execute(event.instructions);
+                });
                 controller.registerSoundListener(
                     event -> {
                         String ctrlName = event.getController().getName();
