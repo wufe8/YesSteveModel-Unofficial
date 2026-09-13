@@ -12,6 +12,7 @@ import com.eliotlash.mclib.math.functions.Function;
 
 import software.bernie.geckolib3.core.molang.LazyVariable;
 import software.bernie.geckolib3.core.molang.MolangParser;
+import software.bernie.geckolib3.core.molang.MolangStringPool;
 
 /**
  * 解释器专用的 {@link MolangParser} 子类：叶子表达式里的变量、函数与 {@code args[]} 都走调用方
@@ -78,11 +79,37 @@ final class ScriptMolangParser extends MolangParser {
         LazyVariable variable = this.variables.get(name);
         if (variable == null) {
             // 取值延迟到 eval 时按**当时的**帧解析，所以同一个 LazyVariable 在
-            // 不同调用帧里读到各自的 t.*；也因此绝不能对它 set() 成常量。
-            variable = new LazyVariable(name, () -> readVariable(name));
+            // 不同调用帧里读到各自的 t.*。
+            variable = new FrameVariable(name);
             this.variables.put(name, variable);
         }
         return variable;
+    }
+
+    /**
+     * supplier 只读、写入回落到 {@link #writeVariable} 的变量。
+     *
+     * <p>直接返回 {@code new LazyVariable(name, () -> readVariable(name))} 会踩 vendored
+     * {@link LazyVariable#set(double)}：它把 supplier **替换成常量**，于是夹在表达式里的赋值
+     * （{@code (v.x = 5) + 0}）既不经过 {@code writeVariable}（宿主永远收不到这次写入），
+     * 又把这次执行后续的读值冻住。脚本的写回必须和块级赋值走同一条路，
+     * 否则"脚本写了 v.x，骨骼却读不到"。</p>
+     */
+    private final class FrameVariable extends LazyVariable {
+
+        FrameVariable(String name) {
+            super(name, () -> readVariable(name));
+        }
+
+        @Override
+        public void set(double value) {
+            writeVariable(getName(), value);
+        }
+
+        @Override
+        public void set(java.util.function.DoubleSupplier valueSupplier) {
+            writeVariable(getName(), valueSupplier == null ? 0.0d : valueSupplier.getAsDouble());
+        }
     }
 
     // ---- 调用帧 / 实参帧 ----
@@ -243,9 +270,29 @@ final class ScriptMolangParser extends MolangParser {
         public double get() {
             List<MolangScriptInterpreter.Argument> arguments = new ArrayList<>(this.args.length);
             for (IValue value : this.args) {
-                arguments.add(MolangScriptInterpreter.Argument.number(value.get()));
+                arguments.add(toArgument(value.get()));
             }
             return this.scope.functionValue(this.name, arguments);
         }
+    }
+
+    /**
+     * 实参还原：字符串字面量在解析期被 {@code MolangStringPool} 池化成整数 id，直接当数字
+     * 传下去的话，宿主的 {@code ctrl.set_animation('正常_待命')} 只能看到 {@code 1000001}
+     * 这样的数字。用 {@link MolangStringPool#isStringId(int)} 把池化 id 还原成字符串实参
+     * （{@link MolangScriptInterpreter.Argument#string}），其余保持数字。
+     *
+     * <p>池 id 从 {@link MolangStringPool#STRING_ID_BASE} 起编号，所以模型里正常的数值实参
+     * 不会落进该区间。</p>
+     */
+    private static MolangScriptInterpreter.Argument toArgument(double value) {
+        int asInt = (int) value;
+        if (asInt == value && MolangStringPool.isStringId(asInt)) {
+            String pooled = MolangStringPool.get(asInt);
+            if (pooled != null) {
+                return MolangScriptInterpreter.Argument.string(pooled);
+            }
+        }
+        return MolangScriptInterpreter.Argument.number(value);
     }
 }

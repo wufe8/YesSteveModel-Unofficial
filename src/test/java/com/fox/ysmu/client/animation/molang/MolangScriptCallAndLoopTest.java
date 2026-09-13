@@ -117,6 +117,77 @@ class MolangScriptCallAndLoopTest {
         assertEquals(0.0d, evaluate("fn.missing(1, 2);", scope), 0.0001d);
     }
 
+    // ---- 括号内的嵌套赋值 ----
+
+    /**
+     * 回归测试：脚本里**夹在表达式里的**赋值（{@code (v.x = 5) + 0;}）必须写回宿主。
+     *
+     * <p>这条路径的坑和关键帧通道不同：脚本的变量由 {@code ScriptMolangParser.getVariable}
+     * 造成 {@code LazyVariable(name, () -> readVariable(name))}，而 vendored
+     * {@code LazyVariable.set(value)} 会把 supplier **替换成常量** —— 于是赋值既不经过
+     * {@code writeVariable}（宿主看不到），也把这次执行里后续的读值冻住了。</p>
+     */
+    @Test
+    void parenthesisedAssignmentWritesBackToTheHost() {
+        ScriptedScope scope = new ScriptedScope();
+
+        double result = evaluate("(v.x = 5) + 0; return v.x;", scope);
+
+        assertEquals(5.0d, result, 0.0001d, "同一脚本内读回应当是 5");
+        assertEquals(5.0d, scope.variables.get("v.x"), 0.0001d, "宿主必须收到这次写入");
+        assertTrue(scope.writes.containsKey("v.x"), "写入必须经过 setVariableValue: " + scope.writes);
+    }
+
+    /** 同一脚本里：先括号赋值，后一条语句读到新值（而不是被冻结的旧值）。 */
+    @Test
+    void parenthesisedAssignmentIsVisibleToLaterStatements() {
+        ScriptedScope scope = new ScriptedScope();
+        scope.variables.put("v.x", 1.0d);
+
+        double result = evaluate("v.x = v.x + 1; (v.x = v.x * 3) + 0; return v.x;", scope);
+
+        assertEquals(6.0d, result, 0.0001d);
+        assertEquals(6.0d, scope.variables.get("v.x"), 0.0001d);
+    }
+
+    // ---- 字符串实参 ----
+
+    /**
+     * wiki 的 {@code args[...]} 不止传数字：动画控制脚本里最典型的用法是
+     * {@code ctrl.set_animation(args[0])} / {@code q.debug_output('v=', args[0])}。
+     *
+     * <p>字符串字面量在解析期就被 {@code MolangStringPool} 池化成整数 id，所以
+     * {@code args[0]} 的 double 通道已经能承载它 —— 比较两侧会拿到同一个 id，
+     * 语义与字符串相等一致（见 {@code MolangDebugOutput.formatArg} 的还原）。</p>
+     */
+    @Test
+    void stringArgumentsTravelThroughArgs() {
+        ScriptedScope scope = new ScriptedScope().function("pick", "return args[0] == 'abc' ? 1 : 0;");
+
+        assertEquals(1.0d, evaluate("return fn.pick('abc');", scope), 0.0001d);
+        assertEquals(0.0d, evaluate("return fn.pick('abcd');", scope), 0.0001d);
+    }
+
+    /** 字符串实参可以是下标的间接形式（wiki：{@code args[t.a + 1]}）。 */
+    @Test
+    void stringArgumentCanBeSelectedByAnIndexExpression() {
+        ScriptedScope scope = new ScriptedScope()
+            .function("second", "t.i = 1; return args[t.i] == 'two' ? 1 : 0;");
+
+        assertEquals(1.0d, evaluate("return fn.second('one', 'two');", scope), 0.0001d);
+    }
+
+    /** 字符串实参经一层转发后仍然保持同一个池 id（调用链不丢值）。 */
+    @Test
+    void stringArgumentSurvivesForwarding() {
+        ScriptedScope scope = new ScriptedScope()
+            .function("inner", "return args[0];")
+            .function("outer", "return fn.inner(args[0]);");
+
+        assertEquals(software.bernie.geckolib3.core.molang.MolangStringPool.intern("abc"),
+            evaluate("return fn.outer('abc');", scope), 0.0001d);
+    }
+
     /** 调用链超过 32 时按 wiki 返回 0（而不是栈溢出）。 */
     @Test
     void theCallChainIsCappedAtTheWikiLimit() {

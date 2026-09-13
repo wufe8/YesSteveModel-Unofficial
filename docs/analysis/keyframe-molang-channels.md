@@ -1,14 +1,14 @@
-# 模型里的 Molang：三条通道与 YSMU 的执行点
+# 模型里的 Molang：四条通道与 YSMU 的执行点
 
-一个模型包里的 Molang 会从三个互不相干的地方进来。它们由不同的代码执行、
+一个模型包里的 Molang 会从四个互不相干的地方进来。它们由不同的代码执行、
 支持程度也不同 —— 排查"脚本写了却没生效"时先确认作者把代码放在了哪条通道上。
 
 | 通道 | 在包里的位置 | YSMU 的执行点 | 状态 |
 | --- | --- | --- | --- |
-| ① 脚本函数 | `functions/名字.molang`、`functions/名字@事件.molang` | `MolangScriptInterpreter` + `OpenYsmScriptRuntime` | 已接入（`@sync` 除外） |
+| ① 脚本函数 | `functions/名字.molang`、`functions/名字@事件.molang` | `MolangScriptInterpreter` + `OpenYsmScriptRuntime` | 已接入（含 `@sync`，见下） |
 | ② 关键帧值 | `animations/*.json` 的骨头 `position`/`rotation`/`scale` 写成 Molang 字符串 | `JsonKeyFrameUtils` → `KeyFrame` 持有 `IValue`，每帧求值 | 已支持 |
 | ③ 时间轴 | `animations/*.json` 的 `timeline` | `MolangInstructionExecutor`（GeckoLib 的 custom instruction keyframe） | 已支持（本次补注释剥离） |
-| ④ 动画控制脚本 | `functions/[@描述]@player_ctrl_<槽位>.molang` | **只有静态提取**（`MolangFunctionParser` → 状态→动画映射） | 未执行 |
+| ④ 动画控制脚本 | `functions/[@描述]@player_ctrl_<槽位>.molang` | `AnimationControlScripts` + `AnimationControlScope`，主槽位接在 `AnimationManager` | 已执行（`pause`/`stop`/`reset` 未接线） |
 
 ## ① 脚本函数与事件订阅
 
@@ -56,13 +56,45 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
   `player.pre_parallel_2`）每帧跑几百行 timeline，就能把整个小游戏跑起来：状态写在 `v.*`，
   骨头按 ② 读出来显示。
 
-## ④ 动画控制脚本（未执行）
+## ④ 动画控制脚本
 
-`functions/[@描述]@player_ctrl_<槽位>.molang` 目前**只**用于静态提取
-`ctrl.set_animation(...)` → 状态→动画映射（`MolangFunctionParser`，见
-`analysis/molang-custom-functions.md`）。脚本里的赋值、`ysm.*` 调用、`ctrl.state_bypass` 之外的
-控制流都不会执行。文件名里槽位要从**最后一个** `@` 之后解析、忽略描述前缀
-（参考库里两种写法都有）。
+`functions/[@描述]@player_ctrl_<槽位>.molang` 的槽位从**最后一个** `@` 之后解析、忽略描述前缀
+（参考库里两种写法都有），由 `MolangScriptRegistry.controlSlotOf()` 实现（有单测）。
+两条路径同时存在：
+
+- **静态提取**（`MolangFunctionParser`，一直是兜底）：状态→动画映射、过渡时长、`indicate_reload`，
+  给 `AnimationManager.MOLANG_*_MAP` 用；见 `analysis/molang-custom-functions.md`。
+- **每帧执行**（`AnimationControlScripts`）：把脚本正文交给 `MolangScriptInterpreter` 跑一遍，
+  由 `AnimationControlScope` 包住宿主作用域并截获 `ctrl.*`：
+
+  | 脚本里写的 | 求值器捕获成 |
+  | --- | --- |
+  | `ctrl.set_animation(名字[, ctrl.loop|play_once|hold_on_last_frame])` | 动画名 + 循环类型 |
+  | `ctrl.set_beginning_transition_length(秒)` | 过渡秒数 |
+  | `ctrl.indicate_reload`（带不带 `()` 都认） | reload 标志 |
+  | `ctrl.reset`（同上） | reset 标志 |
+  | `return ctrl.state_continue / state_pause / state_stop / state_bypass` | 谓词 |
+
+  谓词编码成 `1e9+1..4`：脚本的结果是"最后一条语句的值"，若用 1/2/3/4，结尾写成
+  `ctrl.set_animation(...)` 或随手留一个 `v.x` 都会被误读成谓词；控制函数因此恒返回 0。
+
+- **接线范围**：`AnimationManager.getActiveAnimations` 的主动画槽位每帧求值一次脚本，只在
+  "明确 `state_continue` + 动画名存在"时覆盖静态映射；`bypass`/`NONE`/脚本报错/动画不存在
+  一律回退原逻辑。因此开启它（`Config.MolangControlScripts`，可关闭回旧行为）不会让本来能动的
+  模型不动。
+- **仍未接线**：`ctrl.state_pause` / `ctrl.state_stop` / `ctrl.reset` 需要"不换动画地暂停/停止/
+  重置"的播放原语；`DebugController` 下每个 模型×槽位 记一条一次性日志，不假装支持。
+  非主槽位（`pre_main` / `parallel_N` / `use`…）的脚本目前只走静态提取。
+- **字符串实参**：`ScopeFunction` 用 `MolangStringPool.isStringId()` 把池化 id 还原成字符串，
+  否则 `ctrl.set_animation('x')` 只能拿到数字；池 id 从 `1_000_000` 起编号正是为了让这个判断可靠。
+
+### `@sync`（主动同步）
+
+`ysm.sync(数值...)`（≤16 个参数）在**两条通道**都能发起（关键帧用 `YsmSyncFunction`，
+控制器/脚本用求值器的 `functionValue`）：客户端 → `C2SMolangSync`(id 28) → 服务端广播
+`S2CMolangSync`(id 29) → 各客户端按"发起者 + 包里带的模型"跑该模型的 `sync` 事件脚本
+（`OpenYsmScriptRuntime.runSyncScripts`）。发起后立刻返回；因为 wiki 说"开销相当大"，
+客户端侧做了每秒一次的限流（`MolangSyncSender`）。
 
 ## 输入类函数：键码是 GLFW 的
 

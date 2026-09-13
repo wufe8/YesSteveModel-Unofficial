@@ -185,10 +185,10 @@ git checkout perf/previewUI
 - [SKIP] battlegear2的盾牌位置不正确 目前会以物品的位置来握持(实际上就是物品而非工具)
 - [SKIP] WebP 解码器基于外部实现, 没搞定纯ImageIO
 - 部分控制器变量与molang函数可能存在bug
-- molang 自定义函数(`functions/*.molang`)只实现了动画控制脚本的子集：`ctrl.set_animation`(含循环类型)、`ctrl.set_beginning_transition_length`、`ctrl.indicate_reload`，以及简单变量条件(`v.*`)。`fn.*` 自定义函数、`args[]`/`t.*` 临时变量、`loop`/`for_each`、以及 `@player_init`/`@player_update`/`@sync` 事件订阅尚未实现
+- molang 自定义函数(`functions/*.molang`)已支持 `fn.*` 调用链与递归(深度 32)、`args[]`/`t.*` 临时变量、`loop`/`for_each`、`break`/`continue`、`@player_init`/`@player_update`/`@sync` 事件订阅，以及 `@player_ctrl_<槽位>.molang` 动画控制脚本每帧执行(`ctrl.set_animation` 含循环类型、`ctrl.set_beginning_transition_length`、`ctrl.indicate_reload`、`ctrl.state_continue`/`ctrl.state_bypass`)。仍缺：`ctrl.state_pause`/`ctrl.state_stop`/`ctrl.reset` 需要「不换动画地暂停/停止/重置」的播放原语，目前只回落到内置逻辑；控制脚本只在主动画槽位生效。配置项 `MolangControlScripts` 可关回旧的纯静态提取行为
 - 方块/物品标签类查询(`query.relative_block_has_any_tag` 除 `minecraft:replaceable` 外、`equipped_item_any_tag`、`biome_has_*_tag`)在 1.7.10 无法真正实现，恒返回 false（打开 `DebugController` 会打印模型实际用到但未实现的标签名）
 - 子模型(投射物/载具)可能还存在一些问题 目前仅保证默认模型投射物可用
-- 并行动画只支持数字槽位(`pre_parallel0..7` / `parallel0..7`)；模型自己命名的并行控制器(如 `player.pre_parallel_名字`, 由 `controller/*.json` 声明)目前不会播放, 其中的 molang 也不会执行
+- 并行动画支持数字槽位(`pre_parallel0..7` / `parallel0..7`)与模型自己命名的并行控制器(如 `player.pre_parallel_名字`, 由 `controller/*.json` 声明；映射到固定备用池 `*_extra_0..3_controller`)。同一模型声明的具名并行控制器超过 4 个时超出部分不播放，`DebugController` 会给出一次告警
 - [SKIP] v.roaming长期变量目前不会永久保存
 - 部分 `.ysm` 模型在服务端缓存重建时抛 `NoSuchElementException` 解析失败（每次重建均失败），会被跳过但不阻塞加载
 - [SKIP] 首次更新构建后启动偶发崩溃（SDL3.dll 异常码 0xc000041d），重开游戏即可恢复，属 lwjgl3ify 上游兼容性问题

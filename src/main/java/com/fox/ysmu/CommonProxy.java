@@ -39,4 +39,7 @@ public class CommonProxy {
     public void handleStarModels(SyncStarModels message) {}
 
     public void handlePlayerMotionState(SyncPlayerMotionState message) {}
+
+    /** {@code ysm.sync(...)} 的下行广播；只有客户端会真正处理。 */
+    public void handleMolangSync(com.fox.ysmu.network.message.S2CMolangSync message) {}
 }

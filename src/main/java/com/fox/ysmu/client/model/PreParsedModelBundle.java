@@ -56,6 +56,8 @@ public class PreParsedModelBundle {
     public final Map<String, String> molangFunctions = new LinkedHashMap<>();
     /** 事件订阅：{@code player_init}/{@code player_update} → 按文件顺序要执行的函数名。 */
     public final Map<String, List<String>> molangEventHandlers = new LinkedHashMap<>();
+    /** 动画控制脚本：{@code @player_ctrl_<槽位>.molang} 的槽位名（小写）→ 正文。 */
+    public final Map<String, String> molangControlScripts = new LinkedHashMap<>();
 
     // Texture data (for main-thread OpenGL upload)
     public final Map<ResourceLocation, byte[]> texturesToRegister = new LinkedHashMap<>();

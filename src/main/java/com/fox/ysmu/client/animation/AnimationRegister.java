@@ -22,8 +22,12 @@ import com.fox.ysmu.client.animation.molang.EquippedEnchantmentLevelFunction;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.animation.molang.ParticleFunction;
 import com.fox.ysmu.client.animation.molang.PerlinNoiseFunction;
+import com.fox.ysmu.client.animation.molang.YsmDebugDumpFunction;
+import com.fox.ysmu.client.animation.molang.YsmEffectLevelFunction;
 import com.fox.ysmu.client.animation.molang.YsmSoundFunction;
 import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
+import com.fox.ysmu.client.animation.molang.QueryDebugOutputFunction;
+import com.fox.ysmu.client.animation.molang.QueryDurabilityFunction;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
@@ -128,6 +132,9 @@ public class AnimationRegister {
             functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
             // query.is_item_name_any：按槽位取物品注册名匹配（物品标签类查询仍不支持）。
             functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
+            // query.max_durability / query.remaining_durability(slotType)：YSM-wiki molang/ref 2.2.1。
+            functions.put("query.max_durability", QueryDurabilityFunction.class);
+            functions.put("query.remaining_durability", QueryDurabilityFunction.class);
             // ysm.play_sound / stop_sound / stop_all_sounds：模型 Molang 音效播放（走 YSMSoundManager）。
             functions.put("ysm.play_sound", YsmSoundFunction.class);
             functions.put("ysm.stop_sound", YsmSoundFunction.class);
@@ -143,6 +150,16 @@ public class AnimationRegister {
             functions.put("ysm.relative_block_name", RelativeBlockNameFunction.class);
             // ysm.equipped_enchantment_level：返回指定槽位物品上给定附魔的等级之和。
             functions.put("ysm.equipped_enchantment_level", EquippedEnchantmentLevelFunction.class);
+            // ysm.effect_level：返回渲染实体身上给定药水效果的等级之和（1 级 = 1）。
+            functions.put("ysm.effect_level", YsmEffectLevelFunction.class);
+            // query.debug_output(...)：调试输出到聊天框（wiki: 仅动画调试模式有效）。
+            functions.put("query.debug_output", QueryDebugOutputFunction.class);
+            // ysm.dump_*：调试用的物品/方块/模组/药水/群系信息转储。
+            functions.put("ysm.dump_equipped_item", YsmDebugDumpFunction.class);
+            functions.put("ysm.dump_relative_block", YsmDebugDumpFunction.class);
+            functions.put("ysm.dump_mods", YsmDebugDumpFunction.class);
+            functions.put("ysm.dump_effects", YsmDebugDumpFunction.class);
+            functions.put("ysm.dump_biome", YsmDebugDumpFunction.class);
             // ysm.particle / particle / abs_particle：OpenYSM 粒子 Molang 函数。
             // ParticleFunction 通过 MolangStringPool 还原字符串参数（粒子 id），
             // 实体上下文由 ParticleEffectUtil.setCurrentEntity 每帧写入。
@@ -159,6 +176,8 @@ public class AnimationRegister {
             functions.put("ysm.keyboard", com.fox.ysmu.client.animation.molang.YsmKeyboardFunction.class);
             // ysm.mouse(按钮...)：鼠标按钮查询（wiki 2.5.0），此前完全没有实现。
             functions.put("ysm.mouse", com.fox.ysmu.client.animation.molang.YsmMouseFunction.class);
+            // ysm.sync(...)：把参数同步给服务器上的所有玩家，触发他们那边该模型的 sync 事件脚本。
+            functions.put("ysm.sync", com.fox.ysmu.client.animation.molang.YsmSyncFunction.class);
         };
 
         // 2) `??` 运算符的"显式设置"判定（按当前渲染模型，防跨模型污染）。
@@ -463,6 +482,10 @@ public class AnimationRegister {
         parser.setValue("ysm.hurt_time", () -> player.hurtTime);
         parser.setValue("ysm.food_level", () -> player.getFoodStats().getFoodLevel());
         parser.setValue("ysm.time_delta", com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime::getTimeDelta);
+        // wiki: molang/ref 2.5.1 —— ysm.ground_speed2：真实水平速度（每 tick 位置差值 ×20）。
+        // 与 query.ground_speed 的"对齐 wiki 基准"近似值不同：不裁切、不平滑，本地/远程同一口径。
+        parser.setValue("ysm.ground_speed2", () -> RemotePlayerAnimationQueries
+            .realGroundSpeed(player.posX - player.prevPosX, player.posZ - player.prevPosZ));
         parser.setValue("ysm.has_elytra", () -> MolangUtils.booleanToFloat(
             com.fox.ysmu.compat.EtFuturumCompat.hasElytraEquipped(player)));
         parser.setValue("ysm.elytra_rot_x", () -> player.rotationPitch);

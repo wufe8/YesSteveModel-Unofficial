@@ -4,6 +4,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.function.DoubleSupplier;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 import com.eliotlash.mclib.math.Constant;
 import com.eliotlash.mclib.math.IValue;
@@ -453,6 +455,10 @@ public class MolangParser extends MathBuilder {
 
     private static String rewriteOpenYsmExpression(String expression) throws MolangException {
         String rewritten = replaceStringLiterals(expression);
+        // wiki: molang/var —— query. 可以缩写成 q.。normalizeVariableName 只覆盖变量，
+        // 函数是按字面名在 functions 表里查的，所以这里必须把 q.xxx( 改写成 query.xxx(，
+        // 否则 q.max_durability('mainhand') 这类关键帧表达式整条解析失败。
+        rewritten = rewriteQueryAbbreviation(rewritten);
         rewritten = rewriteVectorFunction(rewritten, "ysm.bone_rot", "ysm.bone_rot");
         rewritten = rewriteVectorFunction(rewritten, "ysm.bone_pos", "ysm.bone_pos");
         rewritten = rewriteVectorFunction(rewritten, "ysm.bone_position", "ysm.bone_position");
@@ -460,6 +466,37 @@ public class MolangParser extends MathBuilder {
         rewritten = rewriteVectorFunction(rewritten, "ysm.bone_pivot_abs", "ysm.bone_pivot_abs");
         return rewritten;
     }
+
+    /**
+     * {@code q.}<b>函数调用</b> → {@code query.}。只匹配调用形式（后面紧跟 {@code (}），
+     * 且要求前面不是标识符字符或 {@code .}，这样 {@code v.q}、{@code v.aq} 不会被误改
+     * （变量缩写已由 {@link #normalizeVariableName} 处理）。
+     *
+     * <p>调用点在 {@code replaceStringLiterals} 之后，表达式里已无字符串字面量，
+     * 因此不必再担心改到引号内容。</p>
+     */
+    private static final Pattern QUERY_ABBREVIATION_CALL =
+        Pattern.compile("(?<![\\w.])q\\.([a-z_][a-z0-9_]*)\\s*\\(");
+
+    private static String rewriteQueryAbbreviation(String expression) {
+        if (expression.indexOf("q.") < 0) {
+            return expression;
+        }
+        Matcher matcher = QUERY_ABBREVIATION_CALL.matcher(expression);
+        StringBuilder out = new StringBuilder(expression.length() + 16);
+        int last = 0;
+        while (matcher.find()) {
+            out.append(expression, last, matcher.start());
+            out.append("query.").append(matcher.group(1)).append('(');
+            last = matcher.end();
+        }
+        if (last == 0) {
+            return expression;
+        }
+        out.append(expression, last, expression.length());
+        return out.toString();
+    }
+
 
     private static String replaceStringLiterals(String expression) throws MolangException {
         StringBuilder out = new StringBuilder(expression.length());

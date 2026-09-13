@@ -261,6 +261,74 @@ public final class AnimationManager {
         return true;
     }
 
+    /** 控制脚本动态覆盖动画名的日志（每个 模型×槽位 只打一条，避免每帧刷屏）。 */
+    private static final java.util.Set<String> LOGGED_CONTROL_SCRIPT = java.util.concurrent.ConcurrentHashMap
+        .newKeySet();
+
+    /**
+     * 动画控制脚本（{@code @player_ctrl_<slot>.molang}）本帧给出的动画名；没有覆盖返回 null。
+     *
+     * <p>wiki: molang/script「动画控制」—— 脚本每帧执行，{@code ctrl.set_animation} 指定动画、
+     * {@code return} 返回谓词。这里只在**明确的 {@code state_continue} + 具体动画名 + 该动画
+     * 确实存在于模型里**时才覆盖调用方的目标，其余情况（{@code state_bypass}/{@code NONE}、
+     * 脚本报错、动画不存在）一律返回 null，让调用方沿用内置逻辑与静态映射 —— 开启这个功能
+     * 不会把本来能动的模型弄坏。</p>
+     *
+     * <p>{@code state_pause}/{@code state_stop}/{@code ctrl.reset} 需要播放机制提供"不换动画地
+     * 暂停/停止/重置"的原语，目前尚未接线：这里只记一条一次性日志，不假装支持。</p>
+     */
+    @Nullable
+    static String controlScriptAnimation(ResourceLocation animId, String slot,
+        AnimationEvent<CustomPlayerEntity> event, java.util.Map<String, ?> animations,
+        @Nullable String fallbackName) {
+        if (!Config.MOLANG_CONTROL_SCRIPTS || animId == null || event == null) {
+            return null;
+        }
+        CustomPlayerEntity animatable = event.getAnimatable();
+        EntityPlayer player = animatable == null ? null : animatable.getPlayer();
+        if (player == null) {
+            return null;
+        }
+        com.fox.ysmu.client.animation.molang.AnimationControlResult result =
+            com.fox.ysmu.client.animation.molang.AnimationControlScripts.evaluate(animId, slot,
+                () -> new com.fox.ysmu.client.animation.controller.OpenYsmScriptScope(player, event, animId,
+                    java.util.Collections.emptyList()));
+        if (result == null) {
+            return null;
+        }
+        com.fox.ysmu.client.animation.molang.AnimationControlResult.Action action = result.action();
+        String name = result.animationName();
+        if (animations != null && name != null && !animations.containsKey(name)) {
+            // 脚本算出了一个模型里不存在的动画：不覆盖（否则看起来像"动画丢了"）。
+            if (Config.DEBUG_CONTROLLER && LOGGED_CONTROL_SCRIPT.add(animId + "|" + slot + "|missing")) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-CTRLSCRIPT] {} slot '{}' set_animation('{}') but that animation is not in the file; keeping '{}'",
+                    animId, slot, name, fallbackName);
+            }
+            return null;
+        }
+        if (action == com.fox.ysmu.client.animation.molang.AnimationControlResult.Action.PAUSE
+            || action == com.fox.ysmu.client.animation.molang.AnimationControlResult.Action.STOP
+            || result.reset()) {
+            if (Config.DEBUG_CONTROLLER && LOGGED_CONTROL_SCRIPT.add(animId + "|" + slot + "|unsupported")) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-CTRLSCRIPT] {} slot '{}' requested {} (reset={}) — pause/stop/reset 尚未接线，保持内置逻辑",
+                    animId, slot, action, result.reset());
+            }
+            return null;
+        }
+        if (action != com.fox.ysmu.client.animation.molang.AnimationControlResult.Action.CONTINUE || name == null) {
+            // bypass / NONE：脚本明确要求交回内置逻辑。
+            return null;
+        }
+        if (!name.equals(fallbackName) && Config.DEBUG_CONTROLLER
+            && LOGGED_CONTROL_SCRIPT.add(animId + "|" + slot + "|override|" + name)) {
+            com.fox.ysmu.ysmu.LOG.info("[YSMU-CTRLSCRIPT] {} slot '{}' -> '{}' (script overrides static mapping '{}')",
+                animId, slot, name, fallbackName);
+        }
+        return name;
+    }
+
     /** 从 PENDING_ROAMING 读取 Molang 变量的当前值 */
     private static double getMolangVariable(String varName) {
         if (StringUtils.isBlank(varName)) return 0;
@@ -768,6 +836,13 @@ public final class AnimationManager {
                     // 使用映射的动画名（如 walk → 正常_行走）替代标准名
                     String mappedName = getMolangMappedAnimation(animId, animationName, event);
                     String targetName = mappedName != null ? mappedName : animationName;
+                    // 动画控制脚本 @player_ctrl_main.molang 每帧求值，优先级高于静态映射：
+                    // 静态提取读不懂的算出来的动画名/复合条件由它兜住，返回 bypass 时目标不变。
+                    String scriptName = controlScriptAnimation(animId, "main", event,
+                        animFile == null ? null : animFile.animations, targetName);
+                    if (scriptName != null) {
+                        targetName = scriptName;
+                    }
                     Animation anim = null;
                     if (animFile != null) {
                         anim = animFile.animations.get(targetName);

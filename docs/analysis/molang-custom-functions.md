@@ -58,25 +58,28 @@ wiki「自定义函数」页除事件订阅外的语法：
 
 **两条已知边界**（写下来是因为它们会在"接入"时才咬人）：
 
-- `args[i]` 目前**只支持数值**：叶子表达式交给 `MolangParser` 后，字符串字面量会被折成
-  `MolangStringPool` 的 int id，所以 `character` 回调拿到的是数字而不是字符串。将来要把
-  `ctrl.set_animation('x')` 这类带字符串参数的调用送进解释器，需要先解决这一层。
-- **只有块自己那一层的赋值会写回宿主**：`v.x = 1;` 这样的一条语句会走解释器的 `AssignmentNode`
-  并调 `scope.setVariableValue`；而夹在表达式里的括号赋值（`(v.x = 1) + 2`）由 `MolangParser`
-  自己处理，只落到那条叶子语句的 `MolangMultiStatement.locals`，对后面的语句与宿主都不可见
-  （这是 vendored mclib 的既有行为，不是解释器引入的）。
+- `args[i]` 支持字符串：字符串字面量在解析期被折成 `MolangStringPool` 的 int id（池 id 从
+  `1_000_000` 起编号，与普通数值不撞车），`ScopeFunction` 再用 `isStringId()` 还原成
+  `Argument.string`，所以 `ctrl.set_animation(args[0])` 这类调用能拿到真正的动画名。
+- **块级与括号内的赋值都会写回宿主**：`v.x = 1;` 走解释器的 `AssignmentNode`；夹在表达式里的
+  `(v.x = 1) + 2` 走 `MolangParser.parseSymbols` → `MolangAssignment`。后者在脚本通道上曾经失效
+  （`ScriptMolangParser` 的变量是 supplier 型 `LazyVariable`，而 vendored `LazyVariable.set()`
+  会把 supplier 换成常量，于是宿主收不到写入、本次执行后续读值还被冻住），现在由
+  `ScriptMolangParser.FrameVariable` 把 `set()` 改道到 `writeVariable`，两条路一致；
+  回归测试见 `MolangScriptCallAndLoopTest`。
 
 ## 未实现（按当前库里的实际用量排序）
 
 | 特性 | 库内用量（参考模型库） | 说明 |
 | --- | --- | --- |
-| **执行动画控制脚本**（`@player_ctrl_*.molang` 的正文） | 6+ 文件 | 目前只静态提取状态→动画映射；脚本里的赋值、`ysm.keyboard`/`ysm.sync`、控制流都不执行。这是 `ysm.keyboard` 在车辆脚本里仍然为 0 的原因 |
-| `@sync` 事件 + `ysm.sync(...)` | 1 文件 | 需要新网络包 + 每个模型的事件注册表 |
+| `state_pause` / `state_stop` / `ctrl.reset` 的**播放语义** | `state_stop` 2 个文件 | 脚本本身已执行、谓词也认得出，但需要"不换动画地暂停/停止/重置"的播放原语；目前只回落到内置逻辑并记一条一次性日志 |
+| 非主槽位的动画控制脚本 | `pre_main`/`parallel_N`/`use` 等 | 求值器与注册表都已按槽位就绪，但只有主动画槽位接在 `AnimationManager` 上；其余槽位仍走静态提取 |
 | 条件里调用 `fn.*` / 读 `t.*` / `args[]` | 少量（都在自定义函数与事件订阅脚本里） | 条件求值（`AnimationManager` 的名称映射）走的是另一条路，会把这些当未定义（0） |
-| `ctrl.set_beginning_transition_length` 之外的 ctrl API | `ctrl.use`/`ctrl.swing` 各 3 次、`ctrl.indicate_reload` 2 文件 | 脚本里的 `ctrl.use(...)`/`ctrl.swing(...)` 不会被执行（控制器条件路径里的同名函数是另一套实现）；真要执行还需要上面那条"字符串参数"边界 |
-| `q.debug_output` 等调试输出 | wiki 示例用 | 需要宿主的 `functionValue` 自己实现，解释器不带任何输出 |
+| `ctrl.hold` / `ctrl.use` / `ctrl.swing` 在**脚本**里 | `ctrl.use`/`ctrl.swing` 各 3 次 | 控制器条件路径里有实现，但脚本路径查的是解析器的函数表，命中的是恒 0 的桩函数 |
 | `fn.x` 写在更大的表达式里但不带括号 | — | 只有"整段就是 `fn.x`"才当调用；`1 + fn.x` 里的 `fn.x` 会当未定义变量（0）。需要那种写法就写 `fn.x()`（走 mclib 函数机制，任意位置都成立） |
-| `state_pause` / `state_stop` / `ctrl.reset` | `state_stop` 2 个文件 | `state_stop`/`state_pause` 仍算"脚本接管了该状态"，所以默认映射保留；它们与 `state_continue` 的**播放方式**差异（暂停时间轴 / 平滑停止）静态提取表达不了，`ctrl.reset` 同理 |
+
+已补齐（原表里的这几条）：执行动画控制脚本、`@sync` + `ysm.sync`、`q.debug_output`/`ysm.dump_*`
+调试输出。
 
 `docs/README.md` 的收录原则适用：这些都是跨模型的机制说明，具体模型名只在 `local/` 里出现。
 
@@ -89,8 +92,9 @@ wiki「自定义函数」页除事件订阅外的语法：
 2. ~~二期剩下的语言特性~~ **已完成**（`fn.*` + 每层 `t.*` + 循环）。注意参考库里
    `fn.` 只出现在 `motorSynth.molang` 的一句注释里、`loop`/`for_each` 一次都没用，
    所以这几条特性目前只有 wiki 示例当规格（见 `MolangScriptCallAndLoopTest`）。
-3. 三期：`@sync` + `ysm.sync(...)`（新网络包），以及**把动画控制脚本当控制器主体执行**
-   （比事件订阅更大：要决定 `@player_ctrl_<槽位>.molang` 与 `controller/*.json` 状态机谁优先）。
+3. ~~三期：`@sync` + `ysm.sync(...)`~~ **已完成**（`C2SMolangSync`/`S2CMolangSync`，id 28/29）；
+   ~~把动画控制脚本当控制器主体执行~~ **主槽位已完成**（`AnimationControlScripts`，配置项
+   `MolangControlScripts` 可关回静态提取）。剩余见上一节的表。
 4. 条件求值第一版只覆盖纯 `v.*` 快速路径 + 控制器求值器；注意它**改变了行为**：以前永远 false 的
    分支会开始命中，需要实机确认那些模型的动画切换是否符合预期（内置 `wine_fox` 包的"低电量 /
    电量过低"分支就是例子）。

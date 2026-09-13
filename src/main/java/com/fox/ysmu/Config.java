@@ -127,6 +127,15 @@ public class Config {
 
     // Model sync config
     public static boolean ENABLE_SYNC_PROTOCOL = true;
+    /**
+     * 动画控制脚本（{@code @player_ctrl_<槽位>.molang}）是否每帧真正执行。
+     * <p>
+     * 关闭时只有解析期静态提取的状态→动画映射生效（旧行为）；开启后每帧求值脚本，
+     * 于是 {@code set_animation} 的动画名可以是算出来的、{@code ctrl.state_bypass}
+     * 会精确地交回内置逻辑。脚本报错或返回 bypass 时仍然回落到内置逻辑，所以开启
+     * 本身不会让"本来能动的模型"不动。用于 A/B 对比模型表现。
+     */
+    public static boolean MOLANG_CONTROL_SCRIPTS = true;
     public static int THREAD_COUNT = 4;
     public static int BANDWIDTH_LIMIT = 0;
     public static int PLAYER_SYNC_TIMEOUT = 60;
@@ -244,6 +253,7 @@ public class Config {
         ENABLE_DIRECT_BUFFER_WATCHDOG = syncBoolean("EnableDirectBufferWatchdog", "watchdog", ENABLE_DIRECT_BUFFER_WATCHDOG, "Safety-net: periodically check Direct Buffer usage and trigger GC when over threshold", load);
         DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB = syncInt("DirectBufferWatchdogThreshold", "watchdog", DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB, "Direct Buffer GC trigger threshold in MB", 128, 8192, load);
         ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Use the unified model sync protocol (covers all model formats: folders, BOM+YSGP and legacy bare-YSGP .ysm). When disabled or version-mismatched, falls back to the legacy MD5/AES sync", load);
+        MOLANG_CONTROL_SCRIPTS = syncBoolean("MolangControlScripts", "animation", MOLANG_CONTROL_SCRIPTS, "Execute @player_ctrl_<slot>.molang animation-control scripts every frame (wiki: molang/script). When disabled only the statically extracted state->animation mapping is used", load);
         THREAD_COUNT = syncInt("ThreadCount", "ysm_sync", THREAD_COUNT, "Target worker count for YSM model sync tasks", 1, 32, load);
         BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
         PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);

@@ -9,7 +9,6 @@ import com.eliotlash.mclib.math.IValue;
 import com.eliotlash.mclib.math.functions.Function;
 
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
-import com.fox.ysmu.compat.BackhandCompat;
 
 import software.bernie.geckolib3.core.molang.MolangStringPool;
 
@@ -84,23 +83,8 @@ public class QueryItemNameAnyFunction extends Function {
         return colon >= 0 ? name.substring(colon + 1) : name;
     }
 
-    /** 与 {@code ysm.equipped_enchantment_level} 使用同一套槽位语义。 */
+    /** 与 {@code ysm.equipped_enchantment_level} 使用同一套槽位语义（见 {@link MolangEquipmentSlots}）。 */
     private static ItemStack getStack(EntityPlayer player, String slotType) {
-        switch (slotType) {
-            case "mainhand":
-                return player.getHeldItem();
-            case "offhand":
-                return BackhandCompat.getOffhandItem(player);
-            case "head":
-                return player.inventory.armorInventory[3];
-            case "chest":
-                return player.inventory.armorInventory[2];
-            case "legs":
-                return player.inventory.armorInventory[1];
-            case "feet":
-                return player.inventory.armorInventory[0];
-            default:
-                return null;
-        }
+        return MolangEquipmentSlots.get(player, slotType);
     }
 }

@@ -22,7 +22,8 @@ import org.apache.commons.lang3.StringUtils;
  *   <li>{@code 名字@事件.molang} —— 既是名为 {@code 名字} 的函数，又订阅了 {@code 事件}
  *       （{@code player_init} / {@code player_update} / {@code sync}）；</li>
  *   <li>{@code @player_ctrl_main.molang} —— **动画控制脚本**，名字为空。它不是函数，
- *       内容由 {@link MolangFunctionParser} 静态提取成状态→动画映射，这里不收。</li>
+ *       正文按槽位登记（{@link #controlScript}），每帧由动画控制求值器执行；
+ *       同时仍由 {@link MolangFunctionParser} 静态提取状态→动画映射，作为求值器不可用时的兜底。</li>
  * </ul>
  * 名字不区分大小写（wiki），所以表里统一按小写存放。
  * <p>
@@ -42,6 +43,8 @@ public final class MolangScriptRegistry {
         final Map<String, String> functions = new LinkedHashMap<>();
         /** 事件名 → 该事件下要执行的函数名（文件顺序）。 */
         final Map<String, List<String>> events = new LinkedHashMap<>();
+        /** 动画控制脚本：槽位名（小写，如 {@code main}、{@code parallel_6}）→ 正文。 */
+        final Map<String, String> controlScripts = new LinkedHashMap<>();
     }
 
     private static final Map<ResourceLocation, Entry> MODELS = new ConcurrentHashMap<>();
@@ -97,6 +100,35 @@ public final class MolangScriptRegistry {
         return EVENT_PLAYER_INIT.equals(event) || EVENT_PLAYER_UPDATE.equals(event) || EVENT_SYNC.equals(event);
     }
 
+    /** 动画控制脚本在后缀里的固定前缀：{@code <任意描述>@player_ctrl_<槽位>.molang}。 */
+    static final String CONTROL_PREFIX = "player_ctrl_";
+
+    /**
+     * 这个文件名是不是**动画控制脚本**；是的话返回它控制的**槽位名**（小写），否则返回 null。
+     *
+     * <p>wiki: molang/script「动画控制」—— 文件名即控制器名把 {@code .} 换成 {@code _ctrl_}，
+     * 所以控制器 {@code player.main} → {@code player_ctrl_main}、{@code player.parallel_6} →
+     * {@code player_ctrl_parallel_6}。带描述前缀的写法（{@code car_stuff@player_ctrl_parallel_6}）
+     * 同样合法，取最后一个 {@code @} 之后的部分。</p>
+     *
+     * <p>事件订阅（{@code 名字@player_init}）不是控制脚本：它的后缀不满足
+     * {@code player_ctrl_} 前缀。</p>
+     */
+    public static String controlSlotOf(String fileName) {
+        String base = baseName(fileName);
+        int at = base.lastIndexOf('@');
+        if (at < 0 || at == base.length() - 1) {
+            return null;
+        }
+        String suffix = base.substring(at + 1);
+        if (!suffix.regionMatches(true, 0, CONTROL_PREFIX, 0, CONTROL_PREFIX.length())) {
+            return null;
+        }
+        String slot = suffix.substring(CONTROL_PREFIX.length())
+            .trim();
+        return slot.isEmpty() ? null : slot.toLowerCase(Locale.ROOT);
+    }
+
     /** 去掉目录与 {@code .molang} 扩展名，保留大小写（模型包里的名字可能不是全小写）。 */
     private static String baseName(String fileName) {
         if (StringUtils.isBlank(fileName)) {
@@ -119,12 +151,14 @@ public final class MolangScriptRegistry {
     /**
      * 把解析阶段收集好的脚本表登记到某个模型上（模型缓存刷新时覆盖）。
      *
-     * @param functions 函数名（小写）→ 正文
-     * @param events    事件名（小写）→ 该事件下按序执行的函数名
+     * @param functions      函数名（小写）→ 正文
+     * @param events         事件名（小写）→ 该事件下按序执行的函数名
+     * @param controlScripts 动画控制脚本：槽位名（小写）→ 正文
      */
     public static void register(ResourceLocation modelId, Map<String, String> functions,
-        Map<String, List<String>> events) {
-        if (modelId == null || (functions.isEmpty() && events.isEmpty())) {
+        Map<String, List<String>> events, Map<String, String> controlScripts) {
+        if (modelId == null || (functions.isEmpty() && events.isEmpty()
+            && (controlScripts == null || controlScripts.isEmpty()))) {
             return;
         }
         Entry entry = new Entry();
@@ -132,7 +166,38 @@ public final class MolangScriptRegistry {
         for (Map.Entry<String, List<String>> event : events.entrySet()) {
             entry.events.put(event.getKey(), new ArrayList<>(event.getValue()));
         }
+        if (controlScripts != null) {
+            for (Map.Entry<String, String> control : controlScripts.entrySet()) {
+                if (control.getKey() != null && control.getValue() != null) {
+                    entry.controlScripts.put(control.getKey()
+                        .toLowerCase(Locale.ROOT), control.getValue());
+                }
+            }
+        }
         MODELS.put(modelId, entry);
+    }
+
+    /** 动画控制脚本正文（{@code @player_ctrl_<slot>.molang}）；没有返回 null。 */
+    public static String controlScript(ResourceLocation modelId, String slot) {
+        if (modelId == null || slot == null) {
+            return null;
+        }
+        Entry entry = MODELS.get(modelId);
+        return entry == null ? null
+            : entry.controlScripts.get(
+                slot.toLowerCase(Locale.ROOT));
+    }
+
+    /** 该模型声明了动画控制脚本的槽位名（小写，按文件顺序）。 */
+    public static List<String> controlSlots(ResourceLocation modelId) {
+        if (modelId == null) {
+            return Collections.emptyList();
+        }
+        Entry entry = MODELS.get(modelId);
+        if (entry == null || entry.controlScripts.isEmpty()) {
+            return Collections.emptyList();
+        }
+        return new ArrayList<>(entry.controlScripts.keySet());
     }
 
     /** 供解释器调用：取函数体正文；没有这个函数返回 null。 */

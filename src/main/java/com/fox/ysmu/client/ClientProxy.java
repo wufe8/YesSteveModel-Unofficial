@@ -86,4 +86,9 @@ public class ClientProxy extends CommonProxy {
     public void handlePlayerMotionState(SyncPlayerMotionState message) {
         RemotePlayerMotionStates.update(message.getPlayerId(), message.getFlags());
     }
+
+    @Override
+    public void handleMolangSync(com.fox.ysmu.network.message.S2CMolangSync message) {
+        com.fox.ysmu.client.animation.controller.MolangSyncClient.handle(message);
+    }
 }

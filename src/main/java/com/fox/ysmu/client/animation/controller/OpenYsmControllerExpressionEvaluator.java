@@ -856,6 +856,14 @@ public final class OpenYsmControllerExpressionEvaluator {
                 }
                 return com.fox.ysmu.compat.KeyboardCompat.isAnyMouseButtonDown(buttons) ? TRUE : FALSE;
             }
+            // ysm.sync(...)：wiki「主动同步」—— 立刻返回（不等待服务端广播），参数最多 16 个。
+            if ("ysm.sync".equals(name) && !arguments.isEmpty()) {
+                java.util.List<Double> values = new java.util.ArrayList<>(arguments.size());
+                for (Argument argument : arguments) {
+                    values.add(argument.asNumber());
+                }
+                return com.fox.ysmu.client.animation.molang.MolangSyncSender.request(values);
+            }
             // --- particle / abs_particle 函数（副作用：生成粒子，返回 1.0/0.0） ---
             if (("particle".equals(name) || "abs_particle".equals(name)
                 || "ysm.particle".equals(name) || "ysm.abs_particle".equals(name))

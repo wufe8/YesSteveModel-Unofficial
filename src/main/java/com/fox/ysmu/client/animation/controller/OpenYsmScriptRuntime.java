@@ -19,7 +19,7 @@ import com.fox.ysmu.ysmu;
  * {@code player_update}（每次更新玩家动画之前）之前跑；wiki 还要求
  * {@code v.roaming} 的同步早于 {@code player_init} —— 调用点在
  * {@code MolangPhysicsRuntime.begin()} 的漫游变量注入之后，正好满足。
- * {@code sync} 需要网络包（三期），这里不触发。
+ * {@code sync} 由下行广播包触发（见 {@link #runSyncScripts}）。
  * <p>
  * 脚本执行失败只记一次警告：脚本是模型作者写的，一条有问题的语句不应该影响渲染。
  */
@@ -50,7 +50,29 @@ public final class OpenYsmScriptRuntime {
         runEvent(player, modelId, MolangScriptRegistry.EVENT_PLAYER_UPDATE);
     }
 
+    /**
+     * 触发某个玩家某个模型的 {@code sync} 事件（wiki: molang/script「主动同步」）。
+     *
+     * <p>由下行广播包调用：所有客户端（含发起者）用**同样的参数**跑该模型的 {@code sync} 脚本，
+     * 于是随机数/预置变量这类"各客户端不一致"的值被拉齐。触发时机自然晚于
+     * {@code player_init}/{@code player_update}（那两个在渲染帧里跑）。</p>
+     *
+     * @param player  发起者在本地世界里的实体；找不到/模型不在本地时调用方应跳过
+     * @param modelId 发起者当前的主模型
+     * @param arguments 同步参数（最多 16 个，服务端已截断）
+     */
+    public static void runSyncScripts(EntityPlayer player, ResourceLocation modelId, List<Double> arguments) {
+        if (player == null || modelId == null) {
+            return;
+        }
+        runEvent(player, modelId, MolangScriptRegistry.EVENT_SYNC, arguments);
+    }
+
     private static void runEvent(EntityPlayer player, ResourceLocation modelId, String event) {
+        runEvent(player, modelId, event, null);
+    }
+
+    private static void runEvent(EntityPlayer player, ResourceLocation modelId, String event, List<Double> arguments) {
         List<String> scripts = MolangScriptRegistry.eventScripts(modelId, event);
         if (scripts.isEmpty()) {
             return;
@@ -59,7 +81,7 @@ public final class OpenYsmScriptRuntime {
             ysmu.LOG.info("[YSMU-MOLANG-SCRIPT] {} {} -> {} script(s): {}", modelId, event, scripts.size(),
                 MolangScriptRegistry.eventFunctionNames(modelId, event));
         }
-        OpenYsmScriptScope scope = new OpenYsmScriptScope(player, null, modelId, null);
+        OpenYsmScriptScope scope = new OpenYsmScriptScope(player, null, modelId, arguments);
         for (String script : scripts) {
             try {
                 MolangScriptInterpreter.evaluate(script, scope);

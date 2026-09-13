@@ -22,6 +22,7 @@ import software.bernie.geckolib3.core.keyframe.KeyFrame;
 import software.bernie.geckolib3.core.keyframe.VectorKeyFrameList;
 import software.bernie.geckolib3.core.molang.MolangParser;
 import software.bernie.geckolib3.core.molang.LazyVariable;
+import software.bernie.geckolib3.core.molang.MolangStringPool;
 import software.bernie.geckolib3.core.util.MathUtil;
 import software.bernie.geckolib3.file.AnimationFile;
 import software.bernie.geckolib3.geo.IGeoRenderer;
@@ -41,6 +42,13 @@ import com.eliotlash.mclib.math.IValue;
  * Called from the RenderArrow mixin when the arrow has a custom model ID.
  */
 public class ArrowProjectileRenderer {
+
+    /** {@code ysm.on_ground_time} 的逐箭计时（EntityArrow 的 ticksInGround 是私有的，读不到）。 */
+    private static final com.fox.ysmu.util.ProjectileGroundTracker GROUND_TRACKER =
+        new com.fox.ysmu.util.ProjectileGroundTracker();
+
+    /** DEBUG_ANIMATION 下逐箭 dump 的限流：每条箭每 20 tick 最多一行，避免刷屏。 */
+    private static final java.util.Map<Integer, Integer> LAST_DEBUG_DUMP_TICK = new java.util.HashMap<>();
 
     // Track which projectile GeoModels have had their bone tree dumped to
     // avoid re-printing the massive tree every frame when DEBUG_MODEL_LOAD is on.
@@ -227,21 +235,31 @@ public class ArrowProjectileRenderer {
         double deltaLength = Math.sqrt(dx * dx + dy * dy + dz * dz);
         boolean isInGround = !arrow.isDead
             && (deltaLength < 0.0001 || arrow.onGround);
-        if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+        // 本方法里所有 DEBUG_ANIMATION 日志都是逐帧的，先统一过一遍限流
+        // （每支箭每 20 tick 至多一行），否则开调试时一个屏幕的箭就能刷爆日志。
+        boolean debugThisTick = com.fox.ysmu.Config.DEBUG_ANIMATION
+            && allowArrowDebug(arrow.getEntityId(), arrow.ticksExisted);
+        if (debugThisTick) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] inGround detection: isDead={}, deltaLen={}, onGround={}, isInGround={}",
                 arrow.isDead, deltaLength, arrow.onGround, isInGround);
         }
         setMolangVar("ysm.in_ground", isInGround ? 1.0 : 0.0);
         setMolangVar("ysm.delta_movement_length", deltaLength);
-        // In 1.7.10, arrows are always shot by bows (no crossbow).
-        // The animation's parallel0 uses:
-        //   "bow": { "scale": "ysm.shoot_item_id!='minecraft:crossbow'" }
-        //   "crossbow": { "scale": "ysm.shoot_item_id=='minecraft:crossbow'" }
-        // Molang compares doubles, so we must NOT equal the intern ID of
-        // 'minecraft:crossbow' (which is typically 1). Setting to 0 ensures
-        // the != comparison is true → bow bone visible.
-        setMolangVar("ysm.shoot_item_id", 0.0);
-        setMolangVar("ysm.on_ground_time", isInGround ? ageInTicks * 0.05 : 0.0);
+        // ysm.shoot_item_id：wiki 语义是"射出此箭的物品 id"（用来区分普通弓和弩）。
+        // 1.7.10 的 EntityArrow 不记录发射武器，而且 1.7.10 没有弩，所以返回**空串**的
+        // 池化 id（MolangStringPool.EMPTY_ID）。模型的写法是
+        //   "bow":      scale = ysm.shoot_item_id != 'minecraft:crossbow'
+        //   "crossbow": scale = ysm.shoot_item_id == 'minecraft:crossbow'
+        // 与空串比较都会落到"弓"那一支。绝不能填 1 这种数字：那会撞上池化字符串 id。
+        setMolangVar("ysm.shoot_item_id", MolangStringPool.EMPTY_ID);
+        // ysm.on_ground_time：wiki 里单位是**刻**，落地后累计、被移动则归零。
+        // 原实现写的是 ageInTicks * 0.05（= 从发射到现在的秒数），量纲和起点都不对，
+        // 模型里 ysm.on_ground_time <= 2 这种"刚落地"判断永远不会在刚落地时成立。
+        if (arrow.isDead) {
+            GROUND_TRACKER.forget(arrow.getEntityId());
+        }
+        setMolangVar("ysm.on_ground_time",
+            GROUND_TRACKER.update(arrow.getEntityId(), isInGround, arrow.ticksExisted));
 
         // Inject roaming variables from PENDING_ROAMING (client-side GUI-set values).
         for (Map.Entry<String, Double> entry : OpenYsmPlayerControllerRuntime.PENDING_ROAMING.entrySet()) {
@@ -259,7 +277,7 @@ public class ArrowProjectileRenderer {
         // behavior of playing ALL animations (parallel0-7, post_main, etc.).
         List<String> activeAnims;
         boolean hasControllers = com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry.get(projGeoId) != null;
-        if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+        if (debugThisTick) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyProjectileAnimations: entityId={}, animFile={}, animCount={}, hasControllers={}",
                 arrow.getEntityId(), projGeoId,
                 animFile != null && animFile.animations != null ? animFile.animations.size() : 0,
@@ -268,20 +286,20 @@ public class ArrowProjectileRenderer {
         if (hasControllers) {
             activeAnims = com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
                 .getActiveAnimations(arrow.getEntityId(), projGeoId, ageInTicks);
-            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+            if (debugThisTick) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] controller returned {} active anims: {}",
                     activeAnims.size(), activeAnims);
             }
         } else {
             // Legacy: all animations
             activeAnims = new java.util.ArrayList<>(animFile.animations.keySet());
-            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+            if (debugThisTick) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] no controllers, legacy mode: {} anims", activeAnims.size());
             }
         }
 
         if (activeAnims.isEmpty()) {
-            if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+            if (debugThisTick) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] activeAnims empty, rendering bind pose");
             }
             return; // No active animations — render in bind pose
@@ -291,7 +309,7 @@ public class ArrowProjectileRenderer {
         for (String animName : activeAnims) {
             Animation anim = animFile.animations.get(animName);
             if (anim == null || anim.boneAnimations == null) {
-                if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("parallel0".equals(animName) || "post_main".equals(animName))) {
+                if (debugThisTick && ("parallel0".equals(animName) || "post_main".equals(animName))) {
                     com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] SKIP anim='{}': anim={} boneAnims={}",
                         animName, anim != null ? "OK" : "NULL",
                         anim != null ? (anim.boneAnimations != null ? anim.boneAnimations.size() : "NULL") : "N/A");
@@ -299,7 +317,7 @@ public class ArrowProjectileRenderer {
                 continue;
             }
 
-            if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("parallel0".equals(animName) || "post_main".equals(animName))) {
+            if (debugThisTick && ("parallel0".equals(animName) || "post_main".equals(animName))) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] ENTER anim='{}': boneAnimations={}",
                     animName, anim.boneAnimations.size());
                 for (BoneAnimation ba : anim.boneAnimations) {
@@ -341,7 +359,7 @@ public class ArrowProjectileRenderer {
                 BoneSnapshot snap = bone.getInitialSnapshot();
 
                 // Debug: log keyframe info for parallel0's critical bones
-                if (com.fox.ysmu.Config.DEBUG_ANIMATION && "parallel0".equals(animName)
+                if (debugThisTick && "parallel0".equals(animName)
                     && ("bow".equals(boneAnim.boneName) || "crossbow".equals(boneAnim.boneName))) {
                     String skf = (boneAnim.scaleKeyFrames != null
                         && boneAnim.scaleKeyFrames.xKeyFrames != null
@@ -362,12 +380,12 @@ public class ArrowProjectileRenderer {
 
                 // Apply scale keyframes
                 applyKeyFrameListScale(bone, boneAnim.scaleKeyFrames, animTick,
-                    snap.scaleValueX, snap.scaleValueY, snap.scaleValueZ);
+                    snap.scaleValueX, snap.scaleValueY, snap.scaleValueZ, debugThisTick);
             }
         }
 
         // Debug: dump bone scales after all animations applied
-        if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+        if (debugThisTick) {
             for (GeoBone bone : model.topLevelBones) {
                 if (bone == null) continue;
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] bone '{}' final: scale=({},{},{}) pos=({},{},{}) rot=({},{},{})",
@@ -476,9 +494,9 @@ public class ArrowProjectileRenderer {
     }
 
     private static void applyKeyFrameListScale(GeoBone bone, VectorKeyFrameList<KeyFrame<IValue>> frames,
-        double tick, double snapX, double snapY, double snapZ) {
+        double tick, double snapX, double snapY, double snapZ, boolean debug) {
         if (frames == null) {
-            if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("bow".equals(bone.name) || "crossbow".equals(bone.name))) {
+            if (debug && ("bow".equals(bone.name) || "crossbow".equals(bone.name))) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyKeyFrameListScale('{}'): frames=null, snap=({},{},{})",
                     bone.name, snapX, snapY, snapZ);
             }
@@ -486,7 +504,7 @@ public class ArrowProjectileRenderer {
         }
         float[] result = evaluateKeyFrameList(frames, tick);
         if (result != null) {
-            if (com.fox.ysmu.Config.DEBUG_ANIMATION && ("bow".equals(bone.name) || "crossbow".equals(bone.name))) {
+            if (debug && ("bow".equals(bone.name) || "crossbow".equals(bone.name))) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyKeyFrameListScale('{}'): kfResult=({},{},{}), snap=({},{},{}), xLen={}, yLen={}, zLen={}",
                     bone.name,
                     result[0], result[1], result[2],
@@ -561,6 +579,24 @@ public class ArrowProjectileRenderer {
     private static void setMolangVar(String name, double value) {
         MolangParser.VARIABLES.computeIfAbsent(name, k -> new LazyVariable(k, () -> 0.0))
             .set(value);
+    }
+
+    /**
+     * {@code DEBUG_ANIMATION} 下逐箭日志的限流：同一支箭每 20 tick 至多放行一次。
+     *
+     * <p>约定：常驻诊断必须同时"有 DEBUG 开关"和"限流"，否则一支箭停在屏幕上就会每帧刷一行。
+     * 返回 {@code true} 表示这一帧可以打印。</p>
+     */
+    private static boolean allowArrowDebug(int entityId, int entityTicks) {
+        Integer last = LAST_DEBUG_DUMP_TICK.get(entityId);
+        if (last != null && entityTicks - last < 20) {
+            return false;
+        }
+        if (LAST_DEBUG_DUMP_TICK.size() > 512) {
+            LAST_DEBUG_DUMP_TICK.clear();
+        }
+        LAST_DEBUG_DUMP_TICK.put(entityId, entityTicks);
+        return true;
     }
 
     /**

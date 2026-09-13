@@ -658,9 +658,9 @@ public class ClientModelManager {
             AnimationManager.MOLANG_RELOAD_MAP.put(ModelIdUtil.getMainId(modelId),
                 new java.util.HashSet<>(bundle.molangHints.reloadAnimations));
         }
-        // .molang 脚本函数与事件订阅（fn.* / @player_init / @player_update）。
+        // .molang 脚本函数与事件订阅（fn.* / @player_init / @player_update / @player_ctrl_*）。
         com.fox.ysmu.client.animation.molang.MolangScriptRegistry.register(ModelIdUtil.getMainId(modelId),
-            bundle.molangFunctions, bundle.molangEventHandlers);
+            bundle.molangFunctions, bundle.molangEventHandlers, bundle.molangControlScripts);
         // Register controller files
         if (!bundle.controllerFiles.isEmpty()) {
             // animationNames lets the registry synthesise the implicit
@@ -932,13 +932,23 @@ public class ClientModelManager {
     }
 
     /**
-     * 把一个 {@code functions/} 条目登记成"脚本函数"和/或"事件订阅"。
+     * 把一个 {@code functions/} 条目登记成"脚本函数"、"事件订阅"或"动画控制脚本"。
      * 文件名的解析规则在 {@code MolangScriptRegistry}（纯函数，有单测）。
      */
     private static void collectMolangScript(PreParsedModelBundle bundle, String fileName, byte[] data) {
+        String controlSlot = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.controlSlotOf(fileName);
+        if (controlSlot != null) {
+            // @player_ctrl_<槽位>.molang：动画控制脚本，按槽位登记（每帧由求值器执行）。
+            // 它同时仍会被静态提取成状态→动画映射，作为求值器不可用时的兜底。
+            String controlBody = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.decode(data);
+            if (controlBody != null && !controlBody.trim()
+                .isEmpty()) {
+                bundle.molangControlScripts.put(controlSlot, controlBody);
+            }
+            return;
+        }
         String functionName = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.functionNameOf(fileName);
         if (functionName == null) {
-            // "@player_ctrl_main" 这类动画控制脚本没有函数名，只做状态→动画映射。
             return;
         }
         String body = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.decode(data);

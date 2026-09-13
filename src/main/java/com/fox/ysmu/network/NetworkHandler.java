@@ -24,6 +24,7 @@ public final class NetworkHandler {
     private static final int SERVERBOUND_OPENYSM_MODEL_SYNC_PAYLOAD_17 = 14;
     private static final int SERVERBOUND_OPENYSM_VERSION_CHECK_17 = 15;
     private static final int SERVERBOUND_OPENYSM_COMPLETE_FEEDBACK_17 = 16;
+    private static final int SERVERBOUND_MOLANG_SYNC = 28;
 
     private static final int CLIENTBOUND_SEND_MODEL_FILE = 1;
     private static final int CLIENTBOUND_REQUEST_SYNC_MODEL = 2;
@@ -45,6 +46,7 @@ public final class NetworkHandler {
     private static final int CLIENTBOUND_SPAWN_PARTICLE_COMMAND = 25;
     private static final int CLIENTBOUND_EVAL_MOLANG = 26;
     private static final int CLIENTBOUND_RESET_MOLANG = 27;
+    private static final int CLIENTBOUND_MOLANG_SYNC = 29;
 
     public static final int OPEN_NPC_MODEL_GUI = 93;
     public static final int SET_NPC_MODEL_ID = 94;
@@ -92,6 +94,12 @@ public final class NetworkHandler {
             C2SCompleteFeedback17.Handler.class,
             C2SCompleteFeedback17.class,
             SERVERBOUND_OPENYSM_COMPLETE_FEEDBACK_17,
+            Side.SERVER);
+        // ysm.sync(...)（wiki: molang/script「主动同步」）：客户端发起，服务端广播给所有人。
+        CHANNEL.registerMessage(
+            C2SMolangSync.Handler.class,
+            C2SMolangSync.class,
+            SERVERBOUND_MOLANG_SYNC,
             Side.SERVER);
     }
 
@@ -195,6 +203,12 @@ public final class NetworkHandler {
             PacketResetMolang.Handler.class,
             PacketResetMolang.class,
             CLIENTBOUND_RESET_MOLANG,
+            Side.CLIENT);
+        // ysm.sync(...) 的下行广播：各客户端用同样参数触发发起者模型的 sync 事件脚本。
+        CHANNEL.registerMessage(
+            S2CMolangSync.Handler.class,
+            S2CMolangSync.class,
+            CLIENTBOUND_MOLANG_SYNC,
             Side.CLIENT);
     }
 

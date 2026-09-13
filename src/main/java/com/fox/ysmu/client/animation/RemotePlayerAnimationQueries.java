@@ -86,6 +86,21 @@ public final class RemotePlayerAnimationQueries {
         return MathHelper.wrapAngleTo180_float(player.rotationYaw - player.prevRotationYaw);
     }
 
+    /**
+     * wiki: molang/ref 2.5.1 —— {@code ysm.ground_speed2}：**真实**水平速度（blocks/s）。
+     *
+     * <p>与 {@link #getGroundSpeed} 那套"对齐 wiki 基准"的 {@code query.ground_speed} 不同，
+     * 这里直接用每 tick 位置差值 ×20：不裁切（上限 {@link #MAX_GROUND_SPEED} 只用于 query 那套）、
+     * 不平滑，本地与远程玩家同一口径。模型里用它做"真实速度"判定（例如
+     * {@code ysm.ground_speed2 / ysm.fps * 60}、{@code ysm.ground_speed2 < 1}）。</p>
+     *
+     * <p>YSM 的原实现是在服务端算好再同步给其他玩家；YSMU 没有这条同步链路，
+     * 而客户端对每个可见玩家都持有服务端下发的 pos/prevPos，因此本地算出的值等价。</p>
+     */
+    public static float realGroundSpeed(double deltaX, double deltaZ) {
+        return (float) (MathHelper.sqrt_double(deltaX * deltaX + deltaZ * deltaZ) * 20.0D);
+    }
+
     private static float clampHeadYaw(float value) {
         return MathHelper.clamp_float(MathHelper.wrapAngleTo180_float(value), -MAX_HEAD_YAW, MAX_HEAD_YAW);
     }

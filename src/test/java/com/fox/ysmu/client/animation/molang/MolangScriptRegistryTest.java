@@ -82,7 +82,7 @@ class MolangScriptRegistryTest {
         Map<String, List<String>> events = new LinkedHashMap<>();
         events.put(MolangScriptRegistry.EVENT_PLAYER_INIT, new ArrayList<>(Collections.singletonList("setup")));
 
-        MolangScriptRegistry.register(ID, functions, events);
+        MolangScriptRegistry.register(ID, functions, events, Collections.emptyMap());
 
         assertTrue(MolangScriptRegistry.hasScripts(ID));
         assertEquals("v.ready = 1;", MolangScriptRegistry.functionScript(ID, "SETUP"));
@@ -108,7 +108,7 @@ class MolangScriptRegistryTest {
         Map<String, String> functions = new LinkedHashMap<>();
         functions.put("add", "return args[0] + args[1];");
         functions.put("twice", "return fn.add(1, 2) * 2;");
-        MolangScriptRegistry.register(ID, functions, Collections.emptyMap());
+        MolangScriptRegistry.register(ID, functions, Collections.emptyMap(), Collections.emptyMap());
 
         assertEquals(3.0d, MolangScriptInterpreter.evaluate("fn.add(1, 2);", new RegistryScope()), 0.0001d);
         // 函数里再调另一个函数（链式调用）

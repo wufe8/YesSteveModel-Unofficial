@@ -13,7 +13,6 @@ import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.item.ItemStack;
 
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
-import com.fox.ysmu.compat.BackhandCompat;
 import com.fox.ysmu.ysmu;
 
 import software.bernie.geckolib3.core.molang.MolangStringPool;
@@ -133,26 +132,10 @@ public class EquippedEnchantmentLevelFunction extends Function {
     }
 
     private static String stripNamespace(String name) {
-        int colon = name.indexOf(':');
-        return colon >= 0 ? name.substring(colon + 1) : name;
+        return MolangEquipmentSlots.stripNamespace(name);
     }
 
     private static ItemStack getStack(EntityPlayer player, String slotType) {
-        switch (slotType) {
-            case "mainhand":
-                return player.getHeldItem();
-            case "offhand":
-                return BackhandCompat.getOffhandItem(player);
-            case "head":
-                return player.inventory.armorInventory[3];
-            case "chest":
-                return player.inventory.armorInventory[2];
-            case "legs":
-                return player.inventory.armorInventory[1];
-            case "feet":
-                return player.inventory.armorInventory[0];
-            default:
-                return null;
-        }
+        return MolangEquipmentSlots.get(player, slotType);
     }
 }
