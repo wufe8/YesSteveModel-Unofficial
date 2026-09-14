@@ -17,7 +17,7 @@ import cpw.mods.fml.common.registry.GameRegistry;
  */
 public final class TinkersCrossbowCompat {
 
-    private static final boolean TCONSTRUCT_LOADED = Loader.isModLoaded("TConstruct");
+    private static final boolean TCONSTRUCT_LOADED = com.fox.ysmu.util.ModAvailability.isLoaded("TConstruct");
     private static final String TIC_CROSSBOW_ID = "TConstruct:Crossbow";
 
     private TinkersCrossbowCompat() {}

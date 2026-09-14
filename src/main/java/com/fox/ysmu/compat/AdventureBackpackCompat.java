@@ -30,7 +30,7 @@ import cpw.mods.fml.relauncher.SideOnly;
 @SideOnly(Side.CLIENT)
 public final class AdventureBackpackCompat {
 
-    private static final boolean MOD_LOADED = Loader.isModLoaded("adventurebackpack");
+    private static final boolean MOD_LOADED = com.fox.ysmu.util.ModAvailability.isLoaded("adventurebackpack");
 
     // Reflected class/method handles
     private static Class<?> wearingClass;

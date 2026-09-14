@@ -34,7 +34,9 @@ public class S2CMolangSync implements IMessage {
     public void fromBytes(ByteBuf buf) {
         this.senderId = new UUID(buf.readLong(), buf.readLong());
         this.modelId = ByteBufUtils.readUTF8String(buf);
-        int count = Math.min(buf.readByte(), C2SMolangSync.MAX_ARGUMENTS);
+        // 长度按无符号字节读，和上行包保持一致：坏包写 0x80 时 readByte() 会得到负数，
+        // 无符号读取 + MAX_ARGUMENTS 截断保证参数数组永远是 0..16 个。
+        int count = Math.min(buf.readUnsignedByte(), C2SMolangSync.MAX_ARGUMENTS);
         this.arguments = new int[Math.max(0, count)];
         for (int i = 0; i < this.arguments.length; i++) {
             this.arguments[i] = buf.readInt();
@@ -71,7 +73,16 @@ public class S2CMolangSync implements IMessage {
         @Override
         public IMessage onMessage(S2CMolangSync message, MessageContext ctx) {
             if (ctx.side == Side.CLIENT) {
-                ysmu.proxy.handleMolangSync(message);
+                // 网络线程只负责投递：handleMolangSync 会触发模型脚本求值并改动客户端
+                // 渲染/注册状态，必须回到 Minecraft 客户端主线程执行。
+                net.minecraft.client.Minecraft.getMinecraft()
+                    .func_152344_a(new Runnable() {
+
+                        @Override
+                        public void run() {
+                            ysmu.proxy.handleMolangSync(message);
+                        }
+                    });
             }
             return null;
         }

@@ -57,6 +57,18 @@ class ModAvailabilityTest {
         assertFalse(ModAvailability.isUnavailable(null));
     }
 
+
+    /** 能力探测：用来代替版本号校验（类在不在才是最可靠的判据）。 */
+    @Test
+    void classPresenceProbeDistinguishesCapability() {
+        assertTrue(ModAvailability.isClassPresent("java.lang.String"));
+        // 测试类路径上就有 Baubles-Expanded（devOnlyNonPublishable）
+        assertTrue(ModAvailability.isClassPresent("baubles.api.expanded.BaubleExpandedSlots"));
+        assertFalse(ModAvailability.isClassPresent("com.example.NoSuchClass"));
+        assertFalse(ModAvailability.isClassPresent(null));
+        assertFalse(ModAvailability.isClassPresent(""));
+    }
+
     /** 参考库里真实出现的那一例：模组不在 → 标签分类是 MOD_ABSENT，而且匹配恒 false。 */
     @Test
     void absentModTagIsClassifiedAsModAbsent() {

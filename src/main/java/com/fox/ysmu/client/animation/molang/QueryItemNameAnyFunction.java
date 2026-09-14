@@ -68,8 +68,13 @@ public class QueryItemNameAnyFunction extends Function {
         }
     }
 
-    /** 物品 id 比较：忽略大小写，允许任意一侧省略命名空间。 */
-    static boolean matches(String registryName, String candidate) {
+    /**
+     * 物品 id 比较：忽略大小写，允许任意一侧省略命名空间。
+     *
+     * <p>公开是给别的兼容层复用（{@code BaublesCompat} 判断饰品槽里的物品），保证"物品 id 怎么写
+     * 才算命中"全仓只有一套规则。</p>
+     */
+    public static boolean matches(String registryName, String candidate) {
         if (registryName == null || candidate == null || candidate.isEmpty()) {
             return false;
         }

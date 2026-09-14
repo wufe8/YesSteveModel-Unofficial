@@ -27,7 +27,7 @@ import cpw.mods.fml.relauncher.SideOnly;
 @SideOnly(Side.CLIENT)
 public final class BlockingCompat {
 
-    private static final boolean BATTLEGEAR2_LOADED = Loader.isModLoaded("battlegear2");
+    private static final boolean BATTLEGEAR2_LOADED = com.fox.ysmu.util.ModAvailability.isLoaded("battlegear2");
     private static Method isBlockingWithShieldMethod;
 
     static {

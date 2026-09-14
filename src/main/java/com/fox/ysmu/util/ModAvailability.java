@@ -75,6 +75,25 @@ public final class ModAvailability {
         return !isLoaded(namespace);
     }
 
+    /**
+     * 某个类在当前运行时是否存在 —— **能力探测**，用来代替版本号校验。
+     *
+     * <p>可选模组的 API 会随版本增删，但"这个类/方法在不在"永远是最可靠的判据；版本号比较
+     * 既容易误判（同一个 mod 的不同 fork 版本号不可比），也会把"其实能用"的版本挡在外面。
+     * 探测到缺失时由调用方回退或跳过，遇到真实问题再处理 —— 不硬性限制版本。</p>
+     */
+    public static boolean isClassPresent(String className) {
+        if (className == null || className.isEmpty()) {
+            return false;
+        }
+        try {
+            Class.forName(className, false, ModAvailability.class.getClassLoader());
+            return true;
+        } catch (Throwable e) {
+            return false;
+        }
+    }
+
     /** 单测钩子：替换"是否已加载"的判定。 */
     public static void setLoadProbe(Predicate<String> probe) {
         loadProbe = probe == null ? ModAvailability::loaderIsModLoaded : probe;

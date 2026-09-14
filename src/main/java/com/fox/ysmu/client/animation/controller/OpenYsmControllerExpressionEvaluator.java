@@ -880,6 +880,19 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return ParticleEffectUtil.handleParticle(player, id,
                     ox, oy, oz, dx, dy, dz, speed, count, lifetime, abs) ? TRUE : FALSE;
             }
+            // ysm.has_any_curios(槽位, id...)：Curios 在 1.7.10 上用前身 Baubles(Baubles-Expanded)
+            // 实现，与关键帧路径共用 BaublesCompat。
+            if ("ysm.has_any_curios".equals(name) && !arguments.isEmpty()) {
+                java.util.List<String> ids = new java.util.ArrayList<>(arguments.size());
+                for (int i = 1; i < arguments.size(); i++) {
+                    String id = arguments.get(i).asString();
+                    if (id != null && !id.isEmpty()) {
+                        ids.add(id);
+                    }
+                }
+                return com.fox.ysmu.compat.BaublesCompat.hasAnyCurio(player, arguments.get(0).asString(), ids)
+                    ? TRUE : FALSE;
+            }
             // query.equipped_item_any_tag / all_tags：标签匹配与关键帧路径共用 ItemTagMatcher。
             if (("query.equipped_item_any_tag".equals(name) || "query.equipped_item_all_tags".equals(name))
                 && arguments.size() >= 2) {

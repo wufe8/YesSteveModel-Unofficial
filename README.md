@@ -36,6 +36,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
   - Battlegear2 — 盾牌格挡检测
   - Et Futurum — 鞘翅飞行检测
   - Tinkers' Construct — 十字弩状态检测
+  - [Baubles-Expanded](https://github.com/GTNewHorizons/Baubles-Expanded)（GTNH 随包自带）— `ysm.has_any_curios` 的 1.7.10 实现：Curios 在 1.7.10 上不存在，用其前身 Baubles 的槽位代替
 - **GTNH 兼容性**:
   - ✅ GTNH 2.8.4 — 已测试
   - ✅ GTNH 2.9.0-beta2 — 已测试
@@ -187,6 +188,8 @@ git checkout perf/previewUI
 - 部分控制器变量与molang函数可能存在bug
 - molang 自定义函数(`functions/*.molang`)已支持 `fn.*` 调用链与递归(深度 32)、`args[]`/`t.*` 临时变量、`loop`/`for_each`、`break`/`continue`、`@player_init`/`@player_update`/`@sync` 事件订阅，以及 `@player_ctrl_<槽位>.molang` 动画控制脚本每帧执行(`ctrl.set_animation` 含循环类型、`ctrl.set_beginning_transition_length`、`ctrl.indicate_reload`、`ctrl.state_continue`/`ctrl.state_bypass`)。`ctrl.hold`/`ctrl.use`/`ctrl.swing`/`ctrl.armor` 在关键帧、timeline 与脚本三条路径共用同一套判断（`$物品ID` / `#tag`（1.7.10 恒 false）/ `:类别`），`ctrl.reset` 会中止当前动画并重置该槽位的控制器状态。**已确认不做**（参考库里 `state_pause` 0 处引用、`state_stop` 仅 2 文件 3 处）：`ctrl.state_pause`（GeckoLib 无「暂停但不暂停时间轴」的原语，回落到内置逻辑）、`state_stop` 的平滑淡出（骨骼复位分支目前是瞬时的，改它会影响所有控制器的停止表现）。控制脚本已接到 `main`、`pre_main`/`post_main`/`pre_hold`/`pre_swing`/`pre_use`（OpenYSM 槽位）、数字 `pre_parallel_N`/`parallel_N` 与 `use`；模型自命名的并行槽位（映射到备用池 `*_extra_N_controller`）还没接。配置项 `MolangControlScripts` 可关回旧的纯静态提取行为
 - `query.head_z_rotation` 是 **YSMU 扩展**（YSM wiki 与官方实现都只有 `head_x_rotation`/`head_y_rotation`）：1.7.10 没有实体 roll，模型侧唯一的 Z 旋转是**相机**的 `EntityRenderer.camRoll`，而本机玩家头部朝向与镜头一致，因此该查询返回相机 roll 的插值（只对本机玩家生效，远程玩家的头部 roll 没有同步字段）。原版从不写 `camRoll`，所以不装 roll 相机类 mod 时它恒 0，与官方行为一致
+- 副手隐藏名单(`HiddenOffhandItems`)此前只在 YSM 自己接管第一人称渲染时生效：主手**空手**时 `shouldRenderCustomHand` 成立、隐藏名单被应用；主手**拿物品**时 YSM 会让位给原版，副手由 Backhand 自己在其 RETURN 注入里画，隐藏名单被绕过（表现为"空手时治愈之斧隐藏、主手拿东西时又冒出来"）。已修：在原版第一人称渲染入口清空 Backhand 副手渲染器的 pending 物品（该字段每 tick 由 Backhand 重填，不会丢物品）
+- `ysm.has_any_curios(槽位, 物品id...)` 用 1.7.10 的 **Baubles/Baubles-Expanded** 实现（Curios 的前身）：Curios 标准槽位 `necklace`/`ring`/`belt`/`charm`/`head`/`body`/`hands` 映射到 Baubles 类型 `amulet`/`ring`/`belt`/`charm`/`head`/`body`/`gauntlet`，模型直接写 Baubles 类型名也能用；**模组自建槽位（`back`/`spellbook`/`curio` 等）在 1.7.10 没有对应物**，返回 false 并各提示一次（不拿"任意饰品"冒充）。注意 1.7.10 上有三个都叫 `Baubles` 的版本、槽位结构不同：原版与 GTNH fork 是**固定 4 格**（`0=amulet, 1/2=ring, 3=belt`，没有类型化 API），只有 **Baubles-Expanded** 才是可配置的十几个槽位（`BaubleExpandedSlots`）；代码按"Expanded 的类在不在"分流，普通版下 `charm`/`head`/`body` 等类型返回 false 并提示需要 Expanded；解析不出槽位时若模型给了具体物品 id，会退化为"任意饰品槽里有没有这个物品"（遇到问题再回退，不做版本硬校验）。未装 Baubles 时该查询恒 false 并提示一次
 - 标签类查询在 1.7.10 没有数据驱动实现，只做能原生回答的部分：`query.relative_block_has_any_tag` 支持 `minecraft:replaceable`；`query.equipped_item_any_tag`/`all_tags` 支持物品类型标签(`minecraft:swords`/`axes`/…)与材质标签(`forge:ingots/iron`→矿物词典 `ingotIron` 等)，其余恒 false。两类未命中分开处理：**来源模组没装**的标签（1.7.10 上最常见，如 `irons_spellbooks:staff`）永远匹配不到，按「正确跳过」每个警告一次 `mod '…' is not installed`；**来源可用但没映射**的才是本模组的缺口，在 `DebugController` 下提示一次。注意这些名字**必须注册**：未注册函数会让整条关键帧表达式解析失败、整个 animation 被丢弃
 - 子模型(投射物/载具)可能还存在一些问题 目前仅保证默认模型投射物可用
 - 并行动画支持数字槽位(`pre_parallel0..7` / `parallel0..7`)与模型自己命名的并行控制器(如 `player.pre_parallel_名字`, 由 `controller/*.json` 声明；映射到固定备用池 `*_extra_0..3_controller`)。同一模型声明的具名并行控制器超过 4 个时超出部分不播放，`DebugController` 会给出一次告警

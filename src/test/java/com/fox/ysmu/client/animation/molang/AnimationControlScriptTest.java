@@ -209,6 +209,20 @@ class AnimationControlScriptTest {
         assertTrue(result.isNoOp());
     }
 
+    /** 宿主作用域建不出来时也不能抛出去 —— prepare/建 scope 同样受保护。 */
+    @Test
+    void hostScopeCreationFailureDegradesToNoOp() {
+        register("main", "ctrl.set_animation('run'); return ctrl.state_continue;");
+
+        AnimationControlResult result = AnimationControlScripts.evaluate(MODEL, "main", () -> {
+            throw new IllegalStateException("host scope unavailable");
+        });
+
+        assertNotNull(result);
+        assertTrue(result.isNoOp());
+        assertNull(result.animationName());
+    }
+
     // ---- 夹具 ----
 
     private static void register(String slot, String body) {

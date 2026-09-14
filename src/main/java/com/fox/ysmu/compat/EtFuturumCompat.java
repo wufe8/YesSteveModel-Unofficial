@@ -26,7 +26,7 @@ import cpw.mods.fml.relauncher.SideOnly;
 @SideOnly(Side.CLIENT)
 public final class EtFuturumCompat {
 
-    private static final boolean ETFUTURUM_LOADED = Loader.isModLoaded("etfuturum");
+    private static final boolean ETFUTURUM_LOADED = com.fox.ysmu.util.ModAvailability.isLoaded("etfuturum");
     private static Method isElytraFlyingMethod;
 
     static {

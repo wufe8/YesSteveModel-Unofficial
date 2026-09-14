@@ -188,6 +188,10 @@ public class AnimationRegister {
             functions.put("ysm.mouse", com.fox.ysmu.client.animation.molang.YsmMouseFunction.class);
             // ysm.sync(...)：把参数同步给服务器上的所有玩家，触发他们那边该模型的 sync 事件脚本。
             functions.put("ysm.sync", com.fox.ysmu.client.animation.molang.YsmSyncFunction.class);
+            // ysm.has_any_curios(槽位, id...)：Curios 在 1.7.10 上用前身 Baubles（GTNH 是
+            // Baubles-Expanded）实现；未安装时恒 false，槽位没有对应物时也会提示一次。
+            functions.put("ysm.has_any_curios",
+                com.fox.ysmu.client.animation.molang.QueryHasAnyCuriosFunction.class);
         };
 
         // 2) `??` 运算符的"显式设置"判定（按当前渲染模型，防跨模型污染）。

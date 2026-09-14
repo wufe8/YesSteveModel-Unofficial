@@ -35,21 +35,23 @@ public final class AnimationControlScripts {
         if (body == null) {
             return null;
         }
-        String prepared = MolangScriptInterpreter.prepare(body);
-        if (prepared.trim()
-            .isEmpty()) {
-            return new AnimationControlResult();
-        }
-        AnimationControlScope scope = new AnimationControlScope(innerScope.get());
-        double predicate;
+        AnimationControlResult result;
         try {
-            predicate = MolangScriptInterpreter.evaluate(prepared, scope);
+            // prepare、宿主作用域创建、求值、结果收集都可能有第三方/宿主代码参与，
+            // 任何一个环节抛出 RuntimeException 都不能改变动画。
+            String prepared = MolangScriptInterpreter.prepare(body);
+            if (prepared.trim()
+                .isEmpty()) {
+                return new AnimationControlResult();
+            }
+            AnimationControlScope scope = new AnimationControlScope(innerScope.get());
+            double predicate = MolangScriptInterpreter.evaluate(prepared, scope);
+            result = scope.result();
+            result.setAction(AnimationControlScope.actionOf(predicate));
         } catch (RuntimeException e) {
             // 脚本报错不能改变动画：按"无操作"处理，让静态映射/内置谓词继续工作。
             return new AnimationControlResult();
         }
-        AnimationControlResult result = scope.result();
-        result.setAction(AnimationControlScope.actionOf(predicate));
         return result;
     }
 

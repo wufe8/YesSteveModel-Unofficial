@@ -16,7 +16,7 @@ import xonin.backhand.client.hooks.ItemRendererHooks;
 
 public class BackhandCompat {
 
-    private static final boolean BACKHAND_LOADED = Loader.isModLoaded("backhand");
+    private static final boolean BACKHAND_LOADED = com.fox.ysmu.util.ModAvailability.isLoaded("backhand");
     private static final java.util.Set<String> COMPAT_WARNED = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final java.util.Set<String> COMPAT_INFOED = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
@@ -181,22 +181,40 @@ public class BackhandCompat {
         if (uid == null) {
             return false;
         }
-        String id = uid.toString().toLowerCase(Locale.ROOT);
-        for (String s : Config.HIDDEN_OFFHAND_ITEMS) {
-            if (s == null) {
+        return matchesHiddenList(uid.toString());
+    }
+
+    /**
+     * 物品注册名是否命中 {@code Config.HIDDEN_OFFHAND_ITEMS}（纯字符串匹配，便于单测）。
+     *
+     * <p>条目格式 {@code modid:itemname}，忽略大小写与首尾空白。条目所属 mod 没装时该条目永远
+     * 匹配不到，警告一次后跳过（"正确跳过，不误伤"）—— 用
+     * {@link com.fox.ysmu.util.ModAvailability} 判断存在性，不看版本。</p>
+     */
+    static boolean matchesHiddenList(String registryId) {
+        if (registryId == null || registryId.isEmpty()) {
+            return false;
+        }
+        String id = registryId.toLowerCase(Locale.ROOT);
+        String[] entries = Config.HIDDEN_OFFHAND_ITEMS;
+        if (entries == null) {
+            return false;
+        }
+        for (String entry : entries) {
+            if (entry == null) {
                 continue;
             }
-            String trimmed = s.trim();
+            String trimmed = entry.trim();
             if (trimmed.isEmpty()) {
                 continue;
             }
-            // 条目所属 mod 未安装：该条目永远匹配不到，警告一次（正确跳过，不误伤）。
             int colon = trimmed.indexOf(':');
             if (colon > 0) {
                 String modId = trimmed.substring(0, colon);
-                if (!Loader.isModLoaded(modId)) {
+                if (!com.fox.ysmu.util.ModAvailability.isLoaded(modId)) {
                     warnOnce("hidden-offhand-mod:" + modId,
-                        "HiddenOffhandItems entry '" + trimmed + "' is ineffective: mod '" + modId + "' is not installed.");
+                        "HiddenOffhandItems entry '" + trimmed + "' is ineffective: mod '" + modId
+                            + "' is not installed.");
                     continue;
                 }
             }
@@ -205,5 +223,46 @@ public class BackhandCompat {
             }
         }
         return false;
+    }
+
+    /**
+     * 第一人称**原版路径**下的副手隐藏（Backhand 自画的副手）。
+     *
+     * <p>背景：主手拿物品时 {@code FirstPersonHandRenderer.shouldRenderCustomHand} 会因为
+     * {@code itemRenderer.itemToRender != null} 而**不接管**第一人称渲染，于是副手由 Backhand 在
+     * {@code ItemRenderer.renderItemInFirstPerson} 的 RETURN 注入里自己画（
+     * {@code ItemRendererHooks.renderOffhandReturn}），隐藏名单在这一路会被完全绕过 —— 这就是
+     * "主手空手时斧头隐藏、主手拿东西时又冒出来"的原因。</p>
+     *
+     * <p>做法：Backhand 画副手用的是它自己的 ItemRenderer 实例
+     * （{@code BackhandRenderHelper.itemRenderer}），绘制内容来自该实例的 public 字段
+     * {@code itemToRender}；把这个字段清空，它的 RETURN 绘制就无物品可画。**不会丢物品**：该字段
+     * 每 tick 由 Backhand 的 {@code MixinEntityRenderer → useOffhandItem(..., updateEquippedItem)}
+     * 重新填入（且 vanilla {@code updateEquippedItem} 对 null→非 null 的处理是安全的），所以即使
+     * 恢复时机不完美也会在下一 tick 自愈。</p>
+     */
+    public static void suppressHiddenOffhandRender() {
+        if (!BACKHAND_LOADED) {
+            return;
+        }
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getMinecraft();
+        EntityPlayer player = mc == null ? null : mc.thePlayer;
+        if (player == null) {
+            return;
+        }
+        try {
+            // 隐藏判定也放进 try：Backhand 的副手物品查询会走到它的 API，
+            // 版本不符时抛 LinkageError/RuntimeException 不能影响渲染帧。
+            if (!isHiddenOffhandItem(getOffhandItem(player))) {
+                return;
+            }
+            xonin.backhand.client.utils.BackhandRenderHelper.itemRenderer.itemToRender = null;
+            infoOnce("hidden-offhand-firstperson",
+                "HiddenOffhandItems: suppressed the Backhand first-person offhand draw (vanilla path).");
+        } catch (Throwable t) {
+            // 能力探测失败（Backhand 版本不符/类缺失）：只告警一次，绝不影响渲染。
+            warnOnce("backhand-api-renderhelper",
+                "Backhand offhand suppression unavailable (incompatible version " + backhandVersion() + "?): " + t);
+        }
     }
 }

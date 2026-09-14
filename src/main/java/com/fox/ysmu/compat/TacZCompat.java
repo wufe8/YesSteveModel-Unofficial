@@ -19,7 +19,7 @@ import cpw.mods.fml.relauncher.SideOnly;
 @SideOnly(Side.CLIENT)
 public final class TacZCompat {
 
-    private static final boolean TACZ_LOADED = Loader.isModLoaded("tacz");
+    private static final boolean TACZ_LOADED = com.fox.ysmu.util.ModAvailability.isLoaded("tacz");
 
     private TacZCompat() {}
 
