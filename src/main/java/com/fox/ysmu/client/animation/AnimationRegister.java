@@ -17,7 +17,9 @@ import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.animation.molang.BonePivotAbsFunction;
+import com.fox.ysmu.client.animation.molang.CtrlArmorFunction;
 import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
+import com.fox.ysmu.client.animation.molang.CtrlItemFunction;
 import com.fox.ysmu.client.animation.molang.EquippedEnchantmentLevelFunction;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.animation.molang.ParticleFunction;
@@ -29,6 +31,7 @@ import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
 import com.fox.ysmu.client.animation.molang.QueryDebugOutputFunction;
 import com.fox.ysmu.client.animation.molang.QueryDurabilityFunction;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
+import com.fox.ysmu.client.animation.molang.QueryItemTagFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction;
 import com.fox.ysmu.client.animation.molang.QueryPositionFunction;
 import com.fox.ysmu.client.animation.molang.RelativeBlockNameFunction;
@@ -117,11 +120,16 @@ public class AnimationRegister {
         // 1) YSMU 特有 Molang 函数注册（每构造一个新 MolangParser 都会执行一次）。
         // ctrl.* / query.* / ysm.* 说明见原 vendored doCoreRemaps()（已迁移至此）。
         MolangParser.ysmFunctionRegistrar = functions -> {
-            // 防止 keyframe 表达式中使用 ctrl.* 时抛 "Function couldn't be found"；
-            // 控制器条件中的 ctrl.* 由 OpenYsmControllerExpressionEvaluator 处理。
-            functions.put("ctrl.hold", CtrlHoldFunction.class);
-            functions.put("ctrl.use", CtrlHoldFunction.class);
-            functions.put("ctrl.swing", CtrlHoldFunction.class);
+            // ctrl.hold/use/swing/armor：keyframe/时间轴/.molang 脚本里的真实现。
+            // 以前这三个注册的是恒 0 桩（真实现只在控制器条件路径），于是
+            // ctrl.hold('mainhand', '$minecraft:apple') 在脚本里永远不成立；
+            // 现在两条路径共用 CtrlItemMatcher 的规则。
+            functions.put("ctrl.hold", CtrlItemFunction.class);
+            functions.put("ctrl.use", CtrlItemFunction.class);
+            functions.put("ctrl.swing", CtrlItemFunction.class);
+            functions.put("ctrl.armor", CtrlArmorFunction.class);
+            // ctrl.ride：keyframe 路径的桩（恒 0）。控制器条件路径有真实现，见
+            // OpenYsmControllerExpressionEvaluator.functionValue。
             functions.put("ctrl.ride", CtrlHoldFunction.class);
             // query.position_delta(axis)：函数版按轴返回位移分量；变量版由 setEntityQueryValues 提供。
             functions.put("query.position_delta", QueryPositionDeltaFunction.class);
@@ -135,6 +143,11 @@ public class AnimationRegister {
             // query.max_durability / query.remaining_durability(slotType)：YSM-wiki molang/ref 2.2.1。
             functions.put("query.max_durability", QueryDurabilityFunction.class);
             functions.put("query.remaining_durability", QueryDurabilityFunction.class);
+            // query.equipped_item_{any_tag,all_tags}(slotType, tag...)：1.7.10 没有数据驱动的物品
+            // 标签，只回答能原生回答的（物品类型 + 矿物词典），其余 false。
+            // 必须注册：未注册函数会让整条关键帧表达式解析失败、整个动画被丢弃。
+            functions.put("query.equipped_item_any_tag", QueryItemTagFunction.class);
+            functions.put("query.equipped_item_all_tags", QueryItemTagFunction.class);
             // ysm.play_sound / stop_sound / stop_all_sounds：模型 Molang 音效播放（走 YSMSoundManager）。
             functions.put("ysm.play_sound", YsmSoundFunction.class);
             functions.put("ysm.stop_sound", YsmSoundFunction.class);
@@ -143,9 +156,6 @@ public class AnimationRegister {
             functions.put("ysm.mod_version", CtrlHoldFunction.class);
             // ysm.perlin_noise：3D 柏林噪声（返回 [0,1]），自实现。
             functions.put("ysm.perlin_noise", PerlinNoiseFunction.class);
-            // ctrl.armor：keyframe 路径桩（恒 0），真实现仅在控制器条件路径
-            // （OpenYsmControllerExpressionEvaluator.functionValue）。
-            functions.put("ctrl.armor", CtrlHoldFunction.class);
             // ysm.relative_block_name：返回玩家相对偏移处方块注册名（OpenYSM 语义，±5 格）。
             functions.put("ysm.relative_block_name", RelativeBlockNameFunction.class);
             // ysm.equipped_enchantment_level：返回指定槽位物品上给定附魔的等级之和。
@@ -264,6 +274,10 @@ public class AnimationRegister {
         parser.register(new LazyVariable("query.has_rider", MolangUtils.FALSE));
         parser.register(new LazyVariable("query.head_x_rotation", 0));
         parser.register(new LazyVariable("query.head_y_rotation", 0));
+        // YSM-wiki: molang/ref 只有 head_x/head_y，没有 head_z（1.7.10 也没有实体 roll）。
+        // YSMU 扩展：用**相机 roll** 当这个值 —— 本机玩家的头部朝向与镜头一致，而原版从不写
+        // EntityRenderer.camRoll（恒 0，仅相机类 mod 会写），所以无相机 mod 时与官方行为一致。
+        parser.register(new LazyVariable("query.head_z_rotation", 0));
         parser.register(new LazyVariable("query.health", 0));
         parser.register(new LazyVariable("query.hurt_time", 0));
 
@@ -397,6 +411,9 @@ public class AnimationRegister {
         parser.setValue("query.has_rider", () -> MolangUtils.booleanToFloat(player.riddenByEntity != null));
         parser.setValue("query.head_x_rotation", () -> data.headPitch);
         parser.setValue("query.head_y_rotation", queryValues.headYaw());
+        // 同上：相机 roll，且只对本机玩家（远程玩家的 roll 无同步字段）。详见 CameraRollQuery。
+        parser.setValue("query.head_z_rotation", () -> com.fox.ysmu.client.animation.molang.CameraRollQuery
+            .isLocalPlayer(player) ? com.fox.ysmu.client.animation.molang.CameraRollQuery.interpolatedRoll() : 0.0d);
         parser.setValue("query.health", player::getHealth);
         parser.setValue("query.hurt_time", () -> player.hurtTime);
         parser.setValue("query.modified_distance_moved", () -> player.distanceWalkedModified);

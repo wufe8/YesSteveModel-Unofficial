@@ -2,7 +2,6 @@ package com.fox.ysmu.client.animation.controller;
 
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.entity.item.EntityBoat;
@@ -16,7 +15,6 @@ import net.minecraft.util.MathHelper;
 import org.apache.commons.lang3.StringUtils;
 
 import com.fox.ysmu.client.animation.RemotePlayerMotionStates;
-import com.fox.ysmu.client.animation.condition.InnerClassify;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.animation.molang.PerlinNoiseFunction;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
@@ -882,6 +880,34 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return ParticleEffectUtil.handleParticle(player, id,
                     ox, oy, oz, dx, dy, dz, speed, count, lifetime, abs) ? TRUE : FALSE;
             }
+            // query.equipped_item_any_tag / all_tags：标签匹配与关键帧路径共用 ItemTagMatcher。
+            if (("query.equipped_item_any_tag".equals(name) || "query.equipped_item_all_tags".equals(name))
+                && arguments.size() >= 2) {
+                String slotType = arguments.get(0).asString();
+                ItemStack stack = com.fox.ysmu.client.animation.molang.MolangEquipmentSlots.get(player, slotType);
+                if (stack == null || stack.getItem() == null) {
+                    return FALSE;
+                }
+                boolean requireAll = name.endsWith("all_tags");
+                boolean matchedAny = false;
+                int checked = 0;
+                for (int i = 1; i < arguments.size(); i++) {
+                    String tag = arguments.get(i).asString();
+                    if (tag == null || tag.isEmpty()) {
+                        continue;
+                    }
+                    checked++;
+                    boolean matched = com.fox.ysmu.client.animation.molang.ItemTagMatcher.matchesTag(stack, tag);
+                    if (matched && !requireAll) {
+                        return TRUE;
+                    }
+                    if (!matched && requireAll) {
+                        return FALSE;
+                    }
+                    matchedAny |= matched;
+                }
+                return requireAll && checked > 0 && matchedAny ? TRUE : FALSE;
+            }
             // --- ysm.* 音效函数（对齐 OpenYSM 2.5.3 参数布局；flags 位标志在 1.7.10 部分不适用） ---
             if ("ysm.play_sound".equals(name) && arguments.size() >= 2) {
                 String soundName = arguments.get(1).asString();
@@ -992,6 +1018,14 @@ public final class OpenYsmControllerExpressionEvaluator {
             }
             if ("head_y_rotation".equals(name)) {
                 return player.rotationYaw;
+            }
+            // YSM-wiki: molang/ref 没有 head_z_rotation（1.7.10 也无实体 roll）。YSMU 扩展：
+            // 用相机 roll 当这个值（本机玩家头朝向与镜头一致），与关键帧路径同一实现；
+            // 原版从不写 camRoll → 无相机 mod 时恒 0，与官方行为一致。详见 CameraRollQuery。
+            if ("head_z_rotation".equals(name)) {
+                return com.fox.ysmu.client.animation.molang.CameraRollQuery.isLocalPlayer(player)
+                    ? com.fox.ysmu.client.animation.molang.CameraRollQuery.interpolatedRoll()
+                    : FALSE;
             }
             if ("cardinal_facing_2d".equals(name)) {
                 int facing = net.minecraft.util.MathHelper.floor_double(
@@ -1419,35 +1453,19 @@ public final class OpenYsmControllerExpressionEvaluator {
 
         /** ctrl.armor('chest'|'feet'|'legs'|'head', '$物品ID'|'empty'|'#tag')。
          *  1.7.10 无物品 tag 系统，'#tag' 恒 false（对齐 OpenYSM 语义）。 */
+        /** 与关键帧/脚本路径共用 {@code CtrlItemMatcher}，避免两条路径规则漂移。 */
         private double armorMatch(List<Argument> arguments) {
             String slot = arguments.size() > 0 ? arguments.get(0).asString() : "";
             String matcher = arguments.size() > 1 ? arguments.get(1).asString() : "";
             if (StringUtils.isBlank(matcher)) {
                 return FALSE; // OpenYSM：id 为空返回 0
             }
-            int armorIndex;
-            if ("head".equals(slot)) {
-                armorIndex = 3;
-            } else if ("chest".equals(slot)) {
-                armorIndex = 2;
-            } else if ("legs".equals(slot)) {
-                armorIndex = 1;
-            } else if ("feet".equals(slot)) {
-                armorIndex = 0;
-            } else {
+            int armorIndex = com.fox.ysmu.client.animation.molang.CtrlItemMatcher.armorSlotIndex(slot);
+            if (armorIndex < 0) {
                 return FALSE; // mainhand/offhand 不属于 ctrl.armor
             }
             ItemStack stack = player.inventory.armorInventory[armorIndex];
-            if ("empty".equals(matcher)) {
-                return stack == null ? TRUE : FALSE;
-            }
-            if (stack == null || stack.getItem() == null) {
-                return FALSE;
-            }
-            if (matcher.startsWith("$")) {
-                return itemId(stack).equals(matcher.substring(1).toLowerCase(Locale.ROOT)) ? TRUE : FALSE;
-            }
-            return FALSE; // '#tag'：1.7.10 无物品标签系统
+            return com.fox.ysmu.client.animation.molang.CtrlItemMatcher.armorMatches(stack, matcher) ? TRUE : FALSE;
         }
 
         private double handMatch(List<Argument> arguments, boolean requireUse, boolean requireSwing) {
@@ -1467,62 +1485,14 @@ public final class OpenYsmControllerExpressionEvaluator {
             return itemMatches(stack, matcher) ? TRUE : FALSE;
         }
 
+        /** 与关键帧/脚本路径共用 {@code CtrlItemMatcher}，避免两条路径规则漂移。 */
         private boolean itemMatches(ItemStack stack, String matcher) {
-            if (StringUtils.isBlank(matcher)) {
-                return stack != null;
-            }
-            if ("empty".equals(matcher)) {
-                return stack == null;
-            }
-            if (stack == null || stack.getItem() == null) {
-                return false;
-            }
-            String id = itemId(stack);
-            if (matcher.startsWith("$")) {
-                return id.equals(matcher.substring(1).toLowerCase(Locale.ROOT));
-            }
-            if (matcher.startsWith("#")) {
-                return false;
-            }
-            String category = matcher.startsWith(":") ? matcher.substring(1) : matcher;
-            return itemCategoryMatches(stack, id, category.toLowerCase(Locale.ROOT));
+            return com.fox.ysmu.client.animation.molang.CtrlItemMatcher
+                .matches(stack, StringUtils.isBlank(matcher) ? "" : matcher);
         }
 
         private String itemId(ItemStack stack) {
-            Object rawName = Item.itemRegistry.getNameForObject(stack.getItem());
-            return rawName == null ? "" : rawName.toString().toLowerCase(Locale.ROOT);
-        }
-
-        private boolean itemCategoryMatches(ItemStack stack, String id, String category) {
-            String itemType = InnerClassify.getItemType(stack);
-            if (category.equals(itemType)) {
-                return true;
-            }
-            if ("trident".equals(category) && "spear".equals(itemType)) {
-                return true;
-            }
-            if ("spear".equals(category) || "trident".equals(category)) {
-                return id.contains("spear") || id.contains("trident");
-            }
-            if (isKnownItemCategory(category)) {
-                return false;
-            }
-            return id.contains(category);
-        }
-
-        private boolean isKnownItemCategory(String category) {
-            return "sword".equals(category)
-                || "axe".equals(category)
-                || "pickaxe".equals(category)
-                || "shovel".equals(category)
-                || "hoe".equals(category)
-                || "bow".equals(category)
-                || "crossbow".equals(category)
-                || "shield".equals(category)
-                || "spear".equals(category)
-                || "trident".equals(category)
-                || "fishing_rod".equals(category)
-                || "throwable_potion".equals(category);
+            return com.fox.ysmu.client.animation.molang.CtrlItemMatcher.itemId(stack);
         }
 
         private boolean allAnimationsFinished() {

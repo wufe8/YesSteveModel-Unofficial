@@ -78,13 +78,27 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
   谓词编码成 `1e9+1..4`：脚本的结果是"最后一条语句的值"，若用 1/2/3/4，结尾写成
   `ctrl.set_animation(...)` 或随手留一个 `v.x` 都会被误读成谓词；控制函数因此恒返回 0。
 
-- **接线范围**：`AnimationManager.getActiveAnimations` 的主动画槽位每帧求值一次脚本，只在
-  "明确 `state_continue` + 动画名存在"时覆盖静态映射；`bypass`/`NONE`/脚本报错/动画不存在
-  一律回退原逻辑。因此开启它（`Config.MolangControlScripts`，可关闭回旧行为）不会让本来能动的
-  模型不动。
-- **仍未接线**：`ctrl.state_pause` / `ctrl.state_stop` / `ctrl.reset` 需要"不换动画地暂停/停止/
-  重置"的播放原语；`DebugController` 下每个 模型×槽位 记一条一次性日志，不假装支持。
+- **接线范围**：`AnimationManager.applyControlScript` 由三个谓词入口调用 ——
+  `predicateOpenYsmSlot`（`pre_main`/`post_main`/`pre_hold`/`pre_swing`/`pre_use`…）、
+  `predicateParallel`（数字 `pre_parallel_N`/`parallel_N`）、`predicateUse`（`use`）；
+  主动画槽位在 `getActiveAnimations` 里内联求值（先跑脚本再决定目标动画，不绕过
+  `predicateMain` 的 `legacyBodyActive` 等簿记）。槽位名由 `controlSlotName` 从控制器名推导
+  （`player.X` → `X`、`X_controller` → `X`）；具名并行备用池返回 null（模型槽位名只有运行时
+  路由知道）。只在"明确 `state_continue` + 动画名存在"时覆盖内置逻辑，
+  `bypass`/`NONE`/脚本报错/动画不存在一律回退，所以开启它（`Config.MolangControlScripts`，
+  可关闭回旧行为）不会让本来能动的模型不动。脚本给出的循环类型会用上
+  （`ctrl.loop`/`play_once`/`hold_on_last_frame`）。
+- **指令的落地**（`AnimationManager.decideControlScript` → `applyControlScriptStop`）：
+  `ctrl.reset` = `PlayState.STOP`（清骨骼队列即"粗暴中止"）+ `markNeedsReload` + 清该槽位的
+  控制器运行时状态；`state_stop` = 同样的中止 + 重载。`state_pause` 交回内置逻辑
+  （GeckoLib 没有暂停原语），`DebugController` 下每个 模型×槽位 记一条一次性日志，不假装支持。
   非主槽位（`pre_main` / `parallel_N` / `use`…）的脚本目前只走静态提取。
+- **`state_stop` 的"平滑"与 `state_pause`：已确认不做**（库内用量 `state_stop` 2 文件 3 处、
+  `state_pause` 0 处）。`state_stop` 的"平滑"要改 vendored 的骨骼复位分支：`resetTickLength`
+  默认 1 且全仓无人调用 `setResetSpeedInTicks`，rotation/position 的 `mostRecentReset*Tick` 被硬写成 0
+  （只有 scale 用了 `seekTime`，还留着"旋转问题相关"的 TODO），所以 `percentageReset` 第一帧就是 1；
+  改它会让**所有**控制器的复位从瞬变变成淡出。`state_pause` 要给控制器加暂停原语并让
+  timeline/音效/粒子事件循环改用未暂停的 tick。两者都只能实机验证，等真有模型用到再做。
 - **字符串实参**：`ScopeFunction` 用 `MolangStringPool.isStringId()` 把池化 id 还原成字符串，
   否则 `ctrl.set_animation('x')` 只能拿到数字；池 id 从 `1_000_000` 起编号正是为了让这个判断可靠。
 

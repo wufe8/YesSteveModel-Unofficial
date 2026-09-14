@@ -352,6 +352,33 @@ public final class OpenYsmPlayerControllerRuntime {
     }
 
     /**
+     * 清掉某玩家某模型下**一个** OpenYSM 控制器的运行时状态（{@code ctrl.reset}）。
+     *
+     * <p>wiki: molang/script「动画控制」—— {@code ctrl.reset} 要求"立刻重置动画控制器至初始
+     * 状态"：不清这个状态机快照的话，控制器下一帧会带着 reset 之前的 state/时间戳继续走，
+     * 看起来就像 reset 没生效。</p>
+     *
+     * @param controllerName OpenYSM 控制器名（如 {@code player.main}）；null 表示清该模型下全部
+     */
+    public static void clearControllerState(UUID playerId, ResourceLocation modelId, String controllerName) {
+        if (playerId == null || modelId == null) {
+            return;
+        }
+        java.util.Iterator<Map.Entry<StateKey, RuntimeState>> it = STATES.entrySet().iterator();
+        while (it.hasNext()) {
+            Map.Entry<StateKey, RuntimeState> entry = it.next();
+            StateKey key = entry.getKey();
+            if (!playerId.equals(key.playerId) || !modelId.equals(key.animationId)) {
+                continue;
+            }
+            if (controllerName == null || controllerName.equals(key.openYsmControllerName)
+                || controllerName.equals(key.geckoControllerName)) {
+                it.remove();
+            }
+        }
+    }
+
+    /**
      * 清零预览（player==null）上下文中指定模型的条件动画变量（swing/hold 类），
      * 使条件驱动的动画立即停止。只影响 GUI 预览状态，不影响实际玩家模型。
      * 由预览页面的 Stop 按钮调用。

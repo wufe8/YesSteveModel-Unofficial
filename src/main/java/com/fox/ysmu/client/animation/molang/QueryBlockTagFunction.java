@@ -99,16 +99,28 @@ public class QueryBlockTagFunction extends Function {
         return false;
     }
 
+    /**
+     * 未命中标签的提示，分两类（与 {@code equipped_item_*_tag} 同一原则）：
+     * 来源模组没装 → 永远匹配不到，警告一次（正确跳过，不是本模组的缺口）；来源可用但没映射
+     * → 才是真缺口，只在 {@code DebugController} 下提示一次。
+     */
     private static void reportUnsupported(String tag) {
+        String name = stripNamespace(tag.toLowerCase(Locale.ROOT));
+        if (!REPORTED_TAGS.add(name)) {
+            return;
+        }
+        if (com.fox.ysmu.util.ModAvailability.isUnavailable(tag)) {
+            ysmu.LOG.warn(
+                "[YSMU-QUERY] block tag '{}' is ineffective: mod '{}' is not installed (matches nothing on 1.7.10)",
+                tag, com.fox.ysmu.util.ModAvailability.namespaceOf(tag));
+            return;
+        }
         if (!Config.DEBUG_CONTROLLER) {
             return;
         }
-        String name = stripNamespace(tag.toLowerCase(Locale.ROOT));
-        if (REPORTED_TAGS.add(name)) {
-            ysmu.LOG.info(
-                "[YSMU-QUERY] relative_block_has_any_tag: no 1.7.10 mapping for block tag '{}' (only minecraft:replaceable is supported)",
-                tag);
-        }
+        ysmu.LOG.info(
+            "[YSMU-QUERY] relative_block_has_any_tag: no 1.7.10 mapping for block tag '{}' (only minecraft:replaceable is supported)",
+            tag);
     }
 
     private static String stripNamespace(String name) {

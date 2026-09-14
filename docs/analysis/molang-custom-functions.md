@@ -72,14 +72,15 @@ wiki「自定义函数」页除事件订阅外的语法：
 
 | 特性 | 库内用量（参考模型库） | 说明 |
 | --- | --- | --- |
-| `state_pause` / `state_stop` / `ctrl.reset` 的**播放语义** | `state_stop` 2 个文件 | 脚本本身已执行、谓词也认得出，但需要"不换动画地暂停/停止/重置"的播放原语；目前只回落到内置逻辑并记一条一次性日志 |
+| `ctrl.state_pause` | 库内 **0 处** | **已确认不做**。GeckoLib 没有"暂停播放但不暂停时间轴"的原语：`tick` 由 `AnimationProcessor` 统一推进，骨骼关键帧与 timeline/音效/粒子事件共用一个 tick。要做得给控制器加"暂停"并让事件循环改用未暂停的 tick（vendored 变更，只能实机验证）。等真有模型用到再说 |
+| `ctrl.state_stop` 的**平滑**部分 | `state_stop` 2 文件 / 3 处 | **已确认不做**（只保留"中止"）。"平滑淡出"要改 vendored 的骨骼复位分支：`resetTickLength` 默认 1 且全仓无人调用 `setResetSpeedInTicks`，rotation/position 的 `mostRecentReset*Tick` 被写成 0（只有 scale 用了 `seekTime`，还留着"旋转问题相关"的 TODO）→ 改它会让**所有**控制器"骨骼不再被动画驱动"的复位从瞬变变成淡出，需要实机确认没有旋转问题回归 |
 | 非主槽位的动画控制脚本 | `pre_main`/`parallel_N`/`use` 等 | 求值器与注册表都已按槽位就绪，但只有主动画槽位接在 `AnimationManager` 上；其余槽位仍走静态提取 |
 | 条件里调用 `fn.*` / 读 `t.*` / `args[]` | 少量（都在自定义函数与事件订阅脚本里） | 条件求值（`AnimationManager` 的名称映射）走的是另一条路，会把这些当未定义（0） |
-| `ctrl.hold` / `ctrl.use` / `ctrl.swing` 在**脚本**里 | `ctrl.use`/`ctrl.swing` 各 3 次 | 控制器条件路径里有实现，但脚本路径查的是解析器的函数表，命中的是恒 0 的桩函数 |
 | `fn.x` 写在更大的表达式里但不带括号 | — | 只有"整段就是 `fn.x`"才当调用；`1 + fn.x` 里的 `fn.x` 会当未定义变量（0）。需要那种写法就写 `fn.x()`（走 mclib 函数机制，任意位置都成立） |
 
 已补齐（原表里的这几条）：执行动画控制脚本、`@sync` + `ysm.sync`、`q.debug_output`/`ysm.dump_*`
-调试输出。
+调试输出、`ctrl.hold`/`ctrl.use`/`ctrl.swing`/`ctrl.armor`（关键帧与脚本路径，与控制器条件路径
+共用 `CtrlItemMatcher`）、`ctrl.reset`。
 
 `docs/README.md` 的收录原则适用：这些都是跨模型的机制说明，具体模型名只在 `local/` 里出现。
 

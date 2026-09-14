@@ -51,6 +51,13 @@ public class ClientProxy extends CommonProxy {
         com.fox.ysmu.client.animation.controller.ModDependencyRegistry.register(
             new com.fox.ysmu.client.animation.controller.ModDependency("swem",
                 "ctrl.swem_"));
+        // 1.7.10 上不存在的模组：模型用它的命名空间写物品标签/条件时（例如某枪械模型写
+        // equipped_item_any_tag('mainhand','irons_spellbooks:staff')）永远匹配不到。注册后
+        // 控制器解析阶段就能发现它，标签路径也会报"该 mod 未安装"而不是"我们没实现"——
+        // 这是"正确跳过"，不是缺口。
+        com.fox.ysmu.client.animation.controller.ModDependencyRegistry.register(
+            new com.fox.ysmu.client.animation.controller.ModDependency("irons_spellbooks",
+                "irons_spellbooks:"));
         CUSTOM_PLAYER_RENDERER = new CustomPlayerRenderer();
         GeoReplacedEntityRenderer.registerReplacedEntity(CustomPlayerEntity.class, CUSTOM_PLAYER_RENDERER);
         ClientRegistry.registerKeyBinding(AnimationRouletteKey.ANIMATION_ROULETTE_KEY);
