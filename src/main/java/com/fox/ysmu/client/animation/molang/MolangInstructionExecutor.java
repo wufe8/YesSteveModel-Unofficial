@@ -170,6 +170,136 @@ public final class MolangInstructionExecutor {
         return out;
     }
 
+    /**
+     * Conservative classification for the timeline scheduler's per-frame "roaming
+     * immediate visibility" refresh.
+     *
+     * <p>OpenYSM models use timeline instructions such as
+     * {@code v.bq_eye = v.roaming.bq_eye} to copy a 轮盘 value into an animation
+     * variable. Because the wheel can change between two loop iterations, the old
+     * runtime re-executed <em>every</em> roaming-referencing instruction each frame —
+     * including non-idempotent ones (random, increments, particles), which is a
+     * side-effect bug. This method returns true only for instructions that are
+     * provably safe to re-run:
+     * <ul>
+     *   <li>every statement is a top-level {@code v.<name> = <expr>} assignment;</li>
+     *   <li>the instruction mentions {@code roaming.};</li>
+     *   <li>the right-hand side contains no function call (no identifier immediately
+     *       followed by {@code (}) and none of the known side-effect markers
+     *       {@code random}, {@code particle}, {@code sound}, {@code effect},
+     *       {@code spawn};</li>
+     *   <li>the right-hand side does not reference the assignment target itself
+     *       (which would make it an increment/accumulator).</li>
+     * </ul>
+     * Anything else is left to the scheduler's once-per-loop dispatch.
+     */
+    public static boolean isIdempotentRoamingAssignment(String instructions) {
+        if (StringUtils.isBlank(instructions)) {
+            return false;
+        }
+        if (!instructions.toLowerCase(java.util.Locale.ROOT)
+            .contains("roaming.")) {
+            return false;
+        }
+        java.util.List<String> statements;
+        try {
+            statements = executableStatements(instructions);
+        } catch (MolangException e) {
+            return false;
+        }
+        if (statements.isEmpty()) {
+            return false;
+        }
+        for (String statement : statements) {
+            int eq = findAssignmentOperator(statement);
+            if (eq <= 0) {
+                return false;
+            }
+            String target = statement.substring(0, eq)
+                .trim()
+                .toLowerCase(java.util.Locale.ROOT);
+            if (!target.matches("v\\.[a-z_][a-z0-9_.]*") || target.startsWith("v.roaming.")) {
+                return false;
+            }
+            String rhs = statement.substring(eq + 1)
+                .trim()
+                .toLowerCase(java.util.Locale.ROOT);
+            if (rhs.isEmpty() || hasFunctionCall(rhs)) {
+                return false;
+            }
+            if (rhs.contains("random") || rhs.contains("particle") || rhs.contains("sound")
+                || rhs.contains("effect") || rhs.contains("spawn")) {
+                return false;
+            }
+            if (containsToken(rhs, target)) {
+                return false;
+            }
+            // Restrict to roaming inputs, numeric literals and pure operators.
+            // Reject cross-assignment cycles (v.a=v.b; v.b=v.a+1), aliases,
+            // bare function references and nested assignments as well as direct increments.
+            String pure = rhs.replaceAll("v\\.roaming\\.[a-z_][a-z0-9_.]*", "0");
+            pure = pure.replaceAll("[0-9]+(?:\\.[0-9]*)?(?:e[+-]?[0-9]+)?", "0");
+            if (!pure.matches("[0.\\s()+*/%?!:<>=&|~-]*")) {
+                return false;
+            }
+            for (int i = 0; i < pure.length(); i++) {
+                if (pure.charAt(i) == '=') {
+                    char before = i > 0 ? pure.charAt(i - 1) : ' ';
+                    char after = i + 1 < pure.length() ? pure.charAt(i + 1) : ' ';
+                    if (before != '=' && before != '!' && before != '<' && before != '>' && after != '=') {
+                        return false;
+                    }
+                }
+            }
+        }
+        return true;
+    }
+
+    /** True when {@code text} contains a function call — an identifier immediately
+     *  followed by {@code (} (whitespace allowed). A parenthesised expression such
+     *  as {@code (v.roaming.a) ? 1 : 0} is not a call and stays eligible for the
+     *  idempotent refresh. */
+    private static boolean hasFunctionCall(String text) {
+        for (int i = 0; i < text.length(); i++) {
+            if (text.charAt(i) != '(') {
+                continue;
+            }
+            int j = i - 1;
+            while (j >= 0 && Character.isWhitespace(text.charAt(j))) {
+                j--;
+            }
+            if (j >= 0 && isTokenChar(text.charAt(j))) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** True when {@code token} occurs in {@code text} delimited by non-identifier
+     *  characters (identifier chars are {@code [a-z0-9_.]} so Molang variable names
+     *  such as {@code v.x} compare as a whole token). */
+    private static boolean containsToken(String text, String token) {
+        int length = text.length();
+        int tokenLength = token.length();
+        if (tokenLength == 0 || tokenLength > length) {
+            return false;
+        }
+        for (int i = 0; i + tokenLength <= length; i++) {
+            if (text.regionMatches(i, token, 0, tokenLength)) {
+                boolean leftOk = i == 0 || !isTokenChar(text.charAt(i - 1));
+                boolean rightOk = i + tokenLength >= length || !isTokenChar(text.charAt(i + tokenLength));
+                if (leftOk && rightOk) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    }
+
+    private static boolean isTokenChar(char c) {
+        return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_' || c == '.';
+    }
+
     /** Execute a pre-parsed instruction array — no split/parse overhead. */
     private static void executeCached(ParsedInstruction[] ops) {
         for (ParsedInstruction pi : ops) {

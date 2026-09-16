@@ -15,8 +15,10 @@ import org.apache.commons.lang3.StringUtils;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.AnimationEntry;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Controller;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.ControllerSet;
+import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.NamedParallelSlots;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.State;
 import com.fox.ysmu.client.animation.controller.OpenYsmControllerDefinitions.Transition;
+import com.fox.ysmu.client.animation.molang.MolangScriptRegistry;
 import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
 import com.google.gson.JsonArray;
@@ -169,31 +171,95 @@ public final class OpenYsmAnimationControllerRegistry {
      * 也发控制器，于是模型会把整块状态机挂在一个具名槽位上。YSMU 用固定的备用池
      * （{@code *_extra_<i>_controller}）承载它们：第 i 个池控制器 = 这份列表的第 i 项。
      * <p>
-     * 列表取自 {@code controllers ∪ declaredNames}（按槽位名排序）：
+     * 列表取自 {@code controllers ∪ declaredNames ∪ 控制脚本槽位}，按槽位名**小写形式**排序：
      * <ul>
      *   <li>用 declaredNames 是为了**索引稳定** —— 只声明了空 states 的占位槽位也必须占一个
      *       位置，否则它后面的槽位会整体前移、错播别人的动画；</li>
-     *   <li>{@code player.} 前缀与短名视为同一个槽位（按槽位名去重），前缀写法优先。</li>
+     *   <li>把 {@code @player_ctrl_<槽位>.molang} 里声明的具名并行槽位也算进来，是为了支持
+     *       **只有脚本、没有 JSON 控制器**的槽位（它同样需要一个池控制器承载）；</li>
+     *   <li>{@code player.} 前缀与短名视为同一个槽位（按槽位名去重），前缀写法优先；</li>
+     *   <li>JSON 声明与控制脚本共用同一次排序，所以一个槽位无论来自哪边都落在同一个下标。</li>
      * </ul>
      *
      * @param animationId 模型的动画 id
      * @param family      族名，{@code pre_parallel} 或 {@code parallel}
      */
     public static List<String> namedParallelSlots(ResourceLocation animationId, String family) {
-        ControllerSet set = animationId == null ? null : CONTROLLERS.get(animationId);
-        if (set == null || family == null) {
+        if (animationId == null || family == null) {
             return Collections.emptyList();
         }
-        // 池控制器的谓词每帧都会问一次，所以结果缓存在 ControllerSet 上
-        // （注册即整体替换，因此不会过期）。
-        return set.namedParallelSlotCache.computeIfAbsent(family, key -> computeNamedParallelSlots(set, key));
+        ControllerSet set = CONTROLLERS.get(animationId);
+        long generation = MolangScriptRegistry.generation();
+        if (set == null) {
+            // 模型只有 functions/ 而没有 controller/*.json：没有 ControllerSet 可挂缓存，
+            // 用一张按 (模型, 族) 的静态表兜底；脚本表一变就重算。
+            String cacheKey = animationId + "\u0000" + family;
+            NamedParallelSlots cached = SCRIPT_ONLY_SLOT_CACHE.get(cacheKey);
+            if (cached != null && cached.scriptGeneration == generation) {
+                return cached.slots;
+            }
+            List<String> slots = computeNamedParallelSlots(null, animationId, family);
+            SCRIPT_ONLY_SLOT_CACHE.put(cacheKey, new NamedParallelSlots(generation, slots));
+            return slots;
+        }
+        // 池控制器的谓词每帧都会问一次，所以结果缓存在 ControllerSet 上；
+        // 列表内容依赖控制脚本表，因此缓存项带上算它时的脚本版本。
+        NamedParallelSlots cached = set.namedParallelSlotCache.get(family);
+        if (cached != null && cached.scriptGeneration == generation) {
+            return cached.slots;
+        }
+        List<String> slots = computeNamedParallelSlots(set, animationId, family);
+        set.namedParallelSlotCache.put(family, new NamedParallelSlots(generation, slots));
+        return slots;
     }
 
-    private static List<String> computeNamedParallelSlots(ControllerSet set, String family) {
-        java.util.TreeSet<String> slots = new java.util.TreeSet<>();
-        collectNamedParallelSlots(set.controllers.keySet(), family, slots);
-        collectNamedParallelSlots(set.declaredNames, family, slots);
-        return slots.isEmpty() ? Collections.emptyList() : new ArrayList<>(slots);
+    /** 模型完全没有 controller/*.json 时，只有控制脚本的具名并行槽位表的兜底缓存。 */
+    private static final Map<String, NamedParallelSlots> SCRIPT_ONLY_SLOT_CACHE = new ConcurrentHashMap<>();
+
+    private static List<String> computeNamedParallelSlots(ControllerSet set, ResourceLocation animationId,
+        String family) {
+        // 用 TreeMap（key = 槽位名小写、value = 首次见到的拼写）而不是 TreeSet：
+        // JSON 声明优先保留原始大小写，`resolveParallelSlotKey` 要用它去查 ControllerSet；
+        // 排序键统一小写，使同一个槽位无论来自 JSON 还是脚本都排在同一个下标。
+        java.util.TreeMap<String, String> slots = new java.util.TreeMap<>();
+        if (set != null) {
+            collectNamedParallelSlots(set.controllers.keySet(), family, slots);
+            collectNamedParallelSlots(set.declaredNames, family, slots);
+        }
+        collectScriptNamedParallelSlots(animationId, family, slots);
+        return slots.isEmpty() ? Collections.emptyList() : new ArrayList<>(slots.values());
+    }
+
+    /** 收集形如 {@code (player.)?<family>_<非数字开头>} 的槽位名（取 {@code <family>_} 之后的部分）。
+     *  key 用小写形式去重，value 保留首次见到的拼写。 */
+    private static void collectNamedParallelSlots(Iterable<String> controllerNames, String family,
+        java.util.Map<String, String> out) {
+        java.util.regex.Pattern pattern = java.util.regex.Pattern
+            .compile("^(?:player\\.)?" + java.util.regex.Pattern.quote(family) + "_([^0-9].*)$");
+        for (String name : controllerNames) {
+            if (name == null) {
+                continue;
+            }
+            java.util.regex.Matcher matcher = pattern.matcher(name);
+            if (matcher.matches()) {
+                String suffix = matcher.group(1);
+                out.putIfAbsent(suffix.toLowerCase(java.util.Locale.ROOT), suffix);
+            }
+        }
+    }
+
+    /** 控制脚本（{@code @player_ctrl_<槽位>.molang}）里声明的具名并行槽位。
+     *  脚本槽位名在登记时已统一为小写（见 {@link MolangScriptRegistry}），这里只按族筛选。 */
+    private static void collectScriptNamedParallelSlots(ResourceLocation animationId, String family,
+        java.util.Map<String, String> out) {
+        if (animationId == null) {
+            return;
+        }
+        List<String> scriptSlots = MolangScriptRegistry.controlSlots(animationId);
+        if (scriptSlots.isEmpty()) {
+            return;
+        }
+        collectNamedParallelSlots(scriptSlots, family, out);
     }
 
     /**
@@ -214,22 +280,6 @@ public final class OpenYsmAnimationControllerRegistry {
             return shortName;
         }
         return null;
-    }
-
-    /** 收集形如 {@code (player.)?<family>_<非数字开头>} 的槽位名（取 {@code <family>_} 之后的部分）。 */
-    private static void collectNamedParallelSlots(Iterable<String> controllerNames, String family,
-        java.util.Set<String> out) {
-        java.util.regex.Pattern pattern =
-            java.util.regex.Pattern.compile("^(?:player\\.)?" + java.util.regex.Pattern.quote(family) + "_([^0-9].*)$");
-        for (String name : controllerNames) {
-            if (name == null) {
-                continue;
-            }
-            java.util.regex.Matcher matcher = pattern.matcher(name);
-            if (matcher.matches()) {
-                out.add(matcher.group(1));
-            }
-        }
     }
 
     /**
@@ -321,6 +371,7 @@ public final class OpenYsmAnimationControllerRegistry {
 
     public static void clear() {
         CONTROLLERS.clear();
+        SCRIPT_ONLY_SLOT_CACHE.clear();
         WARNED.clear();
         OpenYsmPlayerControllerRuntime.clear();
         ProjectileControllerRuntime.clear();

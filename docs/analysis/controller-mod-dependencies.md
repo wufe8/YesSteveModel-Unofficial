@@ -57,19 +57,37 @@ animatable 只调用一次 `registerControllers`，而 `CustomPlayerEntity.mainM
 
 1. `CustomPlayerEntity.registerControllers` 在数字 `pre_parallel_0..7` 之后追加
    `pre_parallel_extra_0..N-1_controller`，在数字 `parallel_0..7` 之后追加
-   `parallel_extra_0..N-1_controller`（N = `ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS`）。
+   `parallel_extra_0..N-1_controller`。N 取 `Config.NAMED_PARALLEL_EXTRA_SLOTS`（配置项
+   `NamedParallelExtraSlots`，默认 8、上限 `ControllerUtils.MAX_NAMED_PARALLEL_EXTRA_SLOTS`
+   = 16、0 = 关闭）——池是**每实体**注册的控制器，所以用有上限的配置值而不是"按模型动态加"。
    谓词用 `predicateOpenYsmSlot`（走模型自己的状态机），**不是** `predicateParallel`
    （那是"直接播同名动画"的兜底，具名槽位没有同名动画）。插入位置即优先级：
    `AnimationData` 内部是 `LinkedHashMap`，后执行的覆盖先执行的。
-2. `OpenYsmPlayerControllerRuntime.resolveControllers` 先认出池名
+2. `OpenYsmPlayerControllerRuntime.resolveControllers` 先调 `routeNamedParallel` 认出池名
    `(player\.)?<族>_extra_<i>_controller`（必须先分流，否则会掉进数字槽位解析），
-   再取该族第 i 个具名槽位并 `addMatch`。
+   再取该族第 i 个具名槽位对应的 ControllerSet 键并 `addMatch`（脚本专用槽位没有键，
+   只走第 5 点的脚本路由）。
 3. 槽位表 `OpenYsmAnimationControllerRegistry.namedParallelSlots()` 取自
-   `controllers ∪ declaredNames` 并按槽位名排序：**只声明了空 states 的占位槽位也必须占一个
-   位置**，否则它后面的槽位会整体前移、错播别人的动画。`player.` 前缀与短名视为同一个槽位。
-   结果缓存在 `ControllerSet` 上（池谓词每帧都要问一次；注册时整个 set 被替换，不会过期）。
+   `controllers ∪ declaredNames ∪ 控制脚本槽位`，按**槽位名小写形式**排序：
+   **只声明了空 states 的占位槽位也必须占一个位置**，否则它后面的槽位会整体前移、错播别人的
+   动画。`player.` 前缀与短名视为同一个槽位（按小写去重，JSON 声明的拼写优先）。
+   结果缓存在 `ControllerSet` 上（池谓词每帧都要问一次；注册时整个 set 被替换），
+   缓存同时记下算它时的 `MolangScriptRegistry.generation()`，脚本表变了就重算 ——
+   脚本可能先于/晚于控制器登记。模型完全没有 `controller/*.json` 时（只有 `functions/`）
+   走一张按 (模型, 族) 的静态兜底缓存。
 4. 模型的具名槽位比池子多时，多出来的没有池控制器承载、永远不会播放 —— 此时打一条一次性
-   `warnOnce`，不静默截断（提高 `NAMED_PARALLEL_EXTRA_SLOTS` 即可）。
+   `warnOnce`（`... declares N named <族> slots but only <pool> extra pool controllers exist;
+   raise Config NamedParallelExtraSlots ...`），不静默截断。
+5. **控制脚本路由**：池控制器谓词先走 `AnimationManager.applyControlScript`。普通槽位由
+   `controlSlotName` 推导槽位名，池控制器推不出（名字是实现细节），改问
+   `OpenYsmPlayerControllerRuntime.namedParallelControlSlot(model, 池控制器名)` ——
+   它给出"第 i 个池控制器本帧承载的 wiki 槽位名"（如 `parallel_car`、
+   `pre_parallel_表情`）。槽位表把控制脚本槽位也算进去，所以**只有
+   `@player_ctrl_<槽位>.molang`、没有 JSON 控制器**的具名槽位同样能被池承载并执行。
+6. **reset 路由**：`ctrl.reset` 只拿得到 wiki 槽位名（`parallel_car`），而运行时状态键可能是
+   OpenYSM 名（`player.parallel_car`，池承载具名槽位时的常见形态）或 legacy 名
+   （`*_controller`）。`clearControllerState` 通过 `matchesControllerName` 统一去掉
+   `player.` 前缀与 `_controller` 后缀再比较，三种拼写都能命中同一个槽位。
 
 池名的 `pre_parallel_extra_*`/`parallel_extra_*` 前缀会被既有的"这是并行控制器"判断
 （`excludeRoot`、漫游变量优化、音效归属等）自然覆盖，与数字槽位同一条路径。
@@ -78,8 +96,11 @@ animatable 只调用一次 `registerControllers`，而 `CustomPlayerEntity.mainM
 
 - 具名槽位只在 player（与第一人称手臂，若将来有专用实体）上有意义；参考实现的
   弹射物/载具是 `allowExtraSlots=false`，YSMU 的池也只注册在 `CustomPlayerEntity` 上。
-- `state_pause`/`state_stop` 之间的播放方式差异、以及 `ctrl.reset` 仍未实现（见
-  `analysis/molang-custom-functions.md`）。
+- 池容量有上限（配置最多 16/族，即每实体最多 32 个额外控制器）。超过上限的具名槽位永远
+  不播放，只有一条 `warnOnce`；要彻底消除只能改成"生命周期安全的动态注册/重建控制器"，
+  那需要碰 `AnimationData` 生命周期（曾试过并回退，见上文），不在当前实现范围。
+- `state_pause` 与 `state_stop` 的**平滑淡出**仍未实现（见 `analysis/molang-custom-functions.md`）；
+  `ctrl.reset` 已实现，且具名并行池承载的槽位也能被 reset 到（控制器名归一化匹配）。
 
 ## 排查方法
 
@@ -95,5 +116,8 @@ animatable 只调用一次 `registerControllers`，而 `CustomPlayerEntity.mainM
 - 刚同步完的前几帧会看到 `missing animation` / `no active animations`，那是懒加载暖机，
   下一帧就绪即正常。
 - 具名并行槽位：`DebugController=true` 时，若模型声明的具名槽位超过池子大小，会有一条
-  `warnOnce`（`... declares N named <族> slots but only ... extra pool controllers exist`）。
-  槽位表本身可用 JUnit 断言（`NamedParallelSlotsTest`），不需要开游戏。
+  `warnOnce`（`... declares N named <族> slots but only ... extra pool controllers exist; raise
+  Config NamedParallelExtraSlots ...`；`config/ysmu.cfg` 的 `animation` 组，上限 16）。
+  槽位表/路由本身可用 JUnit 断言（`NamedParallelSlotsTest`、`NamedParallelRoutingTest`），
+  不需要开游戏：前者测排序/索引稳定/缓存，后者测模型感知路由、换模型、脚本专用槽位、溢出
+  标记与 reset 名匹配。控制脚本是否真的接管仍要看 `[YSMU-CTRLSCRIPT]` 行（实机）。

@@ -19,9 +19,15 @@ public final class ControllerUtils {
 
     /**
      * 具名并行槽位（{@code player.pre_parallel_<非数字后缀>} / {@code player.parallel_<...>}）
-     * 的备用池大小。wiki 只定义数字槽位，但官方对非数字后缀也发控制器；池子固定是为了不受
-     * "模型切换而 {@code registerControllers} 只跑一次"的影响，路由见
-     * {@code OpenYsmPlayerControllerRuntime.resolveControllers()}。
+     * 备用池大小的**默认值**。wiki 只定义数字槽位，但官方对非数字后缀也发控制器；池子固定是为了
+     * 不受"模型切换而 {@code registerControllers} 只跑一次"的影响。
+     * <p>
+     * 实际生效的值是 {@code Config.NAMED_PARALLEL_EXTRA_SLOTS}（配置项 {@code NamedParallelExtraSlots}，
+     * 本常量只提供默认值）；路由见 {@code OpenYsmPlayerControllerRuntime.routeNamedParallel()}。
      */
-    public static final int NAMED_PARALLEL_EXTRA_SLOTS = 4;
+    public static final int DEFAULT_NAMED_PARALLEL_EXTRA_SLOTS = 8;
+
+    /** 配置允许的备用池大小上限：池是**每个实体**注册的控制器，不能无限制地加。
+     *  16 = 每族 16 个（两族共 32 个）已经是"具名槽位极端多"的模型才需要的规模。 */
+    public static final int MAX_NAMED_PARALLEL_EXTRA_SLOTS = 16;
 }

@@ -1,10 +1,11 @@
-﻿key.category.yes_steve_model=Yes Steve Model
+key.category.yes_steve_model=Yes Steve Model
 gui.yes_steve_model.close=关闭
 gui.yes_steve_model.pre_page=前一页
 gui.yes_steve_model.next_page=后一页
 gui.yes_steve_model.all_models=所有模型
 gui.yes_steve_model.star_models=收藏模型
 gui.yes_steve_model.config=打开配置界面
+gui.yes_steve_model.config.named_parallel_slots=每族具名槽位：%s（修改配置文件后重启生效）
 gui.yes_steve_model.download=打开下载界面
 gui.yes_steve_model.search=搜索模型……
 gui.yes_steve_model.model.authors=§2§l▌ §3作者：%s

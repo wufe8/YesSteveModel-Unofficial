@@ -83,8 +83,9 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
   `predicateParallel`（数字 `pre_parallel_N`/`parallel_N`）、`predicateUse`（`use`）；
   主动画槽位在 `getActiveAnimations` 里内联求值（先跑脚本再决定目标动画，不绕过
   `predicateMain` 的 `legacyBodyActive` 等簿记）。槽位名由 `controlSlotName` 从控制器名推导
-  （`player.X` → `X`、`X_controller` → `X`）；具名并行备用池返回 null（模型槽位名只有运行时
-  路由知道）。只在"明确 `state_continue` + 动画名存在"时覆盖内置逻辑，
+  （`player.X` → `X`、`X_controller` → `X`）；具名并行备用池（`*_extra_N_controller`）推不出名字，
+  由 `AnimationManager.controlSlotFor` 问 `OpenYsmPlayerControllerRuntime.namedParallelControlSlot`
+  拿当前模型路由到的槽位。只在"明确 `state_continue` + 动画名存在"时覆盖内置逻辑，
   `bypass`/`NONE`/脚本报错/动画不存在一律回退，所以开启它（`Config.MolangControlScripts`，
   可关闭回旧行为）不会让本来能动的模型不动。脚本给出的循环类型会用上
   （`ctrl.loop`/`play_once`/`hold_on_last_frame`）。
@@ -92,7 +93,8 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
   `ctrl.reset` = `PlayState.STOP`（清骨骼队列即"粗暴中止"）+ `markNeedsReload` + 清该槽位的
   控制器运行时状态；`state_stop` = 同样的中止 + 重载。`state_pause` 交回内置逻辑
   （GeckoLib 没有暂停原语），`DebugController` 下每个 模型×槽位 记一条一次性日志，不假装支持。
-  非主槽位（`pre_main` / `parallel_N` / `use`…）的脚本目前只走静态提取。
+  清控制器状态时按 `player.` 前缀/`_controller` 后缀归一化匹配，因此池承载的具名并行槽位
+  （运行时键是 `player.<族>_<名字>`）也能被 `ctrl.reset` 重置到。
 - **`state_stop` 的"平滑"与 `state_pause`：已确认不做**（库内用量 `state_stop` 2 文件 3 处、
   `state_pause` 0 处）。`state_stop` 的"平滑"要改 vendored 的骨骼复位分支：`resetTickLength`
   默认 1 且全仓无人调用 `setResetSpeedInTicks`，rotation/position 的 `mostRecentReset*Tick` 被硬写成 0

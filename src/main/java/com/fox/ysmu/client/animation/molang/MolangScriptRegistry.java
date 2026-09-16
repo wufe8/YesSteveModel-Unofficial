@@ -49,6 +49,18 @@ public final class MolangScriptRegistry {
 
     private static final Map<ResourceLocation, Entry> MODELS = new ConcurrentHashMap<>();
 
+    /**
+     * 脚本表内容版本号：每次 {@link #register} 覆盖某个模型、或 {@link #clear} 时递增。
+     * <p>
+     * 具名并行槽位表（{@code OpenYsmAnimationControllerRegistry.namedParallelSlots}）要把
+     * "只有控制脚本、没有 JSON 控制器"的槽位也算进去，于是它的内容同时依赖脚本表。
+     * 槽位表按帧缓存（池谓词每帧都要问），缓存的失效条件因此不能只是"控制器重新注册"——
+     * 脚本可以先于/晚于控制器登记。这里给出一个全局单调版本号，缓存带上算出的版本，
+     * 版本不匹配就重算。假阳性（脚本变了但槽位没变）只是多算一次，不会读错。
+     */
+    private static final java.util.concurrent.atomic.AtomicLong GENERATION =
+        new java.util.concurrent.atomic.AtomicLong();
+
     private MolangScriptRegistry() {}
 
     // ---- 文件名解析（纯函数，便于单测） ----
@@ -175,6 +187,7 @@ public final class MolangScriptRegistry {
             }
         }
         MODELS.put(modelId, entry);
+        GENERATION.incrementAndGet();
     }
 
     /** 动画控制脚本正文（{@code @player_ctrl_<slot>.molang}）；没有返回 null。 */
@@ -254,6 +267,12 @@ public final class MolangScriptRegistry {
 
     public static void clear() {
         MODELS.clear();
+        GENERATION.incrementAndGet();
+    }
+
+    /** 脚本表内容版本号（见 {@link #GENERATION}）：供按帧缓存的槽位表判断是否过期。 */
+    public static long generation() {
+        return GENERATION.get();
     }
 
     /** 把字节正文解码成字符串（脚本是 UTF-8 文本）。 */

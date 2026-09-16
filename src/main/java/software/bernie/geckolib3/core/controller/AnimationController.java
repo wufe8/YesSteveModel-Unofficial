@@ -177,6 +177,43 @@ public class AnimationController<T extends IAnimatable> {
         void executeInstruction(CustomInstructionKeyframeEvent<A> event);
     }
 
+    /**
+     * YSMU: narrow per-controller playback clock probe.
+     * <p>
+     * Unlike {@link ICustomInstructionListener} (which is bound to GeckoLib's own
+     * keyframe list and fires at GeckoLib's dispatch point), this listener is called
+     * exactly once per running frame for the animation currently being evaluated,
+     * <em>after</em> the time update (animationSpeed, {@code anim_time_update}, loop
+     * wrap and HOLD clamp) and <em>before</em> bone evaluation. That is the only
+     * point at which {@code tick} is the animation's final playback time for the
+     * frame, which is what the YSMU timeline scheduler needs.
+     * <p>
+     * The listener receives the animation instance being evaluated, so a listener
+     * that belongs to a different controller state (or to a controller that was
+     * retired by a model switch) can ignore the callback by identity.
+     */
+    @FunctionalInterface
+    public interface ITimelinePlaybackListener {
+
+        /**
+         * @param animation the animation instance whose playback position is
+         *                  reported (identity, never null)
+         * @param tick      the final playback tick of this frame
+         * @param delta     exact forward distance since the previous report, in ticks
+         * @param wrapped   true when the tick was wrapped by a loop this frame
+         */
+        void onTimelinePlayback(Animation animation, double tick, double delta, boolean wrapped);
+
+        /** A listener that ignores every callback, used to retire a timeline. */
+        ITimelinePlaybackListener NONE = new ITimelinePlaybackListener() {
+
+            @Override
+            public void onTimelinePlayback(Animation animation, double tick, double delta, boolean wrapped) {
+                // intentionally empty
+            }
+        };
+    }
+
     private final HashMap<String, BoneAnimationQueue> boneAnimationQueues = new HashMap<>();
     private final List<BoneAnimationQueue> activeBoneAnimationQueues = new ArrayList<>();
         // YSMU perf: Pre-built bone name → IBone map — populated once per process() call,
@@ -185,6 +222,31 @@ public class AnimationController<T extends IAnimatable> {
     private HashMap<String, IBone> boneNameToBone = new HashMap<>();
     // YSMU: tickOffset for animation frame time tracking
     public double tickOffset;
+    // YSMU: the final playback tick of the frame currently being processed
+    // (animationSpeed applied, anim_time_update resolved, loop wrapped, HOLD
+    // clamped). It is assigned inside processCurrentAnimation() AFTER the time
+    // update and BEFORE bone evaluation, which is the first point where it is the
+    // value GeckoLib is actually about to evaluate the bones with.
+    private double syncTick;
+    // YSMU: the exact forward distance the playback clock travelled since the
+    // previous report, measured in the same tick units as syncTick. It is the
+    // position's own advance, except across a loop wrap where the position restarts
+    // and the raw elapsed playback time is used instead; a seek/restart is reported
+    // as delta 0 with a new position.
+    private double syncDelta;
+    // YSMU: the raw adjusted tick of the previous report, used only to detect a loop
+    // wrap and to re-anchor; -1 means "re-anchor on the next report".
+    private double lastSyncActualTick = -1.0d;
+    // YSMU: whether processCurrentAnimation() emitted a playback report this frame.
+    // The re-anchor below must key off "no report happened", not off a comparison with
+    // the raw process() tick — since a loop wrap moves tickOffset, the adjusted tick and
+    // the raw seek tick differ for every later frame, which used to re-anchor them all
+    // (delta 0 forever, i.e. the timeline froze after the first loop).
+    private boolean syncReportedThisFrame;
+    // YSMU: listener notified once per frame from processCurrentAnimation() after
+    // the time update and before bone evaluation; the YSMU timeline scheduler uses
+    // it to dispatch on the real playback clock.
+    private ITimelinePlaybackListener timelinePlaybackListener;
     public Queue<Animation> animationQueue = new LinkedList<>();
     public Animation currentAnimation;
     public AnimationBuilder currentAnimationBuilder = new AnimationBuilder();
@@ -250,6 +312,8 @@ public class AnimationController<T extends IAnimatable> {
             if (builder == null || builder.getRawAnimationList()
                 .size() == 0) {
                 animationState = AnimationState.Stopped;
+                // YSMU: the playback clock stopped; the next running report re-anchors.
+                this.lastSyncActualTick = -1.0d;
             } else if (!builder.getRawAnimationList()
                 .equals(currentAnimationBuilder.getRawAnimationList()) || needsAnimationReload) {
                     AtomicBoolean encounteredError = new AtomicBoolean(false);
@@ -301,6 +365,9 @@ public class AnimationController<T extends IAnimatable> {
                     this.animationState = AnimationState.Transitioning;
                     justStartedTransition = true;
                     needsAnimationReload = false;
+                    // YSMU: a fresh animation starts its own clock; re-anchor the
+                    // playback report so the first frame reports delta 0.
+                    this.lastSyncActualTick = -1.0d;
                 }
         }
     }
@@ -358,6 +425,11 @@ public class AnimationController<T extends IAnimatable> {
         // tick-0 sound keyframe is not in the set either, so it fires immediately
         // even though this swing already played its sound.
         carrySoundKeyFramesPassed(outgoing, outgoingPosition);
+        // YSMU: the variant switch keeps the playback position but the listener must
+        // re-anchor to the new animation instead of measuring a cross-animation jump
+        // (the merged copy may have a different length, so a raw position delta would
+        // look like a seek). The kept position is reported as the next anchor.
+        this.lastSyncActualTick = -1.0d;
         return this.currentAnimation != null;
     }
 
@@ -614,7 +686,13 @@ public class AnimationController<T extends IAnimatable> {
 
         assert tick >= 0 : "GeckoLib: Tick was less than zero";
 
+        // YSMU: `tick` here is still the predicate-time value. It is NOT the final
+        // playback time for this frame — processCurrentAnimation() may replace it
+        // from anim_time_update and/or wrap it for the loop / clamp it for HOLD.
+        // The timeline scheduler must not read it from this point; the definitive
+        // report is emitted inside processCurrentAnimation() below.
         // This tests the animation predicate
+        this.timelinePlaybackListener = ITimelinePlaybackListener.NONE;
         PlayState playState = this.testAnimationPredicate(event);
         if (playState == PlayState.STOP || (currentAnimation == null && animationQueue.size() == 0)) {
             // The animation should transition to the model's initial state
@@ -628,6 +706,8 @@ public class AnimationController<T extends IAnimatable> {
             // animation).
             this.boneAnimationQueues.clear();
             this.activeBoneAnimationQueues.clear();
+            // YSMU: no playback while stopped; the next running frame re-anchors.
+            this.lastSyncActualTick = -1.0d;
             return;
         }
 
@@ -835,6 +915,8 @@ public class AnimationController<T extends IAnimatable> {
     private void processCurrentAnimation(double tick, double actualTick, MolangParser parser,
         boolean crashWhenCantFindBone) {
         assert currentAnimation != null;
+        boolean wrappedThisFrame = false;
+        this.syncReportedThisFrame = false;
         // YSMU: anim_time_update — 逐动画自定义时间推进（Bedrock 风格）。
         // 表达式每帧求值，返回动画时间（秒）；query.anim_time = 上一帧时间，
         // query.delta_time = 本帧时间增量（秒）。未提供该字段时走默认时间推进。
@@ -879,6 +961,9 @@ public class AnimationController<T extends IAnimatable> {
             // 普通动画关键帧 Molang 引用 query.delta_time 时读到陈旧/跨动画的值。
             parser.setValue("query.delta_time", 1.0 / 20.0);
         }
+        // Preserve the evaluated pre-wrap position: raw wall-time deltas are not
+        // equivalent when anim_time_update or animationSpeed changes.
+        double timelineUnwrappedTick = tick;
         // Animation has ended
         if (tick >= currentAnimation.animationLength) {
             if (currentAnimation.loop == EDefaultLoopTypes.HOLD_ON_LAST_FRAME) {
@@ -886,11 +971,16 @@ public class AnimationController<T extends IAnimatable> {
             } else if (!currentAnimation.loop.isRepeatingAfterEnd()) {
                 processKeyFrameEvents(currentAnimation.animationLength);
                 resetEventKeyFrames();
+                // YSMU: report the terminal tick before the state leaves Running, so a
+                // timeline on a PLAY_ONCE animation still sees its final position
+                // (otherwise the last events before the stop would be skipped).
+                reportTimelinePlayback(currentAnimation.animationLength, currentAnimation.animationLength, false);
                 // Pull the next animation from the queue
                 Animation peek = animationQueue.peek();
                 if (peek == null) {
                     // No more animations left, stop the animation controller
                     this.animationState = AnimationState.Stopped;
+                    this.lastSyncActualTick = -1.0d;
                     return;
                 } else {
                     // Otherwise, set the state to transitioning and start transitioning to the next
@@ -903,11 +993,16 @@ public class AnimationController<T extends IAnimatable> {
                 processKeyFrameEvents(currentAnimation.animationLength);
                 resetEventKeyFrames();
                 tick = wrapLoopTick(actualTick, tick, currentAnimation.animationLength);
+                wrappedThisFrame = true;
             }
         }
         if (customTime) {
             this.lastAnimTimeTick = tick;
         }
+        // YSMU: definitive playback report for this frame. Everything above (loop
+        // wrap, HOLD clamp, anim_time_update) has already resolved `tick`, and bone
+        // evaluation below has not run yet — the timeline scheduler dispatches here.
+        reportTimelinePlayback(tick, wrappedThisFrame ? timelineUnwrappedTick : tick, wrappedThisFrame);
         setAnimTime(parser, tick);
         processKeyFrameEvents(tick);
 
@@ -958,6 +1053,15 @@ public class AnimationController<T extends IAnimatable> {
         }
         if (this.transitionLengthTicks == 0 && shouldResetTick && this.animationState == AnimationState.Transitioning) {
             this.currentAnimation = animationQueue.poll();
+        }
+        // YSMU: a frame that ends in Transitioning (a non-looping animation handing
+        // over to the next one) may not report a playback delta. Re-anchor here so the
+        // next report measures from the state it actually resumes at instead of counting
+        // the whole hand-over frame as forward playback. Use the per-frame report flag:
+        // comparing against the raw process() tick would differ from the adjusted tick
+        // on every frame after a loop wrap and re-anchor them all.
+        if (!this.syncReportedThisFrame) {
+            this.lastSyncActualTick = -1.0d;
         }
     }
 
@@ -1205,6 +1309,89 @@ public class AnimationController<T extends IAnimatable> {
 
     public double getAnimationSpeed() {
         return animationSpeed;
+    }
+
+    /**
+     * YSMU: report this frame's final playback position to the registered timeline
+     * listener. Called from {@link #processCurrentAnimation} after the time update
+     * and before bone evaluation (and once more at the terminal tick before a
+     * non-looping animation leaves Running).
+     * <p>
+     * The forward distance is the playback position's own advance, so it stays exact
+     * when {@link #animationSpeed} changes between frames and when
+     * {@code anim_time_update} drives the clock; only a loop wrap (where the position
+     * restarts) falls back to the raw elapsed playback time so the distance is never
+     * negative. A report that re-anchors (new animation, restart, resume) carries
+     * delta 0 with the new position, which the consumer treats as a rebase instead of
+     * a replay. Exceptions from the listener never break playback.
+     */
+    private void reportTimelinePlayback(double tick, double actualTick, boolean wrapped) {
+        double delta = 0.0d;
+        if (this.lastSyncActualTick >= 0.0d) {
+            if (wrapped) {
+                // The position restarted at the wrap, so the forward distance is the
+                // raw elapsed playback time, not the position difference.
+                double playbackDelta = actualTick - this.syncTick;
+                if (Double.isFinite(playbackDelta) && playbackDelta > 0.0d) {
+                    delta = playbackDelta;
+                }
+            } else {
+                // No wrap: the position difference IS the forward distance, and it
+                // stays exact even when animationSpeed changed between the two frames
+                // (a raw time difference times the new speed would not).
+                double tickDelta = tick - this.syncTick;
+                if (Double.isFinite(tickDelta) && tickDelta > 0.0d) {
+                    delta = tickDelta;
+                }
+            }
+        }
+        if (!Double.isFinite(delta) || delta < 0.0d) {
+            delta = 0.0d;
+        }
+        this.syncTick = tick;
+        this.syncDelta = delta;
+        this.lastSyncActualTick = actualTick;
+        this.syncReportedThisFrame = true;
+        ITimelinePlaybackListener listener = this.timelinePlaybackListener;
+        if (listener != null && listener != ITimelinePlaybackListener.NONE) {
+            try {
+                listener.onTimelinePlayback(currentAnimation, tick, delta, wrapped);
+            } catch (RuntimeException ignored) {
+                // A broken timeline must not take the animation down with it.
+                this.timelinePlaybackListener = ITimelinePlaybackListener.NONE;
+            }
+        }
+    }
+
+    /**
+     * YSMU: installs (or retires, with {@link ITimelinePlaybackListener#NONE}) the
+     * timeline playback listener. There is at most one listener per controller, so
+     * a model switch that retires the old runtime cannot leave a stale listener
+     * dispatching another model's timeline.
+     */
+    public void setTimelinePlaybackListener(ITimelinePlaybackListener listener) {
+        this.timelinePlaybackListener = listener == null ? ITimelinePlaybackListener.NONE : listener;
+    }
+
+    public ITimelinePlaybackListener getTimelinePlaybackListener() {
+        return this.timelinePlaybackListener;
+    }
+
+    /**
+     * YSMU: the final playback tick reported for the frame being evaluated. See
+     * {@link #reportTimelinePlayback}. Read-only probe; it does not mutate
+     * controller state.
+     */
+    public double getSyncTick() {
+        return syncTick;
+    }
+
+    /**
+     * YSMU: the exact forward playback distance since the previous report, in ticks
+     * and before loop wrapping (see {@link #reportTimelinePlayback}).
+     */
+    public double getSyncDelta() {
+        return syncDelta;
     }
 
     public void setAnimationSpeed(double animationSpeed) {

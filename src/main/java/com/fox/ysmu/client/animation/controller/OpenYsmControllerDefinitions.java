@@ -23,9 +23,24 @@ final class OpenYsmControllerDefinitions {
         /** 懒计算的具名并行槽位表（key = 族名 pre_parallel / parallel），见
          *  {@link OpenYsmAnimationControllerRegistry#namedParallelSlots}。
          *  缓存挂在 ControllerSet 上而不是静态 map 里：注册时整个 set 被替换、clear() 时被移除，
-         *  所以不可能读到过期结果；同时池控制器的谓词每帧都要问一次，不能每帧重建集合。 */
-        final Map<String, List<String>> namedParallelSlotCache =
+         *  所以不可能读到过期结果；同时池控制器的谓词每帧都要问一次，不能每帧重建集合。
+         *  <p>列表还可能含"只有控制脚本、没有 JSON 控制器"的槽位，那部分依赖
+         *  {@code MolangScriptRegistry} 的内容；缓存项因此同时记下算它时的脚本版本，
+         *  版本不匹配就重算（见 {@link NamedParallelSlots#scriptGeneration}）。 */
+        final Map<String, NamedParallelSlots> namedParallelSlotCache =
             new java.util.concurrent.ConcurrentHashMap<>();
+    }
+
+    /** 具名并行槽位表的缓存项：算出这份列表时的脚本表版本 + 结果。 */
+    static final class NamedParallelSlots {
+
+        final long scriptGeneration;
+        final List<String> slots;
+
+        NamedParallelSlots(long scriptGeneration, List<String> slots) {
+            this.scriptGeneration = scriptGeneration;
+            this.slots = slots;
+        }
     }
 
     static final class Controller {

@@ -4,7 +4,6 @@ import static com.fox.ysmu.util.ControllerUtils.CAP_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_MAINHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.HOLD_OFFHAND_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.MAIN_CONTROLLER;
-import static com.fox.ysmu.util.ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS;
 import static com.fox.ysmu.util.ControllerUtils.OPENYSM_PRE_MAIN_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.SWING_CONTROLLER;
 import static com.fox.ysmu.util.ControllerUtils.USE_CONTROLLER;
@@ -46,6 +45,34 @@ public final class OpenYsmPlayerControllerRuntime {
     private static final Map<StateKey, RuntimeState> STATES = new ConcurrentHashMap<>();
     /** Simple per-tag rate limiter for debug logs: tag → last log time (ms). */
     private static final java.util.Map<String, Long> DEBUG_LOG_LAST_TIME = new ConcurrentHashMap<>();
+
+    /**
+     * Global upper bound on timeline instructions dispatched per entity render
+     * frame (reset in {@link #advanceFrameCounter()}). Prevents one entity with
+     * pathological short-period timelines from starving every other entity; the
+     * per-controller scheduler additionally caps its own per-advance dispatching.
+     */
+    private static final int MAX_TIMELINE_DISPATCHES_PER_FRAME = 8192;
+    private static int timelineDispatchBudget = MAX_TIMELINE_DISPATCHES_PER_FRAME;
+
+    /**
+     * Upper bound on the number of source keyframes the per-frame roaming refresh
+     * scans on one controller. The shared dispatch budget already bounds how many
+     * instructions may <em>execute</em>; this additionally bounds the scan itself so
+     * a model with an enormous instruction list cannot make the refresh loop over it
+     * once per frame.
+     */
+    private static final int MAX_ROAMING_REFRESH_SCAN_PER_FRAME = 2048;
+
+    /**
+     * Temporary escape hatch: when true, restore the pre-scheduler behaviour of
+     * replaying <em>every</em> roaming-referencing instruction each frame (including
+     * random/increment/particle side effects). Default false: only provably
+     * idempotent assignments refresh every frame (see
+     * {@code MolangInstructionExecutor.isIdempotentRoamingAssignment}). Promote to a
+     * config option only after real-wheel acceptance testing.
+     */
+    static boolean LEGACY_ROAMING_REPLAY = false;
 
     /** Returns true if the given debug tag should log now (at most once per 1000ms). */
     private static boolean allowDebugLog(String tag) {
@@ -332,6 +359,7 @@ public final class OpenYsmPlayerControllerRuntime {
      */
     public static void clear() {
         STATES.clear();
+        resetTimelineDispatchBudget();
     }
 
     /** 清理指定玩家的全部 RuntimeState（玩家登出时调用）。
@@ -371,11 +399,39 @@ public final class OpenYsmPlayerControllerRuntime {
             if (!playerId.equals(key.playerId) || !modelId.equals(key.animationId)) {
                 continue;
             }
-            if (controllerName == null || controllerName.equals(key.openYsmControllerName)
-                || controllerName.equals(key.geckoControllerName)) {
+            if (controllerName == null || matchesControllerName(controllerName, key.openYsmControllerName)
+                || matchesControllerName(controllerName, key.geckoControllerName)) {
                 it.remove();
             }
         }
+    }
+
+    /**
+     * {@code ctrl.reset} / {@code state_stop} 的控制器名匹配：调用方可能写 wiki 槽位名
+     * （{@code parallel_6}）、OpenYSM 名（{@code player.parallel_6}）或 legacy GeckoLib 名
+     * （{@code parallel_6_controller}），三者指的是同一个槽位。
+     * <p>
+     * 统一去掉 {@code player.} 前缀与 {@code _controller} 后缀再比较。**修的是 reset 路由**：
+     * 具名并行槽位的运行时键是 {@code player.parallel_6}（或短名），而 reset 只从脚本拿到槽位名
+     * {@code parallel_6} —— 按原样比较匹配不到，状态机不会回到初始状态，看起来就像 reset 没生效。
+     */
+    static boolean matchesControllerName(String requested, String candidate) {
+        if (requested == null || candidate == null) {
+            return false;
+        }
+        return normalizeControllerName(requested).equals(normalizeControllerName(candidate));
+    }
+
+    /** 控制器名归一化：去掉 {@code player.} 前缀与 {@code _controller} 后缀。 */
+    private static String normalizeControllerName(String name) {
+        String result = name;
+        if (result.startsWith("player.")) {
+            result = result.substring("player.".length());
+        }
+        if (result.endsWith("_controller")) {
+            result = result.substring(0, result.length() - "_controller".length());
+        }
+        return result;
     }
 
     /**
@@ -706,7 +762,7 @@ public final class OpenYsmPlayerControllerRuntime {
         StateKey key = new StateKey(playerId, animationId, geckoControllerName, openYsmControllerName);
         RuntimeState state = STATES.get(key);
         if (state == null) {
-            state = new RuntimeState();
+            state = new RuntimeState(geckoControllerName);
             STATES.put(key, state);
         }
         return state;
@@ -846,19 +902,28 @@ public final class OpenYsmPlayerControllerRuntime {
             && !OPENYSM_PRE_MAIN_CONTROLLER.equals(ctrlName)
             && !ctrlName.startsWith("parallel_")
             && !ctrlName.startsWith("pre_parallel_");
+        // Resolve every contributing animation once. The list feeds both the bone
+        // merge and the bounded timeline scheduler (see buildTimelineContributors) —
+        // it is never rebuilt per frame beyond this single pass.
+        software.bernie.geckolib3.file.AnimationFile animFile =
+            software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
+        int contributorCount = animationNames.size();
+        List<software.bernie.geckolib3.core.builder.Animation> contributors = new ArrayList<>(contributorCount);
+        for (int i = 0; i < contributorCount; i++) {
+            software.bernie.geckolib3.core.builder.Animation a = null;
+            if (animFile != null) {
+                a = animFile.getAnimation(animationNames.get(i));
+            }
+            if (a == null) {
+                a = lookupAnimation(animationNames.get(i));
+            }
+            contributors.add(a);
+        }
+        software.bernie.geckolib3.core.builder.Animation primaryAnim = contributors.get(0);
         // Build merged bone animations. For single-animation states or when
         // Root filtering is needed, we create a merged copy stored in the
         // GeckoLib cache so the controller loads our modified version.
         List<software.bernie.geckolib3.core.keyframe.BoneAnimation> mergedBones = null;
-        software.bernie.geckolib3.file.AnimationFile animFile =
-            software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
-        software.bernie.geckolib3.core.builder.Animation primaryAnim = null;
-        if (animFile != null) {
-            primaryAnim = animFile.getAnimation(primaryName);
-        }
-        if (primaryAnim == null) {
-            primaryAnim = lookupAnimation(primaryName);
-        }
         if (primaryAnim != null && primaryAnim.boneAnimations != null) {
             mergedBones = new ArrayList<>(primaryAnim.boneAnimations);
         }
@@ -867,14 +932,8 @@ public final class OpenYsmPlayerControllerRuntime {
         // copied away from the shared GeckoLib cache, so a later merge may write
         // into our copy but never into a cache-owned object.
         java.util.Set<String> ownedBones = new java.util.HashSet<>();
-        for (int i = 1; i < animationNames.size(); i++) {
-            software.bernie.geckolib3.core.builder.Animation a = null;
-            if (animFile != null) {
-                a = animFile.getAnimation(animationNames.get(i));
-            }
-            if (a == null) {
-                a = lookupAnimation(animationNames.get(i));
-            }
+        for (int i = 1; i < contributorCount; i++) {
+            software.bernie.geckolib3.core.builder.Animation a = contributors.get(i);
             if (a != null && a.boneAnimations != null) {
                 if (mergedBones == null) {
                     mergedBones = new ArrayList<>(a.boneAnimations);
@@ -883,52 +942,23 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
         }
-        // Collect all custom instruction keyframes (timeline) from all animations.
-        // The primary animation's timeline is included; additional animations'
-        // timelines are merged so that Molang variable assignments in their
-        // timelines (e.g. v.bq_eye = v.roaming.bq_eye) are not lost.
-        java.util.List<software.bernie.geckolib3.core.keyframe.EventKeyFrame<String>> mergedTimeline = new java.util.ArrayList<>();
-        if (primaryAnim != null && primaryAnim.customInstructionKeyframes != null) {
-            mergedTimeline.addAll(primaryAnim.customInstructionKeyframes);
-        }
-        for (int i = 1; i < animationNames.size(); i++) {
-            software.bernie.geckolib3.core.builder.Animation a = null;
-            if (animFile != null) {
-                a = animFile.getAnimation(animationNames.get(i));
-            }
-            if (a == null) {
-                a = lookupAnimation(animationNames.get(i));
-            }
-            if (a != null && a.customInstructionKeyframes != null) {
-                // Merge non-duplicate keyframes (by trigger time) from each source.
-                // When two keyframes share the same tick, CONCATENATE their instruction
-                // strings instead of dropping the second one — otherwise important
-                // timeline instructions (e.g. v.bq_eye in pre_parallel7) can be lost
-                // when another animation (e.g. pre_parallel3) already registered a
-                // keyframe at the same tick.
-                for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : a.customInstructionKeyframes) {
-                    boolean dup = false;
-                    for (int j = 0; j < mergedTimeline.size(); j++) {
-                        software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> existing = mergedTimeline.get(j);
-                        if (Math.abs(existing.getStartTick() - kf.getStartTick()) < 0.001d) {
-                            // Merge: concatenate existing and new instructions with ";;"
-                            String merged = existing.getEventData() + ";;" + kf.getEventData();
-                            mergedTimeline.set(j, new software.bernie.geckolib3.core.keyframe.EventKeyFrame<>(
-                                existing.getStartTick(), merged));
-                            dup = true;
-                            break;
-                        }
-                    }
-                    if (!dup) {
-                        mergedTimeline.add(kf);
-                    }
-                }
-            }
+        // Playback period of the flattened animation. In OpenYSM every animation of
+        // a state is an independent timeline that loops on its own length; YSMU
+        // flattens them into one, so the copy has to span the LONGEST contributor.
+        // Copying the primary's length instead lets the shortest contributor become
+        // the clock: a player.pre_parallel_0 that starts with hair_physics
+        // (0.0202 s, a per-frame physics driver) pinned the whole state to tick ~0
+        // and froze pre_parallel6's 4 s lightning flash. Each short contributor now
+        // keeps its own period in the bounded scheduler instead of repeating its
+        // events by an offset loop.
+        double mergedLength = 0.0d;
+        for (int i = 0; i < contributorCount; i++) {
+            mergedLength = Math.max(mergedLength, playbackLengthTicks(contributors.get(i)));
         }
         // Determine the final animation name: if we have merged bones and either
         // need Root filtering or have multiple animations, use a cached merged copy.
         boolean needsMergedCopy = mergedBones != null
-            && (excludeRoot || animationNames.size() > 1);
+            && (excludeRoot || contributorCount > 1);
         String finalName;
         ILoopType finalLoop;
         if (Config.DEBUG_CONTROLLER && ctrlName != null
@@ -938,63 +968,13 @@ public final class OpenYsmPlayerControllerRuntime {
                 ctrlName, state.name, animationNames,
                 mergedBones == null ? -1 : mergedBones.size());
         }
+        software.bernie.geckolib3.core.builder.Animation mergedAnim = null;
         if (needsMergedCopy) {
             // Remove Root bone for overlay controllers
             if (excludeRoot) {
                 mergedBones.removeIf(ba -> "Root".equals(ba.boneName));
             }
-            // Playback period of the flattened animation. In OpenYSM every
-            // animation of a state is an independent timeline that loops on its
-            // own length; YSMU flattens them into one, so the copy has to span
-            // the LONGEST contributor. Copying the primary's length instead lets
-            // the shortest contributor become the clock: a
-            // player.pre_parallel_0 that starts with hair_physics (0.0202 s, a
-            // per-frame physics driver), which pinned the whole state to
-            // tick ~0 and froze pre_parallel6's 4 s lightning flash.
-            double mergedLength = 0.0d;
-            java.util.List<software.bernie.geckolib3.core.builder.Animation> contributors =
-                new java.util.ArrayList<>(animationNames.size());
-            for (int i = 0; i < animationNames.size(); i++) {
-                software.bernie.geckolib3.core.builder.Animation a;
-                if (i == 0) {
-                    a = primaryAnim;
-                } else {
-                    a = animFile != null ? animFile.getAnimation(animationNames.get(i)) : null;
-                }
-                if (a == null) {
-                    a = lookupAnimation(animationNames.get(i));
-                }
-                contributors.add(a);
-                double len = playbackLengthTicks(a);
-                if (len > mergedLength) {
-                    mergedLength = len;
-                }
-            }
-            // A contributor shorter than the merged period must keep firing on
-            // its own schedule, otherwise a per-frame driver such as
-            // hair_physics (whose timeline maintains the v.HP_* deltas consumed
-            // by the hair springs) would only tick once per merged loop. Repeat
-            // its instructions; its bone channels are all constant Molang values
-            // and therefore clock-independent.
-            for (software.bernie.geckolib3.core.builder.Animation a : contributors) {
-                double len = playbackLengthTicks(a);
-                if (a == null || len <= 0.0d || len >= mergedLength - 0.001d
-                    || a.loop != ILoopType.EDefaultLoopTypes.LOOP
-                    || a.customInstructionKeyframes == null
-                    || a.customInstructionKeyframes.isEmpty()) {
-                    continue;
-                }
-                for (double offset = len; offset < mergedLength - 0.001d; offset += len) {
-                    for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : a.customInstructionKeyframes) {
-                        mergedTimeline.add(
-                            new software.bernie.geckolib3.core.keyframe.EventKeyFrame<>(
-                                kf.getStartTick() + offset,
-                                kf.getEventData()));
-                    }
-                }
-            }
             String mergedName = "__ysm_merged__" + primaryName;
-            software.bernie.geckolib3.core.builder.Animation mergedAnim = null;
             software.bernie.geckolib3.file.AnimationFile cachedFile =
                 software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animationId);
             if (cachedFile != null) {
@@ -1008,8 +988,14 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
             mergedAnim.boneAnimations = mergedBones;
-            mergedAnim.customInstructionKeyframes = mergedTimeline;
-            // Preserve sound keyframes from the primary animation
+            // The bounded scheduler owns merged-timeline dispatch. Emptying this list
+            // removes GeckoLib's identity-based customInstructionKeyframes channel:
+            // no double dispatch, and no fresh EventKeyFrame instances every frame to
+            // defeat executedKeyFrames tracking.
+            mergedAnim.customInstructionKeyframes = java.util.Collections.emptyList();
+            // Preserve sound keyframes from the primary animation. Native particle
+            // keyframes keep their original path (they were never copied onto the
+            // merged copy) — this change is scoped to the custom-instruction timeline.
             if (primaryAnim != null && primaryAnim.soundKeyFrames != null
                 && !primaryAnim.soundKeyFrames.isEmpty()) {
                 mergedAnim.soundKeyFrames = new java.util.ArrayList<>(primaryAnim.soundKeyFrames);
@@ -1046,6 +1032,13 @@ public final class OpenYsmPlayerControllerRuntime {
         // Only call setAnimation ONCE with the final name, so GeckoLib does NOT
         // reset shouldResetTick every frame (which would freeze the animation at tick 0).
         finalName = finalName != null ? finalName : primaryName;
+        // Detect model re-entry: if this RuntimeState was parked for more than a
+        // few frames (model switched away and back), treat sameAnim as false so
+        // setAnimation reloads the merged bone keyframes, and restart the timeline
+        // cursors.
+        boolean isReEntry = runtimeState.lastActiveFrame > 0
+            && FRAME_COUNTER - runtimeState.lastActiveFrame > 10;
+        runtimeState.lastActiveFrame = FRAME_COUNTER;
         // Same-animation detection: skip setAnimation when the same state and
         // animation are already playing.  BUT if the model changed (animationId
         // differs), force setAnimation because RuntimeState persists across
@@ -1054,19 +1047,11 @@ public final class OpenYsmPlayerControllerRuntime {
         boolean sameState = sameModel && state.name.equals(runtimeState.lastSelectedAnimationState);
         boolean sameAnim = sameState && StringUtils.isNotBlank(runtimeState.lastSelectedAnimation)
             && runtimeState.lastSelectedAnimation.equals(primaryName);
-        runtimeState.lastAnimationId = animationId;
-        runtimeState.lastAnimation = primaryName;
-        runtimeState.lastSelectedAnimationState = state.name;
-        runtimeState.lastSelectedAnimation = primaryName;
-        // Detect model re-entry: if this RuntimeState was parked for more
-        // than a few frames (model switched away and back), treat sameAnim
-        // as false so setAnimation reloads the merged bone keyframes.
-        boolean isReEntry = runtimeState.lastActiveFrame > 0
-            && FRAME_COUNTER - runtimeState.lastActiveFrame > 10;
-        runtimeState.lastActiveFrame = FRAME_COUNTER;
         if (sameAnim && isReEntry) {
-            // Force setAnimation on re-entry: clear stale tracking so
-            // sameAnim falls through to the setAnimation path below.
+            // YSMU: a re-entry is NOT a same-animation frame. This must flip the flag
+            // (the old code only cleared the tracking fields, but sameAnim had already
+            // been computed and stayed true for the skipSetAnimation branch below).
+            sameAnim = false;
             runtimeState.lastAnimationId = null;
             runtimeState.lastAnimation = "";
             runtimeState.lastSelectedAnimationState = "";
@@ -1074,81 +1059,360 @@ public final class OpenYsmPlayerControllerRuntime {
             runtimeState.lastActiveAnimations.clear();
             runtimeState.enteredTick = event.getAnimationTick();
         }
+        runtimeState.lastAnimationId = animationId;
+        runtimeState.lastAnimation = primaryName;
+        runtimeState.lastSelectedAnimationState = state.name;
+        runtimeState.lastSelectedAnimation = primaryName;
+        // Configure the bounded timeline scheduler before any early return below.
+        // It takes isReEntry explicitly: a re-entry (and, inside, a model/state or
+        // final-name change) must reset the cursors even when the animation name list
+        // is unchanged.
+        configureTimeline(runtimeState, state, animationId, animationNames, contributors,
+            mergedLength, mergedAnim, finalName, isReEntry);
+        boolean skipSetAnimation = false;
         if (sameAnim) {
-            // Same state + same animation → skip setAnimation to preserve
-            // keyframe tracking (sound/particle keyframes already executed
-            // won't re-fire).  However, timeline custom instructions must
-            // still re-execute every frame for pre_parallel/parallel controllers
-            // so that roaming variable changes from the expression wheel take
-            // effect immediately.  GeckoLib's native keyframe event tracking
-            // only fires each instruction once.
-            // We ONLY re-execute for pre_parallel/parallel controllers because
-            // other controllers' timeline instructions set swing-related
-            // variables (v.qh, v.random, etc.) that must NOT be re-triggered
-            // every frame.
-            // Additionally, check if conditional animation entries have changed
-            // since last frame. These depend on roaming variable values evaluated
-            // in collectActiveAnimations(),
-            // and when they change, setAnimation must run to apply the new
-            // merged bone keyframes even though the primary animation name
-            // (e.g. pre_parallel0) hasn't changed.
+            // Same state + same animation → skip setAnimation to preserve keyframe
+            // tracking (sound/particle keyframes already executed won't re-fire).
+            // Conditional animation entries can still change between frames because
+            // they depend on roaming variables; when they do, setAnimation must run
+            // to apply the new merged bone keyframes even though the primary
+            // animation name (e.g. pre_parallel0) has not changed.
             boolean animsChanged = !animationNames.equals(runtimeState.lastActiveAnimations);
             runtimeState.lastActiveAnimations = new java.util.ArrayList<>(animationNames);
-            if (animsChanged) {
-                // Conditional animation entries changed → must call
-                // setAnimation to apply new merged bone keyframes.
-                // Fall through to the setAnimation logic below.
-            } else if (ctrlName != null
-                && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))) {
-                if (!mergedTimeline.isEmpty()) {
-                    // First pass: check if any instruction references roaming
-                    // variables.  If none do, we can skip the per-frame
-                    // execute() entirely — GeckoLib's processKeyFrameEvents
-                    // already fires each instruction once per animation loop,
-                    // which is sufficient for non-roaming variables.
-                    boolean hasRoamingRef = false;
-                    for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : mergedTimeline) {
-                        String data = kf.getEventData();
-                        if (data != null && data.contains("roaming.")) {
-                            hasRoamingRef = true;
-                            break;
-                        }
-                    }
-                    if (hasRoamingRef) {
-                        for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> kf : mergedTimeline) {
-                            String data = kf.getEventData();
-                            if (data != null) {
-                                MolangInstructionExecutor.execute(data);
-                            }
-                        }
-                    }
-                }
-                return;
-            } else {
-                return;
+            if (!animsChanged) {
+                skipSetAnimation = true;
             }
         }
-        // When the state hasn't changed but only the animation variant changed
-        // (e.g. attack1's animation switches from sword_attack_01 to
-        // sword_attack_run1 because the player started running), preserve the
-        // current tick position so the animation doesn't restart from tick 0.
-        // Full restarts (state transitions, e.g. default→attack1) use
-        // setAnimation to reset tick to 0 as expected.
-        AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
-        if (Config.DEBUG_CONTROLLER && allowDebugLog("CTRL-PLAY-" + ctrlName)) {
-            ysmu.LOG.info("[YSMU-CTRL-PLAY] {} state='{}' playing='{}' animations={} sameState={}",
-                ctrlName, state.name, finalName, animationNames, sameState);
-        }
-        if (sameState) {
-            // Preserve playback position: the animation continues from where it
-            // left off, just with updated bone keyframes for the new variant.
-            event.getController().setAnimationPreservingTick(builder,
-                event.getAnimationTick(),
-                Math.max(0.0d, event.getAnimationTick() - runtimeState.enteredTick));
+        if (skipSetAnimation) {
+            // Timeline refresh runs once per frame here for pre_parallel/parallel
+            // controllers so roaming variable changes from the expression wheel take
+            // effect immediately. Only provably idempotent assignments are re-run —
+            // random/increment/particle side effects are not replayed. Other
+            // controllers' timeline instructions set swing-related variables (v.qh,
+            // v.random, …) that must NOT be re-triggered every frame.
+            if (ctrlName != null
+                && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))) {
+                refreshRoamingAssignments(contributors, ctrlName);
+            }
         } else {
-            // State transition: restart animation from tick 0.
-            event.getController().markNeedsReload();
-            event.getController().setAnimation(builder);
+            // When the state hasn't changed but only the animation variant changed
+            // (e.g. attack1's animation switches from sword_attack_01 to
+            // sword_attack_run1 because the player started running), preserve the
+            // current tick position so the animation doesn't restart from tick 0.
+            // Full restarts (state transitions, e.g. default→attack1) use
+            // setAnimation to reset tick to 0 as expected.
+            AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
+            if (Config.DEBUG_CONTROLLER && allowDebugLog("CTRL-PLAY-" + ctrlName)) {
+                ysmu.LOG.info("[YSMU-CTRL-PLAY] {} state='{}' playing='{}' animations={} sameState={}",
+                    ctrlName, state.name, finalName, animationNames, sameState);
+            }
+            if (sameState) {
+                // Preserve playback position: the animation continues from where it
+                // left off, just with updated bone keyframes for the new variant.
+                event.getController().setAnimationPreservingTick(builder,
+                    event.getAnimationTick(),
+                    Math.max(0.0d, event.getAnimationTick() - runtimeState.enteredTick));
+            } else {
+                // State transition: restart animation from tick 0.
+                event.getController().markNeedsReload();
+                event.getController().setAnimation(builder);
+            }
+        }
+        // Install the narrow per-controller playback listener. The controller calls
+        // it from inside processCurrentAnimation() — i.e. during this frame's
+        // controller.process(), after the time update and before bone evaluation —
+        // so the scheduler dispatches on the real final playback tick instead of the
+        // predicate-time tick (which anim_time_update and the loop/HOLD handling
+        // have not applied yet at applyAnimations() time).
+        installTimelineListener(event.getController(), runtimeState, mergedAnim);
+    }
+
+    /**
+     * Configures (or reuses) this RuntimeState's bounded timeline scheduler.
+     * <p>
+     * Only the merged path owns dispatch: its GeckoLib copy has
+     * {@code customInstructionKeyframes} emptied, so the scheduler is the single
+     * channel. A single-animation controller keeps GeckoLib's stable-identity path
+     * and does not schedule.
+     * <p>
+     * The reuse fast path is only taken when the contributor set <em>and</em> every
+     * condition that forces a reset agree: a state change or a re-entry with the
+     * same animation list must restart the cursors, otherwise switching
+     * {@code attack → attack} (or leaving and returning to a model) would resume the
+     * previous state's phase and never fire the state's entry events.
+     */
+    private static void configureTimeline(RuntimeState runtimeState, State state, ResourceLocation animationId,
+        List<String> animationNames, List<software.bernie.geckolib3.core.builder.Animation> contributors,
+        double mergedLength, software.bernie.geckolib3.core.builder.Animation mergedAnim, String finalName,
+        boolean reEntry) {
+        if (mergedAnim == null) {
+            clearTimeline(runtimeState, animationId, state.name, finalName);
+            return;
+        }
+        boolean modelChanged = !animationId.equals(runtimeState.lastTimelineAnimationId);
+        boolean nameChanged = finalName == null ? runtimeState.lastTimelineFinalName != null
+            : !finalName.equals(runtimeState.lastTimelineFinalName);
+        boolean stateChanged = !state.name.equals(runtimeState.lastTimelineState);
+        boolean restart = reEntry || modelChanged || nameChanged || stateChanged
+            || runtimeState.timelineScheduler == null || !runtimeState.timelineScheduler.isStarted();
+        String key = animationId + "|" + finalName + "|" + animationNames;
+        if (key.equals(runtimeState.timelineProgramKey) && runtimeState.timelineScheduler != null && !restart) {
+            // Steady state: the contributor set is unchanged, so the cursors simply
+            // keep advancing — no per-frame program rebuild, no allocation churn.
+            runtimeState.timelineOwnsDispatch = true;
+            runtimeState.lastTimelineAnimationId = animationId;
+            runtimeState.lastTimelineState = state.name;
+            runtimeState.lastTimelineFinalName = finalName;
+            return;
+        }
+        TimelineProgram program = buildTimelineProgram(animationNames, contributors, mergedLength);
+        if (program.contributors.isEmpty()) {
+            clearTimeline(runtimeState, animationId, state.name, finalName);
+            return;
+        }
+        runtimeState.timelineOwnsDispatch = true;
+        if (runtimeState.timelineScheduler == null) {
+            runtimeState.timelineScheduler = new TimelineEventScheduler();
+        }
+        // A genuine restart resets every cursor; an incremental conditional-entry
+        // change keeps the cursors of contributors whose content is unchanged.
+        runtimeState.timelineScheduler.configure(program.contributors, restart);
+        runtimeState.timelineProgramKey = key;
+        reportTimelineTruncation(runtimeState.timelineScheduler, program, animationId, animationNames);
+        runtimeState.lastTimelineAnimationId = animationId;
+        runtimeState.lastTimelineState = state.name;
+        runtimeState.lastTimelineFinalName = finalName;
+    }
+
+    private static void clearTimeline(RuntimeState runtimeState, ResourceLocation animationId, String stateName,
+        String finalName) {
+        runtimeState.timelineOwnsDispatch = false;
+        runtimeState.timelineScheduler = null;
+        runtimeState.timelineProgramKey = "";
+        runtimeState.timelineMergedAnim = null;
+        runtimeState.lastTimelineAnimationId = animationId;
+        runtimeState.lastTimelineState = stateName;
+        runtimeState.lastTimelineFinalName = finalName;
+    }
+
+    /**
+     * Registers this RuntimeState as the controller's timeline playback listener.
+     * <p>
+     * At most one listener exists per controller, so a model switch or a controller
+     * that falls back to the GeckoLib-owned single-animation path cannot leave a
+     * stale listener dispatching another model's instructions. When the timeline is
+     * not active the listener is retired to {@code NONE} rather than left pointing at
+     * a dropped RuntimeState.
+     */
+    private static void installTimelineListener(AnimationController<?> controller, RuntimeState runtimeState,
+        software.bernie.geckolib3.core.builder.Animation mergedAnim) {
+        if (controller == null) {
+            return;
+        }
+        if (mergedAnim == null || !runtimeState.timelineOwnsDispatch || runtimeState.timelineScheduler == null) {
+            if (controller.getTimelinePlaybackListener() != AnimationController.ITimelinePlaybackListener.NONE) {
+                controller.setTimelinePlaybackListener(AnimationController.ITimelinePlaybackListener.NONE);
+            }
+            runtimeState.timelineMergedAnim = null;
+            return;
+        }
+        runtimeState.timelineMergedAnim = mergedAnim;
+        if (controller.getTimelinePlaybackListener() != runtimeState.timelineListener) {
+            controller.setTimelinePlaybackListener(runtimeState.timelineListener);
+        }
+    }
+
+    /**
+     * Per-frame playback callback. Called by
+     * {@link AnimationController#processCurrentAnimation} after the time update and
+     * before bone evaluation, so {@code tick} is the final playback position of this
+     * frame. {@code delta} is the exact forward distance since the previous frame and
+     * is {@code 0} when the position was (re)anchored, which the scheduler treats as
+     * a rebase instead of a replay.
+     */
+    private static void handleTimelinePlayback(RuntimeState runtimeState, double tick, double delta) {
+        if (!runtimeState.timelineOwnsDispatch) {
+            return;
+        }
+        TimelineEventScheduler scheduler = runtimeState.timelineScheduler;
+        if (scheduler == null) {
+            return;
+        }
+        scheduler.advanceFrame(tick, delta, runtimeState.timelineSink);
+    }
+
+    /**
+     * Per-frame roaming refresh for pre_parallel/parallel controllers. By default
+     * only provably idempotent {@code v.x = <roaming expression>} assignments are
+     * re-run; random/increment/particle side effects are left to the scheduler's
+     * once-per-loop dispatch. {@link #LEGACY_ROAMING_REPLAY} restores the old
+     * replay-everything behaviour as a temporary escape hatch.
+     * <p>
+     * <b>Deliberate conservatism.</b> This is a behaviour change, not just a
+     * performance cap: an instruction that is <em>not</em> classified idempotent no
+     * longer runs every frame, so a model that relied on a non-idempotent expression
+     * (a per-frame increment, a random draw, a particle spawn) now sees it once per
+     * loop instead. The old "contains {@code roaming.}" test was too broad — it
+     * replayed those side effects every frame. The classifier accepts only
+     * {@code v.<name> = <expression>} statements that read {@code roaming.} and
+     * contain no function call, so anything it cannot prove is left to the scheduler.
+     * <p>
+     * Bounds: the scan is capped at {@link #MAX_ROAMING_REFRESH_SCAN_PER_FRAME}
+     * keyframes and every execution consumes the shared per-frame
+     * {@link #MAX_TIMELINE_DISPATCHES_PER_FRAME} budget, so this path can never run
+     * more instructions than the scheduler's own dispatch path and cannot starve
+     * other entities for more than one frame's worth of budget.
+     */
+    private static void refreshRoamingAssignments(
+        List<software.bernie.geckolib3.core.builder.Animation> contributors, String ctrlName) {
+        if (contributors == null) {
+            return;
+        }
+        int scanned = 0;
+        for (software.bernie.geckolib3.core.builder.Animation animation : contributors) {
+            if (animation == null || animation.customInstructionKeyframes == null) {
+                continue;
+            }
+            for (software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> keyFrame
+                : animation.customInstructionKeyframes) {
+                // Bound the scan itself, not just the executions: the budget below
+                // already limits how many instructions run, this limits how much the
+                // model can make the refresh read every frame.
+                if (++scanned > MAX_ROAMING_REFRESH_SCAN_PER_FRAME) {
+                    return;
+                }
+                if (keyFrame == null) {
+                    continue;
+                }
+                String data = keyFrame.getEventData();
+                if (data == null) {
+                    continue;
+                }
+                if (LEGACY_ROAMING_REPLAY) {
+                    if (!data.toLowerCase(java.util.Locale.ROOT)
+                        .contains("roaming.")) {
+                        continue;
+                    }
+                } else if (!MolangInstructionExecutor.isIdempotentRoamingAssignment(data)) {
+                    continue;
+                }
+                if (timelineDispatchBudget <= 0) {
+                    return;
+                }
+                timelineDispatchBudget--;
+                MolangInstructionExecutor.noteTimelineExecution(ctrlName, data);
+                MolangInstructionExecutor.execute(data);
+            }
+        }
+    }
+
+    /**
+     * The scheduler program plus the counts the builder itself dropped.
+     * <p>
+     * The builder caps <em>before</em> allocating (it must not materialise a copy
+     * larger than the scheduler would keep), so a model over the caps is already
+     * reduced by the time {@link TimelineEventScheduler#configure} sees it — the
+     * scheduler's own {@code getTruncated*} counters would then read 0 and the
+     * {@code [YSMU-TL-CAP]} diagnostic would never fire. These fields keep the drop
+     * visible.
+     */
+    static final class TimelineProgram {
+
+        final List<TimelineEventScheduler.Contributor> contributors;
+        final int truncatedContributors;
+        final int truncatedEvents;
+
+        TimelineProgram(List<TimelineEventScheduler.Contributor> contributors, int truncatedContributors,
+            int truncatedEvents) {
+            this.contributors = contributors;
+            this.truncatedContributors = truncatedContributors;
+            this.truncatedEvents = truncatedEvents;
+        }
+    }
+
+    /**
+     * Builds the scheduler program from the contributing animations' timelines.
+     * <p>
+     * The caps are applied <em>before</em> allocation, not after: the source
+     * keyframe list is scanned at most {@code MAX_EVENTS_PER_CONTRIBUTOR} times and
+     * the events array is sized to the bounded count, so a model that declares an
+     * enormous instruction list never materialises a full-size copy first. The
+     * scheduler repeats the same caps, which keeps the two layers consistent; what
+     * the builder itself dropped is reported through {@link TimelineProgram}.
+     * <p>
+     * <b>Contributors keep their own loop flag.</b> A {@code HOLD_ON_LAST_FRAME} or
+     * {@code PLAY_ONCE} merged program stops the controller from advancing at its
+     * end, so every contributor's {@code delta} becomes 0 and none of them reach
+     * another event anyway. Forcing them all non-looping would additionally truncate
+     * a short looping contributor that is legitimately mid-cycle while the holding
+     * parent animation is still short of its last frame.
+     */
+    static TimelineProgram buildTimelineProgram(List<String> animationNames,
+        List<software.bernie.geckolib3.core.builder.Animation> contributors, double mergedLength) {
+        List<TimelineEventScheduler.Contributor> out = new ArrayList<>();
+        if (contributors == null) {
+            return new TimelineProgram(out, 0, 0);
+        }
+        int remainingEvents = TimelineEventScheduler.MAX_TOTAL_EVENTS;
+        int truncatedContributors = 0;
+        long truncatedEvents = 0;
+        for (int i = 0; i < contributors.size(); i++) {
+            software.bernie.geckolib3.core.builder.Animation animation = contributors.get(i);
+            if (animation == null || animation.customInstructionKeyframes == null
+                || animation.customInstructionKeyframes.isEmpty()) {
+                continue;
+            }
+            int sourceCount = animation.customInstructionKeyframes.size();
+            if (out.size() >= TimelineEventScheduler.MAX_CONTRIBUTORS || remainingEvents <= 0) {
+                // Over a cap: the contributor is dropped whole and the scheduler will
+                // never see it, so the drop has to be counted here.
+                truncatedContributors++;
+                truncatedEvents += sourceCount;
+                continue;
+            }
+            double period = playbackLengthTicks(animation);
+            if (period <= 0.0d && mergedLength > 0.0d) {
+                // No computable period (e.g. an anim_time_update contributor): keep it
+                // on the merged period rather than letting its events fire once and
+                // never again.
+                period = mergedLength;
+            }
+            boolean loops = animation.loop == ILoopType.EDefaultLoopTypes.LOOP;
+            // Cap before allocating: never copy more than the scheduler would keep.
+            int capacity = Math.min(remainingEvents,
+                Math.min(sourceCount, TimelineEventScheduler.MAX_EVENTS_PER_CONTRIBUTOR));
+            // Truncation is sourceCount minus what we were allowed to keep; null
+            // keyframes below shrink the stored events but are not truncation.
+            truncatedEvents += sourceCount - capacity;
+            List<TimelineEventScheduler.Event> events = new ArrayList<>(capacity);
+            for (int k = 0; k < capacity; k++) {
+                software.bernie.geckolib3.core.keyframe.EventKeyFrame<String> keyFrame =
+                    animation.customInstructionKeyframes.get(k);
+                if (keyFrame == null) {
+                    continue;
+                }
+                Double tick = keyFrame.getStartTick();
+                events.add(new TimelineEventScheduler.Event(tick == null ? 0.0d : tick, keyFrame.getEventData()));
+            }
+            String name = i < animationNames.size() ? animationNames.get(i) : animation.animationName;
+            remainingEvents -= events.size();
+            out.add(TimelineEventScheduler.contributor(name, period, loops, events));
+        }
+        return new TimelineProgram(out, truncatedContributors, (int) Math.min(Integer.MAX_VALUE, truncatedEvents));
+    }
+
+    /** Rate-limited report when a model exceeds the scheduler's (or the builder's) safety caps. */
+    private static void reportTimelineTruncation(TimelineEventScheduler scheduler, TimelineProgram program,
+        ResourceLocation animationId, List<String> animationNames) {
+        int droppedContributors = scheduler.getTruncatedContributors() + program.truncatedContributors;
+        int droppedEvents = scheduler.getTruncatedEvents() + program.truncatedEvents;
+        if (droppedContributors == 0 && droppedEvents == 0) {
+            return;
+        }
+        if (Config.DEBUG_CONTROLLER && allowDebugLog("TL-CAP-" + animationId)) {
+            ysmu.LOG.warn(
+                "[YSMU-TL-CAP] {} animations={}: dropped {} contributor(s) and {} event(s) over the scheduler caps",
+                animationId, animationNames, droppedContributors, droppedEvents);
         }
     }
 
@@ -1405,7 +1669,11 @@ public final class OpenYsmPlayerControllerRuntime {
         List<ControllerMatch> matches = new ArrayList<>();
         // 具名并行槽位的备用池必须先分流：它的名字也带 pre_parallel_/parallel_ 前缀，
         // 落到下面的数字槽位解析会得到一个 -1 然后什么都不匹配。
-        if (routeNamedParallelSlot(matches, animationId, set, geckoControllerName)) {
+        NamedParallelRoute namedRoute = routeNamedParallel(animationId, geckoControllerName);
+        if (namedRoute != null) {
+            if (namedRoute.controllerKey != null) {
+                addMatch(matches, set, namedRoute.controllerKey);
+            }
             return matches;
         }
         int preferredIndex = getParallelIndex(geckoControllerName);
@@ -1463,37 +1731,79 @@ public final class OpenYsmPlayerControllerRuntime {
      * 具名并行槽位的备用池：{@code (player.)?<族>_extra_<i>_controller} 的第 i 个池控制器
      * 承载该族第 i 个具名槽位（见
      * {@link OpenYsmAnimationControllerRegistry#namedParallelSlots(ResourceLocation, String)}）。
+     * <p>
+     * 这个映射是**按当前模型**算的：换模型后同一个池下标可能承载另一个槽位，所以不能缓存
+     * "下标 → 控制器名"到池控制器上（槽位表本身按模型缓存，见注册表）。
      *
-     * @return true 表示这个名字归池子管（已处理完毕）；false 表示不是池控制器
+     * @return 路由结果；{@code null} 表示这个名字不是池控制器
      */
-    private static boolean routeNamedParallelSlot(List<ControllerMatch> matches, ResourceLocation animationId,
-        ControllerSet set, String geckoControllerName) {
+    static NamedParallelRoute routeNamedParallel(ResourceLocation animationId, String geckoControllerName) {
         String[] pool = parseNamedParallelPoolController(geckoControllerName);
         if (pool == null) {
-            return false;
+            return null;
         }
         String family = pool[0];
         int index = Integer.parseInt(pool[1]);
         java.util.List<String> slots = OpenYsmAnimationControllerRegistry.namedParallelSlots(animationId, family);
-        if (slots.size() > NAMED_PARALLEL_EXTRA_SLOTS) {
+        int poolSize = Config.NAMED_PARALLEL_EXTRA_SLOTS;
+        if (slots.size() > poolSize) {
             // 模型声明的具名槽位比池子大：多出来的那些没有池控制器承载，永远不会播放。
-            // 只警告一次、不静默截断（提高 ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS 即可解决）。
+            // 只警告一次、不静默截断（提高配置项 NamedParallelExtraSlots 即可解决）。
             OpenYsmAnimationControllerRegistry.warnOnce(
                 "parallel-extra-overflow:" + animationId + ":" + family,
                 animationId + " declares " + slots.size() + " named " + family + " slots but only "
-                    + NAMED_PARALLEL_EXTRA_SLOTS + " extra pool controllers exist; raise"
-                    + " ControllerUtils.NAMED_PARALLEL_EXTRA_SLOTS (slots=" + slots + ")");
+                    + poolSize + " extra pool controllers exist; raise Config NamedParallelExtraSlots"
+                    + " (slots=" + slots + ")");
         }
-        if (index >= slots.size()) {
-            // 该模型没有这么多具名槽位：这个池控制器本帧什么都不做。
-            return true;
+        String slot = index < slots.size() ? slots.get(index) : null;
+        String controlSlot = slot == null ? null : family + "_" + slot;
+        String controllerKey = slot == null ? null
+            : OpenYsmAnimationControllerRegistry.resolveParallelSlotKey(animationId, family, slot);
+        return new NamedParallelRoute(family, index, controlSlot, controllerKey, slots.size(), poolSize);
+    }
+
+    /**
+     * 池控制器本帧应该交给动画控制脚本的**槽位名**（如 {@code parallel_6} / {@code pre_parallel_表情}）。
+     * <p>
+     * {@code controlSlotName()} 对池名故意返回 null（模型给的槽位名只有这里知道），
+     * 所以 {@code AnimationManager} 在具名并行槽位上用这个方法补齐脚本路由；
+     * 该槽位只有脚本、没有 JSON 控制器时也能命中脚本。
+     *
+     * @return 槽位名；不是池控制器、或该模型没有这么多具名槽位时返回 {@code null}
+     */
+    public static String namedParallelControlSlot(ResourceLocation animationId, String geckoControllerName) {
+        NamedParallelRoute route = routeNamedParallel(animationId, geckoControllerName);
+        return route == null ? null : route.controlSlot;
+    }
+
+    /** 一个具名并行池控制器的路由结果。 */
+    static final class NamedParallelRoute {
+
+        final String family;
+        final int index;
+        /** 该池下标承载的具名槽位对应的控制脚本槽位名（{@code <族>_<后缀>}），没分到为 null。 */
+        final String controlSlot;
+        /** 该槽位解析出的 ControllerSet 键名（{@code player.<族>_<后缀>} 优先），
+         *  只有脚本、没有 JSON 控制器时为 null。 */
+        final String controllerKey;
+        /** 模型声明的具名槽位数。 */
+        final int declaredSlots;
+        /** 已注册的池控制器数量（{@code Config.NAMED_PARALLEL_EXTRA_SLOTS}）。 */
+        final int poolSize;
+
+        NamedParallelRoute(String family, int index, String controlSlot, String controllerKey,
+            int declaredSlots, int poolSize) {
+            this.family = family;
+            this.index = index;
+            this.controlSlot = controlSlot;
+            this.controllerKey = controllerKey;
+            this.declaredSlots = declaredSlots;
+            this.poolSize = poolSize;
         }
-        String slotKey = OpenYsmAnimationControllerRegistry
-            .resolveParallelSlotKey(animationId, family, slots.get(index));
-        if (slotKey != null) {
-            addMatch(matches, set, slotKey);
+
+        boolean overflow() {
+            return declaredSlots > poolSize;
         }
-        return true;
     }
 
     /**
@@ -1557,9 +1867,18 @@ public final class OpenYsmPlayerControllerRuntime {
     /** Called by MolangPhysicsRuntime.begin() to advance the frame counter. */
     public static void advanceFrameCounter() {
         FRAME_COUNTER++;
+        // Reset the per-frame timeline dispatch budget (once per entity render frame).
+        timelineDispatchBudget = MAX_TIMELINE_DISPATCHES_PER_FRAME;
+    }
+
+    /** Clears the timeline dispatch budget immediately; used by tests and clear(). */
+    static void resetTimelineDispatchBudget() {
+        timelineDispatchBudget = MAX_TIMELINE_DISPATCHES_PER_FRAME;
     }
 
     static final class RuntimeState {
+        /** GeckoLib controller name; used only by the rate-limited timeline sink. */
+        final String controllerName;
         String currentState = "";
         /** Whether the controller has ever transitioned away from its initial state. */
         boolean hasLeftInitial = false;
@@ -1589,6 +1908,51 @@ public final class OpenYsmPlayerControllerRuntime {
         boolean lastSwingActive;
         /** Regular HashMap is safe: all RuntimeState access is on the client render thread. */
         final Map<String, Double> variables = new java.util.HashMap<>();
+        /** Bounded timeline scheduler; non-null only while the merged path owns
+         *  dispatch. Dropped together with the RuntimeState on reset/reload. */
+        TimelineEventScheduler timelineScheduler;
+        boolean timelineOwnsDispatch;
+        /** Signature (model | finalName | animation list) of the configured program. */
+        String timelineProgramKey = "";
+        ResourceLocation lastTimelineAnimationId = null;
+        String lastTimelineState = "";
+        String lastTimelineFinalName = null;
+        /** The merged animation instance this state currently schedules, so the
+         *  playback listener can ignore a callback for any other animation. */
+        software.bernie.geckolib3.core.builder.Animation timelineMergedAnim;
+        /** The single playback listener installed on the gecko controller. It carries
+         *  no state of its own: the merged-animation identity check above is what
+         *  makes a retired RuntimeState inert, so a model switch cannot leave this
+         *  state's scheduler advancing on another model's controller. */
+        final AnimationController.ITimelinePlaybackListener timelineListener =
+            new AnimationController.ITimelinePlaybackListener() {
+
+                @Override
+                public void onTimelinePlayback(software.bernie.geckolib3.core.builder.Animation animation, double tick,
+                    double delta, boolean wrapped) {
+                    if (animation == null || animation != timelineMergedAnim) {
+                        return;
+                    }
+                    handleTimelinePlayback(RuntimeState.this, tick, delta);
+                }
+            };
+        /** Budget-aware dispatch sink for the scheduler (captures the controller name). */
+        final TimelineEventScheduler.Sink timelineSink = new TimelineEventScheduler.Sink() {
+
+            @Override
+            public void dispatch(String instructions) {
+                if (timelineDispatchBudget <= 0) {
+                    return;
+                }
+                timelineDispatchBudget--;
+                MolangInstructionExecutor.noteTimelineExecution(controllerName, instructions);
+                MolangInstructionExecutor.execute(instructions);
+            }
+        };
+
+        RuntimeState(String controllerName) {
+            this.controllerName = controllerName;
+        }
     }
 
     private static final class ControllerMatch {

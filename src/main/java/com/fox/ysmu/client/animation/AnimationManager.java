@@ -272,7 +272,8 @@ public final class AnimationManager {
      * （wiki 的控制器名把 {@code .} 换成 {@code _ctrl_}），legacy 控制器形如
      * {@code main_controller} / {@code use_controller} / {@code parallel_6_controller}。
      * 认不出（例如具名并行备用池 {@code pre_parallel_extra_0_controller}）返回 null ——
-     * 它的槽位名要问运行时路由结果，这里不猜。</p>
+     * 它的槽位名要问运行时路由结果，这里不猜；{@link #controlSlotFor} 会用
+     * {@link OpenYsmPlayerControllerRuntime#namedParallelControlSlot} 把这块补上。</p>
      */
     @Nullable
     static String controlSlotName(@Nullable String geckoControllerName) {
@@ -293,6 +294,38 @@ public final class AnimationManager {
             return geckoControllerName.substring(0, geckoControllerName.length() - "_controller".length());
         }
         return null;
+    }
+
+    /**
+     * 这一帧要交给动画控制脚本的槽位名：普通槽位由 {@link #controlSlotName} 从控制器名推导；
+     * 具名并行备用池（{@code *_extra_N_controller}）的槽位名取决于**当前模型**的槽位表，
+     * 只有 {@link OpenYsmPlayerControllerRuntime#namedParallelControlSlot} 知道，在这里补齐。
+     * <p>
+     * 不补的话，模型给具名并行槽位写的 {@code @player_ctrl_<槽位>.molang} 永远拿不到控制权：
+     * 池控制器的谓词每帧先查脚本，查到的槽位名是 null，脚本阶段直接跳过。
+     */
+    @Nullable
+    static String controlSlotFor(AnimationEvent<CustomPlayerEntity> event) {
+        if (event == null || event.getController() == null) {
+            return null;
+        }
+        String name = event.getController().getName();
+        String slot = controlSlotName(name);
+        if (slot != null) {
+            return slot;
+        }
+        // 池名：解析它只为给动画控制脚本用。没开脚本、或当前模型根本没有脚本时，
+        // applyControlScript 也会直接返回 null，所以省掉这次按模型的路由（绝大多数模型走这里）。
+        if (!Config.MOLANG_CONTROL_SCRIPTS) {
+            return null;
+        }
+        CustomPlayerEntity animatable = event.getAnimatable();
+        ResourceLocation animId = animatable == null ? null : animatable.getAnimation();
+        if (animId == null
+            || !com.fox.ysmu.client.animation.molang.MolangScriptRegistry.hasScripts(animId)) {
+            return null;
+        }
+        return OpenYsmPlayerControllerRuntime.namedParallelControlSlot(animId, name);
     }
 
     /**
@@ -473,31 +506,12 @@ public final class AnimationManager {
         EntityPlayer player = event.getAnimatable() == null ? null : event.getAnimatable()
             .getPlayer();
         if (player != null) {
+            // 这里只给得出 wiki 槽位名（如 parallel_6）；clearControllerState 内部会把
+            // player. 前缀 / _controller 后缀归一化后再匹配，因此具名并行备用池承载的
+            // 槽位（运行时键是 player.parallel_6 或短名）也能被 reset 到。
             com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.clearControllerState(
                 player.getUniqueID(), animId, "player." + slot);
         }
-    }
-
-    /**
-     * 动画控制脚本（{@code @player_ctrl_<slot>.molang}）本帧的决定；没有脚本/未开启返回 null。
-     */
-    @Nullable
-    static ControlScriptDecision controlScriptDecision(ResourceLocation animId, String slot,
-        AnimationEvent<CustomPlayerEntity> event, java.util.Map<String, ?> animations,
-        @Nullable String fallbackName) {
-        if (!Config.MOLANG_CONTROL_SCRIPTS || animId == null || event == null) {
-            return null;
-        }
-        CustomPlayerEntity animatable = event.getAnimatable();
-        EntityPlayer player = animatable == null ? null : animatable.getPlayer();
-        if (player == null) {
-            return null;
-        }
-        com.fox.ysmu.client.animation.molang.AnimationControlResult result =
-            com.fox.ysmu.client.animation.molang.AnimationControlScripts.evaluate(animId, slot,
-                () -> new com.fox.ysmu.client.animation.controller.OpenYsmScriptScope(player, event, animId,
-                    java.util.Collections.emptyList()));
-        return decideControlScript(result, animations, fallbackName, animId, slot);
     }
 
     /** 从 PENDING_ROAMING 读取 Molang 变量的当前值 */
@@ -781,7 +795,7 @@ public final class AnimationManager {
             }
         }
         // 动画控制脚本优先（pre_main / post_main / pre_hold / pre_swing / pre_use …）。
-        PlayState scriptState = applyControlScript(event, controlSlotName(event.getController().getName()));
+        PlayState scriptState = applyControlScript(event, controlSlotFor(event));
         if (scriptState != null) {
             return scriptState;
         }
@@ -973,6 +987,14 @@ public final class AnimationManager {
             }
         }
 
+        // player_ctrl_main 优先：动画控制脚本必须在 OpenYSM 控制器（tryApply）之前求值，
+        // 否则模型自带 main 控制器一旦返回动画，脚本就永远拿不到控制权
+        // （顺序与 use / pre_main 等槽位一致）。
+        PlayState scriptState = applyControlScript(event, "main");
+        if (scriptState != null) {
+            legacyBodyActive = false;
+            return scriptState;
+        }
         PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
         if (controllerState != null) {
             legacyBodyActive = false;
@@ -1017,17 +1039,8 @@ public final class AnimationManager {
                     // 使用映射的动画名（如 walk → 正常_行走）替代标准名
                     String mappedName = getMolangMappedAnimation(animId, animationName, event);
                     String targetName = mappedName != null ? mappedName : animationName;
-                    // 动画控制脚本 @player_ctrl_main.molang 每帧求值，优先级高于静态映射：
-                    // 静态提取读不懂的算出来的动画名/复合条件由它兜住，返回 bypass 时目标不变。
-                    ControlScriptDecision scriptDecision = controlScriptDecision(animId, "main", event,
-                        animFile == null ? null : animFile.animations, targetName);
-                    if (scriptDecision != null && scriptDecision.stop) {
-                        applyControlScriptStop(animId, "main", event, scriptDecision.reset);
-                        return PlayState.STOP;
-                    }
-                    if (scriptDecision != null && scriptDecision.animationName != null) {
-                        targetName = scriptDecision.animationName;
-                    }
+                    // player_ctrl_main 已在 tryApply 之前统一求值（见本方法开头），
+                    // 不再在这里重复求值，避免脚本每帧被跑两遍。
                     Animation anim = null;
                     if (animFile != null) {
                         anim = animFile.animations.get(targetName);

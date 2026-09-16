@@ -5,6 +5,8 @@ import java.io.File;
 import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.common.config.Property;
 
+import com.fox.ysmu.util.ControllerUtils;
+
 public class Config {
     private static Configuration configuration;
 
@@ -136,6 +138,14 @@ public class Config {
      * 本身不会让"本来能动的模型"不动。用于 A/B 对比模型表现。
      */
     public static boolean MOLANG_CONTROL_SCRIPTS = true;
+    /**
+     * 具名并行槽位（{@code player.pre_parallel_<非数字后缀>} / {@code player.parallel_<...>}）
+     * 备用池大小（每族）。每个实体注册 {@code 2 × 此值} 个额外控制器，所以有上限
+     * （{@link ControllerUtils#MAX_NAMED_PARALLEL_EXTRA_SLOTS}），不是越多越好。
+     * 默认值覆盖绝大多数模型；只有当模型声明的具名槽位超过默认值时才有必要提高。
+     * 0 = 关闭具名并行槽位（池不注册，具名槽位不播放）。
+     */
+    public static int NAMED_PARALLEL_EXTRA_SLOTS = ControllerUtils.DEFAULT_NAMED_PARALLEL_EXTRA_SLOTS;
     public static int THREAD_COUNT = 4;
     public static int BANDWIDTH_LIMIT = 0;
     public static int PLAYER_SYNC_TIMEOUT = 60;
@@ -254,6 +264,7 @@ public class Config {
         DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB = syncInt("DirectBufferWatchdogThreshold", "watchdog", DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB, "Direct Buffer GC trigger threshold in MB", 128, 8192, load);
         ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Use the unified model sync protocol (covers all model formats: folders, BOM+YSGP and legacy bare-YSGP .ysm). When disabled or version-mismatched, falls back to the legacy MD5/AES sync", load);
         MOLANG_CONTROL_SCRIPTS = syncBoolean("MolangControlScripts", "animation", MOLANG_CONTROL_SCRIPTS, "Execute @player_ctrl_<slot>.molang animation-control scripts every frame (wiki: molang/script). When disabled only the statically extracted state->animation mapping is used", load);
+        NAMED_PARALLEL_EXTRA_SLOTS = syncInt("NamedParallelExtraSlots", "animation", NAMED_PARALLEL_EXTRA_SLOTS, "Extra pool controllers registered per parallel family (pre_parallel/parallel) to carry model-named parallel slots (player.pre_parallel_<name>). Each entity registers 2x this many extra controllers, so it is bounded; raise only if a model declares more named slots than the default. 0 disables named parallel slots.", 0, ControllerUtils.MAX_NAMED_PARALLEL_EXTRA_SLOTS, load);
         THREAD_COUNT = syncInt("ThreadCount", "ysm_sync", THREAD_COUNT, "Target worker count for YSM model sync tasks", 1, 32, load);
         BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
         PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);
