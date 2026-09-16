@@ -58,6 +58,10 @@ public final class AssetCache<K, V> {
     private final AssetProvider<K, V> provider;
     private final long failedRetryMs;
     private final ConcurrentHashMap<K, Entry<V>> entries = new ConcurrentHashMap<>();
+    /** 清空代次：{@link #clear()} 自增。后台加载在提交时记下代次，主线程应用结果前比对，
+     *  不一致说明中途发生过 clear（断线/资源重载），必须丢弃结果而不是 apply。 */
+    private final java.util.concurrent.atomic.AtomicLong generation =
+        new java.util.concurrent.atomic.AtomicLong();
 
     public AssetCache(AssetProvider<K, V> provider, long failedRetryMs) {
         this.provider = provider;
@@ -178,8 +182,12 @@ public final class AssetCache<K, V> {
         }
     }
 
-    /** 释放所有 READY 资源并清空状态（断线 / /ysm reload 时调用）。 */
+    /** 释放所有 READY 资源并清空状态（断线 / /ysm reload 时调用）。
+     *  <p>同时推进 {@link #generation}：此刻还在后台跑的加载结果回来时会被判为过期并丢弃，
+     *  不会把刚被清掉的资源重新 {@code apply} 回 GeckoLib 缓存（旧实现会复活一个已经
+     *  不属于任何登记项的资源，既泄漏又可能让"应该消失的模型"继续渲染）。 */
     public void clear() {
+        generation.incrementAndGet();
         for (Map.Entry<K, Entry<V>> me : entries.entrySet()) {
             Entry<V> e = me.getValue();
             if (e.getState() == State.READY) {
@@ -198,6 +206,11 @@ public final class AssetCache<K, V> {
         return entries.size();
     }
 
+    /** 清空代次（测试/诊断用）：{@link #clear()} 自增，后台加载据此判断结果是否已过期。 */
+    long generation() {
+        return generation.get();
+    }
+
     /** 提交后台加载，并保证加载结果在主线程应用。 */
     private void beginLoad(K key, Entry<V> e) {
         State s = e.getState();
@@ -207,6 +220,7 @@ public final class AssetCache<K, V> {
         if (!e.cas(s, State.LOADING)) {
             return; // 另一线程已抢先开始加载
         }
+        final long startedGeneration = generation.get();
         ThreadTools.THREAD_POOL.submit(() -> {
             V loaded;
             try {
@@ -217,6 +231,12 @@ public final class AssetCache<K, V> {
             }
             final V value = loaded;
             Minecraft.getMinecraft().func_152344_a(() -> {
+                // 结果回来时可能已经过时：clear()（断线/资源重载）推进了 generation，或该条目
+                // 已被 release/替换（entries 里不再是同一个 Entry）。此时绝不能 apply ——
+                // provider.apply 会往 GeckoLib 全局缓存写一个已无人管理的资源。
+                if (startedGeneration != generation.get() || entries.get(key) != e) {
+                    return;
+                }
                 if (value != null) {
                     try {
                         provider.apply(key, value);
@@ -236,7 +256,9 @@ public final class AssetCache<K, V> {
         });
     }
 
-    /** 立即释放指定资源（READY→ABSENT 并调用 provider.release；未加载/加载中时为 no-op）。 */
+    /** 立即释放指定资源（READY→ABSENT 并调用 provider.release；未加载时为 no-op）。
+     *  <p>正在后台加载的条目也会被取消（LOADING→ABSENT 并移出登记表）：后台结果回来时
+     *  会因 {@code entries.get(key) != e} 被丢弃，不会重新出现在缓存里。 */
     public void release(K key) {
         Entry<V> e = entries.get(key);
         if (e != null) {
@@ -245,7 +267,7 @@ public final class AssetCache<K, V> {
     }
 
     private void release(K key, Entry<V> e) {
-        if (!e.cas(State.READY, State.ABSENT)) {
+        if (!e.cas(State.READY, State.ABSENT) && !e.cas(State.LOADING, State.ABSENT)) {
             return;
         }
         try {

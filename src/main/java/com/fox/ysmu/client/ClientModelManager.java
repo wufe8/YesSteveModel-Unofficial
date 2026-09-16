@@ -149,8 +149,12 @@ public class ClientModelManager {
     private static final String PROJECTILE_KEY_PREFIX = "projectile_";
 
     // ── Lazy reloading from encrypted client cache ────────────────────────
-    /** Maps main model ID → cache file path (relative to CACHE_CLIENT) for re-reading from the encrypted client cache. */
-    private static final Map<ResourceLocation, String> CACHED_MODEL_MD5 = new HashMap<>();
+    /** Maps main model ID → cache file path (relative to CACHE_CLIENT) for re-reading from the encrypted client cache.
+     *  <p>并发：写发生在同步/解析路径（含后台解析线程），读发生在资源懒加载的后台线程
+     *  （{@code AssetProvider#load} → {@link #loadLegacyModelData}），所以必须是并发 map ——
+     *  普通 HashMap 会在扩容时被并发读撕出错误结果甚至死循环。 */
+    private static final Map<ResourceLocation, String> CACHED_MODEL_MD5 =
+        new java.util.concurrent.ConcurrentHashMap<>();
     /** Main model IDs whose encrypted client cache uses the OpenYSM (YsmCrypt) format.
      *  Those files are decrypted with the session client key, not the legacy password. */
     private static final java.util.Set<ResourceLocation> OPENYSM_CACHE_FORMAT =

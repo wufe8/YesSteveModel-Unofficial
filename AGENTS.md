@@ -118,6 +118,8 @@ Preserve existing public names and legacy casing, including the lowercase `ysmu`
 
 When adding user-facing text, update both `en_US.lang` and `zh_CN.lang`. When adding config fields, update `Config`, the relevant GUI screen if applicable, and translation keys.
 
+Chinese **displayable text** in `zh_CN.lang` (`gui.*`, `commands.*`, `message.*`, `molang.*` — the GUI and the chat use the same `FontRenderer`) uses **ASCII punctuation plus one space** (`名称: 值(说明)`), never fullwidth `，。、；：！？（）…` or `【】“”`. On some clients the font stops rendering the rest of the line at a fullwidth `（` (the tail becomes invisible) while centring still measures the whole string, so a centred label appears shifted left and drifts when the selected option changes, and a left-aligned one silently loses its explanatory tail. Keep the explanatory text — just write the punctuation in ASCII. Decorative glyphs that the default font does ship (e.g. `▌`) are fine; replace other icon glyphs (e.g. `⏸`) with an ASCII form.
+
 When adding model animation states, register names and priorities through `AnimationRegister`/`AnimationManager`, and ensure `ConditionManager.addTest` can classify conditional animation names.
 
 Reference third-party models generically in code comments and commit messages. A concrete model name is fine when it ships with the mod (the built-in `wine_fox` pack and its sub-models, `default`, `misc`, or a fixture under `src/test`); otherwise describe the shape of the problem ("a model that declares only `player.parallel_0..7` and drives visibility from `pre_parallel6`") instead of naming a downloaded pack. Note the models under `res/` (other than `wine_fox_fold`) are downloaded packs that once exposed a bug — still not nameable.

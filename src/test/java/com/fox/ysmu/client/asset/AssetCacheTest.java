@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.asset;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -75,5 +76,38 @@ class AssetCacheTest {
 
         assertEquals(1, cache.size());
         assertEquals(Collections.emptyList(), provider.released);
+    }
+
+    /**
+     * A background load started before a {@code clear()} must not apply afterwards.
+     * {@code clear()} bumps the generation, which is what the main-thread apply callback
+     * checks; the observable contract here is the bump plus the emptied table.
+     */
+    @Test
+    void clearInvalidatesInFlightLoads() {
+        RecordingProvider provider = new RecordingProvider();
+        AssetCache<String, String> cache = new AssetCache<>(provider, 0L);
+        cache.register("ysmu:a/main", "geo", 0L);
+
+        long before = cache.generation();
+        cache.clear();
+
+        assertTrue(cache.generation() > before, "clear() must invalidate in-flight loads");
+        assertEquals(0, cache.size());
+        assertEquals(Collections.singletonList("ysmu:a/main"), provider.released);
+    }
+
+    /** release() drops the entry and releases the value; a second call is a no-op. */
+    @Test
+    void releaseRemovesTheEntryAndIsIdempotent() {
+        RecordingProvider provider = new RecordingProvider();
+        AssetCache<String, String> cache = new AssetCache<>(provider, 0L);
+        cache.register("ysmu:a/main", "geo", 0L);
+
+        cache.release("ysmu:a/main");
+        cache.release("ysmu:a/main"); // 已不在表里 → no-op
+
+        assertEquals(0, cache.size());
+        assertEquals(Collections.singletonList("ysmu:a/main"), provider.released);
     }
 }

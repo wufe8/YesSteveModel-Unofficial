@@ -134,6 +134,39 @@ class AnimationManagerControlScriptDecisionTest {
         assertNull(AnimationManager.controlSlotName(""));
     }
 
+    /**
+     * wiki：{@code ctrl.indicate_reload} 必须在 {@code ctrl.set_animation} 之前调用才生效；
+     * 而 {@code ctrl.set_beginning_transition_length} / indicate_reload 以前只有注册期静态提取
+     * 的 map 会生效（只能绑字面量动画名）。这里证明**本帧运行时**的值也随决定带出来，供
+     * {@code applyControlScript} 落到控制器上。
+     */
+    @Test
+    void runtimeIndicateReloadAndTransitionRideAlongInTheDecision() {
+        AnimationManager.ControlScriptDecision decision = AnimationManager.decideControlScript(
+            evaluate("main",
+                "ctrl.indicate_reload; ctrl.set_beginning_transition_length(0.1);"
+                    + " ctrl.set_animation('run'); return ctrl.state_continue;"),
+            ANIMATIONS, "idle", MODEL, "main");
+
+        assertNotNull(decision);
+        assertEquals("run", decision.animationName);
+        assertTrue(decision.indicateReload, "脚本本帧调了 indicate_reload，决定里必须带上");
+        assertNotNull(decision.transitionSeconds);
+        assertEquals(0.1d, decision.transitionSeconds, 1.0e-9d);
+    }
+
+    /** 脚本没写提示时不能凭空塞值：过渡时长保持 null，由静态映射/控制器默认值决定。 */
+    @Test
+    void aScriptWithoutHintsLeavesTheRuntimeValuesEmpty() {
+        AnimationManager.ControlScriptDecision decision = AnimationManager.decideControlScript(
+            evaluate("main", "ctrl.set_animation('run'); return ctrl.state_continue;"), ANIMATIONS, "idle", MODEL,
+            "main");
+
+        assertNotNull(decision);
+        assertNull(decision.transitionSeconds);
+        assertFalse(decision.indicateReload);
+    }
+
     /** 空宿主作用域：这些脚本不读写任何变量。 */
     private static final class EmptyScope implements MolangScriptInterpreter.MolangScriptScope {
 

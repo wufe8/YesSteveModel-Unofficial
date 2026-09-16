@@ -995,7 +995,14 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return Math.max(0.0d, event.getAnimationTick() - state.enteredTick) / 20.0d;
             }
             if ("life_time".equals(name)) {
-                return event == null ? FALSE : event.getAnimationTick() / 20.0d;
+                if (event != null) {
+                    return event.getAnimationTick() / 20.0d;
+                }
+                // 没有 AnimationEvent 的调用点：@player_init / @player_update / @sync 事件脚本
+                // （OpenYsmScriptRuntime.runEvent 传 event=null）。这些地方以前恒返回 0，而
+                // q.life_time 的语义是"实体存在时间(秒)"（参考库的 @player_ctrl 脚本确实拿它
+                // 做 math.mod(life_time, 1) 闪烁），所以退回实体自己的 ticksExisted。
+                return player.ticksExisted / 20.0d;
             }
             if ("all_animations_finished".equals(name) || "any_animation_finished".equals(name)) {
                 // 动态计算结果缓存下来，供 debug overlay / /ysm query 读取

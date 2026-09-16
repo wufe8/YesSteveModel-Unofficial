@@ -16,6 +16,7 @@
 | `dedupe_mc_log.py` | **通用**日志"行形状"折叠：把只差时间戳/线程/数字的重复行合并计数，并可列出某个标签实际产生过的**所有不同取值**（判断"变量根本没变"时最有用） |
 | `plot_anim_probe.py` | 解析 `[YSMU-KF]` / `[YSMU-BONE]` 探针行（探针本身已从源码移除，只能用留档日志；需要重跑就用 `git show c5f3cbb:<文件>` 取回），输出文本统计 + ASCII 图 + CSV + 无依赖 SVG（`--png` 需要 matplotlib） |
 | `vendor_imagestream.py` | 生成 ImageStream/WebP 解码相关的 vendored 代码 |
+| `scan_named_parallel_slots.py` | 扫描模型目录树（默认 `res`），统计每个模型声明的**具名**并行槽位（`(player.)?(pre_parallel\|parallel)_<非数字>`，来源同运行时：`controller/*.json` 键名 + `<描述>@player_ctrl_<槽位>.molang` 文件名）与**数字**槽位数量，用来判断 `NamedParallelExtraSlots` 该设多大 |
 
 典型用法：
 

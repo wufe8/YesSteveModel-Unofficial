@@ -376,8 +376,22 @@ public final class AnimationManager {
             return null;
         }
         ILoopType loopType = loopTypeOf(scriptLoop);
-        return loopType == null ? playAnimation(event, decision.animationName)
+        // wiki：若要重载当前动画，必须在 ctrl.set_animation **之前**调用 ctrl.indicate_reload ——
+        // 同名动画否则会被忽略。所以在 playAnimation 之前 markNeedsReload，让 setAnimation 的
+        // "同名但 needsAnimationReload" 分支走重载。
+        if (decision.indicateReload && event.getController() != null) {
+            event.getController()
+                .markNeedsReload();
+        }
+        PlayState state = loopType == null ? playAnimation(event, decision.animationName)
             : playAnimation(event, decision.animationName, loopType);
+        // 过渡时长放在 playAnimation 之后：applyMolangPlaybackHints 可能用静态提取的 map 设过它，
+        // 而脚本本帧真正执行出来的值更权威。
+        if (decision.transitionSeconds != null && decision.transitionSeconds >= 0.0d
+            && event.getController() != null) {
+            event.getController().transitionLengthTicks = decision.transitionSeconds * 20.0d;
+        }
+        return state;
     }
 
     /** 脚本给出的循环类型 → GeckoLib 的 loop 类型；没写（null）返回 null（用动画自带的）。 */
@@ -407,11 +421,31 @@ public final class AnimationManager {
         final boolean stop;
         /** {@code ctrl.reset}：同时清掉该槽位的控制器运行时状态（回到初始状态）。 */
         final boolean reset;
+        /**
+         * 脚本**本帧**给的过渡时长（秒，{@code ctrl.set_beginning_transition_length}）；null = 没给。
+         * <p>注册期静态提取的 {@code MOLANG_TRANSITION_MAP} 只能绑定字面量动画名，动态算出来的
+         * 名字绑不上 —— 这个字段是那条路径的补充。
+         */
+        @Nullable
+        final Double transitionSeconds;
+        /**
+         * 脚本**本帧**调用了 {@code ctrl.indicate_reload}。wiki 明确要求它在
+         * {@code ctrl.set_animation} **之前**调用才生效（否则同名动画会被忽略而不是重载），
+         * 所以应用方必须先 markNeedsReload 再播。
+         */
+        final boolean indicateReload;
 
         ControlScriptDecision(@Nullable String animationName, boolean stop, boolean reset) {
+            this(animationName, stop, reset, null, false);
+        }
+
+        ControlScriptDecision(@Nullable String animationName, boolean stop, boolean reset,
+            @Nullable Double transitionSeconds, boolean indicateReload) {
             this.animationName = animationName;
             this.stop = stop;
             this.reset = reset;
+            this.transitionSeconds = transitionSeconds;
+            this.indicateReload = indicateReload;
         }
     }
 
@@ -485,7 +519,8 @@ public final class AnimationManager {
                     name, fallbackName);
             }
         }
-        return new ControlScriptDecision(name, false, false);
+        return new ControlScriptDecision(name, false, false, result.transitionSeconds(),
+            result.indicateReload());
     }
 
     /**

@@ -27,6 +27,9 @@ public final class OpenYsmScriptRuntime {
 
     /** 已经跑过 {@code player_init} 的 (玩家, 模型) 组合。 */
     private static final Set<String> INITIALISED = ConcurrentHashMap.newKeySet();
+    /** 每个玩家上一帧渲染用的模型：用来识别"切换到另一个模型"，见 {@link #shouldRunPlayerInit}。 */
+    private static final java.util.Map<UUID, ResourceLocation> LAST_RENDERED_MODEL =
+        new ConcurrentHashMap<>();
     /** 每个 (模型, 事件) 只打一条诊断日志。 */
     private static final Set<String> LOGGED = ConcurrentHashMap.newKeySet();
 
@@ -40,14 +43,48 @@ public final class OpenYsmScriptRuntime {
      * @param modelId 当前主模型
      */
     public static void runFrameScripts(EntityPlayer player, ResourceLocation modelId) {
-        if (player == null || modelId == null || !MolangScriptRegistry.hasScripts(modelId)) {
+        if (player == null || modelId == null) {
             return;
         }
-        String key = player.getUniqueID() + "|" + modelId;
-        if (INITIALISED.add(key)) {
+        // 注意：即使这个模型没有任何脚本，也要更新"上一帧模型"并重新武装旧模型的 init 标记 ——
+        // 否则 A → B(无脚本) → A 回到 A 时 init 不会重跑（wiki：player_init 的触发时机是
+        // "玩家切换到该模型或玩家实体加载时"，切换回来属于"切换到该模型"）。
+        boolean justSwitchedToThisModel =
+            shouldRunPlayerInit(INITIALISED, LAST_RENDERED_MODEL, player.getUniqueID(), modelId);
+        if (!MolangScriptRegistry.hasScripts(modelId)) {
+            return;
+        }
+        if (justSwitchedToThisModel) {
             runEvent(player, modelId, MolangScriptRegistry.EVENT_PLAYER_INIT);
         }
         runEvent(player, modelId, MolangScriptRegistry.EVENT_PLAYER_UPDATE);
+    }
+
+    /**
+     * 记录该玩家这一帧的模型，并回答"本帧是否应当触发 {@code player_init}"。
+     *
+     * <p>语义（wiki: molang/script「事件订阅」—— {@code player_init} 在"玩家切换到该模型或玩家
+     * 实体加载时"触发）：</p>
+     * <ul>
+     *   <li>第一次看到 (玩家, 模型) → 触发；</li>
+     *   <li>同一模型连续渲染 → 不重复触发；</li>
+     *   <li>玩家切到别的模型时，把**旧模型**的已初始化标记清掉，于是 A→B→A 回到 A 会重新触发
+     *       {@code player_init}（init 里建立的随机种子/预置变量因此不会停留在上一轮的值）。</li>
+     * </ul>
+     *
+     * <p>抽成静态纯函数（表和 map 由调用方传入）是为了能在没有 Minecraft 环境的单测里覆盖
+     * 切换序列。</p>
+     */
+    static boolean shouldRunPlayerInit(Set<String> initialised,
+        java.util.Map<UUID, ResourceLocation> lastRenderedModel, UUID playerId, ResourceLocation modelId) {
+        if (initialised == null || lastRenderedModel == null || playerId == null || modelId == null) {
+            return false;
+        }
+        ResourceLocation previous = lastRenderedModel.put(playerId, modelId);
+        if (previous != null && !previous.equals(modelId)) {
+            initialised.remove(playerId + "|" + previous);
+        }
+        return initialised.add(playerId + "|" + modelId);
     }
 
     /**
@@ -106,6 +143,7 @@ public final class OpenYsmScriptRuntime {
     /** 模型缓存全量刷新时调用：脚本表换了，{@code player_init} 必须重跑。 */
     public static void clear() {
         INITIALISED.clear();
+        LAST_RENDERED_MODEL.clear();
         LOGGED.clear();
     }
 
@@ -116,5 +154,6 @@ public final class OpenYsmScriptRuntime {
         }
         String prefix = playerId.toString() + "|";
         INITIALISED.removeIf(key -> key.startsWith(prefix));
+        LAST_RENDERED_MODEL.remove(playerId);
     }
 }
