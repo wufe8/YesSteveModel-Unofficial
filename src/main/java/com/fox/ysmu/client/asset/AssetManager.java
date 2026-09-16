@@ -73,9 +73,13 @@ public final class AssetManager {
     public static void tick() {
         // 内置兜底模型（default）必须常驻：若被闲置释放，GUI 预览 fallback 到它时
         // GeckoLib 的 getModel() 会抛 GeoModelException "Could not find model" 崩溃。
-        // 每次回收前 touch 刷新其活跃时间，evict 便不会释放它。
-        GEO.touch(com.fox.ysmu.client.model.CustomPlayerModel.DEFAULT_MAIN_MODEL);
-        ANIM.touch(com.fox.ysmu.client.model.CustomPlayerModel.DEFAULT_MAIN_MODEL);
+        // 而且它的几何/动画**没有**加密客户端缓存可恢复（loadDefaultModel 直接从本地
+        // builtin/ 或 legacy custom/ 读盘，从不写 CACHED_MODEL_MD5），释放后 reload 必然
+        // 失败。几何按子 id 分开缓存，所以这里按"属于 default 模型"整批刷新活跃时间，
+        // 不能只 touch main：只 touch main 时 `…/arm` 会在闲置后被释放，回切第一人称
+        // 手臂就缺 geo。
+        GEO.touchIf(com.fox.ysmu.client.ClientModelManager::isDefaultModelId);
+        ANIM.touchIf(com.fox.ysmu.client.ClientModelManager::isDefaultModelId);
 
         // Suppress all resource eviction while the preview GUI is open or within
         // the post-close grace period.

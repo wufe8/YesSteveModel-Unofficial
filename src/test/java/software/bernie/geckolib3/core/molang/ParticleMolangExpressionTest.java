@@ -2,6 +2,7 @@ package software.bernie.geckolib3.core.molang;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
+import static org.junit.jupiter.api.Assertions.assertThrows;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import org.junit.jupiter.api.BeforeEach;
@@ -70,5 +71,22 @@ class ParticleMolangExpressionTest {
         assertEquals("minecraft:flame", MolangStringPool.get(id));
         // 相同字符串应返回同一 id（幂等）
         assertEquals(id, MolangStringPool.intern("minecraft:flame"));
+    }
+
+    /**
+     * 四个粒子函数名必须全部注册。未注册的函数会让整条关键帧表达式解析失败、整个
+     * animation 被丢弃，所以 {@code ysm.abs_particle} 漏注册是一个会让模型丢失动画的
+     * 真实缺陷（绝对模式在 ParticleFunction 里早已实现，只是名字没进函数表）。
+     */
+    @Test
+    void everyParticleFunctionNameIsRegistered() throws Exception {
+        MolangParser parser = new MolangParser();
+        for (String name : new String[] { "particle", "abs_particle", "ysm.particle", "ysm.abs_particle" }) {
+            IValue value = parser.parseExpression(name + "('flame', 0, 1, 0, 0.5, 0, 0.5, 0.1, 1, 8);");
+            assertNotNull(value, name + " must be registered so keyframe parsing does not fail");
+            assertEquals(0.0D, value.get(), 0.0001D, "no entity context -> " + name + " returns 0");
+        }
+        // 前置条件：未注册的名字确实会被拒绝，否则上面的断言证明不了注册生效。
+        assertThrows(Exception.class, () -> parser.parseExpression("ysm.definitely_not_a_function(1);"));
     }
 }

@@ -276,6 +276,19 @@ public class ClientModelManager {
     }
 
     /**
+     * True when {@code id} — a base id, a mainId, or any sub-model id such as
+     * {@code ysmu:default/arm} — belongs to the configured default/fallback model.
+     * <p>
+     * Used to pin the fallback's geo/animation entries against idle eviction: the local
+     * default model is read from {@code builtin/}/{@code custom/} and never gets a
+     * {@code CACHED_MODEL_MD5} entry, so once an entry is released it can never be
+     * reloaded through the lazy asset path.
+     */
+    public static boolean isDefaultModelId(ResourceLocation id) {
+        return isDefaultModelBundle(id);
+    }
+
+    /**
      * Apply 优先模型集合（base id）：同步期间这些模型的 bundle 排到
      * {@link #PENDING_APPLY_DEFAULT}（优先队列）最前面，使进存档后本地玩家
      * 自己的模型尽快完整注册（几何/纹理/extra wheel/MODELS），不必等整批模型
@@ -1776,6 +1789,16 @@ public class ClientModelManager {
         // MODELS keys are base model ids (e.g. "ysmu:model_id").
         for (Map.Entry<ResourceLocation, List<ResourceLocation>> entry : MODELS.entrySet()) {
             ResourceLocation modelBaseId = entry.getKey();
+            // 内置兜底模型（default）的贴图必须常驻，和 AssetManager.tick() 里
+            // GEO/ANIM 的常驻理由相同，但这里更硬：它的字节没有加密客户端缓存可恢复
+            // —— loadDefaultModel() 直接从本地 builtin/（或 legacy custom/default）
+            // 读盘，从不写 CACHED_MODEL_MD5，于是 restoreTextureData() 的
+            // loadLegacyModelData() 一定返回 null。一旦按空闲释放字节，回切到
+            // default（或第一人称兜底）就再也恢复不出来，表现为白模，只能 /ysm reload
+            // 或重启。default 的贴图很小，常驻的代价远低于这个闭环缺口。
+            if (isDefaultModelBundle(modelBaseId)) {
+                continue;
+            }
             long lastUsed = 0L;
             boolean anyUploaded = false;
             for (ResourceLocation texId : entry.getValue()) {

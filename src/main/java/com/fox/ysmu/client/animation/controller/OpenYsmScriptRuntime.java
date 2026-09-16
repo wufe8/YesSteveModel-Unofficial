@@ -57,6 +57,10 @@ public final class OpenYsmScriptRuntime {
      * 于是随机数/预置变量这类"各客户端不一致"的值被拉齐。触发时机自然晚于
      * {@code player_init}/{@code player_update}（那两个在渲染帧里跑）。</p>
      *
+     * <p>它在渲染帧之外执行，所以必须显式带上（发起者玩家, 模型）的变量作用域 ——
+     * 否则脚本里的 {@code v.*} 赋值会因为 {@code MolangPhysicsRuntime} 没有帧上下文而丢失
+     * （见 {@code runWithVariableScope}）。</p>
+     *
      * @param player  发起者在本地世界里的实体；找不到/模型不在本地时调用方应跳过
      * @param modelId 发起者当前的主模型
      * @param arguments 同步参数（最多 16 个，服务端已截断）
@@ -65,7 +69,12 @@ public final class OpenYsmScriptRuntime {
         if (player == null || modelId == null) {
             return;
         }
-        runEvent(player, modelId, MolangScriptRegistry.EVENT_SYNC, arguments);
+        // @sync 由主线程调度任务在渲染帧之外触发：没有帧上下文时
+        // MolangPhysicsRuntime.setVariable 返回 false，脚本里的 v.* 赋值会被全部丢弃。
+        // 这里临时挂上（发起者玩家, 该模型）的变量作用域，写回落进下一帧 begin() 读的
+        // 同一份 ScopeState —— 既保住跨帧可见性，也不会写进当前正在渲染的其他玩家/模型。
+        com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.runWithVariableScope(player, modelId,
+            () -> runEvent(player, modelId, MolangScriptRegistry.EVENT_SYNC, arguments));
     }
 
     private static void runEvent(EntityPlayer player, ResourceLocation modelId, String event) {

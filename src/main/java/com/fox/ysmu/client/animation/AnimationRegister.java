@@ -174,6 +174,10 @@ public class AnimationRegister {
             // ParticleFunction 通过 MolangStringPool 还原字符串参数（粒子 id），
             // 实体上下文由 ParticleEffectUtil.setCurrentEntity 每帧写入。
             functions.put("ysm.particle", ParticleFunction.class);
+            // ysm.abs_particle：与 ysm.particle 成对。漏注册时整条关键帧表达式解析失败、
+            // 整个 animation 被丢弃（与 query.equipped_item_*_tag 同一条约定），
+            // 所以四个名字必须都在。ParticleFunction 按注册名里的 "abs_" 判定绝对模式。
+            functions.put("ysm.abs_particle", ParticleFunction.class);
             functions.put("particle", ParticleFunction.class);
             functions.put("abs_particle", ParticleFunction.class);
             // ysm.bone_pivot_abs：骨骼绝对枢轴（模型单位），沿父链应用完整变换。

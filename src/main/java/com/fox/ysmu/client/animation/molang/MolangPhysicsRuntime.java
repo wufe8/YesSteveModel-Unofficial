@@ -170,6 +170,37 @@ public final class MolangPhysicsRuntime {
         OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
     }
 
+    /**
+     * Runs {@code body} with the variable scope of {@code (player, modelId)} installed
+     * as the current frame context, without a render pass.
+     * <p>
+     * Out-of-frame script events ({@code @sync}, dispatched from a scheduled task
+     * between frames) have no {@code begin()}/{@code end()} of their own, so
+     * {@link #setVariable} returned {@code false} and every {@code v.*} assignment in
+     * them was silently dropped. Installing the scope makes such a write land in the
+     * same {@link ScopeState} the next render frame of that player+model reads, and
+     * keeps it isolated from whichever other player/model is being rendered.
+     * <p>
+     * The context has no {@link AnimationProcessor}, so bone/physics reads degrade to
+     * their neutral defaults ({@link #bone(int)} returns {@code null}); a {@code @sync}
+     * script has no rendered bones to read anyway. A previously installed frame context
+     * (nested call) is restored afterwards.
+     */
+    public static void runWithVariableScope(EntityPlayer player, ResourceLocation modelId, Runnable body) {
+        if (body == null) {
+            return;
+        }
+        FrameContext previous = currentFrameContext;
+        ScopeState state = modelId == null ? null
+            : STATES.computeIfAbsent(ScopeKey.from(player, modelId), ignored -> new ScopeState());
+        currentFrameContext = state == null ? null : new FrameContext(modelId, state, null);
+        try {
+            body.run();
+        } finally {
+            currentFrameContext = previous;
+        }
+    }
+
     public static void clear() {
         STATES.clear();
         CAPTURED_BONE_MATRIX.clear();
@@ -573,7 +604,7 @@ public final class MolangPhysicsRuntime {
 
     private static IBone bone(int nameId) {
         FrameContext context = currentFrameContext;
-        if (context == null || nameId == MolangStringPool.EMPTY_ID) {
+        if (context == null || context.processor == null || nameId == MolangStringPool.EMPTY_ID) {
             return null;
         }
         String boneName = MolangStringPool.get(nameId);

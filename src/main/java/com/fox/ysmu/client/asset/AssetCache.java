@@ -90,10 +90,15 @@ public final class AssetCache<K, V> {
      * 通常由首次同步流程调用，之后由本缓存统一管理生命周期。
      */
     public void register(K key, V value) {
+        register(key, value, System.currentTimeMillis());
+    }
+
+    /** @param now synthetic clock (tests); see {@link #evict}. */
+    void register(K key, V value, long now) {
         Entry<V> e = entries.computeIfAbsent(key, k -> new Entry<>());
         e.value = value;
         e.setState(State.READY);
-        e.lastUsed = System.currentTimeMillis();
+        e.lastUsed = now;
     }
 
     /** 标记最近使用，避免被空闲回收。 */
@@ -101,6 +106,27 @@ public final class AssetCache<K, V> {
         Entry<V> e = entries.get(key);
         if (e != null && e.getState() == State.READY) {
             e.lastUsed = System.currentTimeMillis();
+        }
+    }
+
+    /**
+     * 把所有当前 READY 且满足 {@code predicate} 的条目标记为最近使用。
+     * <p>
+     * 供"必须常驻"的资源使用：兜底模型 default 的几何按子 id 分开缓存
+     * （{@code …/main}、{@code …/arm}），只 {@link #touch(Object) touch} 主几何会让手臂
+     * 几何在闲置后被释放，而本地兜底模型没有加密客户端缓存可重载 —— 回切时缺 geo。
+     */
+    public void touchIf(java.util.function.Predicate<K> predicate) {
+        touchIf(predicate, System.currentTimeMillis());
+    }
+
+    /** @param now synthetic clock (tests); see {@link #evict}. */
+    void touchIf(java.util.function.Predicate<K> predicate, long now) {
+        for (Map.Entry<K, Entry<V>> me : entries.entrySet()) {
+            Entry<V> e = me.getValue();
+            if (e.getState() == State.READY && predicate.test(me.getKey())) {
+                e.lastUsed = now;
+            }
         }
     }
 

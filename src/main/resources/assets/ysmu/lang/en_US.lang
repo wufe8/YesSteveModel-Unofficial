@@ -5,7 +5,6 @@ gui.yes_steve_model.next_page=Next Page
 gui.yes_steve_model.all_models=All Models
 gui.yes_steve_model.star_models=Star Models
 gui.yes_steve_model.config=Open Config GUI
-gui.yes_steve_model.config.named_parallel_slots=Named slots/family: %s (edit config; restart required)
 gui.yes_steve_model.download=Open Download GUI
 gui.yes_steve_model.search=Search models...
 gui.yes_steve_model.model.authors=§2§l▌ §3Authors: %s

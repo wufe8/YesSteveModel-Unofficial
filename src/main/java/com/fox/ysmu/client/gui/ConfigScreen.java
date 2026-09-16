@@ -40,11 +40,10 @@ public class ConfigScreen extends GuiScreen {
             // 预览刷新：点击循环离散值（0-4），文本置中与其他点击项一致
             this.buttonList.add(new FlatColorButton(9, x + 5, y + 25 + i++ * 22, 400, 20,
                 I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH)));
-            // 池在实体初始化时注册，运行中不改容量；显示配置值并说明需改文件、重启。
-            GuiButton namedSlots = new FlatColorButton(16, x + 5, y + 25 + i++ * 22, 400, 20,
-                I18n.format("gui.yes_steve_model.config.named_parallel_slots", Config.NAMED_PARALLEL_EXTRA_SLOTS));
-            namedSlots.enabled = false;
-            this.buttonList.add(namedSlots);
+            // 具名并行槽位（NamedParallelExtraSlots）**不在游戏内调整**：池在实体初始化时
+            // 注册，运行中改不了容量，改配置文件后重启才生效。这里曾经放一个 disabled 的
+            // 只读按钮，点了没反应容易被当成 bug，已移除（值仍写在 config/ysmu.cfg 的
+            // animation 组，README 有说明）。
         } else if (page == 1) {
             int i = 0;
             addCheckbox(3,  x + 5, y + 25 + i++ * 22, "print_animation_roulette_msg", Config.PRINT_ANIMATION_ROULETTE_MSG);
