@@ -301,6 +301,10 @@ public final class MolangPhysicsRuntime {
             return false;
         }
         context.state.variables.put(name, value);
+        // 常驻变量（v.roaming.*）赋值必须"粘住"：动画/时间轴写完的值若是只留在本帧作用域里，
+        // 下一帧 begin() 注入 ysm.json 默认值时就会被冲掉（轮盘"变身"只能生效一次的根因）。
+        // 这里是所有 v.* 赋值路径的唯一汇聚点——关键帧表达式、嵌套赋值、时间轴指令都走它。
+        OpenYsmPlayerControllerRuntime.noteRoamingWrite(context.modelId, name, value);
         return true;
     }
 

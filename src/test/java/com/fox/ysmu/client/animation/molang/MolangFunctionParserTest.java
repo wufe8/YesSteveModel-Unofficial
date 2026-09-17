@@ -5,7 +5,10 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
+
+import org.apache.commons.lang3.tuple.Pair;
 
 import org.junit.jupiter.api.Test;
 
@@ -65,6 +68,48 @@ class MolangFunctionParserTest {
 
         assertTrue(hints.reloadAnimations.contains("发射"));
         assertFalse(hints.reloadAnimations.contains("待命"));
+    }
+
+    /**
+     * 复合守卫 + 内层条件动画的写法（碰墙抬手的形状）：只能登记**内层**条件，不能把外层守卫
+     * 当成替代动画的守卫 —— 否则外层守卫（ctrl.run || ctrl.walk）在走路时无条件成立，内层的
+     * 相对方块/朝向判定会被整个绕过（空旷超平坦四个方向都没墙也会命中 defWall）。
+     */
+    @Test
+    void compoundGuardWithInnerConditionsKeepsOnlyTheInnerConditions() {
+        Map<String, List<Pair<String, String>>> parsed = MolangFunctionParser.parseConditionalAnimations(script(
+            "ctrl.run || ctrl.walk ? { "
+                + "((v.east == false) && (query.cardinal_facing_2d == 5)) ? { ctrl.set_animation('defWall'); return ctrl.state_continue; }; "
+                + "(v.north == false) && (query.cardinal_facing_2d == 2) ? { ctrl.set_animation('defWall'); return ctrl.state_continue; }; "
+                + "}; return ctrl.state_stop;"));
+
+        List<Pair<String, String>> entries = parsed.get("walk");
+        assertFalse(entries == null || entries.isEmpty(), "内层条件必须被登记: " + parsed);
+        for (Pair<String, String> entry : entries) {
+            assertTrue(entry.getKey()
+                .contains("cardinal_facing_2d"),
+                "守卫里必须保留墙/朝向判定，不能只剩外层 ctrl.run||ctrl.walk: " + entry.getKey());
+            assertEquals("defWall", entry.getValue());
+        }
+        assertEquals(2, entries.size());
+    }
+
+    /** 复合守卫 + **直接** set_animation（倒走动画的形状）仍要登记，否则会丢掉这条兜底。 */
+    @Test
+    void compoundGuardWithDirectSetAnimationIsStillCaptured() {
+        Map<String, List<Pair<String, String>>> parsed = MolangFunctionParser.parseConditionalAnimations(script(
+            "(ctrl.walk && (ysm.input_vertical < 0.1)) ? { ctrl.set_animation('walkBack'); return ctrl.state_continue; }; "
+                + "return ctrl.state_bypass;"));
+
+        assertEquals(1, parsed.get("walk")
+            .size(), parsed.toString());
+        assertEquals("walkBack", parsed.get("walk")
+            .get(0)
+            .getValue());
+        assertTrue(parsed.get("walk")
+            .get(0)
+            .getKey()
+            .contains("input_vertical"));
     }
 
     @Test

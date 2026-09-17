@@ -100,6 +100,9 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             }
         } else {
             try {
+                // GUI 预览没有玩家，parser 里的"玩家运动/视角"查询会停在世界渲染留下的实时值上
+                // （实测 query.yaw_speed≈130）。累加型模型会因此在预览里无休止旋转，先复位成中性值。
+                AnimationRegister.setPreviewParserValues(GeckoLibCache.getInstance().parser);
                 super.setLivingAnimations(animatable, instanceId, animationEvent);
                 // GUI preview path: also hide expression/weapon bones
                 // (same as the in-game path above, but the preview entity

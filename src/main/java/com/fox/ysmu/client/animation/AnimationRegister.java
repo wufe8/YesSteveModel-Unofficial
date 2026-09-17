@@ -356,6 +356,15 @@ public class AnimationRegister {
         parser.register(new LazyVariable("ysm.mainhand_charged_crossbow", MolangUtils.FALSE));
         parser.register(new LazyVariable("ysm.offhand_charged_crossbow", MolangUtils.FALSE));
 
+        // 这六个原先只靠 setYsmValues 里的 setValue 隐式创建（getVariable 会 computeIfAbsent），
+        // 显式注册后它们从第 0 帧起就有确定值，setPreviewParserValues 的"归零"也不再依赖创建时机。
+        parser.register(new LazyVariable("ysm.ground_speed2", 0));
+        parser.register(new LazyVariable("ysm.input_vertical", 0));
+        parser.register(new LazyVariable("ysm.input_horizontal", 0));
+        parser.register(new LazyVariable("ysm.xxa", 0));
+        parser.register(new LazyVariable("ysm.yya", 0));
+        parser.register(new LazyVariable("ysm.zza", 0));
+
         parser.register(new LazyVariable("ysm.armor_value", 0));
         parser.register(new LazyVariable("ysm.hurt_time", 0));
         parser.register(new LazyVariable("ysm.food_level", 20));
@@ -471,6 +480,37 @@ public class AnimationRegister {
         parser.setValue("query.time_of_day", () -> MolangUtils.normalizeTime(mc.theWorld.getWorldTime()));
         parser.setValue("query.time_stamp", () -> mc.theWorld.getWorldTime());
     }
+
+    /**
+     * GUI 预览渲染前先调用的"玩家运动/视角"查询兜底。
+     *
+     * <p>预览实体是 {@code setPlayer(null)} 的假实体，{@link #setParserValue} 整段都不会执行
+     * （它要求 {@code getPlayer() != null}），而 parser 是全局共享的 —— 于是预览里的动画求值读到的是
+     * **世界渲染上一次留下的实时值**。实测（临时探针）预览里
+     * {@code query.yaw_speed≈130}、{@code body_y_rotation=-180}、{@code head_yaw=22} 全是世界玩家的状态。</p>
+     *
+     * <p>后果对"累加型"模型很致命：模型把这类速率累加进 {@code v.} 变量（头发/披风滞后）时，预览里
+     * 输入长期非 0 且不衰减 → 头发在模型选择界面里**无休止地 360 度旋转**（看起来像"鼠标没锁在屏幕中心"
+     * 那种快速转角度）。预览里模型应当保持中性姿态，所以这里把"玩家在动/在看"的信号全部归零；
+     * 会随时间自然推进的量（{@code query.anim_time}/{@code life_time}、{@code ysm.fps}、
+     * {@code ysm.rendering_in_*}）刻意不动，预览动画本身仍要播放。</p>
+     */
+    public static void setPreviewParserValues(MolangParser parser) {
+        if (parser == null) {
+            return;
+        }
+        for (String name : PREVIEW_NEUTRAL_QUERIES) {
+            parser.setValue(name, 0.0d);
+        }
+    }
+
+    /** 预览里必须归零的"玩家运动/视角"查询：只放会驱动位移、形变、累加的开量。 */
+    static final String[] PREVIEW_NEUTRAL_QUERIES = { "query.head_x_rotation",
+        "query.head_y_rotation", "query.head_z_rotation", "query.eye_target_x_rotation",
+        "query.eye_target_y_rotation", "query.body_x_rotation", "query.body_y_rotation", "query.yaw_speed",
+        "query.ground_speed", "query.vertical_speed", "query.modified_distance_moved", "query.walk_distance",
+        "ysm.head_yaw", "ysm.head_pitch", "ysm.ground_speed2", "ysm.input_vertical", "ysm.input_horizontal",
+        "ysm.xxa", "ysm.yya", "ysm.zza", "ysm.elytra_rot_x", "ysm.elytra_rot_y", "ysm.elytra_rot_z" };
 
     /**
      * 头部旋转查询的唯一绑定点。

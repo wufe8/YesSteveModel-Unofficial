@@ -121,6 +121,45 @@ public final class OpenYsmPlayerControllerRuntime {
         }
     }
 
+    /**
+     * 常驻变量（{@code v.roaming.*}）的动画侧写回：把动画 / 时间轴 / 关键帧 Molang 写下的值
+     * 记为"该模型下已被设置"，否则下一帧 {@link MolangPhysicsRuntime#begin} 注入 ysm.json 里的
+     * 默认值时会把它冲掉。
+     *
+     * <p>wiki 语义依据（{@code /wiki/molang/var/}）：{@code variable.roaming.} 是"常驻变量"，
+     * 与实体变量一样**赋值后一直保持**，只有再次赋值才改变；默认值只用于"从未赋过值"的 null
+     * 初值，绝不是每帧复位。实测案例：某模型轮盘"变身"的时间轴写
+     * {@code v.roaming.a=1-v.roaming.b; v.roaming.b=v.roaming.a;}，而 {@code v.roaming.b}
+     * 同时是模型自定义配置里的复选框变量（默认 0）。默认值每帧回写 → 时间轴写下的 1 在下一帧
+     * 被冲成 0 → 第二次"变身"算出的目标状态与第一次相同 → 变身只能生效一次，之后无法切回。</p>
+     *
+     * <p>写入的仍是 {@link #PENDING_ROAMING}（全局平坦表，与轮盘 GUI 同一个存储），因此轮盘
+     * 配置界面读到的就是动画刚写下的状态；跨模型隔离由 {@code EXPLICIT_ROAMING_BY_MODEL}
+     * 提供（该标记只对这个模型生效）。该存储没有玩家维度：多人下某玩家动画写下的常驻变量
+     * 会对同模型的其他人可见 —— 与轮盘 GUI 写入的现状一致，属既有设计的限制。</p>
+     *
+     * @param varName 变量名，可带 {@code v.} / {@code variable.} 前缀
+     */
+    public static void noteRoamingWrite(ResourceLocation modelId, String varName, double value) {
+        if (varName == null) {
+            return;
+        }
+        String name = varName;
+        if (name.startsWith("variable.")) {
+            name = name.substring("variable.".length());
+        }
+        if (name.startsWith("v.")) {
+            name = name.substring(2);
+        }
+        if (!name.startsWith("roaming.")) {
+            // 只有常驻变量会被默认值每帧回写；其它 v.* 没有这条写回，不必记录。
+            return;
+        }
+        PENDING_ROAMING.put(name, value);
+        markRoamingExplicit(modelId, name);
+        invalidateFrameRoamingCache();
+    }
+
     /** 判断某变量是否在指定模型上被显式设置。全局标记（无模型上下文写入）对所有模型生效。 */
     public static boolean isRoamingExplicit(ResourceLocation modelId, String varName) {
         if (EXPLICIT_ROAMING.contains(varName)) {

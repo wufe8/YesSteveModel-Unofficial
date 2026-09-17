@@ -312,8 +312,24 @@ public final class MolangFunctionParser {
             if (state == null) continue;
             // 块内容
             String blockContent = script.substring(blockOpen + 1, blockEnd);
-            // 1) 块自己的守卫（复合条件）：整块就是"这个状态下、满足该条件时播这个动画"。
-            if (!isSimpleCtrlCondition(script, stateEnd, qmarkPos)) {
+            // 1) 先收集**内层条件**的 set_animation：`cond ? { ctrl.set_animation('X'); ... }`。
+            List<Pair<String, String>> inner = new ArrayList<>();
+            Matcher condMatcher = CONDITIONAL_SET_ANIM_PATTERN.matcher(blockContent);
+            while (condMatcher.find()) {
+                String condition = condMatcher.group(1).trim();
+                String animName = condMatcher.group(2);
+                if (StringUtils.isNoneBlank(condition) && StringUtils.isNoneBlank(animName)) {
+                    inner.add(Pair.of(condition, animName));
+                }
+            }
+            // 2) 只有当块里**没有**内层条件动画时，才把"外层复合守卫 + 块里第一个 set_animation"
+            // 当成一条替代动画。
+            // 否则外层守卫会顶替掉内层的真判定：例如
+            //   ctrl.run || ctrl.walk ? { (v.east==false && facing==5) ? { set_animation('defWall') … } … }
+            // 曾被登记成 walk -> [("ctrl.run||ctrl.walk", "defWall")]，而该守卫在**走路时无条件成立** ——
+            // 四个方向都没有墙的空旷地形（内层条件全假）也会播 defWall，相对方块/朝向判定被整个绕过。
+            // 内层条件才是作者真正的意图（外层守卫只是"别在没移动时求值"），所以有内层条目时只留内层。
+            if (inner.isEmpty() && !isSimpleCtrlCondition(script, stateEnd, qmarkPos)) {
                 String guard = script.substring(statementStart(script, qmarkPos), qmarkPos).trim();
                 Matcher guardAnim = SET_ANIM_PATTERN.matcher(blockContent);
                 if (StringUtils.isNoneBlank(guard) && guardAnim.find()) {
@@ -324,15 +340,9 @@ public final class MolangFunctionParser {
                     }
                 }
             }
-            // 2) 在这个块中找所有条件守卫的 set_animation
-            Matcher condMatcher = CONDITIONAL_SET_ANIM_PATTERN.matcher(blockContent);
-            while (condMatcher.find()) {
-                String condition = condMatcher.group(1).trim();
-                String animName = condMatcher.group(2);
-                if (StringUtils.isNoneBlank(condition) && StringUtils.isNoneBlank(animName)) {
-                    result.computeIfAbsent(state, k -> new ArrayList<>())
-                        .add(Pair.of(condition, animName));
-                }
+            for (Pair<String, String> entry : inner) {
+                result.computeIfAbsent(state, k -> new ArrayList<>())
+                    .add(entry);
             }
         }
         return result;
