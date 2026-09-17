@@ -194,8 +194,34 @@ public final class RawYsmModelAdapter {
                 putAnimationFile(animations, entry.getKey(), entry.getValue());
             }
         }
-        // Note: projectile animation/controller files are deliberately NOT merged here.
-        // They will be registered separately when the full projectile entity system renders them.
+        // 弹射物动画 / 控制器：二进制 .ysm 里它们和主实体一样是完整数据
+        // （RawSubEntity.animationFiles / animationControllerFiles），旧实现只桥接了弹射物的几何和
+        // 贴图，把这两样丢掉了 —— 注释写着"由弹射物实体系统单独注册"，但本地 .ysm 并没有那条路径
+        // （只有服务端同步的 OpenYsmModelSyncClient 会处理）。缺失的后果不是"少播一个动画"：
+        // ArrowProjectileRenderer 在 GeckoLibCache 里找不到投影物的 AnimationFile 就直接 return，
+        // 几何停在**绑定姿势**，于是模型里靠骨骼缩放隐藏的所有子模型（弓、弩、各种光效盒）同时可见。
+        //
+        // key 命名与 FolderFormat.loadProjectiles 保持一致：动画 projectile_<id>、
+        // 控制器 projectile_ctrl_<id>；ClientModelManager 把两者都还原成同一个子模型 id
+        // （ysmu:<model>/projectile_<id>），与服务端同步路径用的 id 完全相同。
+        for (Map.Entry<String, RawYsmModel.RawSubEntity> entry : raw.projectiles.entrySet()) {
+            RawYsmModel.RawSubEntity sub = entry.getValue();
+            String[] matchIds = sub.matchIds != null && sub.matchIds.length > 0
+                ? sub.matchIds : new String[]{sub.identifier};
+            for (String matchId : matchIds) {
+                if (StringUtils.isBlank(matchId)) continue;
+                for (RawYsmModel.RawAnimationFile animFile : sub.animationFiles.values()) {
+                    putAnimationFile(animations, "projectile_" + matchId, animFile);
+                }
+                for (RawYsmModel.RawAnimationControllerFile ctrlFile : sub.animationControllerFiles) {
+                    if (ctrlFile == null) continue;
+                    byte[] data = ctrlFile.sourceJson == null ? createControllerJson(ctrlFile) : ctrlFile.sourceJson;
+                    if (data != null && data.length > 0) {
+                        animations.put("projectile_ctrl_" + matchId, data);
+                    }
+                }
+            }
+        }
         putAnimationControllers(animations, raw);
         putMolangFunctions(animations, raw);
 

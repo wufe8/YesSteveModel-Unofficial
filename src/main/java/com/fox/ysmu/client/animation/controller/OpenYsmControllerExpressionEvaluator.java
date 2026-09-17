@@ -644,6 +644,15 @@ public final class OpenYsmControllerExpressionEvaluator {
         return com.fox.ysmu.client.animation.RemotePlayerMotionStates.isFlying(player);
     }
 
+    /**
+     * 净头偏航（渲染器同口径）：{@code wrapDegrees(rotationYawHead - renderYawOffset)}。
+     * 关键帧路径的 {@code ysm.head_yaw}/{@code query.head_x_rotation} 取它的负值。
+     */
+    private static double netHeadYaw(EntityPlayer player) {
+        return net.minecraft.util.MathHelper
+            .wrapAngleTo180_float(player.rotationYawHead - player.renderYawOffset);
+    }
+
     private static boolean evalIsOnGround(EntityPlayer player) {
         if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer) {
             return player.onGround;
@@ -1033,11 +1042,18 @@ public final class OpenYsmControllerExpressionEvaluator {
             if ("is_on_ground".equals(name)) {
                 return isOnGround() ? TRUE : FALSE;
             }
+            // YSM-wiki: molang/ref —— 头部这一对是 x = 左右视角(yaw)、y = 上下视角(pitch)
+            // （`ysm.head_yaw` == `query.head_x_rotation`、`ysm.head_pitch` == `query.head_y_rotation`；
+            // 参考实现的 QueryBinding 同样是 head_x_rotation -> netHeadYaw、head_y_rotation -> headPitch）。
+            // 取值与关键帧路径（AnimationRegister.bindHeadRotationQueries）保持同一口径：
+            // yaw = 取负的净头偏航（rotationYawHead - renderYawOffset），pitch = 取负的视角俯仰。
+            // 原先这里与关键帧路径一样把 x/y 绑反了：模型用 head_x_rotation 做的左右摆动会拿到
+            // 俯仰角，头抬到顶时被塞进 ±90，头发过度翻转。
             if ("head_x_rotation".equals(name)) {
-                return player.rotationPitch;
+                return -netHeadYaw(player);
             }
             if ("head_y_rotation".equals(name)) {
-                return player.rotationYaw;
+                return -player.rotationPitch;
             }
             // YSM-wiki: molang/ref 没有 head_z_rotation（1.7.10 也无实体 roll）。YSMU 扩展：
             // 用相机 roll 当这个值（本机玩家头朝向与镜头一致），与关键帧路径同一实现；

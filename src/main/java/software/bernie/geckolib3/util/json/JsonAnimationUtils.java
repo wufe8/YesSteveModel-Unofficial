@@ -448,6 +448,21 @@ public class JsonAnimationUtils {
         }
         if (animation.animationLength == null) {
             animation.animationLength = calculateLength(animation.boneAnimations);
+        } else {
+            // 长度必须覆盖关键帧跨度。Bedrock 的"阶梯关键帧" `{"pre":…,"post":…}` 在
+            // JsonKeyFrameUtils 里被展开成两个间隔 1e-7 秒的关键帧；如果阶梯正好在动画末尾，
+            // 关键帧跨度就比 JSON 里的 animation_length 大 2e-6 tick。采样 tick 会被钳到
+            // animation_length，从而落在最后一段阶梯**内部**（约 2% 处）："停在最后一帧"永远
+            // 拿不到 post 值，而是插值出 ~0.02 倍的结果。
+            // 实例：某弹射物把箭身缩放到 0.8 的阶梯放在 post_main 末尾，实测只剩 0.015 ——
+            // 整套光效骨骼被压到 2%，看起来像"动画没生效、模型停在绑定姿势"。
+            // 把长度抬到至少等于跨度即可：tick 钳到跨度末端，最后一段正好插值到 post。
+            double keyFrameSpan = calculateLength(animation.boneAnimations);
+            // calculateLength 用 Double.MAX_VALUE 表示"一个关键帧都没有"（纯 timeline 动画），
+            // 那种动画的长度不能被改写。
+            if (keyFrameSpan > 0 && keyFrameSpan < Double.MAX_VALUE) {
+                animation.animationLength = Math.max(animation.animationLength, keyFrameSpan);
+            }
         }
 
         return animation;

@@ -272,30 +272,33 @@ public class ArrowProjectileRenderer {
         // Reset all bones to their initial snapshot before applying animations
         resetBonesToSnapshot(model.topLevelBones);
 
-        // Determine which animations should play via the controller system.
-        // If the model has no controllers registered, fall back to the legacy
-        // behavior of playing ALL animations (parallel0-7, post_main, etc.).
+        // Determine which animations should play.
+        // The state animations (air/ground/fire/water) are selected by entity state and the
+        // parallel0..7 slots always play; controller state machines (when the model declares
+        // one) contribute their own entries on top. This path is used whether or not the
+        // model has controllers — the old "no controllers → play every animation" fallback
+        // played all four state animations at once, which stacked every sub-model variant
+        // (bow/crossbow/impact effects) onto the same projectile entity.
         List<String> activeAnims;
-        boolean hasControllers = com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry.get(projGeoId) != null;
+        boolean hasControllers = com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry
+            .get(projGeoId) != null;
         if (debugThisTick) {
             com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyProjectileAnimations: entityId={}, animFile={}, animCount={}, hasControllers={}",
                 arrow.getEntityId(), projGeoId,
                 animFile != null && animFile.animations != null ? animFile.animations.size() : 0,
                 hasControllers);
         }
-        if (hasControllers) {
-            activeAnims = com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
-                .getActiveAnimations(arrow.getEntityId(), projGeoId, ageInTicks);
-            if (debugThisTick) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] controller returned {} active anims: {}",
-                    activeAnims.size(), activeAnims);
-            }
-        } else {
-            // Legacy: all animations
-            activeAnims = new java.util.ArrayList<>(animFile.animations.keySet());
-            if (debugThisTick) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] no controllers, legacy mode: {} anims", activeAnims.size());
-            }
+        activeAnims = com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
+            .getActiveAnimations(
+                arrow.getEntityId(),
+                projGeoId,
+                ageInTicks,
+                com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.ProjectileState
+                    .of(isInGround, arrow.isInWater(), arrow.isBurning()));
+        if (debugThisTick) {
+            com.fox.ysmu.ysmu.LOG.info(
+                "[YSMU-ARROW] selected {} active anims (inGround={}, inWater={}, burning={}): {}",
+                activeAnims.size(), isInGround, arrow.isInWater(), arrow.isBurning(), activeAnims);
         }
 
         if (activeAnims.isEmpty()) {
@@ -305,6 +308,34 @@ public class ArrowProjectileRenderer {
             return; // No active animations — render in bind pose
         }
 
+        applyActiveAnimations(model, animFile, activeAnims, ageInTicks, debugThisTick);
+
+        // Debug: dump bone scales after all animations applied
+        if (debugThisTick) {
+            for (GeoBone bone : model.topLevelBones) {
+                if (bone == null) continue;
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] bone '{}' final: scale=({},{},{}) pos=({},{},{}) rot=({},{},{})",
+                    bone.name,
+                    bone.getScaleX(), bone.getScaleY(), bone.getScaleZ(),
+                    bone.getPositionX(), bone.getPositionY(), bone.getPositionZ(),
+                    bone.getRotationX(), bone.getRotationY(), bone.getRotationZ());
+                dumpBoneScales(bone.childBones, 1);
+            }
+            // Also dump Molang variable values that drive the animations
+            dumpMolangVars();
+        }
+    }
+
+    /**
+     * Writes the keyframes of {@code activeAnims} onto {@code model}'s bones, in list order:
+     * later animations overwrite earlier ones bone-by-bone, which is how the animation priority
+     * of {@link com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime} is realised.
+     *
+     * <p>Package-private and free of entity/GL state on purpose: it lets a plain unit test replay
+     * a real model's projectile animations and inspect the resulting bone transforms.</p>
+     */
+    static void applyActiveAnimations(GeoModel model, AnimationFile animFile, List<String> activeAnims,
+        double ageInTicks, boolean debugThisTick) {
         // Only apply keyframes from the active animations
         for (String animName : activeAnims) {
             Animation anim = animFile.animations.get(animName);
@@ -382,21 +413,6 @@ public class ArrowProjectileRenderer {
                 applyKeyFrameListScale(bone, boneAnim.scaleKeyFrames, animTick,
                     snap.scaleValueX, snap.scaleValueY, snap.scaleValueZ, debugThisTick);
             }
-        }
-
-        // Debug: dump bone scales after all animations applied
-        if (debugThisTick) {
-            for (GeoBone bone : model.topLevelBones) {
-                if (bone == null) continue;
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] bone '{}' final: scale=({},{},{}) pos=({},{},{}) rot=({},{},{})",
-                    bone.name,
-                    bone.getScaleX(), bone.getScaleY(), bone.getScaleZ(),
-                    bone.getPositionX(), bone.getPositionY(), bone.getPositionZ(),
-                    bone.getRotationX(), bone.getRotationY(), bone.getRotationZ());
-                dumpBoneScales(bone.childBones, 1);
-            }
-            // Also dump Molang variable values that drive the animations
-            dumpMolangVars();
         }
     }
 

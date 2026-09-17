@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.animation;
 
 import java.util.function.BiPredicate;
+import java.util.function.DoubleSupplier;
 
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.entity.AbstractClientPlayer;
@@ -417,8 +418,6 @@ public class AnimationRegister {
         parser.setValue("query.ground_speed", queryValues.groundSpeed());
         parser.setValue("query.has_cape", () -> MolangUtils.booleanToFloat(hasCape(player)));
         parser.setValue("query.has_rider", () -> MolangUtils.booleanToFloat(player.riddenByEntity != null));
-        parser.setValue("query.head_x_rotation", () -> data.headPitch);
-        parser.setValue("query.head_y_rotation", queryValues.headYaw());
         // 同上：相机 roll，且只对本机玩家（远程玩家的 roll 无同步字段）。详见 CameraRollQuery。
         parser.setValue("query.head_z_rotation", () -> com.fox.ysmu.client.animation.molang.CameraRollQuery
             .isLocalPlayer(player) ? com.fox.ysmu.client.animation.molang.CameraRollQuery.interpolatedRoll() : 0.0d);
@@ -473,10 +472,33 @@ public class AnimationRegister {
         parser.setValue("query.time_stamp", () -> mc.theWorld.getWorldTime());
     }
 
+    /**
+     * 头部旋转查询的唯一绑定点。
+     *
+     * <p>YSM-wiki: molang/ref 明写「{@code ysm.head_yaw} **与 query.head_x_rotation 相同**、
+     * {@code ysm.head_pitch} **与 query.head_y_rotation 相同**」，参考实现的 QueryBinding 也是这么
+     * 绑的（{@code head_x_rotation -> netHeadYaw}、{@code head_y_rotation -> headPitch}）。
+     * 也就是**头部**这一对查询是 x = 左右视角(yaw)、y = 上下视角(pitch)，与
+     * {@code query.eye_target_*}/{@code body_*} 那两对（x = pitch、y = yaw，同样是参考实现的绑法）
+     * 刻意不同。</p>
+     *
+     * <p>原先这里 x 绑的是 pitch、y 绑的是 yaw（与 eye_target 同理但头部不是），于是模型用
+     * {@code query.head_x_rotation} 做的**左右**摆动（头发/披风侧向甩动，或与 {@code ysm.head_yaw}
+     * 混用算 yaw）拿到的是俯仰角：平视时 pitch≈0 看不出问题，头抬到顶/低到底时被塞进 ±90 的
+     * 左右旋转 —— 头发过度翻转、卷曲。</p>
+     *
+     * <p>把两个名字接到同一对 supplier 上，从结构上保证 wiki 的等价关系不会被再次写反。</p>
+     */
+    static void bindHeadRotationQueries(MolangParser parser, DoubleSupplier headYaw, DoubleSupplier headPitch) {
+        parser.setValue("ysm.head_yaw", headYaw);
+        parser.setValue("ysm.head_pitch", headPitch);
+        parser.setValue("query.head_x_rotation", headYaw);
+        parser.setValue("query.head_y_rotation", headPitch);
+    }
+
     private static void setYsmValues(AnimationEvent<CustomPlayerEntity> animationEvent, MolangParser parser,
         EntityModelData data, EntityPlayer player, Minecraft mc, RemotePlayerAnimationQueries.QueryValues queryValues) {
-        parser.setValue("ysm.head_yaw", queryValues.headYaw());
-        parser.setValue("ysm.head_pitch", () -> data.headPitch);
+        bindHeadRotationQueries(parser, queryValues::headYaw, () -> data.headPitch);
         parser.setValue("ysm.input_vertical", () -> player.moveForward);
         parser.setValue("ysm.input_horizontal", () -> player.moveStrafing);
         parser.setValue("ysm.xxa", () -> player.moveStrafing);

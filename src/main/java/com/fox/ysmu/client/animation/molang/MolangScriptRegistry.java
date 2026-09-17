@@ -66,6 +66,32 @@ public final class MolangScriptRegistry {
     // ---- 文件名解析（纯函数，便于单测） ----
 
     /**
+     * 该 {@code .molang} 文件是否允许做**静态**"状态→动画"提取（写入
+     * {@code AnimationManager.MOLANG_STATE_MAP} / {@code MOLANG_CONDITIONAL_MAP}）。
+     *
+     * <p>这两张表的唯一消费者是 legacy 主状态机 {@code AnimationManager.predicateMain}，键是
+     * {@code walk}/{@code run}/{@code idle}/{@code sneak}… 这类**主身体状态**（提取用的
+     * {@code extractCtrlStateName} 取的是守卫里**最后一个** {@code ctrl.<名字>}）。所以只有"身体层"
+     * 槽位可以写：{@code main}（玩家主动画）与 {@code pre_main}（OpenYSM 的身体底层；1.7.10 侧没有
+     * {@code pre_main} 控制器，模型没有 JSON 控制器时它只能靠这两张表生效，所以必须保留）。</p>
+     *
+     * <p>覆盖层槽位（{@code parallel_N}/{@code pre_parallel_N}/{@code use}/{@code swing}/
+     * {@code hold_*}/护甲…）绝不能写：它们由 {@code applyControlScript(event, 槽位)} 每帧在**自己的
+     * 控制器**上求值，动画通常只动手臂/眼睛。一旦被当成本状态的替代动画，主状态机就会被别的槽位劫持 ——
+     * 实测某内置子模型的 {@code @player_ctrl_parallel_5}（碰墙抬手，守卫 {@code ctrl.run || ctrl.walk}
+     * 被取成 {@code walk} 状态）把走路替换成了只有 4 根骨骼的贴墙防御姿势 {@code defWall}，
+     * 表现就是"向前走路腿不动、角色直立"。普通函数 / 事件订阅文件（没有 {@code @player_ctrl_} 槽位）
+     * 保持历史行为，不做限制。</p>
+     */
+    public static boolean allowsStaticStateMapping(String fileName) {
+        String slot = controlSlotOf(fileName);
+        if (slot == null) {
+            return true;
+        }
+        return "main".equals(slot) || "pre_main".equals(slot);
+    }
+
+    /**
      * 这个文件名对应的**函数名**（小写）；它不是一个可调用函数时返回 null。
      * <p>
      * 规则：wiki 的函数名只能由字母/下划线/数字组成，所以含 {@code @} 的文件名只有

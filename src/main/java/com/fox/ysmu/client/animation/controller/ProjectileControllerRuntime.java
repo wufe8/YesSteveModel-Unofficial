@@ -75,6 +75,34 @@ public final class ProjectileControllerRuntime {
 
     private static final Map<StateKey, RuntimeState> STATES = new ConcurrentHashMap<>();
 
+    /** 弹射物的实体状态，决定 {@code air} / {@code ground} / {@code fire} / {@code water} 选哪几个。 */
+    public static final class ProjectileState {
+
+        /** 默认状态：在空中飞行、没有落地/着火/入水。 */
+        public static final ProjectileState AIRBORNE = new ProjectileState(true, false, false, false);
+
+        final boolean inAir;
+        final boolean inGround;
+        final boolean onFire;
+        final boolean inWater;
+
+        public ProjectileState(boolean inAir, boolean inGround, boolean onFire, boolean inWater) {
+            this.inAir = inAir;
+            this.inGround = inGround;
+            this.onFire = onFire;
+            this.inWater = inWater;
+        }
+
+        /**
+         * 由弹射物实体推导状态。四个状态**可以同时为真**：落地/入水/着火并不互斥，优先级由
+         * {@link #getActiveAnimations} 的应用顺序决定。{@code inAir} 只要求"没落地"，因为
+         * 入水/着火的动画是叠在飞行动画之上覆盖的（wiki: air 优先度低，被其他动画覆盖）。
+         */
+        public static ProjectileState of(boolean inGround, boolean inWater, boolean onFire) {
+            return new ProjectileState(!inGround, inGround, onFire, inWater);
+        }
+    }
+
     private ProjectileControllerRuntime() {}
 
     /**
@@ -88,13 +116,30 @@ public final class ProjectileControllerRuntime {
      * @return active animation names; empty if no controllers or no active animations
      */
     public static List<String> getActiveAnimations(int entityId, ResourceLocation animId, double ageInTicks) {
+        return getActiveAnimations(entityId, animId, ageInTicks, ProjectileState.AIRBORNE);
+    }
+
+    /**
+     * Evaluates all controllers registered for the given projectile animation
+     * ID and returns the list of animation names that should be active.
+     *
+     * @param entityId  the projectile entity's ID (for state isolation)
+     * @param animId    the projectile's animation ResourceLocation
+     *                  (e.g. {@code ysmu:<model>/projectile_#arrow})
+     * @param ageInTicks current animation time in ticks
+     * @param state     the entity state that selects the {@code air}/{@code ground}/
+     *                  {@code fire}/{@code water} state animations
+     * @return active animation names; empty if no controllers or no active animations
+     */
+    public static List<String> getActiveAnimations(int entityId, ResourceLocation animId, double ageInTicks,
+        ProjectileState state) {
         ControllerSet set = OpenYsmAnimationControllerRegistry.get(animId);
         if (set == null || set.controllers.isEmpty()) {
             if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL] getActiveAnimations: no controllers for {}, entityId={}",
                     animId, entityId);
             }
-            return Collections.emptyList();
+            return selectImplicitAnimations(animId, state, new ArrayList<>(), Collections.emptySet());
         }
 
         if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
@@ -125,22 +170,84 @@ public final class ProjectileControllerRuntime {
             result.addAll(controllerAnims);
         }
 
-        // Include unmanaged animations (e.g. parallel0-7) that are not referenced
-        // by any controller state. These are pass-through animations that handle
-        // bone visibility and should always play alongside controller-managed ones.
-        // The animations themselves already use ysm.in_ground expressions to control
-        // bone visibility (e.g. Arrow_ scale = !ysm.in_ground hides glow children on ground).
+        return selectImplicitAnimations(animId, state, result, managedAnims);
+    }
+
+    /**
+     * Appends the animations the projectile runtime picks by itself (outside the
+     * controller state machines) and returns the final, ordered active list.
+     *
+     * <p>YSM-wiki: 动画制作/弹射物动画（其前身 箭矢动画）把弹射物的可自定义动画定为
+     * {@code water} / {@code fire} / {@code ground} / {@code air} 四个**状态**动画加
+     * {@code parallel0..7} 并行动画。状态动画按实体状态播放：{@code air}/{@code ground}
+     * 优先度低（会被其他动画覆盖），{@code fire}/{@code water} 优先度高（只被并行动画覆盖）；
+     * 并行动画恒定播放且优先级最高。渲染器按返回列表的顺序逐个把关键帧写成骨骼的**绝对**变换，
+     * 所以"后出现 = 优先度高"就是列表顺序。</p>
+     *
+     * <p>这里必须按状态过滤。早先的实现是"把控制器没引用到的动画全部当直通动画播放"，
+     * 于是 {@code air}/{@code fire}/{@code ground}/{@code water} 四个状态动画同时生效 ——
+     * 模型为不同弹射物状态准备的子模型（弓、弩、爆开、落地插地…）会全部叠在同一个实体上显示，
+     * 而没有任何控制器的模型（只有状态动画 + 并行动画）受这个错误影响最严重。</p>
+     */
+    private static List<String> selectImplicitAnimations(ResourceLocation animId, ProjectileState state,
+        List<String> result, java.util.Set<String> managedAnims) {
         software.bernie.geckolib3.file.AnimationFile animFile =
             software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
-        if (animFile != null && animFile.animations != null) {
-            for (String animName : animFile.animations.keySet()) {
-                if (!managedAnims.contains(animName) && !result.contains(animName)) {
-                    result.add(animName);
-                }
-            }
+        if (animFile == null || animFile.animations == null) {
+            return result;
         }
 
+        // 低优先度：飞行 → 落地；高优先度：着火 → 入水。后加入的在同骨骼上覆盖先加入的。
+        addIfPresent(result, animFile, state.inAir, "air");
+        addIfPresent(result, animFile, state.inGround, "ground");
+        addIfPresent(result, animFile, state.onFire, "fire");
+        addIfPresent(result, animFile, state.inWater, "water");
+
+        // 并行动画：恒定播放，数字越大越靠后（优先级越高）。
+        for (int i = 0; i < MAX_PARALLEL_SLOT; i++) {
+            addIfPresent(result, animFile, true, "parallel" + i);
+        }
+
+        // 其余既没被控制器引用、也不是状态/并行动画的动画不再无条件播放：它们不在弹射物动画
+        // 清单里，旧实现的"一律播放"正是状态动画叠加的来源。开 DEBUG_CONTROLLER 时列出来，
+        // 便于发现确实依赖这种非标准写法的模型。
+        if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
+            for (String name : animFile.animations.keySet()) {
+                if (result.contains(name) || managedAnims.contains(name) || isKnownImplicitAnimation(name)) {
+                    continue;
+                }
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-PROJ-CTRL]   ignored non-standard unmanaged animation '{}' for {}", name, animId);
+            }
+        }
         return result;
+    }
+
+    /** {@code parallel0..7} 的槽位数（wiki: 弹射物并行动画固定 8 个槽位）。 */
+    private static final int MAX_PARALLEL_SLOT = 8;
+
+    private static boolean isKnownImplicitAnimation(String name) {
+        if (name == null) {
+            return false;
+        }
+        if ("air".equals(name) || "ground".equals(name) || "fire".equals(name) || "water".equals(name)) {
+            return true;
+        }
+        if (!name.startsWith("parallel")) {
+            return false;
+        }
+        String digits = name.substring("parallel".length());
+        return digits.length() == 1 && digits.charAt(0) >= '0' && digits.charAt(0) < '0' + MAX_PARALLEL_SLOT;
+    }
+
+    private static void addIfPresent(List<String> result, software.bernie.geckolib3.file.AnimationFile animFile,
+        boolean condition, String animationName) {
+        if (!condition || result.contains(animationName)) {
+            return;
+        }
+        if (animFile.animations.containsKey(animationName)) {
+            result.add(animationName);
+        }
     }
 
     private static String getCurrentStateName(int entityId, ResourceLocation animId, String controllerName) {

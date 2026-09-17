@@ -1198,7 +1198,8 @@ public final class AnimationManager {
             if (last == null || last != hash || last == -1 || last == 0) {
                 event.getController().markNeedsReload();
             }
-            return playIfPresent(event, findHoldAnimation(event, player, false));
+            String holdAnim = prepareHoldAnimation(getAnimationId(event), findHoldAnimation(event, player, false));
+            return playIfPresent(event, holdAnim);
         } else {
             // 尝试空手持握动画 (hold_offhand:empty)
             String emptyAnim = findHoldAnimation(event, player, false);
@@ -1252,38 +1253,7 @@ public final class AnimationManager {
             if (last == null || last != hash || last == -1 || last == 0) {
                 event.getController().markNeedsReload();
             }
-            String holdAnim = findHoldAnimation(event, player, true);
-            if (com.fox.ysmu.Config.DEBUG_CONTROLLER && StringUtils.isNoneBlank(holdAnim)) {
-                String loopStr = "?";
-                ResourceLocation animId = getAnimationId(event);
-                if (animId != null) {
-                    software.bernie.geckolib3.file.AnimationFile f = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
-                    if (f != null) {
-                        software.bernie.geckolib3.core.builder.Animation a = f.getAnimation(holdAnim);
-                        if (a != null) {
-                            loopStr = String.valueOf(a.loop);
-                            // Force correct loop type for hold animations
-                            a.loop = ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
-                        }
-                    }
-                }
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-HOLD] model='{}' anim='{}' state={} loop={}",
-                    animId, holdAnim,
-                    event.getController().getAnimationState(),
-                    loopStr + "->HOLD_ON_LAST_FRAME");
-            } else if (StringUtils.isNoneBlank(holdAnim)) {
-                // Always ensure hold animations have the correct loop type
-                ResourceLocation animId = getAnimationId(event);
-                if (animId != null) {
-                    software.bernie.geckolib3.file.AnimationFile f = software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
-                    if (f != null) {
-                        software.bernie.geckolib3.core.builder.Animation a = f.getAnimation(holdAnim);
-                        if (a != null) {
-                            a.loop = ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
-                        }
-                    }
-                }
-            }
+            String holdAnim = prepareHoldAnimation(getAnimationId(event), findHoldAnimation(event, player, true));
             return playIfPresent(event, holdAnim);
         } else {
             // 尝试空手持握动画 (hold_mainhand:empty)
@@ -1586,6 +1556,49 @@ public final class AnimationManager {
         ConditionalHold conditionalHold = isMainHand ? ConditionManager.getHoldMainhand(id)
             : ConditionManager.getHoldOffhand(id);
         return conditionalHold == null ? null : conditionalHold.doTest(player, isMainHand);
+    }
+
+    /**
+     * 播放持握动画前的统一入口：把动画的循环类型改成"停在最后一帧"，然后原样返回动画名。
+     *
+     * <p>YSM-wiki: 动画制作/手部条件动画「持有动画」——持有动画在玩家**切换物品时从头播放一次**，
+     * 用来做切换武器的动作，所以它的语义一定是"播一次然后停在最后一帧"。模型作者写得很随意：
+     * 同一份模型里 {@code hold_offhand:axe} 可能写 {@code "loop": true}，而 {@code hold_mainhand:axe}
+     * 写 {@code "loop": "hold_on_last_frame"}，两者都当"持握动画"用（res/ 里 6 个模型的
+     * {@code hold_offhand:axe} 就写着 {@code "loop": true}）。所以**必须在播放前统一覆盖循环类型**，
+     * 不能指望模型自己写对。</p>
+     *
+     * <p>主手和副手都走这一个入口。早先只有主手分支做了覆盖（commit 662a6f2），副手分支直接
+     * {@code playIfPresent(findHoldAnimation(...))}，于是副手持斧头时 {@code hold_offhand:axe} 的
+     * {@code "loop": true} 原样生效 —— 掏出动作无限重复、永远停不在最后一帧。</p>
+     *
+     * <p>注意它改的是 {@code GeckoLibCache} 里**共享的 Animation 对象**（沿用既有做法）：只有当
+     * {@code RawAnimation.loopType} 为 {@code null} 时才会用到这个值，所以显式传了循环类型的调用
+     * （例如 {@code hold_*:empty} 走 {@code playAnimation(..., LOOP)}）不受影响。</p>
+     */
+    static String prepareHoldAnimation(ResourceLocation animId, String animationName) {
+        if (animId == null || StringUtils.isBlank(animationName)) {
+            return animationName;
+        }
+        software.bernie.geckolib3.file.AnimationFile file = software.bernie.geckolib3.resource.GeckoLibCache
+            .getInstance()
+            .getAnimations()
+            .get(animId);
+        if (file == null) {
+            return animationName;
+        }
+        software.bernie.geckolib3.core.builder.Animation animation = file.getAnimation(animationName);
+        if (animation == null) {
+            return animationName;
+        }
+        if (animation.loop != ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME) {
+            if (Config.DEBUG_CONTROLLER) {
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-HOLD] model='{}' anim='{}' loop={}->HOLD_ON_LAST_FRAME",
+                    animId, animationName, animation.loop);
+            }
+            animation.loop = ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
+        }
+        return animationName;
     }
 
     private static String findSwingAnimation(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player) {

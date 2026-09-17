@@ -952,6 +952,10 @@ public class ClientModelManager {
      * 把一个 {@code functions/} 条目登记成"脚本函数"、"事件订阅"或"动画控制脚本"。
      * 文件名的解析规则在 {@code MolangScriptRegistry}（纯函数，有单测）。
      */
+    /** DEBUG_CONTROLLER 下一次性提示去重：跳过了静态状态映射的覆盖层脚本文件名。 */
+    private static final java.util.Set<String> LOGGED_STATIC_MAPPING_SKIP = java.util.concurrent.ConcurrentHashMap
+        .newKeySet();
+
     private static void collectMolangScript(PreParsedModelBundle bundle, String fileName, byte[] data) {
         String controlSlot = com.fox.ysmu.client.animation.molang.MolangScriptRegistry.controlSlotOf(fileName);
         if (controlSlot != null) {
@@ -999,16 +1003,36 @@ public class ClientModelManager {
             if (YsmControllerResources.isMolangResource(key)) {
                 // 除了静态提取状态→动画映射，还登记脚本函数体与事件订阅：
                 // functions/<名字>.molang 只会被 fn.* 调用，名字@事件 才由事件触发。
-                collectMolangScript(bundle, YsmControllerResources.molangName(key), animData);
-                Map<String, String> parsed = com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseStateToAnimationMap(animData);
-                if (!parsed.isEmpty()) {
-                    bundle.molangMapping.putAll(parsed);
+                String molangFileName = YsmControllerResources.molangName(key);
+                collectMolangScript(bundle, molangFileName, animData);
+                // 静态"状态→动画"映射只服务 legacy 主状态机，所以只有身体层槽位（main / pre_main）
+                // 可以写；覆盖层槽位（parallel_N / pre_parallel_N / use / swing / …）的 set_animation
+                // 由 applyControlScript(event, 槽位) 在自己的控制器上求值，绝不能当成主状态的替代动画
+                // （否则主状态机被劫持：实测某内置子模型的 @player_ctrl_parallel_5 把 walk 换成了
+                // 只有 4 根骨骼的贴墙防御姿势，走路时腿不动 = 角色直立）。判据见
+                // MolangScriptRegistry.allowsStaticStateMapping。
+                if (com.fox.ysmu.client.animation.molang.MolangScriptRegistry
+                    .allowsStaticStateMapping(molangFileName)) {
+                    Map<String, String> parsed = com.fox.ysmu.client.animation.molang.MolangFunctionParser
+                        .parseStateToAnimationMap(animData);
+                    if (!parsed.isEmpty()) {
+                        bundle.molangMapping.putAll(parsed);
+                    }
+                    Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> condParsed =
+                        com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseConditionalAnimations(animData);
+                    for (Map.Entry<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> ce : condParsed
+                        .entrySet()) {
+                        bundle.molangConditional.merge(ce.getKey(), ce.getValue(), (a, b) -> {
+                            a.addAll(b);
+                            return a;
+                        });
+                    }
+                } else if (Config.DEBUG_CONTROLLER && LOGGED_STATIC_MAPPING_SKIP.add(molangFileName)) {
+                    ysmu.LOG.info(
+                        "[YSMU-MOLANG] {} 是覆盖层槽位的控制脚本，跳过静态状态→动画提取（改由逐帧控制脚本按槽位生效）",
+                        molangFileName);
                 }
-                Map<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> condParsed =
-                    com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseConditionalAnimations(animData);
-                for (Map.Entry<String, List<org.apache.commons.lang3.tuple.Pair<String, String>>> ce : condParsed.entrySet()) {
-                    bundle.molangConditional.merge(ce.getKey(), ce.getValue(), (a, b) -> { a.addAll(b); return a; });
-                }
+                // 过渡时长/重载提示按动画名共享给所有控制器（与槽位无关），照旧提取。
                 bundle.molangHints.mergeFrom(
                     com.fox.ysmu.client.animation.molang.MolangFunctionParser.parseAnimationHints(animData));
                 continue;
