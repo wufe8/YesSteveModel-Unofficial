@@ -161,6 +161,17 @@ public final class ParticleEffectUtil {
     }
 
     /**
+     * 本次生成的粒子寿命（tick）：行为表声明了固定寿命就用它（高版本有些粒子的寿命是
+     * 硬编码常量，如 BubblePopParticle 的 4 tick），否则沿用调用方传的 lifetime。
+     */
+    static int effectiveLifetime(ParticleBehaviors.Behavior behavior, int requestedLifetime) {
+        if (behavior != null && behavior.fixedLifetime > 0) {
+            return behavior.fixedLifetime;
+        }
+        return requestedLifetime;
+    }
+
+    /**
      * 生成粒子。参数语义与 OpenYSM {@code ParticleEffectUtil.handleParticle} 对齐。
      *
      * @return 是否成功（id 为空 / GUI 预览 / 世界无效 → false）
@@ -235,16 +246,17 @@ public final class ParticleEffectUtil {
                 ysmu.LOG.info("[YSMU-PARTICLE] spawn {} -> world=({},{},{}) yaw={} entityPos=({},{},{})",
                     isAbsolute ? "abs" : "rel", x, y, z, dbgYaw, entity.posX, entity.posY, entity.posZ);
             }
-            emit(mc, emitName, customTexId, beh, x, y, z, vx, vy, vz, lifetime);
+            emit(mc, emitName, customTexId, beh, x, y, z, vx, vy, vz,
+                effectiveLifetime(beh, lifetime));
             return true;
         }
         // count > 0：OpenYSM 不设置寿命（emitParticle 里没有 setLifetime），粒子用
         // 类型默认寿命；自定义粒子用行为表默认寿命（含随机范围，对齐 SplashParticle
         // 8~40 tick），vanilla 粒子由类型自带。
         Random random = entity.worldObj.rand;
-        int life = beh != null ? beh.defaultLifetime
-            + (beh.lifetimeVariance > 0 ? random.nextInt(beh.lifetimeVariance + 1) : 0)
-            : lifetime;
+        int life = beh == null ? lifetime
+            : effectiveLifetime(beh, beh.defaultLifetime
+                + (beh.lifetimeVariance > 0 ? random.nextInt(beh.lifetimeVariance + 1) : 0));
         for (int i = 0; i < count; i++) {
             double spreadX = random.nextGaussian() * dx;
             double spreadY = random.nextGaussian() * dy;
@@ -270,6 +282,8 @@ public final class ParticleEffectUtil {
         ParticleBehaviors.Behavior beh,
         double x, double y, double z, double vx, double vy, double vz, int lifetime) {
         if (customTexId >= 0 && beh != null) {
+            // 序列粒子（如 bubble_pop_0..4）：把整串帧纹理交给粒子，由它按 age 换帧。
+            int[] frameTextureIds = ParticleTextureManager.getFrameTextureIds(particleName);
             // 水滴/雪花/水花类忽略调用方速度，用行为表自身的初始运动（对齐高版本
             // 粒子类行为：水滴下落、水花垂直小弹跳——避免模型传的过大 speed 让粒子
             // 随机飞散/瞬间飞出看不见）。velocityScale 预留在需要缩放外部速度时用。
@@ -284,10 +298,11 @@ public final class ParticleEffectUtil {
             final boolean fade = beh.fadeOut;
             final boolean dieGround = beh.dieOnGround;
             final int tid = customTexId;
+            final int[] frames = frameTextureIds;
             mc.func_152344_a(() -> {
                 if (mc.theWorld != null) {
                     CustomParticleManager.add(new CustomParticleFX(
-                        mc.theWorld, x, y, z, mx, my, mz, tid,
+                        mc.theWorld, x, y, z, mx, my, mz, tid, frames,
                         scale, lifetime, gravity, tr, tg, tb, fade, dieGround));
                 }
             });

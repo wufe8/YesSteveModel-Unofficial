@@ -185,9 +185,24 @@ public class ArrowProjectileRenderer {
             // Apply projectile animations (parallel0-7, post_main, etc.)
             // before rendering so bone transforms are correct.
             if (entity instanceof EntityArrow arrow) {
+                // 注意：vanilla 传进来的 x/y/z 是**相机相对坐标**（world - renderPos），只能用于 glTranslated。
+                // 时间轴里的 ysm.particle(...) 需要**世界坐标**，这里另外算一份渲染插值位置，
+                // 否则粒子会被生成在离箭矢几千格远的地方（实测 2000+ 格，肉眼完全看不到）。
+                double worldX = arrow.lastTickPosX + (arrow.posX - arrow.lastTickPosX) * partialTicks;
+                double worldY = arrow.lastTickPosY + (arrow.posY - arrow.lastTickPosY) * partialTicks;
+                double worldZ = arrow.lastTickPosZ + (arrow.posZ - arrow.lastTickPosZ) * partialTicks;
                 applyProjectileAnimations(projModel, arrow, partialTicks, projGeoId, modelId, arrowType,
-                    x, y, z, interpYaw, interpPitch);
+                    worldX, worldY, worldZ, interpYaw, interpPitch);
             }
+
+            // 半透明贴图必须走混合：该模型两个外圈方块的面在贴图里只有 1~23% 不透明像素，
+            // 而这里直接调 renderRecursively（绕过了 IGeoRenderer.render 里的
+            // blendFunc/enableBlend），透明像素会被当成不透明画出来 —— 表现为"内部蓝色图案
+            // 不透明 + 底面发黑（透明像素的 RGB）"，官方那边是半透明、几乎看不见。
+            net.geckominecraft.client.renderer.GlStateManager.disableCull();
+            GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
+            net.geckominecraft.client.renderer.GlStateManager.enableBlend();
+            GL11.glEnable(GL11.GL_TEXTURE_2D);
 
             // Render all bone cubes through GeckoLib's renderRecursively
             // which properly applies MATRIX_STACK bone transforms (pivot/rotation).
@@ -205,6 +220,9 @@ public class ArrowProjectileRenderer {
                 com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] Model render failed", e);
             }
         } finally {
+            // 与 IGeoRenderer.render 的收尾一致，恢复顶点渲染 pass 的默认状态。
+            net.geckominecraft.client.renderer.GlStateManager.disableBlend();
+            net.geckominecraft.client.renderer.GlStateManager.enableCull();
             GL11.glPopMatrix();
         }
         return true;
@@ -214,8 +232,10 @@ public class ArrowProjectileRenderer {
      * Apply projectile animation keyframes to the GeoModel bones before rendering.
      * Evaluates Molang expressions in keyframes using the arrow entity context.
      *
-     * @param renderX/renderY/renderZ 实体渲染插值坐标（= 模型原点），供时间轴里的
-     *        {@code ysm.particle(...)} 把模型空间偏移换算到世界坐标；与 {@code glTranslated} 同源。
+     * @param renderX/renderY/renderZ 实体渲染插值**世界**坐标（= 模型原点），供时间轴里的
+     *        {@code ysm.particle(...)} 把模型空间偏移换算到世界坐标。
+     *        <b>必须传世界坐标</b>：vanilla {@code doRender} 的 x/y/z 是相机相对坐标，
+     *        拿它当世界坐标会让粒子落到离实体几千格远的地方。
      * @param interpYaw/interpPitch   与 {@code glRotatef} 相同的模型旋转，粒子偏移沿用同一套。
      */
     @SuppressWarnings("rawtypes")
@@ -307,11 +327,12 @@ public class ArrowProjectileRenderer {
                     com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.ProjectileState
                         .of(isInGround, arrow.isInWater(), arrow.isBurning()));
         List<String> activeAnims = new java.util.ArrayList<>(activeEntries.size());
-        Map<String, Double> tickOffsets = new java.util.HashMap<>();
+        // 每条动画的"时钟原点"：状态动画 = 进入状态时的实体年龄，其余 = 0（按实体年龄采样）。
+        Map<String, Double> clockOrigins = new java.util.HashMap<>();
         for (com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.ActiveAnimation entry : activeEntries) {
             activeAnims.add(entry.name);
-            if (entry.tickOffset != 0.0d) {
-                tickOffsets.put(entry.name, entry.tickOffset);
+            if (entry.startTick != 0.0d) {
+                clockOrigins.put(entry.name, entry.startTick);
             }
         }
         if (debugThisTick) {
@@ -327,7 +348,7 @@ public class ArrowProjectileRenderer {
             return; // No active animations — render in bind pose
         }
 
-        applyActiveAnimations(model, animFile, activeAnims, tickOffsets, ageInTicks, debugThisTick);
+        applyActiveAnimations(model, animFile, activeAnims, clockOrigins, ageInTicks, debugThisTick);
 
         // 时间轴（飞行拖尾 / 命中水花）：必须在骨骼写完之后派发——模型里的
         // ysm.bone_pivot_abs(...) 要读这一帧的骨骼姿态。粒子函数还要"当前实体"上下文，
@@ -397,7 +418,7 @@ public class ArrowProjectileRenderer {
      * a real model's projectile animations and inspect the resulting bone transforms.</p>
      *
      * <p>这条重载把所有动画都按实体年龄采样（偏移 0），供只有动画名的调用方和单测使用；
-     * 正式渲染路径用下面带 {@code tickOffsets} 的重载，让控制器状态动画从进入状态那刻计时。</p>
+     * 正式渲染路径用下面带时钟原点的重载，让控制器状态动画从进入状态那刻计时。</p>
      */
     static void applyActiveAnimations(GeoModel model, AnimationFile animFile, List<String> activeAnims,
         double ageInTicks, boolean debugThisTick) {
@@ -406,12 +427,11 @@ public class ArrowProjectileRenderer {
     }
 
     /**
-     * 同上，但每条动画可以带一个"相对所属控制器状态进入时刻"的 tick 偏移
-     * （{@code ProjectileControllerRuntime.ActiveAnimation#tickOffset}）：采样时刻 =
-     * {@code ageInTicks - tickOffset}。缺失的动画按偏移 0 处理。
+     * 同上，但每条动画可以带一个**时钟原点**（{@code ActiveAnimation#startTick}，单位 tick）：
+     * 采样时刻 = {@code ageInTicks - startTick}。缺失的动画原点按 0 处理（= 按实体年龄采样）。
      */
     static void applyActiveAnimations(GeoModel model, AnimationFile animFile, List<String> activeAnims,
-        Map<String, Double> tickOffsets, double ageInTicks, boolean debugThisTick) {
+        Map<String, Double> clockOrigins, double ageInTicks, boolean debugThisTick) {
         // Only apply keyframes from the active animations
         for (String animName : activeAnims) {
             Animation anim = animFile.animations.get(animName);
@@ -440,9 +460,9 @@ public class ArrowProjectileRenderer {
                 }
             }
 
-            // 控制器状态动画从进入状态那刻计时（偏移 > 0）；其余动画偏移 0，等于实体年龄。
-            Double offset = tickOffsets.get(animName);
-            double animAge = ageInTicks - (offset != null ? offset : 0.0d);
+            // 控制器状态动画从进入状态那刻计时（原点 > 0）；其余动画原点 0，等于实体年龄。
+            Double clockOrigin = clockOrigins.get(animName);
+            double animAge = ageInTicks - (clockOrigin != null ? clockOrigin : 0.0d);
 
             double animLength = anim.animationLength != null ? anim.animationLength : 0;
             double animTick;

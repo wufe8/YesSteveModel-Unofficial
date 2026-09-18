@@ -53,6 +53,13 @@ public final class ProjectileTimelineRuntime {
 
     private static final Map<String, State> STATES = new ConcurrentHashMap<>();
 
+    /**
+     * {@code DEBUG_ANIMATION} 下的诊断去重集合（每个"实体+动画"各一行）：
+     * 这是判断"模型的 timeline 到底有没有派发"的唯一直接证据 —— 粒子被生成时没有别的可见副作用。
+     */
+    private static final java.util.Set<String> LOGGED_PROGRAM = ConcurrentHashMap.newKeySet();
+    private static final java.util.Set<String> LOGGED_FIRST_DISPATCH = ConcurrentHashMap.newKeySet();
+
     private static final TimelineEventScheduler.Sink SINK = instructions -> {
         if (frameBudget <= 0) {
             return;
@@ -101,6 +108,11 @@ public final class ProjectileTimelineRuntime {
             state.scheduler = null;
             state.programKey = "";
             state.lastAge = ageInTicks;
+            if (com.fox.ysmu.Config.DEBUG_ANIMATION && LOGGED_PROGRAM.add(stateKey + "|empty")) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-PROJ-TL] {} entity={}: active animations carry no timeline instructions: {}",
+                    animId, entityId, activeAnims);
+            }
             return;
         }
 
@@ -121,7 +133,20 @@ public final class ProjectileTimelineRuntime {
             delta = 0.0d;
         }
         state.elapsed += delta;
-        state.scheduler.advanceFrame(state.elapsed, delta, SINK);
+        int dispatched = state.scheduler.advanceFrame(state.elapsed, delta, SINK);
+        if (com.fox.ysmu.Config.DEBUG_ANIMATION) {
+            if (LOGGED_PROGRAM.add(stateKey)) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-PROJ-TL] {} entity={}: {} timeline contributor(s), {} event(s), active={}",
+                    animId, entityId, program.contributors.size(),
+                    state.scheduler.getTrackedEventCount(), activeAnims);
+            }
+            if (dispatched > 0 && LOGGED_FIRST_DISPATCH.add(stateKey)) {
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-PROJ-TL] {} entity={}: first dispatch -> {} instruction(s) (clockOrigin={})",
+                    animId, entityId, dispatched, state.elapsed - delta);
+            }
+        }
     }
 
     private static String key(int entityId, ResourceLocation animId) {

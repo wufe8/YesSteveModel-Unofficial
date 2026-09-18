@@ -1,6 +1,7 @@
 package com.fox.ysmu.client.animation.controller;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
@@ -191,6 +192,32 @@ class ProjectileTimelineClockTest {
         ProjectileTimelineRuntime.beginRenderFrame();
         dispatch(file, Collections.singletonList("parallel1"), 60.0d);
         assertTrue(probe("v.tl_loop") > used, "新的一帧必须重新获得预算");
+    }
+
+    /**
+     * 整条链路：模型 JSON 里的 {@code timeline} 必须被解析成 {@code customInstructionKeyframes}，
+     * 否则运行时再怎么派发也没有东西可发（弹射物动画以前连"有 timeline"这一步都没接上）。
+     */
+    @Test
+    void timelineSurvivesJsonParsingAndExecutes() {
+        String json = "{\"format_version\":\"1.19.0\",\"animations\":{"
+            + "\"post_ground\":{\"animation_length\":0.1,\"loop\":\"hold_on_last_frame\","
+            + "\"bones\":{\"b\":{\"scale\":{\"0.0\":0.5,\"0.1\":2.5}}},"
+            + "\"timeline\":{\"0.0\":[\"v.tl_json = v.tl_json + 1;\"]}}}}";
+        AnimationFile parsed = com.fox.ysmu.client.ClientModelManager.parseAnimationFileFromJson(json);
+        Animation postGround = parsed.animations.get("post_ground");
+        assertNotNull(postGround, "动画必须解析出来");
+        assertNotNull(postGround.customInstructionKeyframes, "timeline 必须变成 customInstructionKeyframes");
+        assertEquals(1, postGround.customInstructionKeyframes.size());
+        assertTrue(postGround.customInstructionKeyframes.get(0).getEventData().contains("v.tl_json"),
+            postGround.customInstructionKeyframes.get(0).getEventData());
+
+        setProbe("v.tl_json", 0);
+        ProjectileTimelineRuntime.forget(ENTITY_ID, ANIM_ID);
+        ProjectileTimelineRuntime.beginRenderFrame();
+        dispatch(parsed, Collections.singletonList("post_ground"), 77.0d);
+        assertEquals(1.0d, probe("v.tl_json"), 1.0e-6d, "解析出来的 timeline 指令必须真的执行");
+        ProjectileTimelineRuntime.forget(ENTITY_ID, ANIM_ID);
     }
 
     /** 不同实体互不干扰（各自的时钟与游标）。 */

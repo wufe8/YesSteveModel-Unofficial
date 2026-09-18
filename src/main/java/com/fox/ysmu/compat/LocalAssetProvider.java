@@ -537,32 +537,45 @@ public final class LocalAssetProvider {
      * @return PNG 字节；未找到返回 {@code null}
      */
     public static byte[] readParticleTextureBytes(String particleName) {
-        if (!isAvailable()) return null;
+        java.util.List<String> textures = readParticleTextureNames(particleName);
+        if (textures.isEmpty()) return null;
+        return readAssetBytes("textures/particle/" + textures.get(0) + ".png");
+    }
+
+    /**
+     * 高版本 {@code particles/<name>.json} 声明的**完整**纹理名列表（命名空间已剥离，按声明顺序）。
+     *
+     * <p>有些粒子是"逐帧换贴图"的序列（如 {@code bubble_pop} 的 {@code bubble_pop_0..4}，
+     * 由 {@code BubblePopParticle.setSpriteFromAge} 在 4 tick 内轮播），只取第一张会让它看起来
+     * 是一张静止的图。JSON 里既可能是 {@code textures} 数组也可能是单个 {@code texture} 字段。</p>
+     *
+     * <p>没有 JSON 定义时回退为 {@code textures/particle/<name>.png}（返回该名字本身），
+     * 这样调用方仍然只需要"按名字取图"。</p>
+     */
+    public static java.util.List<String> readParticleTextureNames(String particleName) {
+        java.util.List<String> out = new java.util.ArrayList<>();
+        if (!isAvailable()) return out;
         String stripped = stripNamespace(particleName);
-        if (stripped.isEmpty()) return null;
-        // 1) particles/<name>.json → texture/textures 字段
+        if (stripped.isEmpty()) return out;
         byte[] def = readAssetBytes("particles/" + stripped + ".json");
         if (def != null) {
             try {
                 com.google.gson.JsonObject obj = new com.google.gson.JsonParser()
                     .parse(new String(def, StandardCharsets.UTF_8))
                     .getAsJsonObject();
-                String tex = null;
-                if (obj.has("textures") && obj.get("textures").isJsonArray()
-                    && obj.getAsJsonArray("textures").size() > 0) {
-                    tex = obj.getAsJsonArray("textures").get(0).getAsString();
+                if (obj.has("textures") && obj.get("textures").isJsonArray()) {
+                    for (com.google.gson.JsonElement element : obj.getAsJsonArray("textures")) {
+                        if (element != null && element.isJsonPrimitive()) {
+                            String name = stripNamespace(element.getAsString());
+                            if (!name.isEmpty()) out.add(name);
+                        }
+                    }
                 } else if (obj.has("texture") && obj.get("texture").isJsonPrimitive()) {
-                    tex = obj.get("texture").getAsString();
+                    String name = stripNamespace(obj.get("texture").getAsString());
+                    if (!name.isEmpty()) out.add(name);
                 }
                 if (Config.DEBUG_PARTICLE) {
-                    ysmu.LOG.info("[YSMU-ASSET] particles/{}.json -> texture='{}'", stripped, tex);
-                }
-                if (tex != null && !tex.isEmpty()) {
-                    byte[] data = readAssetBytes("textures/particle/" + stripNamespace(tex) + ".png");
-                    if (data != null) return data;
-                    if (Config.DEBUG_PARTICLE) {
-                        ysmu.LOG.info("[YSMU-ASSET] textures/particle/{}.png not found", stripNamespace(tex));
-                    }
+                    ysmu.LOG.info("[YSMU-ASSET] particles/{}.json -> textures={}", stripped, out);
                 }
             } catch (Exception e) {
                 if (Config.DEBUG_PARTICLE) {
@@ -570,8 +583,9 @@ public final class LocalAssetProvider {
                 }
             }
         }
-        // 2) 回退：textures/particle/<name>.png
-        return readAssetBytes("textures/particle/" + stripped + ".png");
+        // 回退：textures/particle/<name>.png（此时"纹理名"就是粒子名本身）
+        if (out.isEmpty()) out.add(stripped);
+        return out;
     }
 
     /** 剥离资源名/纹理名的命名空间前缀（{@code minecraft:drip_fall} → {@code drip_fall}）。 */

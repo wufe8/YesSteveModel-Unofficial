@@ -106,22 +106,28 @@ public final class ProjectileControllerRuntime {
     private ProjectileControllerRuntime() {}
 
     /**
-     * 一个"当前应播放的弹射物动画"，以及它相对**所属控制器状态进入时刻**的已播放 tick。
+     * 一个"当前应播放的弹射物动画"，以及它的**时钟原点**：该动画的播放时间 = 实体年龄 - startTick。
      *
-     * <p>状态动画必须从进入该状态的那一帧开始计时：{@code post_main} / {@code post_ground}
+     * <p>状态动画的时钟原点是"进入该状态时的实体年龄"：{@code post_main} / {@code post_ground}
      * 这类 {@code hold_on_last_frame} 动画只在开头几 tick 里把骨骼放大/爆开，用实体总年龄去采样
      * 会直接停在最后一帧上（实测落地动画永远停在"缩放 0"）。{@code air}/{@code ground}/
-     * {@code parallel*} 这些非控制器动画仍然从实体出生起计时（循环动画，偏移恒为 0）。</p>
+     * {@code parallel*} 这些非控制器动画从实体出生起算（startTick = 0）。</p>
+     *
+     * <p><b>这里是"原点"而不是"已播放时长"</b>，因为渲染器统一用 {@code 年龄 - startTick}
+     * 采样：非控制器动画填 0 就自然退化成"按年龄采样"，状态动画填进入时刻就得到"进入状态后经过的
+     * 时长"。曾经填的是"时长"（{@code age - enteredTick}），渲染器再减一次就变成了
+     * {@code enteredTick} 本身 —— 飞行期采样到 0（方块不出现）、落地早的箭（近距离）采样到落地年龄
+     * （方块停在中途可见）。</p>
      */
     public static final class ActiveAnimation {
 
         public final String name;
-        /** 相对状态进入时刻已经过的 tick；非控制器动画恒为 0。 */
-        public final double tickOffset;
+        /** 时钟原点（tick）：0 = 从实体出生起算；状态动画 = 进入该状态时的实体年龄。 */
+        public final double startTick;
 
-        ActiveAnimation(String name, double tickOffset) {
+        ActiveAnimation(String name, double startTick) {
             this.name = name;
-            this.tickOffset = tickOffset;
+            this.startTick = startTick;
         }
 
         @Override
@@ -296,7 +302,7 @@ public final class ProjectileControllerRuntime {
             return;
         }
         if (animFile.animations.containsKey(animationName)) {
-            // 非控制器动画：从实体出生起计时（循环动画），偏移为 0。
+            // 非控制器动画：从实体出生起计时（时钟原点 0）。
             result.add(new ActiveAnimation(animationName, 0.0d));
         }
     }
@@ -342,8 +348,9 @@ public final class ProjectileControllerRuntime {
 
         // 状态动画从**进入当前状态**那一刻开始计时：YSM 的控制器每进入一个状态就从头播该状态的
         // 动画（hold_on_last_frame 停住）。用实体总年龄采样会让 0.2 秒长的落地动画从第一帧起就
-        // 停在最后一帧上，整段爆开效果被跳过。
-        double tickOffset = Math.max(0.0d, ageInTicks - state.enteredTick);
+        // 停在最后一帧上，整段爆开效果被跳过。这里给的是**时钟原点**（进入状态时的实体年龄），
+        // 渲染器统一用 `年龄 - 原点` 采样（见 ActiveAnimation 的注释：给"已播放时长"会双重相减）。
+        double startTick = Math.max(0.0d, state.enteredTick);
 
         // Collect active animation names from the current state
         List<ActiveAnimation> anims = new ArrayList<>();
@@ -355,7 +362,7 @@ public final class ProjectileControllerRuntime {
                     || evaluateExpression(entry.condition)) {
                     // Only include animations that actually exist
                     if (animationExists(animId, entry.animationName)) {
-                        anims.add(new ActiveAnimation(entry.animationName, tickOffset));
+                        anims.add(new ActiveAnimation(entry.animationName, startTick));
                     }
                 }
             }

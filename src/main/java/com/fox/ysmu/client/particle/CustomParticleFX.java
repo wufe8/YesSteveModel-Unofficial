@@ -27,6 +27,10 @@ public class CustomParticleFX extends EntityFX {
     private final boolean fadeOut;
     /** 撞到地面或进入液体时立即消失（高版本 SplashParticle 行为）。 */
     private final boolean dieOnGround;
+    /** 逐帧纹理序列（如 bubble_pop_0..4）；null/空 = 单张纹理 {@link #glTextureId}。 */
+    private final int[] frameTextureIds;
+    /** 当前帧下标（由 {@code particleAge / particleMaxAge} 推出，与高版本 setSpriteFromAge 同义）。 */
+    private int currentFrame;
 
     /**
      * @param tintR/tintG/tintB 颜色乘数（1,1,1 = 纹理原样；高版本水滴纹理本身是白色，
@@ -38,8 +42,21 @@ public class CustomParticleFX extends EntityFX {
             double vx, double vy, double vz, int glTextureId,
             float scale, int maxAge, float gravity,
             float tintR, float tintG, float tintB, boolean fadeOut, boolean dieOnGround) {
+        this(world, x, y, z, vx, vy, vz, glTextureId, null, scale, maxAge, gravity,
+            tintR, tintG, tintB, fadeOut, dieOnGround);
+    }
+
+    /**
+     * @param frameTextureIds 逐帧纹理序列（序列粒子；null = 单张）。渲染时按
+     *        {@code age / lifetime × 帧数} 取帧，对应高版本的 {@code setSpriteFromAge}。
+     */
+    public CustomParticleFX(World world, double x, double y, double z,
+            double vx, double vy, double vz, int glTextureId, int[] frameTextureIds,
+            float scale, int maxAge, float gravity,
+            float tintR, float tintG, float tintB, boolean fadeOut, boolean dieOnGround) {
         super(world, x, y, z);
         this.glTextureId = glTextureId;
+        this.frameTextureIds = frameTextureIds != null && frameTextureIds.length > 1 ? frameTextureIds : null;
         this.motionX = vx;
         this.motionY = vy;
         this.motionZ = vz;
@@ -70,6 +87,9 @@ public class CustomParticleFX extends EntityFX {
             // （1.7.10 EntityFX 默认落地后会继续滑行，看起来像向外飞行）
             this.setDead();
         }
+        if (frameTextureIds != null) {
+            this.currentFrame = frameForAge(this.particleAge, this.particleMaxAge, frameTextureIds.length);
+        }
     }
 
     /** 渲染层 3：独立于 vanilla 的 layer 0/1/2，由 MixinEffectRenderer 额外渲染。 */
@@ -78,9 +98,24 @@ public class CustomParticleFX extends EntityFX {
         return 3;
     }
 
-    /** 渲染层绑定该纹理。 */
+    /**
+     * 序列粒子的当前帧：与高版本 {@code SingleQuadParticle#setSpriteFromAge} 同义
+     * （进度 = {@code age / lifetime}，映射到 {@code [0, frameCount-1]}）。
+     */
+    static int frameForAge(int age, int maxAge, int frameCount) {
+        if (frameCount <= 1) {
+            return 0;
+        }
+        if (maxAge <= 0) {
+            return frameCount - 1;
+        }
+        int frame = (int) ((float) age / (float) maxAge * (float) frameCount);
+        return Math.max(0, Math.min(frameCount - 1, frame));
+    }
+
+    /** 渲染层绑定该纹理：序列粒子返回**当前帧**（管理器按纹理分组，帧不同自然分到不同批次）。 */
     public int getCustomTextureId() {
-        return glTextureId;
+        return frameTextureIds == null ? glTextureId : frameTextureIds[currentFrame];
     }
 
     @Override

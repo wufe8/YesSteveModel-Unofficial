@@ -49,11 +49,24 @@ public final class ParticleBehaviors {
         /** 撞到地面或进入液体时立即消失（对齐高版本 SplashParticle；否则 1.7.10
          *  EntityFX 会落地后继续滑行，看起来像向外飞行而不是短暂水花）。 */
         public final boolean dieOnGround;
+        /** 固定寿命（tick）：> 0 时**忽略调用方传的 lifetime**。
+         *  有些高版本粒子的寿命是硬编码的常量（如 BubblePopParticle 的 4 tick），
+         *  而模型常常按自己的习惯传 30~50 —— 不覆盖就会让粒子在该消失的时候还在。
+         *  0 = 不覆盖（沿用调用方 / defaultLifetime）。 */
+        public final int fixedLifetime;
 
         Behavior(boolean ignoreVelocity, double initVx, double initVy, double initVz,
                 float gravity, float scale, float tintR, float tintG, float tintB,
                 int defaultLifetime, boolean fadeOut, float velocityScale,
                 int lifetimeVariance, boolean dieOnGround) {
+            this(ignoreVelocity, initVx, initVy, initVz, gravity, scale, tintR, tintG, tintB,
+                defaultLifetime, fadeOut, velocityScale, lifetimeVariance, dieOnGround, 0);
+        }
+
+        Behavior(boolean ignoreVelocity, double initVx, double initVy, double initVz,
+                float gravity, float scale, float tintR, float tintG, float tintB,
+                int defaultLifetime, boolean fadeOut, float velocityScale,
+                int lifetimeVariance, boolean dieOnGround, int fixedLifetime) {
             this.ignoreVelocity = ignoreVelocity;
             this.initVx = initVx;
             this.initVy = initVy;
@@ -68,6 +81,7 @@ public final class ParticleBehaviors {
             this.velocityScale = velocityScale;
             this.lifetimeVariance = lifetimeVariance;
             this.dieOnGround = dieOnGround;
+            this.fixedLifetime = fixedLifetime;
         }
     }
 
@@ -111,6 +125,19 @@ public final class ParticleBehaviors {
         0.2F, 0.55F, 1.0F, 1.0F, 1.0F,
         50, true, 1.0F, 0, false);
 
+    /**
+     * 泡泡破裂：对齐 1.21 BubblePopParticle 源码（lifetime = 4、gravity = 0.008、
+     * 保留调用方速度、默认 0.1 格尺寸、无渐隐）。它的纹理是 bubble_pop_0..4 五帧序列，
+     * 由 {@code ParticleTextureManager} 按名字读 particles/bubble_pop.json 的完整列表。
+     * <p>
+     * 高版本这个粒子的寿命是**硬编码 4 tick**，而模型（如某弹射物的飞行拖尾/命中水花）传的是
+     * 30~50 —— 必须用 {@code fixedLifetime} 覆盖，否则水花会在原地挂两秒。
+     */
+    private static final Behavior BUBBLE_POP = new Behavior(
+        false, 0.0, 0.0, 0.0,
+        0.008F, 1.0F, 1.0F, 1.0F, 1.0F,
+        4, false, 1.0F, 0, false, 4);
+
     private static final Map<String, Behavior> TABLE = new HashMap<>();
 
     static {
@@ -130,6 +157,8 @@ public final class ParticleBehaviors {
         // 雪花
         TABLE.put("snowflake", SNOWFLAKE);
         TABLE.put("snow", SNOWFLAKE);
+        // 泡泡破裂（高版本独有纹理 + 硬编码 4 tick 寿命）
+        TABLE.put("bubble_pop", BUBBLE_POP);
     }
 
     private ParticleBehaviors() {}
