@@ -87,6 +87,80 @@ public final class ParticleEffectUtil {
     }
 
     /**
+     * 弹射物（子模型）粒子生成用的渲染变换覆盖。
+     *
+     * <p>玩家模型的偏移基准是"脚底 + 身体偏航"，而弹射物的模型原点就是实体的渲染坐标、
+     * 并且模型还额外绕 Y 转了 {@code yaw - 90}、绕 Z 转了 {@code pitch}（见
+     * {@code ArrowProjectileRenderer} 的 {@code glRotatef} 调用）。模型的时间轴里写的是
+     * <b>模型空间</b>的偏移（{@code ysm.bone_pivot_abs('Arrow')/16*0.7}），所以这里用
+     * 渲染插值坐标 + 同一套旋转把它换算到世界坐标，而不是复用玩家那套 {@link #rotateOffset}。</p>
+     *
+     * <p>只在弹射物时间轴派发期间生效（{@code begin}/{@code end} 成对，finally 里收尾），
+     * 玩家路径不受影响。角度符号沿用 {@link #rotateOffset} 的约定：{@code glRotatef(θ)}
+     * 对应本处用 {@code -θ} 构造的旋转。</p>
+     */
+    private static boolean projectileTransformActive;
+    private static double projectileX;
+    private static double projectileY;
+    private static double projectileZ;
+    private static float projectileYaw;
+    private static float projectilePitch;
+
+    /** 进入弹射物粒子变换作用域（x/y/z 为渲染插值坐标 = 模型原点）。 */
+    public static void beginProjectileTransform(double x, double y, double z, float yaw, float pitch) {
+        projectileTransformActive = true;
+        projectileX = x;
+        projectileY = y;
+        projectileZ = z;
+        projectileYaw = yaw;
+        projectilePitch = pitch;
+    }
+
+    /** 退出弹射物粒子变换作用域。 */
+    public static void endProjectileTransform() {
+        projectileTransformActive = false;
+    }
+
+    /** 偏移基准点（世界坐标）：弹射物用渲染插值坐标，其余用玩家/实体的脚底。 */
+    private static double baseX(Entity entity) {
+        return projectileTransformActive ? projectileX : entity.posX;
+    }
+
+    private static double baseY(Entity entity) {
+        // 1.7.10 玩家 posY = 脚底 + yOffset(1.62)（Entity.posY = boundingBox.minY + yOffset），
+        // 而 OpenYSM(1.20.1) 的 entity.getY() = 脚底。直接用 posY 会让粒子系统性偏高约一个
+        // 眼睛高度（模型的粒子生成点普遍偏高 ~1.6）。用 boundingBox.minY（脚底）与
+        // OpenYSM 语义对齐。弹射物的模型原点就是渲染坐标，直接用插值 y。
+        return projectileTransformActive ? projectileY : entity.boundingBox.minY;
+    }
+
+    private static double baseZ(Entity entity) {
+        return projectileTransformActive ? projectileZ : entity.posZ;
+    }
+
+    /** 模型空间偏移 → 世界偏移（弹射物按模型渲染旋转，其余按实体朝向绕 Y 旋转）。 */
+    private static double[] spawnOffset(Entity entity, double ox, double oy, double oz, boolean isAbsolute) {
+        if (projectileTransformActive) {
+            return rotateProjectileOffset(ox, oy, oz);
+        }
+        return rotateOffset(entity, ox, oy, oz, isAbsolute);
+    }
+
+    /** 按 {@code Ry(yaw - 90) × Rz(pitch)} 旋转模型空间偏移（符号约定见字段注释）。 */
+    private static double[] rotateProjectileOffset(double ox, double oy, double oz) {
+        double ap = Math.toRadians(-projectilePitch);
+        double cp = Math.cos(ap);
+        double sp = Math.sin(ap);
+        double x1 = ox * cp - oy * sp;
+        double y1 = ox * sp + oy * cp;
+        double z1 = oz;
+        double ay = Math.toRadians(-(projectileYaw - 90.0F));
+        double cy = Math.cos(ay);
+        double sy = Math.sin(ay);
+        return new double[] { x1 * cy + z1 * sy, y1, -x1 * sy + z1 * cy };
+    }
+
+    /**
      * 生成粒子。参数语义与 OpenYSM {@code ParticleEffectUtil.handleParticle} 对齐。
      *
      * @return 是否成功（id 为空 / GUI 预览 / 世界无效 → false）
@@ -148,14 +222,10 @@ public final class ParticleEffectUtil {
                 id, particleName, isAbsolute, ox, oy, oz, dx, dy, dz, speed, count, lifetime);
         }
         if (count == 0) {
-            double[] spawn = rotateOffset(entity, ox, oy, oz, isAbsolute);
-            double x = entity.posX + spawn[0];
-            // 1.7.10 玩家 posY = 脚底 + yOffset(1.62)（Entity.posY = boundingBox.minY + yOffset），
-            // 而 OpenYSM(1.20.1) 的 entity.getY() = 脚底。直接用 posY 会让粒子系统性偏高约一个
-            // 眼睛高度（模型的粒子生成点普遍偏高 ~1.6）。用 boundingBox.minY（脚底）与
-            // OpenYSM 语义对齐。
-            double y = entity.boundingBox.minY + spawn[1];
-            double z = entity.posZ + spawn[2];
+            double[] spawn = spawnOffset(entity, ox, oy, oz, isAbsolute);
+            double x = baseX(entity) + spawn[0];
+            double y = baseY(entity) + spawn[1];
+            double z = baseZ(entity) + spawn[2];
             final double vx = speed * dx;
             final double vy = speed * dy;
             final double vz = speed * dz;
@@ -182,11 +252,10 @@ public final class ParticleEffectUtil {
             final double vx = random.nextGaussian() * speed;
             final double vy = random.nextGaussian() * speed;
             final double vz = random.nextGaussian() * speed;
-            double[] spawn = rotateOffset(entity, ox + spreadX, oy + spreadY, oz + spreadZ, isAbsolute);
-            final double x = entity.posX + spawn[0];
-            // 同 count==0：1.7.10 玩家 posY 含 yOffset(1.62)，用 boundingBox.minY（脚底）对齐 OpenYSM。
-            final double y = entity.boundingBox.minY + spawn[1];
-            final double z = entity.posZ + spawn[2];
+            double[] spawn = spawnOffset(entity, ox + spreadX, oy + spreadY, oz + spreadZ, isAbsolute);
+            final double x = baseX(entity) + spawn[0];
+            final double y = baseY(entity) + spawn[1];
+            final double z = baseZ(entity) + spawn[2];
             emit(mc, emitName, customTexId, beh, x, y, z, vx, vy, vz, life);
         }
         return true;

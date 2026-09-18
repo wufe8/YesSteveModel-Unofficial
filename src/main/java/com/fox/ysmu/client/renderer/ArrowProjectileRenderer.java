@@ -13,6 +13,9 @@ import org.lwjgl.opengl.GL11;
 
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
+import com.fox.ysmu.client.animation.controller.ProjectileTimelineRuntime;
+import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
+import com.fox.ysmu.client.particle.ParticleEffectUtil;
 import com.fox.ysmu.util.ModelIdUtil;
 
 import software.bernie.geckolib3.core.easing.EasingManager;
@@ -182,7 +185,8 @@ public class ArrowProjectileRenderer {
             // Apply projectile animations (parallel0-7, post_main, etc.)
             // before rendering so bone transforms are correct.
             if (entity instanceof EntityArrow arrow) {
-                applyProjectileAnimations(projModel, arrow, partialTicks, projGeoId, modelId, arrowType);
+                applyProjectileAnimations(projModel, arrow, partialTicks, projGeoId, modelId, arrowType,
+                    x, y, z, interpYaw, interpPitch);
             }
 
             // Render all bone cubes through GeckoLib's renderRecursively
@@ -209,10 +213,15 @@ public class ArrowProjectileRenderer {
     /**
      * Apply projectile animation keyframes to the GeoModel bones before rendering.
      * Evaluates Molang expressions in keyframes using the arrow entity context.
+     *
+     * @param renderX/renderY/renderZ 实体渲染插值坐标（= 模型原点），供时间轴里的
+     *        {@code ysm.particle(...)} 把模型空间偏移换算到世界坐标；与 {@code glTranslated} 同源。
+     * @param interpYaw/interpPitch   与 {@code glRotatef} 相同的模型旋转，粒子偏移沿用同一套。
      */
     @SuppressWarnings("rawtypes")
     private static void applyProjectileAnimations(GeoModel model, EntityArrow arrow, float partialTicks,
-        ResourceLocation projGeoId, ResourceLocation modelId, String arrowType) {
+        ResourceLocation projGeoId, ResourceLocation modelId, String arrowType,
+        double renderX, double renderY, double renderZ, float interpYaw, float interpPitch) {
         // Get the animation file for this projectile
         AnimationFile animFile = GeckoLibCache.getInstance().getAnimations().get(projGeoId);
         if (animFile == null || animFile.animations == null) {
@@ -257,6 +266,8 @@ public class ArrowProjectileRenderer {
         // 模型里 ysm.on_ground_time <= 2 这种"刚落地"判断永远不会在刚落地时成立。
         if (arrow.isDead) {
             GROUND_TRACKER.forget(arrow.getEntityId());
+            com.fox.ysmu.client.animation.controller.ProjectileTimelineRuntime
+                .forget(arrow.getEntityId(), projGeoId);
         }
         setMolangVar("ysm.on_ground_time",
             GROUND_TRACKER.update(arrow.getEntityId(), isInGround, arrow.ticksExisted));
@@ -279,7 +290,6 @@ public class ArrowProjectileRenderer {
         // model has controllers — the old "no controllers → play every animation" fallback
         // played all four state animations at once, which stacked every sub-model variant
         // (bow/crossbow/impact effects) onto the same projectile entity.
-        List<String> activeAnims;
         boolean hasControllers = com.fox.ysmu.client.animation.controller.OpenYsmAnimationControllerRegistry
             .get(projGeoId) != null;
         if (debugThisTick) {
@@ -288,13 +298,22 @@ public class ArrowProjectileRenderer {
                 animFile != null && animFile.animations != null ? animFile.animations.size() : 0,
                 hasControllers);
         }
-        activeAnims = com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
-            .getActiveAnimations(
-                arrow.getEntityId(),
-                projGeoId,
-                ageInTicks,
-                com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.ProjectileState
-                    .of(isInGround, arrow.isInWater(), arrow.isBurning()));
+        List<com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.ActiveAnimation> activeEntries =
+            com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime
+                .getActiveAnimationEntries(
+                    arrow.getEntityId(),
+                    projGeoId,
+                    ageInTicks,
+                    com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.ProjectileState
+                        .of(isInGround, arrow.isInWater(), arrow.isBurning()));
+        List<String> activeAnims = new java.util.ArrayList<>(activeEntries.size());
+        Map<String, Double> tickOffsets = new java.util.HashMap<>();
+        for (com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime.ActiveAnimation entry : activeEntries) {
+            activeAnims.add(entry.name);
+            if (entry.tickOffset != 0.0d) {
+                tickOffsets.put(entry.name, entry.tickOffset);
+            }
+        }
         if (debugThisTick) {
             com.fox.ysmu.ysmu.LOG.info(
                 "[YSMU-ARROW] selected {} active anims (inGround={}, inWater={}, burning={}): {}",
@@ -308,7 +327,13 @@ public class ArrowProjectileRenderer {
             return; // No active animations — render in bind pose
         }
 
-        applyActiveAnimations(model, animFile, activeAnims, ageInTicks, debugThisTick);
+        applyActiveAnimations(model, animFile, activeAnims, tickOffsets, ageInTicks, debugThisTick);
+
+        // 时间轴（飞行拖尾 / 命中水花）：必须在骨骼写完之后派发——模型里的
+        // ysm.bone_pivot_abs(...) 要读这一帧的骨骼姿态。粒子函数还要"当前实体"上下文，
+        // 以及把模型空间偏移按箭矢的渲染变换换算成世界坐标。
+        dispatchProjectileTimelines(arrow, projGeoId, animFile, activeAnims, ageInTicks, model,
+            renderX, renderY, renderZ, interpYaw, interpPitch);
 
         // Debug: dump bone scales after all animations applied
         if (debugThisTick) {
@@ -327,15 +352,66 @@ public class ArrowProjectileRenderer {
     }
 
     /**
+     * 派发弹射物动画的时间轴指令（飞行拖尾、命中水花等），并为它们准备三样上下文：
+     *
+     * <ol>
+     *   <li>{@code ysm.particle(...)} 读的"当前实体" = 这支箭（
+     *       {@link ParticleEffectUtil#setCurrentEntity}）；</li>
+     *   <li>粒子偏移的基准点/旋转 = 箭矢的渲染变换（模型空间偏移由模型自己用
+     *       {@code bone_pivot_abs(...)/16*0.7} 算出，需要按 {@code yaw-90}/{@code pitch} 转过去）；</li>
+     *   <li>{@code ysm.bone_pivot_abs(...)} 读的骨骼表 = 这份几何（弹射物不注册进玩家 processor，
+     *       没有这份表时该函数恒返回 0，粒子只能落在实体原点）。</li>
+     * </ol>
+     *
+     * <p>三个上下文都在 finally 里还原，玩家渲染路径不受影响。</p>
+     */
+    private static void dispatchProjectileTimelines(EntityArrow arrow, ResourceLocation projGeoId,
+        AnimationFile animFile, List<String> activeAnims, double ageInTicks, GeoModel model,
+        double renderX, double renderY, double renderZ, float interpYaw, float interpPitch) {
+        Entity previousEntity = ParticleEffectUtil.getCurrentEntity();
+        ParticleEffectUtil.setCurrentEntity(arrow);
+        ParticleEffectUtil.beginProjectileTransform(renderX, renderY, renderZ, interpYaw, interpPitch);
+        java.util.Map<String, software.bernie.geckolib3.core.processor.IBone> previousBones =
+            MolangPhysicsRuntime.beginProjectileBones(model.topLevelBones);
+        try {
+            ProjectileTimelineRuntime.dispatch(arrow.getEntityId(), projGeoId, animFile, activeAnims, ageInTicks);
+        } catch (Throwable e) {
+            // 每帧路径，按内容去重（模型的时间轴表达式可能引用本环境没有的函数）。
+            String key = "timeline|" + e.getClass().getName() + '|' + e.getMessage();
+            if (LOGGED_RENDER_WARNS.add(key)) {
+                com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] Projectile timeline dispatch failed", e);
+            }
+        } finally {
+            MolangPhysicsRuntime.endProjectileBones(previousBones);
+            ParticleEffectUtil.endProjectileTransform();
+            ParticleEffectUtil.setCurrentEntity(previousEntity);
+        }
+    }
+
+    /**
      * Writes the keyframes of {@code activeAnims} onto {@code model}'s bones, in list order:
      * later animations overwrite earlier ones bone-by-bone, which is how the animation priority
      * of {@link com.fox.ysmu.client.animation.controller.ProjectileControllerRuntime} is realised.
      *
      * <p>Package-private and free of entity/GL state on purpose: it lets a plain unit test replay
      * a real model's projectile animations and inspect the resulting bone transforms.</p>
+     *
+     * <p>这条重载把所有动画都按实体年龄采样（偏移 0），供只有动画名的调用方和单测使用；
+     * 正式渲染路径用下面带 {@code tickOffsets} 的重载，让控制器状态动画从进入状态那刻计时。</p>
      */
     static void applyActiveAnimations(GeoModel model, AnimationFile animFile, List<String> activeAnims,
         double ageInTicks, boolean debugThisTick) {
+        applyActiveAnimations(model, animFile, activeAnims, java.util.Collections.emptyMap(), ageInTicks,
+            debugThisTick);
+    }
+
+    /**
+     * 同上，但每条动画可以带一个"相对所属控制器状态进入时刻"的 tick 偏移
+     * （{@code ProjectileControllerRuntime.ActiveAnimation#tickOffset}）：采样时刻 =
+     * {@code ageInTicks - tickOffset}。缺失的动画按偏移 0 处理。
+     */
+    static void applyActiveAnimations(GeoModel model, AnimationFile animFile, List<String> activeAnims,
+        Map<String, Double> tickOffsets, double ageInTicks, boolean debugThisTick) {
         // Only apply keyframes from the active animations
         for (String animName : activeAnims) {
             Animation anim = animFile.animations.get(animName);
@@ -364,6 +440,10 @@ public class ArrowProjectileRenderer {
                 }
             }
 
+            // 控制器状态动画从进入状态那刻计时（偏移 > 0）；其余动画偏移 0，等于实体年龄。
+            Double offset = tickOffsets.get(animName);
+            double animAge = ageInTicks - (offset != null ? offset : 0.0d);
+
             double animLength = anim.animationLength != null ? anim.animationLength : 0;
             double animTick;
             if (animLength > 0) {
@@ -374,12 +454,12 @@ public class ArrowProjectileRenderer {
                 boolean isLooping = anim.loop != null && anim.loop.isRepeatingAfterEnd()
                     && anim.loop != ILoopType.EDefaultLoopTypes.HOLD_ON_LAST_FRAME;
                 if (isLooping) {
-                    animTick = ageInTicks % animLength;
+                    animTick = animAge % animLength;
                 } else {
-                    animTick = Math.min(ageInTicks, animLength);
+                    animTick = Math.min(animAge, animLength);
                 }
             } else {
-                animTick = ageInTicks;
+                animTick = animAge;
             }
 
             // For each bone animated by this animation
@@ -488,7 +568,7 @@ public class ArrowProjectileRenderer {
 
     private static void applyKeyFrameList(GeoBone bone, VectorKeyFrameList<KeyFrame<IValue>> frames,
         double tick, double snapX, double snapY, double snapZ, boolean isRotation) {
-        if (frames == null) return;
+        if (!hasAllAxes(frames)) return;
         float[] result = evaluateKeyFrameList(frames, tick);
         if (result != null) {
             // Animation values are ADDED to the initial snapshot (GeckoLib convention)
@@ -498,9 +578,27 @@ public class ArrowProjectileRenderer {
         }
     }
 
+    /**
+     * 一条骨骼通道是否真的有数据：Bedrock 的标量关键帧（{@code "scale": 0.9}）会被展开成三轴
+     * 关键帧，所以正常写法三轴都有数据；三轴全空说明模型只写了**别的通道**（例如只写 rotation）。
+     *
+     * <p>必须按"三轴齐全"判断，不能只看 {@code frames != null}：解析器会给没写的通道留下一个
+     * 存在但轴列表为空的 {@code VectorKeyFrameList}，此时 {@link #evaluateAxis} 对每个空轴返回 0，
+     * 于是"只旋转"的动画会把前一条动画写好的缩放**清零**。真实案例：某弹射物的外圈骨骼由
+     * {@code parallel2} 写 0.9 缩放、由 {@code parallel3} 只写旋转，结果缩放松在 0 上，落地后
+     * 旋转的六边形完全不可见。GeckoLib 自己的玩家路径（{@code AnimationProcessor.tickAnimation}）
+     * 也是在 {@code rX/rY/rZ}（或 {@code sX/sY/sZ}）三个点都非空时才写这条通道。</p>
+     */
+    private static boolean hasAllAxes(VectorKeyFrameList<KeyFrame<IValue>> frames) {
+        return frames != null
+            && frames.xKeyFrames != null && !frames.xKeyFrames.isEmpty()
+            && frames.yKeyFrames != null && !frames.yKeyFrames.isEmpty()
+            && frames.zKeyFrames != null && !frames.zKeyFrames.isEmpty();
+    }
+
     private static void applyKeyFrameListPosition(GeoBone bone, VectorKeyFrameList<KeyFrame<IValue>> frames,
         double tick, double snapX, double snapY, double snapZ) {
-        if (frames == null) return;
+        if (!hasAllAxes(frames)) return;
         float[] result = evaluateKeyFrameList(frames, tick);
         if (result != null) {
             bone.setPositionX((float) (result[0] + snapX));
@@ -511,9 +609,9 @@ public class ArrowProjectileRenderer {
 
     private static void applyKeyFrameListScale(GeoBone bone, VectorKeyFrameList<KeyFrame<IValue>> frames,
         double tick, double snapX, double snapY, double snapZ, boolean debug) {
-        if (frames == null) {
+        if (!hasAllAxes(frames)) {
             if (debug && ("bow".equals(bone.name) || "crossbow".equals(bone.name))) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyKeyFrameListScale('{}'): frames=null, snap=({},{},{})",
+                com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] applyKeyFrameListScale('{}'): no scale axes on this channel, snap=({},{},{})",
                     bone.name, snapX, snapY, snapZ);
             }
             return;

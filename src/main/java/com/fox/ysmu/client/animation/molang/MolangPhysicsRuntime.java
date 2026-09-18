@@ -29,6 +29,22 @@ public final class MolangPhysicsRuntime {
     private static final Map<ScopeKey, ScopeState> STATES = new ConcurrentHashMap<>();
 
     /**
+     * 弹射物（子模型）骨骼作用域：只提供"名字 → 骨骼"这一件事，供
+     * {@code ysm.bone_pivot_abs()} / {@code bone_position|rotation|scale()} 使用。
+     *
+     * <p>弹射物的 GeoModel 不经过玩家的 {@link AnimationProcessor} 注册，所以
+     * {@link #bone(int)} 原来对它一律返回 null：某弹射物动画的时间轴里
+     * {@code ysm.bone_pivot_abs('Arrow')} 恒等于 0，粒子只能落在实体原点（而不是模型上算出来的位置）。
+     * 这里用一份临时的名字表补上——弹射物渲染期间由
+     * {@code ArrowProjectileRenderer} 调用 {@link #beginProjectileBones} 建立。</p>
+     *
+     * <p>刻意不复用 {@link FrameContext}：弹射物没有玩家侧的物理状态与变量作用域，
+     * 借用 FrameContext 会让 {@code first_order} 之类的函数去读空的 {@code context.state}。
+     * 这个作用域只在"玩家上下文没解析出骨骼"时兜底，因此不会影响玩家模型。</p>
+     */
+    private static Map<String, IBone> projectileBones;
+
+    /**
      * 最近一帧 ScopeState 的 v.* 变量快照（debug 用）。
      * 嵌套赋值（如 {@code (cond) ? (v.wet = 30) : 0}）经由
      * {@code ScopedMolangVariable.set()} 只写入当前帧的 ScopeState；
@@ -155,6 +171,44 @@ public final class MolangPhysicsRuntime {
         // 漫游变量已经注入完毕（wiki 要求 roaming 同步早于 player_init），
         // 而 setMolangQueries 正是"每次更新玩家动画之前"。
         com.fox.ysmu.client.animation.controller.OpenYsmScriptRuntime.runFrameScripts(player, modelId);
+    }
+
+    /**
+     * 建立弹射物（子模型）骨骼作用域：把几何里的骨骼按名字登记，供
+     * {@code ysm.bone_pivot_abs(...)} 等骨骼函数在弹射物动画的时间轴里解析。
+     *
+     * <p>由 {@code ArrowProjectileRenderer} 在一次弹射物渲染 pass 内成对调用
+     * （{@link #beginProjectileBones} / {@link #endProjectileBones}），
+     * 递归收集所有层级的骨骼；结束时会恢复调用前的作用域（弹射物渲染可能发生在
+     * 玩家渲染之外，但也可能是嵌套的，所以用局部变量保存而不是简单置 null）。</p>
+     */
+    public static Map<String, IBone> beginProjectileBones(
+        java.util.List<GeoBone> topLevelBones) {
+        Map<String, IBone> previous = projectileBones;
+        Map<String, IBone> bones = new java.util.HashMap<>();
+        collectBones(topLevelBones, bones);
+        projectileBones = bones;
+        return previous;
+    }
+
+    /** 结束弹射物骨骼作用域，恢复 {@link #beginProjectileBones} 之前的那一份。 */
+    public static void endProjectileBones(Map<String, IBone> previous) {
+        projectileBones = previous;
+    }
+
+    private static void collectBones(java.util.List<GeoBone> bones, Map<String, IBone> out) {
+        if (bones == null) {
+            return;
+        }
+        for (GeoBone bone : bones) {
+            if (bone == null) {
+                continue;
+            }
+            if (bone.name != null) {
+                out.put(bone.name, bone);
+            }
+            collectBones(bone.childBones, out);
+        }
     }
 
     public static void end() {
@@ -457,6 +511,12 @@ public final class MolangPhysicsRuntime {
             return 0.0D;
         }
         double matrixResult = matrixBonePivot(bone, axis);
+        if (projectileBones != null) {
+            // 弹射物作用域没有渲染期矩阵捕获，直接用父链重算；同时**避开**捕获路径：
+            // 捕获表是按"当前玩家模型 + 骨骼名"存的，弹射物骨骼名可能和玩家模型重名
+            // （例如都叫 Arrow），走了捕获就会拿到玩家那条骨骼的位置。
+            return matrixResult;
+        }
         if (trackingEnabled && trackingModelId != null) {
             String boneName = MolangStringPool.get(nameId);
             float[] m = boneName == null ? null
@@ -608,12 +668,23 @@ public final class MolangPhysicsRuntime {
     }
 
     private static IBone bone(int nameId) {
-        FrameContext context = currentFrameContext;
-        if (context == null || context.processor == null || nameId == MolangStringPool.EMPTY_ID) {
+        if (nameId == MolangStringPool.EMPTY_ID) {
             return null;
         }
         String boneName = MolangStringPool.get(nameId);
-        return boneName == null ? null : context.processor.getBone(boneName);
+        if (boneName == null) {
+            return null;
+        }
+        FrameContext context = currentFrameContext;
+        if (context != null && context.processor != null) {
+            IBone bone = context.processor.getBone(boneName);
+            if (bone != null) {
+                return bone;
+            }
+        }
+        // 弹射物（子模型）作用域兜底：GeoModel 没注册进玩家 processor，只能查这份名字表。
+        Map<String, IBone> bones = projectileBones;
+        return bones == null ? null : bones.get(boneName);
     }
 
     private static final class FrameContext {

@@ -1459,7 +1459,12 @@ public final class OpenYsmPlayerControllerRuntime {
      *  when its clock is driven by {@code anim_time_update}.
      *  <p>{@code calculateLength} returns {@link Double#MAX_VALUE} as a sentinel
      *  for "no keyframe timing", which must not be treated as a real period. */
-    private static double playbackLengthTicks(software.bernie.geckolib3.core.builder.Animation animation) {
+    /**
+     * 动画的播放周期（tick）。包级可见：弹射物时间轴执行器
+     * （{@code ProjectileTimelineRuntime}）用同一套周期判定，避免两条路径对
+     * "这个动画多久循环一次"得出不同结论。
+     */
+    static double playbackLengthTicks(software.bernie.geckolib3.core.builder.Animation animation) {
         if (animation == null) {
             return 0.0d;
         }

@@ -106,6 +106,31 @@ public final class ProjectileControllerRuntime {
     private ProjectileControllerRuntime() {}
 
     /**
+     * 一个"当前应播放的弹射物动画"，以及它相对**所属控制器状态进入时刻**的已播放 tick。
+     *
+     * <p>状态动画必须从进入该状态的那一帧开始计时：{@code post_main} / {@code post_ground}
+     * 这类 {@code hold_on_last_frame} 动画只在开头几 tick 里把骨骼放大/爆开，用实体总年龄去采样
+     * 会直接停在最后一帧上（实测落地动画永远停在"缩放 0"）。{@code air}/{@code ground}/
+     * {@code parallel*} 这些非控制器动画仍然从实体出生起计时（循环动画，偏移恒为 0）。</p>
+     */
+    public static final class ActiveAnimation {
+
+        public final String name;
+        /** 相对状态进入时刻已经过的 tick；非控制器动画恒为 0。 */
+        public final double tickOffset;
+
+        ActiveAnimation(String name, double tickOffset) {
+            this.name = name;
+            this.tickOffset = tickOffset;
+        }
+
+        @Override
+        public String toString() {
+            return name;
+        }
+    }
+
+    /**
      * Evaluates all controllers registered for the given projectile animation
      * ID and returns the list of animation names that should be active.
      *
@@ -133,6 +158,22 @@ public final class ProjectileControllerRuntime {
      */
     public static List<String> getActiveAnimations(int entityId, ResourceLocation animId, double ageInTicks,
         ProjectileState state) {
+        List<ActiveAnimation> entries = getActiveAnimationEntries(entityId, animId, ageInTicks, state);
+        List<String> names = new ArrayList<>(entries.size());
+        for (ActiveAnimation entry : entries) {
+            names.add(entry.name);
+        }
+        return names;
+    }
+
+    /**
+     * 同 {@link #getActiveAnimations(int, ResourceLocation, double, ProjectileState)}，但额外带回
+     * 每条动画**相对它所属控制器状态进入时刻**的已播放 tick（渲染器要用它采样关键帧，见
+     * {@link ActiveAnimation}）。返回顺序与 {@code getActiveAnimations} 完全一致，一次求值只走
+     * 一遍状态机。
+     */
+    public static List<ActiveAnimation> getActiveAnimationEntries(int entityId, ResourceLocation animId,
+        double ageInTicks, ProjectileState state) {
         ControllerSet set = OpenYsmAnimationControllerRegistry.get(animId);
         if (set == null || set.controllers.isEmpty()) {
             if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
@@ -158,9 +199,9 @@ public final class ProjectileControllerRuntime {
         }
 
         // Evaluate controller state machines for active animations
-        List<String> result = new ArrayList<>();
+        List<ActiveAnimation> result = new ArrayList<>();
         for (Controller controller : set.controllers.values()) {
-            List<String> controllerAnims = evaluateController(entityId, animId, controller, ageInTicks);
+            List<ActiveAnimation> controllerAnims = evaluateController(entityId, animId, controller, ageInTicks);
             if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
                 com.fox.ysmu.ysmu.LOG.info("[YSMU-PROJ-CTRL]   controller '{}': state='{}', anims={}",
                     controller.name,
@@ -189,8 +230,8 @@ public final class ProjectileControllerRuntime {
      * 模型为不同弹射物状态准备的子模型（弓、弩、爆开、落地插地…）会全部叠在同一个实体上显示，
      * 而没有任何控制器的模型（只有状态动画 + 并行动画）受这个错误影响最严重。</p>
      */
-    private static List<String> selectImplicitAnimations(ResourceLocation animId, ProjectileState state,
-        List<String> result, java.util.Set<String> managedAnims) {
+    private static List<ActiveAnimation> selectImplicitAnimations(ResourceLocation animId, ProjectileState state,
+        List<ActiveAnimation> result, java.util.Set<String> managedAnims) {
         software.bernie.geckolib3.file.AnimationFile animFile =
             software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
         if (animFile == null || animFile.animations == null) {
@@ -213,7 +254,7 @@ public final class ProjectileControllerRuntime {
         // 便于发现确实依赖这种非标准写法的模型。
         if (com.fox.ysmu.Config.DEBUG_CONTROLLER) {
             for (String name : animFile.animations.keySet()) {
-                if (result.contains(name) || managedAnims.contains(name) || isKnownImplicitAnimation(name)) {
+                if (containsName(result, name) || managedAnims.contains(name) || isKnownImplicitAnimation(name)) {
                     continue;
                 }
                 com.fox.ysmu.ysmu.LOG.info(
@@ -221,6 +262,15 @@ public final class ProjectileControllerRuntime {
             }
         }
         return result;
+    }
+
+    private static boolean containsName(List<ActiveAnimation> entries, String name) {
+        for (ActiveAnimation entry : entries) {
+            if (entry.name.equals(name)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /** {@code parallel0..7} 的槽位数（wiki: 弹射物并行动画固定 8 个槽位）。 */
@@ -240,13 +290,14 @@ public final class ProjectileControllerRuntime {
         return digits.length() == 1 && digits.charAt(0) >= '0' && digits.charAt(0) < '0' + MAX_PARALLEL_SLOT;
     }
 
-    private static void addIfPresent(List<String> result, software.bernie.geckolib3.file.AnimationFile animFile,
+    private static void addIfPresent(List<ActiveAnimation> result, software.bernie.geckolib3.file.AnimationFile animFile,
         boolean condition, String animationName) {
-        if (!condition || result.contains(animationName)) {
+        if (!condition || containsName(result, animationName)) {
             return;
         }
         if (animFile.animations.containsKey(animationName)) {
-            result.add(animationName);
+            // 非控制器动画：从实体出生起计时（循环动画），偏移为 0。
+            result.add(new ActiveAnimation(animationName, 0.0d));
         }
     }
 
@@ -257,9 +308,10 @@ public final class ProjectileControllerRuntime {
     }
 
     /**
-     * Evaluate a single controller's state machine and return active animation names.
+     * Evaluate a single controller's state machine and return its active animations,
+     * each carrying the tick offset of the state it belongs to.
      */
-    private static List<String> evaluateController(int entityId, ResourceLocation animId,
+    private static List<ActiveAnimation> evaluateController(int entityId, ResourceLocation animId,
         Controller controller, double ageInTicks) {
         RuntimeState state = getOrCreateState(entityId, animId, controller.name);
 
@@ -288,8 +340,13 @@ public final class ProjectileControllerRuntime {
             current = next;
         }
 
+        // 状态动画从**进入当前状态**那一刻开始计时：YSM 的控制器每进入一个状态就从头播该状态的
+        // 动画（hold_on_last_frame 停住）。用实体总年龄采样会让 0.2 秒长的落地动画从第一帧起就
+        // 停在最后一帧上，整段爆开效果被跳过。
+        double tickOffset = Math.max(0.0d, ageInTicks - state.enteredTick);
+
         // Collect active animation names from the current state
-        List<String> anims = new ArrayList<>();
+        List<ActiveAnimation> anims = new ArrayList<>();
         if (current != null) {
             for (AnimationEntry entry : current.animations) {
                 // Projectile animations typically don't use conditions,
@@ -298,7 +355,7 @@ public final class ProjectileControllerRuntime {
                     || evaluateExpression(entry.condition)) {
                     // Only include animations that actually exist
                     if (animationExists(animId, entry.animationName)) {
-                        anims.add(entry.animationName);
+                        anims.add(new ActiveAnimation(entry.animationName, tickOffset));
                     }
                 }
             }
