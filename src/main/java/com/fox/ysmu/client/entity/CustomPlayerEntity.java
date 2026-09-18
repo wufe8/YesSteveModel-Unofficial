@@ -95,6 +95,14 @@ public class CustomPlayerEntity implements IAnimatable {
             new AnimationController(this, USE_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateUse));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_POST_USE_CONTROLLER, 0, manager::predicateOpenYsmSlot));
+        // 轮盘动画（cap 控制器：extra0..7 / gui 预览的 hover/focus）在并行族**之前**注册。
+        // wiki「并行动画」：pre_parallel 优先级最低（会被主动画覆盖），parallel **优先级最高**
+        // （不同 parallel 之间数字越大越高）。GeckoLib 按控制器注册顺序逐骨覆盖，所以
+        // parallel* 必须排在 main/hold/swing/use/**cap** 之后，否则轮盘动画里写的
+        // scale/position（例如某模型"打招呼/鼓掌"把 AllBody 缩放写回 1）会盖掉
+        // parallel1 的形态缩放，人形与狐形就同时显示。
+        data.addAnimationController(
+            new AnimationController(this, CAP_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateCap));
         for (int i = 0; i < 8; i++) {
             String controllerName = String.format("parallel_%d_controller", i);
             String animationName = String.format("parallel%d", i);
@@ -107,15 +115,15 @@ public class CustomPlayerEntity implements IAnimatable {
             data.addAnimationController(new AnimationController(this,
                 String.format("parallel_extra_%d_controller", i), 0, manager::predicateOpenYsmSlot));
         }
-        // 为每个盔甲槽位注册控制器，使用1-4的索引值
+        // 为每个盔甲槽位注册控制器，使用1-4的索引值。
+        // 必须排在并行族**之后**：wiki「护甲动画」要求并行动画把护甲组缩放设成 0、
+        // 由护甲动画把对应组缩放改回 1——顺序反了就永远露不出护甲。
         for (int slotIndex = 1; slotIndex <= 4; slotIndex++) {
             String controllerName = String.format("%s_controller", ConditionArmor.getSlotNameFromIndex(slotIndex));
             int finalSlotIndex = slotIndex;
             data.addAnimationController(
                 new AnimationController(this, controllerName, 0, e -> manager.predicateArmor(e, finalSlotIndex)));
         }
-        data.addAnimationController(
-            new AnimationController(this, CAP_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateCap));
         data.getAnimationControllers()
             .values()
             .forEach(controller -> {

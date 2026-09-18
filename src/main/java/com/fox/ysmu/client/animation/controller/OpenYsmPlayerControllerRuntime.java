@@ -1075,8 +1075,7 @@ public final class OpenYsmPlayerControllerRuntime {
         // few frames (model switched away and back), treat sameAnim as false so
         // setAnimation reloads the merged bone keyframes, and restart the timeline
         // cursors.
-        boolean isReEntry = runtimeState.lastActiveFrame > 0
-            && FRAME_COUNTER - runtimeState.lastActiveFrame > 10;
+        boolean isReEntry = isReEntry(runtimeState.lastActiveFrame);
         runtimeState.lastActiveFrame = FRAME_COUNTER;
         // Same-animation detection: skip setAnimation when the same state and
         // animation are already playing.  BUT if the model changed (animationId
@@ -1897,16 +1896,43 @@ public final class OpenYsmPlayerControllerRuntime {
         }
     }
 
-    /** Monotonically increasing frame counter used to detect RuntimeState
-     *  re-entry after a controller was inactive (e.g. model switched away
-     *  and back).  Incremented at the start of each render frame in
-     *  MolangPhysicsRuntime.begin(). */
+    /** Monotonically increasing **render frame** counter used to detect RuntimeState
+     *  re-entry after a controller was inactive (e.g. model switched away and back).
+     *  Advanced once per rendered frame by {@link #advanceRenderFrame()} (hooked to
+     *  {@code TickEvent.RenderTickEvent}), never per model pass — see
+     *  {@link #beginModelPass()} for why that distinction is load-bearing. */
     private static int FRAME_COUNTER = 0;
 
-    /** Called by MolangPhysicsRuntime.begin() to advance the frame counter. */
-    public static void advanceFrameCounter() {
+    /** 停放超过这么多**渲染帧**才算"模型被换走又换回来"。 */
+    private static final int RE_ENTRY_FRAMES = 10;
+
+    /** "模型被换走又换回来"判定：该控制器上一次处理距今超过 {@link #RE_ENTRY_FRAMES} 帧。 */
+    static boolean isReEntry(int lastActiveFrame) {
+        return lastActiveFrame > 0 && FRAME_COUNTER - lastActiveFrame > RE_ENTRY_FRAMES;
+    }
+
+    /** 测试用：当前帧计数。 */
+    static int frameCounter() {
+        return FRAME_COUNTER;
+    }
+
+    /**
+     * 每个**渲染帧**推进一次帧计数（由 {@code ClientEventHandler.onRenderTick} 调用）。
+     *
+     * <p>必须与"模型 pass"分开：模型选择页一帧要渲染十几到二十几个模型，如果按 pass 推进，
+     * 同一个控制器两次处理之间会差十几二十个"帧"，{@link #isReEntry} 就每帧误判成再入，
+     * 于是并行控制器（眼睛/耳朵/尾巴/表情/物理状态时间轴）每帧重启一次——表现为预览页
+     * 抖动 + 眼睛逐帧眨动，而关掉预览页（每帧只有 2~3 个 pass）就正常。</p>
+     */
+    public static void advanceRenderFrame() {
         FRAME_COUNTER++;
-        // Reset the per-frame timeline dispatch budget (once per entity render frame).
+    }
+
+    /**
+     * 模型渲染 pass 入口（每个模型每帧一次，由 {@code MolangPhysicsRuntime.begin()} 调用）：
+     * 只重置本 pass 的时间轴派发预算。**不要**在这里推进帧计数（见 {@link #advanceRenderFrame()}）。
+     */
+    public static void beginModelPass() {
         timelineDispatchBudget = MAX_TIMELINE_DISPATCHES_PER_FRAME;
     }
 

@@ -84,6 +84,22 @@ public class ClientEventHandler {
     /** Tick counter for in-use model sweep (every 100 ticks = 5s). */
     private static int inUseSweepTick = 0;
 
+    /**
+     * 每**渲染帧**推进一次动画控制器的帧计数（模型"再入"判定用）。
+     *
+     * <p>必须挂在渲染帧事件上，不能放在每个模型的渲染 pass 里：模型选择页(Alt+Y)一帧会渲染
+     * 十几到二十几个模型，按 pass 推进会把这些都算成"帧"，于是 {@code isReEntry} 每帧误判，
+     * 并行控制器（眼睛/耳朵/尾巴/表情/物理时间轴）每帧重启一次 —— 预览页抖动 + 眼睛逐帧眨动，
+     * 关掉页面就正常。</p>
+     */
+    @SubscribeEvent
+    public static void onRenderTick(TickEvent.RenderTickEvent event) {
+        if (event.phase != TickEvent.Phase.START) {
+            return;
+        }
+        com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.advanceRenderFrame();
+    }
+
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {

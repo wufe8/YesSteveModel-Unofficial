@@ -79,9 +79,10 @@ public final class MolangPhysicsRuntime {
             currentFrameContext = null;
             return;
         }
-        // Advance the global frame counter used by
-        // OpenYsmPlayerControllerRuntime to detect model-switch re-entry.
-        com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.advanceFrameCounter();
+        // 模型 pass 入口：重置本 pass 的时间轴派发预算。帧计数由真实渲染帧推进
+        // （ClientEventHandler.onRenderTick → advanceRenderFrame），**不能**在这里推进——
+        // 一帧渲染 N 个模型会把计数推进 N 次，"停放超过 10 帧"的再入判定就会每帧误判。
+        com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.beginModelPass();
         EntityPlayer player = animatable.getPlayer();
         ScopeKey key = ScopeKey.from(player, animatable.getMainModel());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
