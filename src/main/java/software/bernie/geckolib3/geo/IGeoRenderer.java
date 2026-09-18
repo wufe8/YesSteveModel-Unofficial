@@ -21,6 +21,7 @@ import software.bernie.geckolib3.geo.render.built.GeoCube;
 import software.bernie.geckolib3.geo.render.built.GeoModel;
 import software.bernie.geckolib3.geo.render.built.GeoQuad;
 import software.bernie.geckolib3.geo.render.built.GeoVertex;
+import software.bernie.geckolib3.core.processor.IBone;
 import software.bernie.geckolib3.model.provider.GeoModelProvider;
 import software.bernie.geckolib3.util.MatrixStack;
 
@@ -60,6 +61,17 @@ public interface IGeoRenderer<T> {
         GlStateManager.enableCull();
     }
 
+    /**
+     * 骨骼是否因缩放退化而整体不渲染：**任意一轴为 0** 即为隐藏。
+     *
+     * <p>三轴全 0 是最常见的显式隐藏；单轴 0 同样不可见（现代管线法线矩阵 invert 退化，
+     * 且 0 厚度的面片不是作者想要的外观）。抽出来是为了能单测这条判定。</p>
+     */
+    static boolean isScaleInvisible(IBone bone) {
+        return bone == null
+            || bone.getScaleX() == 0f || bone.getScaleY() == 0f || bone.getScaleZ() == 0f;
+    }
+
     default boolean isBoneRenderOverriden(T animatable, GeoBone bone) {
         return false;
     }
@@ -82,8 +94,14 @@ public interface IGeoRenderer<T> {
         }
 
         if (!bone.isHidden()) {
-            // Match OpenYSM NativeModelRenderer behavior: scale (0,0,0) = hidden
-            if (bone.getScaleX() == 0f && bone.getScaleY() == 0f && bone.getScaleZ() == 0f) {
+            // 任意一轴缩放为 0 = 该骨骼及其子树不渲染。两种写法都是"隐藏"：
+            //   * 三轴全 0：模型里最常见的显式隐藏（护甲动画 wiki：并行动画把护甲组缩放到 0，
+            //     护甲动画再缩放回 1）；
+            //   * 单轴 0：现代渲染管线的法线矩阵由 invert() 得到，缩放矩阵奇异时退化 → 整块
+            //     画不出来；而且"压成 0 厚度的面片"也从来不是作者想要的外观。
+            // 实测：某弹射物命中后把箭身写成 [0,1,1]（贴图 alpha 全不透明），官方客户端看不到
+            // 箭身，我们却画出一块很显眼的面片 —— 作者的本意是"收掉箭身"。
+            if (isScaleInvisible(bone)) {
                 MATRIX_STACK.pop();
                 return;
             }

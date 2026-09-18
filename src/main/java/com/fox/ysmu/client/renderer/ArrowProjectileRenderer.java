@@ -16,7 +16,9 @@ import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.animation.controller.ProjectileTimelineRuntime;
 import com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime;
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
+import com.fox.ysmu.util.IProjectileModelArrow;
 import com.fox.ysmu.util.ModelIdUtil;
+import com.fox.ysmu.util.ProjectileShootItemIds;
 
 import software.bernie.geckolib3.core.easing.EasingManager;
 import software.bernie.geckolib3.core.easing.EasingType;
@@ -67,6 +69,39 @@ public class ArrowProjectileRenderer {
     public static void clearDumpedTrees() {
         DUMPED_TREES.clear();
         LOGGED_RENDER_WARNS.clear();
+    }
+
+    /**
+     * 关掉弹射物绘制期间的固定管线定向光，返回"是否需要还原"。
+     * <p>
+     * 官方客户端同角度实测：外圈白框（贴图里是纯白 255、全不透明）最暗的一条边 ≈ 230/255 = 0.90，
+     * 其余边 255 —— 官方这边几乎是**平光**。而 1.7.10 的实体 pass 是用
+     * `RenderHelper.enableStandardItemLighting()` 包起来的（见 `EntityRenderer` 的 pass 0/pass 1：
+     * 环境光 0.4 + 两盏 0.6 的平行光 + `GL_FLAT`），法线同时背向两盏灯的面**正好落到 0.4**。
+     * <p>
+     * 弹射物模型普遍把子模型用 `scale` 压成薄卡片（该模型 `Arrow_E.scale = (1,1,0.01)`）：
+     * 压扁后三个面仍带着压缩前的三个法线（`MatrixStack.scale` 只在轴为负时才动法线栈），
+     * 其中一个面于是被打成 0.4。实测同一个 0.396 因子既把白框压成 101/255，也把半透明蓝
+     * `(84,131,219) α136` 压成 `(87,115,165)` —— 就是玩家看到的"内圈蓝色部件底部发黑"。
+     * <p>
+     * 这里选择直接把定向光关掉（所有面 = 1.0，与官方实测的 0.90 只差一点），而不是去改共享的
+     * `MatrixStack`/`IGeoRenderer` 法线计算：玩家模型不在这条链路上，本轮保持 1.7.10 的原有观感；
+     * 同时只保存/还原一个布尔量，不必在每帧每支箭上做 `glGetFloat` 之类的驱动查询。
+     * 还原用裸 GL11（与 `HudPreviewCache` 一致）：`GlStateManager` 的灯光跟踪状态不保证与实际同步。
+     */
+    private static boolean beginFlatProjectileLighting() {
+        if (!GL11.glIsEnabled(GL11.GL_LIGHTING)) {
+            return false;
+        }
+        GL11.glDisable(GL11.GL_LIGHTING);
+        return true;
+    }
+
+    /** 还原 {@link #beginFlatProjectileLighting()} 关掉的定向光。 */
+    private static void endFlatProjectileLighting(boolean disabledByUs) {
+        if (disabledByUs) {
+            GL11.glEnable(GL11.GL_LIGHTING);
+        }
     }
 
     /** 每帧渲染路径的 warn（去重：同一条消息只打一次）。 */
@@ -165,6 +200,8 @@ public class ArrowProjectileRenderer {
         }
 
         // === Render the actual projectile GeoModel ===
+        // 定向光：只在弹射物模型绘制期间关掉（见 beginFlatProjectileLighting），finally 里还原。
+        boolean projectileLightingDisabled = false;
         GL11.glPushMatrix();
         try {
             GL11.glTranslated(x, y, z);
@@ -198,11 +235,17 @@ public class ArrowProjectileRenderer {
             // 半透明贴图必须走混合：该模型两个外圈方块的面在贴图里只有 1~23% 不透明像素，
             // 而这里直接调 renderRecursively（绕过了 IGeoRenderer.render 里的
             // blendFunc/enableBlend），透明像素会被当成不透明画出来 —— 表现为"内部蓝色图案
-            // 不透明 + 底面发黑（透明像素的 RGB）"，官方那边是半透明、几乎看不见。
+            // 不透明、外圈白框变成实心面片"，官方那边是半透明、几乎看不见。
+            // （"底面发黑"不是透明像素的 RGB：alpha test 早把 alpha≈0 的像素丢了；那是 1.7.10
+            // 实体 pass 的定向光把背光面打到 0.4，见上面 beginFlatProjectileLighting 的注释。）
             net.geckominecraft.client.renderer.GlStateManager.disableCull();
             GL11.glBlendFunc(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA);
             net.geckominecraft.client.renderer.GlStateManager.enableBlend();
             GL11.glEnable(GL11.GL_TEXTURE_2D);
+
+            // 弹射物按官方的近平光画：关掉固定管线的定向光，消掉 1.7.10 实体 pass 里 0.4 的背光面
+            // （压扁成卡片的子模型会整面发黑，见 beginFlatProjectileLighting 的注释）。
+            projectileLightingDisabled = beginFlatProjectileLighting();
 
             // Render all bone cubes through GeckoLib's renderRecursively
             // which properly applies MATRIX_STACK bone transforms (pivot/rotation).
@@ -220,6 +263,8 @@ public class ArrowProjectileRenderer {
                 com.fox.ysmu.ysmu.LOG.warn("[YSMU-ARROW] Model render failed", e);
             }
         } finally {
+            // 还原弹射物绘制前的定向光。必须在 finally：绘制中途抛异常也不能把灯光留在关闭状态。
+            endFlatProjectileLighting(projectileLightingDisabled);
             // 与 IGeoRenderer.render 的收尾一致，恢复顶点渲染 pass 的默认状态。
             net.geckominecraft.client.renderer.GlStateManager.disableBlend();
             net.geckominecraft.client.renderer.GlStateManager.enableCull();
@@ -275,12 +320,18 @@ public class ArrowProjectileRenderer {
         setMolangVar("ysm.in_ground", isInGround ? 1.0 : 0.0);
         setMolangVar("ysm.delta_movement_length", deltaLength);
         // ysm.shoot_item_id：wiki 语义是"射出此箭的物品 id"（用来区分普通弓和弩）。
-        // 1.7.10 的 EntityArrow 不记录发射武器，而且 1.7.10 没有弩，所以返回**空串**的
-        // 池化 id（MolangStringPool.EMPTY_ID）。模型的写法是
+        // 1.7.10 的 EntityArrow **不把发射武器同步给客户端**（shootingEntity 只在服务端赋值），
+        // 所以由 MixinEntityArrow 在箭矢构造时把射手的手持物品注册名写进 datawatcher 带过来，
+        // 这里再折算成模型会写的现代 id（1.7.10 没有 minecraft:crossbow，GTNH 的弩是
+        // TConstruct:Crossbow 之类，见 ProjectileShootItemIds）。模型的写法是
         //   "bow":      scale = ysm.shoot_item_id != 'minecraft:crossbow'
         //   "crossbow": scale = ysm.shoot_item_id == 'minecraft:crossbow'
-        // 与空串比较都会落到"弓"那一支。绝不能填 1 这种数字：那会撞上池化字符串 id。
-        setMolangVar("ysm.shoot_item_id", MolangStringPool.EMPTY_ID);
+        // 必须用**池化字符串 id**（MolangStringPool.intern）：绝不能填 1 这种数字，那会撞上池化 id。
+        String shootItemId = arrow instanceof IProjectileModelArrow projectileArrow
+            ? projectileArrow.ysmu$getShootItemId()
+            : null;
+        setMolangVar("ysm.shoot_item_id",
+            MolangStringPool.intern(ProjectileShootItemIds.toModernId(shootItemId)));
         // ysm.on_ground_time：wiki 里单位是**刻**，落地后累计、被移动则归零。
         // 原实现写的是 ageInTicks * 0.05（= 从发射到现在的秒数），量纲和起点都不对，
         // 模型里 ysm.on_ground_time <= 2 这种"刚落地"判断永远不会在刚落地时成立。
@@ -540,8 +591,11 @@ public class ArrowProjectileRenderer {
         if (v != null) deltaLength = v.get();
         v = MolangParser.VARIABLES.get("ysm.on_ground_time");
         if (v != null) onGroundTime = v.get();
-        com.fox.ysmu.ysmu.LOG.info("[YSMU-ARROW] Molang vars: ysm.shoot_item_id={}, ysm.in_ground={}, ysm.delta_movement_length={}, ysm.on_ground_time={}",
-            shootId, inGround, deltaLength, onGroundTime);
+        // shoot_item_id 是池化字符串 id，直接打数字看不出是哪把武器，这里把字符串一并打出来。
+        String shootIdText = MolangStringPool.get((int) shootId);
+        com.fox.ysmu.ysmu.LOG.info(
+            "[YSMU-ARROW] Molang vars: ysm.shoot_item_id={}('{}'), ysm.in_ground={}, ysm.delta_movement_length={}, ysm.on_ground_time={}",
+            shootId, shootIdText != null ? shootIdText : "<number>", inGround, deltaLength, onGroundTime);
     }
 
     private static void saveInitialSnapshots(List<GeoBone> bones) {
@@ -556,7 +610,7 @@ public class ArrowProjectileRenderer {
         if (bones == null) return;
         for (GeoBone bone : bones) {
             // Clear any persistent hidden state so renderRecursively's
-            // scale=(0,0,0) check is the sole visibility gatekeeper.
+            // scale check (any axis == 0 → hidden) is the sole visibility gatekeeper.
             if (bone.isHidden()) {
                 bone.setHidden(false);
             }
