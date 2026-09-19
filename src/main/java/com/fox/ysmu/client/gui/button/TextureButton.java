@@ -7,6 +7,7 @@ import com.fox.ysmu.network.message.OpenModelGuiMessage;
 import com.fox.ysmu.network.message.SetModelAndTexture;
 import com.fox.ysmu.network.message.SetNpcModelAndTexture;
 import com.fox.ysmu.util.ModelIdUtil;
+import com.fox.ysmu.client.renderer.PreviewRefreshPolicy;
 import com.fox.ysmu.util.RenderUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
@@ -29,6 +30,8 @@ public class TextureButton extends GuiButton {
     private boolean modelCacheDirty = true;
     private int modelCacheFramesUntilRefresh = 0;
     private int modelCacheLastRefreshInterval = -1;
+    /** 自动模式的墙钟累加器；只在 {@code Config.GUI_MODEL_PREVIEW_REFRESH < 0} 时使用。 */
+    private final PreviewRefreshPolicy.Tracker previewRefresh = new PreviewRefreshPolicy.Tracker();
 
     public TextureButton(int id, int pX, int pY, ResourceLocation modelId, ResourceLocation textureId, EntityPlayer player) {
         super(id, pX, pY, 54, 102, "");
@@ -54,6 +57,7 @@ public class TextureButton extends GuiButton {
      *  from the screen (page flip / screen close) to avoid VRAM leaks. */
     public void dispose() {
         fboCache.delete();
+        previewRefresh.reset();
         modelCacheDirty = true;
     }
 
@@ -67,18 +71,27 @@ public class TextureButton extends GuiButton {
         this.drawGradientRect(this.xPosition, this.yPosition, this.xPosition + this.width, this.yPosition + this.height, 0xFF_434242, 0xFF_434242);
 
         // Off-screen framebuffer caching for the texture preview.
-        // Use configured refresh interval.
-        int refreshInterval = Config.GUI_MODEL_PREVIEW_REFRESH;
-        if (refreshInterval != modelCacheLastRefreshInterval) {
+        // 刷新策略同 ModelButton：-1 = 自动（整页共享预算），0 = 静态，1-4 = 每 N 帧。
+        int refreshMode = Config.GUI_MODEL_PREVIEW_REFRESH;
+        if (refreshMode != modelCacheLastRefreshInterval) {
             modelCacheFramesUntilRefresh = 0;
-            modelCacheLastRefreshInterval = refreshInterval;
+            modelCacheLastRefreshInterval = refreshMode;
+            previewRefresh.reset();
         }
-        boolean timeToRefresh = refreshInterval > 0 && --modelCacheFramesUntilRefresh <= 0;
+        ExtendedModelInfo eep = ExtendedModelInfo.get(player);
+        boolean selected = eep != null && textureId.equals(eep.getSelectTexture());
+        boolean periodicDue;
+        if (refreshMode < 0) {
+            PreviewRefreshPolicy.noteVisible();
+            periodicDue = previewRefresh.due(this.id, this.field_146123_n || selected);
+        } else {
+            periodicDue = refreshMode > 0 && --modelCacheFramesUntilRefresh <= 0;
+        }
         // 同步进行中不重建 FBO 缩略图（内存优先，同步完成后恢复按需渲染）。
         if (!com.fox.ysmu.client.ClientModelManager.SYNC_IN_PROGRESS
-            && (modelCacheDirty || timeToRefresh)) {
+            && (modelCacheDirty || periodicDue)) {
             modelCacheDirty = false;
-            modelCacheFramesUntilRefresh = refreshInterval;
+            modelCacheFramesUntilRefresh = refreshMode;
 
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
@@ -99,8 +112,10 @@ public class TextureButton extends GuiButton {
                 GL11.glMatrixMode(GL11.GL_MODELVIEW);
 
                 try {
+                    long bakeStart = System.nanoTime();
                     RenderUtil.renderEntityInInventory(this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 24,
                         35, mc.thePlayer, modelId, textureId);
+                    PreviewRefreshPolicy.noteBake((System.nanoTime() - bakeStart) / 1.0e6F);
                 } finally {
                     GL11.glMatrixMode(GL11.GL_PROJECTION);
                     GL11.glPopMatrix();
@@ -119,8 +134,6 @@ public class TextureButton extends GuiButton {
         } else {
             this.drawCenteredString(font, name, this.xPosition + this.width / 2, this.yPosition + this.height - 15, 0xF3EFE0);
         }
-        ExtendedModelInfo eep = ExtendedModelInfo.get(player);
-        boolean selected = eep != null && textureId.equals(eep.getSelectTexture());
         if (selected || this.field_146123_n) {
             drawBorder(selected ? 0xff_82C56A : 0xff_F3EFE0);
         }

@@ -11,6 +11,7 @@ import com.fox.ysmu.network.message.OpenModelGuiMessage;
 import com.fox.ysmu.network.message.SetModelAndTexture;
 import com.fox.ysmu.network.message.SetNpcModelAndTexture;
 import com.fox.ysmu.util.ModelIdUtil;
+import com.fox.ysmu.client.renderer.PreviewRefreshPolicy;
 import com.fox.ysmu.util.RenderUtil;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.FontRenderer;
@@ -52,6 +53,8 @@ public class ModelButton extends GuiButton {
     private boolean modelCacheWasHovered = false;
     private int modelCacheFramesUntilRefresh = 0;
     private int modelCacheLastRefreshInterval = -1;
+    /** 自动模式的墙钟累加器；只在 {@code Config.GUI_MODEL_PREVIEW_REFRESH < 0} 时使用。 */
+    private final PreviewRefreshPolicy.Tracker previewRefresh = new PreviewRefreshPolicy.Tracker();
 
     // GUI animation state
     private long lastHoverTime = -1;
@@ -150,6 +153,7 @@ public class ModelButton extends GuiButton {
      *  to avoid VRAM leaks. */
     public void dispose() {
         fboCache.delete();
+        previewRefresh.reset();
         // Free the DynamicTextures created for the foreground/background images.
         // Without this, browsing a large library uploads a permanent GL texture
         // per model button that has GUI images (VRAM growth that never shrinks).
@@ -204,9 +208,10 @@ public class ModelButton extends GuiButton {
         // The base preview_animation is now played by predicateMain, so the cap
         // controller only handles temporary overlays — they blend naturally.
         String guiAnimName = "";
+        boolean isSelected = false;
         if (guiEnhancements) {
             ExtendedModelInfo eep = ExtendedModelInfo.get(player);
-            boolean isSelected = eep != null && eep.getModelId() != null
+            isSelected = eep != null && eep.getModelId() != null
                 && mainModelId.equals(ModelIdUtil.getMainId(eep.getModelId()));
 
             if (isSelected) {
@@ -253,25 +258,32 @@ public class ModelButton extends GuiButton {
         }
 
         // Off-screen framebuffer caching for the model preview.
-        // Use configured refresh interval; fall back to 0 when GUI_ENHANCEMENTS
-        // is disabled (fully static, no periodic refresh).
-        int refreshInterval = guiEnhancements ? Config.GUI_MODEL_PREVIEW_REFRESH : 0;
+        // 刷新策略：-1 = 自动（整页共享预算，见 PreviewRefreshPolicy）；0 = 静态（仅交互时重烘焙）；
+        // 1-4 = 每 N 帧。GUI_ENHANCEMENTS 关闭时退化成静态。
+        int refreshMode = guiEnhancements ? Config.GUI_MODEL_PREVIEW_REFRESH : 0;
         // Re-sync counter when user changes the config value.
-        if (refreshInterval != modelCacheLastRefreshInterval) {
+        if (refreshMode != modelCacheLastRefreshInterval) {
             modelCacheFramesUntilRefresh = 0;
-            modelCacheLastRefreshInterval = refreshInterval;
+            modelCacheLastRefreshInterval = refreshMode;
+            previewRefresh.reset();
         }
         boolean hoverChanged = this.field_146123_n != modelCacheWasHovered;
         boolean animChanged = !guiAnimName.equals(modelCacheGuiAnim);
-        boolean timeToRefresh = refreshInterval > 0 && --modelCacheFramesUntilRefresh <= 0;
+        boolean periodicDue;
+        if (refreshMode < 0) {
+            PreviewRefreshPolicy.noteVisible();
+            periodicDue = previewRefresh.due(this.id, this.field_146123_n || isSelected);
+        } else {
+            periodicDue = refreshMode > 0 && --modelCacheFramesUntilRefresh <= 0;
+        }
         // 同步进行中不重建 FBO 缩略图：完整 geo/anim 留给同步完成后按需加载（压峰值内存），
         // 期间显示已缓存的 FBO（首次为空白占位）。
         if (!ClientModelManager.SYNC_IN_PROGRESS
-            && (hoverChanged || animChanged || modelCacheDirty || timeToRefresh)) {
+            && (hoverChanged || animChanged || modelCacheDirty || periodicDue)) {
             modelCacheWasHovered = this.field_146123_n;
             modelCacheGuiAnim = guiAnimName;
             modelCacheDirty = false;
-            modelCacheFramesUntilRefresh = refreshInterval;
+            modelCacheFramesUntilRefresh = refreshMode;
 
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
@@ -299,6 +311,7 @@ public class ModelButton extends GuiButton {
                     final String baseAnim = ClientModelManager.PREVIEW_ANIMATION.get(mainModelId);
                     // Preview uses the model's default_texture, not the first texture.
                     final ResourceLocation previewTex = ClientModelManager.resolveDefaultTexture(mainModelId, modelInfo.getRight());
+                    long bakeStart = System.nanoTime();
                     RenderUtil.renderEntityInInventory(
                         this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
                         mc.thePlayer, modelInfo.getLeft(), previewTex,
@@ -316,6 +329,8 @@ public class ModelButton extends GuiButton {
                             }
                         },
                         disablePreviewRotation);
+                    // 自动模式的花费换算：整页共享预算 ÷ 可见数量 ÷ 这个单次成本。
+                    PreviewRefreshPolicy.noteBake((System.nanoTime() - bakeStart) / 1.0e6F);
                 } finally {
                     GL11.glMatrixMode(GL11.GL_PROJECTION);
                     GL11.glPopMatrix();

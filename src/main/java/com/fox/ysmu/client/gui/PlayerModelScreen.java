@@ -334,7 +334,8 @@ public class PlayerModelScreen extends GuiScreen {
         String pageInfo = String.format("%d/%d", page + 1, this.maxPage + 1);
         this.drawString(fontRendererObj, pageInfo, x + 138 + (282 - fontRendererObj.getStringWidth(pageInfo)) / 2, y + 223 - fontRendererObj.FONT_HEIGHT / 2, 0xF3EFE0);
 
-        String debugInfo = String.format("%s-%s", "1.7.10", Tags.VERSION);
+        String debugInfo = String.format("%s-%s", "1.7.10", Tags.VERSION)
+            + "  |  " + com.fox.ysmu.client.renderer.PreviewRefreshPolicy.describeMode();
         this.drawString(fontRendererObj, debugInfo, x + 2, y + 226, 0x555555);
         // super.render -> super.drawScreen, 这会绘制所有按钮
         super.drawScreen(mouseX, mouseY, partialTicks);
@@ -486,6 +487,13 @@ public class PlayerModelScreen extends GuiScreen {
         private final ClientModelManager.ClientPackData packData;
         @Nullable
         private ResourceLocation iconLocation;
+        /** Result of probing for ysm-pack.png on disk. Probed once (null = not yet):
+         *  this fallback runs per visible pack button per frame, and the File.isFile()
+         *  stat showed up in the per-frame GUI path of a client profile. The pack
+         *  folder cannot appear or disappear while the screen is open. */
+        private Boolean packIconOnDisk;
+        @Nullable
+        private java.io.File packIconFile;
 
         PackFolderButton(int id, int pX, int pY, String packName, int modelCount,
             @Nullable ClientModelManager.ClientPackData packData) {
@@ -534,13 +542,15 @@ public class PlayerModelScreen extends GuiScreen {
             // Fallback: try loading ysm-pack.png directly from the pack folder
             if (!drewIcon) {
                 try {
-                    java.io.File packDir = new java.io.File(
-                        net.minecraft.client.Minecraft.getMinecraft().mcDataDir,
-                        "config/ysmu/custom/" + packName);
-                    java.io.File iconFile = new java.io.File(packDir, "ysm-pack.png");
-                    if (iconFile.isFile()) {
+                    if (packIconOnDisk == null) {
+                        java.io.File packDir = new java.io.File(mc.mcDataDir, "config/ysmu/custom/" + packName);
+                        java.io.File iconFile = new java.io.File(packDir, "ysm-pack.png");
+                        packIconOnDisk = iconFile.isFile();
+                        packIconFile = packIconOnDisk ? iconFile : null;
+                    }
+                    if (packIconOnDisk && packIconFile != null) {
                         if (iconLocation == null) {
-                            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(iconFile);
+                            java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(packIconFile);
                             if (img != null) {
                                 iconLocation = mc.getTextureManager().getDynamicTextureLocation(
                                     "ysmu_pack_fs_" + packName,

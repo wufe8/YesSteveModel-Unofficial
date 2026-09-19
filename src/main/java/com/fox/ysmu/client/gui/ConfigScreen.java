@@ -119,7 +119,9 @@ public class ConfigScreen extends GuiScreen {
                 ((ConfigCheckBox) button).doPress();
                 break;
             case 9:
-                Config.GUI_MODEL_PREVIEW_REFRESH = (Config.GUI_MODEL_PREVIEW_REFRESH + 1) % 5;
+                // 循环 -1(自动) → 0(静态) → 1..4(每 N 帧)。取值域是 [-1, 4]，
+                // 先 +2 抬到 [1, 6] 再取模，避免负数取模（Java 里 -1 % 6 == -1）。
+                Config.GUI_MODEL_PREVIEW_REFRESH = ((Config.GUI_MODEL_PREVIEW_REFRESH + 2) % 6) - 1;
                 button.displayString = I18n.format("gui.yes_steve_model.config.gui_model_preview_refresh." + Config.GUI_MODEL_PREVIEW_REFRESH);
                 break;
         }

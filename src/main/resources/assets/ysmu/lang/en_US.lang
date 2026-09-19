@@ -37,10 +37,11 @@ gui.yes_steve_model.config.texture_vram_budget.512=Texture VRAM budget: 512 MB
 gui.yes_steve_model.config.texture_vram_budget.1024=Texture VRAM budget: 1024 MB
 gui.yes_steve_model.config.texture_vram_budget.2048=Texture VRAM budget: 2048 MB (loose)
 gui.yes_steve_model.config.page=Page %d
-gui.yes_steve_model.config.gui_model_preview_refresh=Preview refresh (0=static 1-4=every N frames)
+gui.yes_steve_model.config.gui_model_preview_refresh=Preview refresh (-1=auto 0=static 1-4=every N frames)
+gui.yes_steve_model.config.gui_model_preview_refresh.-1=Preview refresh: Auto (adaptive, whole-page budget)
 gui.yes_steve_model.config.gui_model_preview_refresh.0=Preview refresh: Static (no periodic update)
 gui.yes_steve_model.config.gui_model_preview_refresh.1=Preview refresh: Every frame (Smooth Priority, high GPU load)
-gui.yes_steve_model.config.gui_model_preview_refresh.2=Preview refresh: Every 2 frames (balanced)
+gui.yes_steve_model.config.gui_model_preview_refresh.2=Preview refresh: Every 2 frames
 gui.yes_steve_model.config.gui_model_preview_refresh.3=Preview refresh: Every 3 frames
 gui.yes_steve_model.config.gui_model_preview_refresh.4=Preview refresh: Every 4 frames (FPS Priority)
 gui.yes_steve_model.config.hide_offhand_defoliage_axe=Hide the Healing Axe in offhand

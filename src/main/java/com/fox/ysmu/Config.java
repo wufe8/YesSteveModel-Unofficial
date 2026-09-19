@@ -37,10 +37,12 @@ public class Config {
     // GUI Config
     public static boolean GUI_ENHANCEMENTS = true;
     public static boolean SHOW_LOADING_PROGRESS = true;
-    /** Preview FBO refresh interval in frames. 0 = no periodic refresh (only on interaction). 1-4 = refresh every N frames. default: 2*/
-    public static int GUI_MODEL_PREVIEW_REFRESH = 2;
+    /** Preview grid FBO refresh mode. -1 = auto (whole-page shared budget, see
+     *  {@code PreviewRefreshPolicy}); 0 = static (only on interaction); 1-4 = refresh
+     *  every N frames. default: -1 */
+    public static int GUI_MODEL_PREVIEW_REFRESH = -1;
     /** HUD selfie model FBO cache. When true (default), renders to an off-screen
-     *  framebuffer every 10 frames and blits the cached texture between refreshes.
+     *  framebuffer at an adaptive rate and blits the cached texture between refreshes.
      *  Set to false to force every-frame rendering (no performance gain). */
     public static boolean GUI_HUD_PREVIEW_CACHE = true;
 
@@ -231,7 +233,7 @@ public class Config {
         // GUI config values
         GUI_ENHANCEMENTS = syncBoolean("GuiEnhancements", "gui", GUI_ENHANCEMENTS, "Enable model selection GUI enhancements (foreground/background textures and GUI animations)", load);
         SHOW_LOADING_PROGRESS = syncBoolean("ShowLoadingProgress", "gui", SHOW_LOADING_PROGRESS, "Show model sync progress bar overlay", load);
-        GUI_MODEL_PREVIEW_REFRESH = syncInt("GuiModelPreviewRefresh", "gui", GUI_MODEL_PREVIEW_REFRESH, "Preview refresh interval in frames. 0 = static (no periodic refresh, only on interaction). 1-4 = refresh every N frames. Higher = smoother animation but more GPU load.", 0, 4, load);        GUI_HUD_PREVIEW_CACHE = syncBoolean("GuiHudPreviewCache", "gui", GUI_HUD_PREVIEW_CACHE, "HUD selfie model FBO cache. Disable for every-frame rendering (no performance gain).", load);
+        GUI_MODEL_PREVIEW_REFRESH = syncInt("GuiModelPreviewRefresh", "gui", GUI_MODEL_PREVIEW_REFRESH, "Preview grid FBO refresh. -1 = auto (whole-page shared budget), 0 = static (only on interaction), 1-4 = refresh every N frames. Higher = smoother animation but more GPU load.", -1, 4, load);        GUI_HUD_PREVIEW_CACHE = syncBoolean("GuiHudPreviewCache", "gui", GUI_HUD_PREVIEW_CACHE, "HUD selfie model FBO cache. Disable for every-frame rendering (no performance gain).", load);
         // Local asset config values
         HIGH_VERSION_GAME_PATH = syncString("HighVersionGamePath", "local_assets", HIGH_VERSION_GAME_PATH, "Path to a high-version Minecraft game directory (e.g. C:/Users/x/AppData/Roaming/.minecraft). YSMU reads sounds.json and OGG files from here to play high-version sounds that Et-Futurum doesn't cover.", load);
         HIGH_VERSION_ASSET_VERSION = syncString("HighVersionAssetVersion", "local_assets", HIGH_VERSION_ASSET_VERSION, "Asset version to use (e.g. '32'). Must match the version subfolder under assets/indexes/ in the game directory.", load);

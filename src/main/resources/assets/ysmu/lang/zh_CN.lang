@@ -44,10 +44,11 @@ gui.yes_steve_model.config.texture_vram_budget.512=贴图显存预算: 512 MB
 gui.yes_steve_model.config.texture_vram_budget.1024=贴图显存预算: 1024 MB
 gui.yes_steve_model.config.texture_vram_budget.2048=贴图显存预算: 2048 MB(宽松)
 gui.yes_steve_model.config.page=第 %d 页
-gui.yes_steve_model.config.gui_model_preview_refresh=预览刷新间隔(0=静态 1-4=每N帧)
+gui.yes_steve_model.config.gui_model_preview_refresh=预览刷新(-1=自动 0=静态 1-4=每N帧)
+gui.yes_steve_model.config.gui_model_preview_refresh.-1=预览刷新: 自动(整页共享预算, 默认)
 gui.yes_steve_model.config.gui_model_preview_refresh.0=预览刷新: 静态(无定时更新)
 gui.yes_steve_model.config.gui_model_preview_refresh.1=预览刷新: 每帧(流畅优先, 高GPU负载)
-gui.yes_steve_model.config.gui_model_preview_refresh.2=预览刷新: 每2帧(默认)
+gui.yes_steve_model.config.gui_model_preview_refresh.2=预览刷新: 每2帧
 gui.yes_steve_model.config.gui_model_preview_refresh.3=预览刷新: 每3帧
 gui.yes_steve_model.config.gui_model_preview_refresh.4=预览刷新: 每4帧(帧数优先)
 gui.yes_steve_model.config.hide_offhand_defoliage_axe=隐藏位于副手的治愈之斧
