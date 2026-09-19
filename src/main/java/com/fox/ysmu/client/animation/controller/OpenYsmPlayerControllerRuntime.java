@@ -108,15 +108,22 @@ public final class OpenYsmPlayerControllerRuntime {
         new ConcurrentHashMap<>();
 
     /**
-     * 标记某模型的 roaming 变量为"用户显式设置"。modelId 为 null 时退化为
-     * 全局标记（写入方拿不到模型上下文的兜底，对所有模型生效）。
+     * 标记某模型的 roaming 变量为"用户显式设置"。
+     *
+     * <p>{@code modelId == null}（写入方拿不到模型上下文）时**不再**把名字加进全局集合：
+     * {@link #isRoamingExplicit} 先查全局集合，所以那样会让一个模型的设置对**所有**模型表现为
+     * "用户显式设置"（跨模型串值的经典入口）。只有真正全局的名字
+     * （{@link #isGlobalRoamingName}：轮盘锁/轮盘动画）才退化成全局标记。</p>
      */
     public static void markRoamingExplicit(ResourceLocation modelId, String varName) {
+        if (varName == null) {
+            return;
+        }
         if (modelId != null) {
             EXPLICIT_ROAMING_BY_MODEL.computeIfAbsent(modelId,
                 k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()))
                 .add(varName);
-        } else {
+        } else if (isGlobalRoamingName(varName)) {
             EXPLICIT_ROAMING.add(varName);
         }
     }
@@ -158,6 +165,49 @@ public final class OpenYsmPlayerControllerRuntime {
         PENDING_ROAMING.put(name, value);
         markRoamingExplicit(modelId, name);
         invalidateFrameRoamingCache();
+    }
+
+    /** 全局轮盘变量：不属于任何模型，对所有模型生效（轮盘锁 / 轮盘动画）。 */
+    private static boolean isGlobalRoamingName(String varName) {
+        return "lock_wheel".equals(varName) || "wheel_anim".equals(varName);
+    }
+
+    /**
+     * 这个名字是否属于该模型的常驻变量族：模型声明过（{@code ysm.json} 的 config_forms）、
+     * 被本模型显式设置过，或者是全局轮盘变量。
+     *
+     * <p>控制器路径最后一级"全局 {@code PENDING_ROAMING} 回退读"必须先过这一关：那张表是
+     * 跨模型共享的扁平表，不加判断时模型 A 在轮盘里设的值会漏给模型 B（B 在控制器条件里读
+     * {@code v.x} 就拿到 A 的值）。关键帧路径对同类残留（{@code GLOBAL_VAR_OWNER} 来源不是
+     * 当前模型）是返回 0 的，两条路径的口径必须一致。</p>
+     *
+     * <p>{@code x} 与 {@code roaming.x} 两种写法都认：模型声明时用哪种写就存哪种
+     * （`config_forms` 的 {@code value} 通常是 {@code v.roaming.x}，但也有写成 {@code v.x} 的）。</p>
+     */
+    public static boolean isRoamingNameForModel(ResourceLocation modelId, String varName) {
+        if (varName == null) {
+            return false;
+        }
+        if (isGlobalRoamingName(varName)) {
+            return true;
+        }
+        if (modelId == null) {
+            return false;
+        }
+        if (isRoamingExplicit(modelId, varName)) {
+            return true;
+        }
+        java.util.Set<String> declared = MODEL_ROAMING_VARS.get(modelId);
+        if (declared == null) {
+            return false;
+        }
+        if (declared.contains(varName)) {
+            return true;
+        }
+        if (varName.startsWith(ROAMING_PREFIX)) {
+            return declared.contains(varName.substring(ROAMING_PREFIX.length()));
+        }
+        return declared.contains(ROAMING_PREFIX + varName);
     }
 
     /** 判断某变量是否在指定模型上被显式设置。全局标记（无模型上下文写入）对所有模型生效。 */
@@ -202,6 +252,40 @@ public final class OpenYsmPlayerControllerRuntime {
         return n == 4 ? keys : java.util.Arrays.copyOf(keys, n);
     }
 
+    /** 模型**自己**在关键帧/控制器里赋值过的变量裸名（不含 {@code v.} / {@code roaming.} 前缀）。
+     *
+     *  <p>注入 roaming 变量的"裸名别名"时，这些名字必须跳过：模型把它们当自己的变量用，
+     *  注入会在同一帧里和模型自己的赋值互相覆盖，表现成值在两个来源之间交替 —— 用户实测
+     *  `v.bq_qx2` 在注入值(2)与模型计算值(1)之间震荡、表情/部件闪烁（见
+     *  {@link #LAST_INJECTED_ALIAS} 的自校准）。</p>
+     *
+     *  <p>为什么不能无脑删掉别名：`v.roaming.x` 与 `v.x` 在 YSM 里是**两个不同的变量**
+     *  （wiki: molang/var，`variable.roaming.` 是常驻变量、`variable.` 是实体变量），
+     *  但确实有模型在关键帧里只写裸名 —— 第一方 wine_fox 的 `14_momo` 就是
+     *  `"scale": "1-v.smallfox_size"` 而它的滑块是 `v.roaming.smallfox_size`。所以别名
+     *  要保，只是不能覆盖模型自己的变量。</p> */
+    private static final Map<ResourceLocation, java.util.Set<String>> MODEL_OWNED_VARS =
+        new ConcurrentHashMap<>();
+
+    /** (模型 + "|" + 裸名) → 上一次注入的值。下一次注入前如果发现目标 map 里这个键**不是**
+     *  我们注入的值，就说明模型自己改写过它 ⇒ 记进 {@link #MODEL_OWNED_VARS}，从此不再注入别名。
+     *  自校准，不需要在模型加载时扫一遍脚本。 */
+    private static final Map<String, Double> LAST_INJECTED_ALIAS = new ConcurrentHashMap<>();
+
+    static boolean isModelOwnedVar(ResourceLocation modelId, String bareName) {
+        if (modelId == null) {
+            return false;
+        }
+        java.util.Set<String> owned = MODEL_OWNED_VARS.get(modelId);
+        return owned != null && owned.contains(bareName);
+    }
+
+    private static void markModelOwnedVar(ResourceLocation modelId, String bareName) {
+        MODEL_OWNED_VARS
+            .computeIfAbsent(modelId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()))
+            .add(bareName);
+    }
+
     private static String[] roamingKeys(String keyPrefix, String varName) {
         Map<String, String[]> byPrefix = ROAMING_KEYS.get(varName);
         if (byPrefix == null) {
@@ -228,8 +312,29 @@ public final class OpenYsmPlayerControllerRuntime {
      *  identical values every time: a client profile attributed 1.26 s of a 24.8 s
      *  client thread to the {@code HashMap.put}/{@code String} work in here. */
     public static void injectRoamingVar(java.util.Map<String, Double> target, String keyPrefix,
-        String varName, double value) {
+        String varName, double value, ResourceLocation modelId) {
+        String plain = varName.startsWith(ROAMING_PREFIX) ? varName.substring(ROAMING_PREFIX.length()) : null;
+        String plainLc = plain == null ? null : plain.toLowerCase(java.util.Locale.ROOT);
+        boolean ownsBare = plain != null && isModelOwnedVar(modelId, plain);
         for (String key : roamingKeys(keyPrefix, varName)) {
+            if (plain != null && (key.equals(keyPrefix + plain) || key.equals(keyPrefix + plainLc))) {
+                // 裸名别名：模型自己也会写这个名字时不能注入（否则就是覆盖模型的变量）。
+                if (ownsBare) {
+                    continue;
+                }
+                if ("v.".equals(keyPrefix) && modelId != null) {
+                    // 自校准：上一次注入后，这个键是否被模型自己改写成了别的值？
+                    String tag = modelId + "|" + plain;
+                    Double injected = LAST_INJECTED_ALIAS.get(tag);
+                    Double current = target.get(key);
+                    if (injected != null && current != null && current.doubleValue() != injected.doubleValue()) {
+                        markModelOwnedVar(modelId, plain);
+                        ownsBare = true;
+                        continue;
+                    }
+                    LAST_INJECTED_ALIAS.put(tag, value);
+                }
+            }
             Double previous = target.get(key);
             if (previous == null || previous.doubleValue() != value) {
                 target.put(key, value);
@@ -370,6 +475,8 @@ public final class OpenYsmPlayerControllerRuntime {
         MODEL_ROAMING_VARS.clear();
         MODEL_ROAMING_DEFAULTS.clear();
         EXPLICIT_ROAMING_BY_MODEL.clear();
+        MODEL_OWNED_VARS.clear();
+        LAST_INJECTED_ALIAS.clear();
     }
 
     /**
@@ -632,7 +739,7 @@ public final class OpenYsmPlayerControllerRuntime {
         Map<String, Double> modelRoaming = getRoamingVarsForModel(animationId);
         if (!modelRoaming.isEmpty()) {
             for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
-                injectRoamingVar(runtimeState.variables, "", entry.getKey(), entry.getValue());
+                injectRoamingVar(runtimeState.variables, "", entry.getKey(), entry.getValue(), animationId);
             }
         }
         // Debug: log roaming variables relevant to pants/coat switching

@@ -18,6 +18,7 @@ import com.fox.ysmu.compat.BlockingCompat;
 import com.fox.ysmu.compat.EtFuturumCompat;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
 import com.fox.ysmu.client.animation.molang.BonePivotAbsFunction;
+import com.fox.ysmu.client.animation.molang.CameraDistanceQuery;
 import com.fox.ysmu.client.animation.molang.CtrlArmorFunction;
 import com.fox.ysmu.client.animation.molang.CtrlHoldFunction;
 import com.fox.ysmu.client.animation.molang.CtrlItemFunction;
@@ -235,6 +236,11 @@ public class AnimationRegister {
         ScopedMolangVariable.globalFallback = (name, fallback) ->
             MolangPhysicsRuntime.getGlobalScopedValue(name, fallback);
 
+        // 3.6) 帧外写入（无帧上下文 → 落到全局 VARIABLES）的 v.* 记一笔来源：这类值不属于
+        // 任何模型，读取侧的 globalFallback 要挡住它（以前"无来源记录 = 放行"会把模型初始化
+        // 时写的值端给别的模型）。
+        ScopedMolangVariable.unscopedWriteSink = MolangPhysicsRuntime::noteUnscopedGlobalVarWrite;
+
         // 4) vendored 物理函数桥（ysm.first_order / second_order / bone_rot / bone_pos / bone_scale）。
         // 无帧上下文时 MolangPhysicsRuntime 各方法优雅降级（first/secondOrder 返回 input，bone* 返回 0）。
         MolangPhysicsBridge.physics = new MolangPhysicsBridge.Physics() {
@@ -420,7 +426,9 @@ public class AnimationRegister {
             double[] YSM_CARDINAL = {3.0, 4.0, 2.0, 5.0};
             return YSM_CARDINAL[facing];
         });
-        parser.setValue("query.distance_from_camera", () -> mc.renderViewEntity.getDistanceToEntity(player));
+        // 相机到实体的距离：第三人称必须算上镜头后退（原实现在本机玩家上恒为 0，
+        // 见 CameraDistanceQuery 的类注释）。
+        parser.setValue("query.distance_from_camera", () -> CameraDistanceQuery.forPlayer(player));
         parser.setValue("query.equipment_count", () -> getEquipmentCount(player));
         parser.setValue("query.eye_target_x_rotation", () -> player.rotationPitch);
         parser.setValue("query.eye_target_y_rotation", () -> player.rotationYaw);

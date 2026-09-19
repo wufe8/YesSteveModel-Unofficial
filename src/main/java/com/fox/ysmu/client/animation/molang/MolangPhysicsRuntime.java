@@ -138,7 +138,7 @@ public final class MolangPhysicsRuntime {
             // 否则裸名引用（如 v.bq_eye）会因只存了 v.roaming.bq_eye 而读到 0。
             for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
                 OpenYsmPlayerControllerRuntime.injectRoamingVar(state.variables, "v.",
-                    entry.getKey(), entry.getValue());
+                    entry.getKey(), entry.getValue(), modelId);
             }
             // car_stuff@player_ctrl_parallel_6.molang:
             //   v.show_car=v.roaming.car && !(ctrl.tac_hold_gun||...)
@@ -770,18 +770,45 @@ public final class MolangPhysicsRuntime {
      *  跨模型隔离。不删除任何 VARIABLES 条目，因此不会破坏系统注册变量，也
      *  没有并发遍历风险。无来源记录的变量（系统注册等）不隔离。 */
     public static double getGlobalScopedValue(String name, double fallback) {
-        String owner = GLOBAL_VAR_OWNER.get(name);
-        double result = fallback;
-        if (owner != null) {
-            FrameContext ctx = currentFrameContext;
-            if (ctx != null && ctx.modelId != null) {
-                String cur = getModelDisplayName(ctx.modelId);
-                if (cur == null || !cur.equals(owner)) {
-                    result = 0.0;
-                }
-            }
+        FrameContext ctx = currentFrameContext;
+        String current = ctx == null || ctx.modelId == null ? null : getModelDisplayName(ctx.modelId);
+        return isGlobalVarReadable(GLOBAL_VAR_OWNER.get(name), current) ? fallback : 0.0D;
+    }
+
+    /** 帧外（无 {@link FrameContext}）写进全局 {@code VARIABLES} 的 {@code v.*} 来源标记：
+     *  这种值不属于任何模型，读取侧一律挡住（见 {@link #isGlobalVarReadable}）。 */
+    private static final String UNSCOPED_OWNER = "<unscoped>";
+
+    /** {@link ScopedMolangVariable#unscopedWriteSink} 的落点：记下"这个全局 v.* 是帧外写的"。 */
+    public static void noteUnscopedGlobalVarWrite(String varName) {
+        if (varName != null) {
+            GLOBAL_VAR_OWNER.put(varName, UNSCOPED_OWNER);
         }
-        return result;
+    }
+
+    /**
+     * 全局 {@code v.*} 是否允许读回当前模型（纯策略，拆出来便于单测）。
+     *
+     * @param owner            写入来源模型显示名；{@code null} = 无记录（系统注册变量、
+     *                         带 supplier 的静态变量），{@link #UNSCOPED_OWNER} = 帧外写入
+     * @param currentModelName 当前渲染模型显示名；{@code null} = 没有模型上下文
+     */
+    public static boolean isGlobalVarReadable(String owner, String currentModelName) {
+        if (currentModelName == null) {
+            // 没有模型上下文（帧外：模型初始化、指令、单测里的 Molang 求值）：不比较模型，
+            // 帧外写 → 帧外读的往返必须继续可用。
+            return true;
+        }
+        if (UNSCOPED_OWNER.equals(owner)) {
+            // 帧外写入、现在有模型在读：这个值不属于任何模型。以前它没有来源记录，于是
+            // "无记录 = 放行"会把模型初始化阶段写的值端给正在渲染的模型。
+            return false;
+        }
+        if (owner == null) {
+            // 系统注册的 v.*（带 supplier）与旧行为一致：不隔离。
+            return true;
+        }
+        return owner.equals(currentModelName);
     }
 
     /** 模型的可读显示名，用于 debug overlay 来源列（与模型预览页面一致）：

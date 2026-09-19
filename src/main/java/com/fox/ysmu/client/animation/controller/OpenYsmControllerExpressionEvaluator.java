@@ -990,6 +990,15 @@ public final class OpenYsmControllerExpressionEvaluator {
             if (MolangPhysicsRuntime.containsKey(scoped)) {
                 return MolangPhysicsRuntime.getVariable(scoped, FALSE);
             }
+            // 全局 PENDING_ROAMING 是跨模型共享的扁平表：回退前必须确认这个名字属于当前模型
+            // （声明过 config_forms / 本模型显式设置过 / 全局轮盘变量），否则模型 A 在轮盘里
+            // 设的值会漏给模型 B —— 关键帧路径对同类残留返回 0，两条路径口径必须一致。
+            // 名字上 `x` 与 `roaming.x` 本来就是两个不同的实参，所以"两边都有定义时各读各的"
+            // 这一条由调用点保证，这里只补模型判定。
+            if (!OpenYsmPlayerControllerRuntime.isRoamingNameForModel(
+                MolangPhysicsRuntime.getCurrentModelId(), name)) {
+                return FALSE;
+            }
             Double pending = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(name);
             if (pending == null) {
                 pending = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(scoped);
@@ -1070,9 +1079,8 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return YSM_CARDINAL[facing];
             }
             if ("distance_from_camera".equals(name)) {
-                Minecraft mc = Minecraft.getMinecraft();
-                return mc.renderViewEntity == null ? 0.0d
-                    : mc.renderViewEntity.getDistanceToEntity(player);
+                // 与关键帧路径同一实现（第三人称的镜头后退必须算进来）。
+                return com.fox.ysmu.client.animation.molang.CameraDistanceQuery.forPlayer(player);
             }
             if ("equipment_count".equals(name)) {
                 int count = 0;

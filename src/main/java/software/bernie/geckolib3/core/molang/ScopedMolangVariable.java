@@ -50,7 +50,21 @@ public class ScopedMolangVariable extends LazyVariable {
         double get(String name, double fallback);
     }
 
+    /**
+     * Host-mod-injected hook: called when a write could <b>not</b> go to a model scope
+     * (no frame context active) and therefore lands in the global {@code VARIABLES} map.
+     * The host uses it to record that this global entry belongs to no model, so the
+     * model-isolated read fallback can refuse to serve it to any model. Set once at mod
+     * init; {@code null} → no recording (plain global behavior).
+     */
+    public interface UnscopedWriteSink {
+        void onUnscopedWrite(String name);
+    }
+
     public static volatile ScopedVariableStore store = null;
+
+    /** Host-mod hook for global-fallback writes; see {@link UnscopedWriteSink}. */
+    public static volatile UnscopedWriteSink unscopedWriteSink = null;
 
     /** Model-isolated global fallback (see {@link GlobalFallback}). */
     public static volatile GlobalFallback globalFallback = null;
@@ -67,6 +81,11 @@ public class ScopedMolangVariable extends LazyVariable {
     public void set(double value) {
         ScopedVariableStore s = store;
         if (s == null || !s.set(getName(), value)) {
+            // 落到全局 VARIABLES：这个值不属于任何模型，通知宿主记一笔，读取侧才能挡住它。
+            UnscopedWriteSink sink = unscopedWriteSink;
+            if (sink != null) {
+                sink.onUnscopedWrite(getName());
+            }
             super.set(value);
         }
     }

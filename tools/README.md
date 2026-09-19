@@ -16,6 +16,7 @@
 | `dedupe_mc_log.py` | **通用**日志"行形状"折叠：把只差时间戳/线程/数字的重复行合并计数，并可列出某个标签实际产生过的**所有不同取值**（判断"变量根本没变"时最有用） |
 | `plot_anim_probe.py` | 解析 `[YSMU-KF]` / `[YSMU-BONE]` 探针行（探针本身已从源码移除，只能用留档日志；需要重跑就用 `git show c5f3cbb:<文件>` 取回），输出文本统计 + ASCII 图 + CSV + 无依赖 SVG（`--png` 需要 matplotlib） |
 | `vendor_imagestream.py` | 生成 ImageStream/WebP 解码相关的 vendored 代码 |
+| `spark_dump.py` | 读 spark 采样数据（`https://bytebin.lucko.me/<code>` 的原始 `application/x-spark-sampler`），自己算 self（独占）时间并打印调用树 / 调用路径 / 按类·按包的 self 排行。**不要用网页版数字**，见"排查坑" |
 | `scan_named_parallel_slots.py` | 扫描模型目录树（默认 `res`），统计每个模型声明的**具名**并行槽位（`(player.)?(pre_parallel\|parallel)_<非数字>`，来源同运行时：`controller/*.json` 键名 + `<描述>@player_ctrl_<槽位>.molang` 文件名）与**数字**槽位数量，用来判断 `NamedParallelExtraSlots` 该设多大 |
 
 典型用法：
@@ -32,6 +33,13 @@
     # 骨骼轨迹
     python tools/plot_anim_probe.py probe.log --bone <bone-name>
 
+    # spark 采样：先拿原始数据（网页 HTML 只是 viewer 壳，没有数字）
+    curl -s -H "Accept-Encoding: identity" https://bytebin.lucko.me/<code> -o p.sparkprofile
+    python tools/spark_dump.py p.sparkprofile --meta
+    python tools/spark_dump.py p.sparkprofile --thread Client --class-self --package-self --top 40
+    python tools/spark_dump.py p.sparkprofile --thread Client --paths "<方法名正则>"   # 谁调用的
+    python tools/spark_dump.py p.sparkprofile --thread Client --focus "<方法名正则>"   # 子树
+
 ## 排查坑（踩过的，别再踩）
 
 **日志本身**
@@ -44,32 +52,53 @@
 3. `Config` 里的 `debug` 等级需要启动参数，用户不会去改；探针一律写在 `info` 等级，
    并做频率限制（否则刷屏本身会改变现象）。
 
-**探针与采样**
+**采样与剖析**
 
 4. 采样频率会骗人。游戏锁定 20 tps，但快速动画（如 0.02 s 的物理驱动、阶梯式闪电）在
    1 Hz 采样下会被抽样成"永远为 0"。按帧采样，或先确认采样周期远小于动画周期。
-5. 探针插入位置要晚于数据填充。放在队列填充之前读到的永远是 `null`（曾把
-   `posX=null` 当成解析 bug 追了很久）。
-6. 同一帧内同一个模型可能被渲染多次（GUI 预览 + 世界渲染），**后一次会覆盖前一次**；
-   看探针要区分是哪一趟、哪个控制器推的动画（打印动画名/控制器名，不要只打印骨骼值）。
-7. GeckoLib 的 `AnimationController` 重复提交同一个 `AnimationBuilder` **不会重启**动画；
-   反过来，控制器处于 Stopped 时会重新触发 reload 并把 tick 归零 —— 分析"动画卡在
-   t=0"时先分清是回退路径（`playLoopAnimation`）还是 OpenYSM 状态机路径。
+5. spark 网页上的 "CPU 时长" 是按**类目包含求和**的：同一方法在不同调用点会被累加，
+   所以 `java.lang.reflect.Method.invoke` 能显示成 200%。判断"到底贵在哪"必须从调用树
+   重算 **self（独占）时间**（`spark_dump.py` 做的事；全树 self 之和 = 根节点总时间，可自校验）。
+   反过来，要衡量"某个子系统总开销"才用 inclusive，并且要说明它是几处调用点之和。
+6. 采样数据要用 `curl` 从 `bytebin.lucko.me` 取原始 protobuf（`Accept-Encoding: identity`）；
+   `spark.lucko.me/<code>` 返回的是 Next.js viewer 壳，里面没有数字。
+7. **`metadata.number_of_ticks` 是游戏 tick，不是帧数**。它 ≈ 时长 × 20（MC 的 tick 上限），
+   所以拿它当帧数去算"每帧 ms / fps"会离谱地错。第一次踩坑时把 496 tick / 24.8 s 读成
+   "496 帧、20 fps"，而实际帧率是 300–500，所有"每帧"数字都大了 20 倍以上。
+   **spark 的 profile 里没有帧数**：帧率要另外用 F3 记，或者干脆只用百分比。
+8. `SamplerData.time_windows` 是**按墙钟分钟**切窗口（`ProfilingWindowUtils.WINDOW_SIZE_SECONDS = 60`），
+   多个窗口 = 采样跨过了分钟边界，**不是**"某段操作前/后"。想按操作分段只能自己记时间戳
+   （或分成两次采样）。
+9. 1.7.10 的栈帧里 MC/Forge 方法是 **SRG 名**（`func_71411_J`、`func_71361_d`），不是 MCP 名。
+   要对照源码就去 `build/rfg/mcp_patched_minecraft-sources.jar`（或 `build/rfg/minecraft-src/`）
+   反查。例：`Minecraft.func_71361_d` = `checkGLError(String)`，`RenderGlobal.func_147589_a` = `renderEntities`。
+10. 采样里出现大块 **native/驱动调用 self 时间**（`glGetError`、`glIsEnabled`、`glDrawArrays`）
+   时，先想清楚它是"CPU 在算"还是"驱动在同步点等 GPU"。4K 下二者能差 20% 以上帧时间；
+   要归因 CPU 就把分辨率降下来重采一次。
+11. spark 的 Java 采样器**只记时间不记调用次数**，"每帧调用了几次"一律推不出来；
+   要次数得自己插计数器探针。
+12. 探针插入位置要晚于数据填充。放在队列填充之前读到的永远是 `null`（曾把
+    `posX=null` 当成解析 bug 追了很久）。
+13. 同一帧内同一个模型可能被渲染多次（GUI 预览 + 世界渲染），**后一次会覆盖前一次**；
+    看探针要区分是哪一趟、哪个控制器推的动画（打印动画名/控制器名，不要只打印骨骼值）。
+14. GeckoLib 的 `AnimationController` 重复提交同一个 `AnimationBuilder` **不会重启**动画；
+    反过来，控制器处于 Stopped 时会重新触发 reload 并把 tick 归零 —— 分析"动画卡在
+    t=0"时先分清是回退路径（`playLoopAnimation`）还是 OpenYSM 状态机路径。
 
 **模型与构建**
 
-8. 仓库里的 `res/` 只是参考资料，**改它不影响游戏**。运行时用的是
-   `config/ysmu/{custom,builtin}` + 客户端缓存；模型改了要重新导入/清缓存。
-9. `-dirty` 只表示"有未提交改动"，不代表 jar 是新的。确认版本要看启动日志的
-   `I am ysmu at version …`（`Tags.VERSION` = git tag/describe），并比对源文件与
-   `build/libs/*.jar` 的时间戳。
-10. 模型包里的文件名可能是中文（例如 `animations/主动画.json`）。写脚本时不要只匹配
+15. 仓库里的 `res/` 只是参考资料，**改它不影响游戏**。运行时用的是
+    `config/ysmu/{custom,builtin}` + 客户端缓存；模型改了要重新导入/清缓存。
+16. `-dirty` 只表示"有未提交改动"，不代表 jar 是新的。确认版本要看启动日志的
+    `I am ysmu at version …`（`Tags.VERSION` = git tag/describe），并比对源文件与
+    `build/libs/*.jar` 的时间戳。
+17. 模型包里的文件名可能是中文（例如 `animations/主动画.json`）。写脚本时不要只匹配
     `*.animation.json`，应按"目录下所有 `.json`"处理，并注意 Python 的 Windows
     版本读不了 MSYS 路径（`/h/...`），要么用 `H:/...`，要么在 MSYS shell 里 `cd` 后用相对路径。
-11. 模型 JSON 很大（单个 `main.animation.json` 可达 8 MB），`grep -o` 递归扫 `local/`
+18. 模型 JSON 很大（单个 `main.animation.json` 可达 8 MB），`grep -o` 递归扫 `local/`
     会超时；用 Python 逐文件解析，或限定 `--include`。
-12. javac 的 `@argfile` 遇到超长 `-cp` 行会解析失败；要快速做编译检查，
+19. javac 的 `@argfile` 遇到超长 `-cp` 行会解析失败；要快速做编译检查，
     直接对着上一次构建的 `build/libs/*-dev.jar` + 少量依赖编译改动文件即可。
-13. 探针是**临时**的：问题查清就删掉，源码里只留 `Config.DEBUG_*` 开关 + 频率限制的诊断
+20. 探针是**临时**的：问题查清就删掉，源码里只留 `Config.DEBUG_*` 开关 + 频率限制的诊断
     （`[YSMU-SOUND-PROBE]`、`allowDebugLog(tag)`）。骨骼/关键帧类探针写死了具体模型的骨骼名，
     留着只会误导后来人；要重跑用 `git show <sha>:<path>` 取回。
