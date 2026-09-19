@@ -27,6 +27,37 @@ public class ExtraPlayerConfigScreen extends GuiScreen {
         this.yawOffset = (float) Config.PLAYER_YAW_OFFSET;
     }
 
+    /**
+     * Must NOT pause the game — this screen is a live preview of an in-game element,
+     * exactly like the other three YSMU screens ({@link PlayerModelScreen},
+     * {@link PlayerTextureScreen}, {@link AnimationRouletteScreen}), which all
+     * override this. Leaving it at the {@code GuiScreen} default of {@code true} broke
+     * the preview in two separate ways in singleplayer, because
+     * {@code Minecraft.isGamePaused()} was true for the whole time this screen was
+     * open:
+     *
+     * <ul>
+     *   <li>{@code Minecraft.updateTimer} freezes {@code renderPartialTicks} while
+     *       paused and {@code AnimationTicker} stops advancing
+     *       {@code AnimationData.tick}, so {@code seekTime} in
+     *       {@code AnimatedGeoModel.setLivingAnimations} becomes constant. The
+     *       same-render-state dedup in {@code AnimationProcessor.tickAnimation} then
+     *       short-circuits on every frame and the bones keep their previous values:
+     *       the pose freezes (a blink sticks on the closed frame, a swing shows one
+     *       frame) while the transform still follows the mouse — it looks like the
+     *       preview "keeps swaying but stopped animating".</li>
+     *   <li>{@code CustomPlayerModel.setLivingAnimations} picks its branch on
+     *       {@code !isGamePaused()}, so the paused player fell into the <em>GUI
+     *       preview</em> branch: neutralised parser values plus
+     *       {@code applyWeaponBoneVisibility(..., null)}, i.e. the model was drawn in
+     *       its preview state — parts the in-game state hides were all shown.</li>
+     * </ul>
+     */
+    @Override
+    public boolean doesGuiPauseGame() {
+        return false;
+    }
+
 
     @Override
     public void drawScreen(int pMouseX, int pMouseY, float pPartialTick) {
