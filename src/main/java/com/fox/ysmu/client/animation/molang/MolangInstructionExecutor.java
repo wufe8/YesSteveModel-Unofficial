@@ -197,6 +197,27 @@ public final class MolangInstructionExecutor {
         if (StringUtils.isBlank(instructions)) {
             return false;
         }
+        // 纯函数（只吃这个字符串），而输入是模型作者写死的常量文本，所以结果可以长缓存。
+        // 它是"应用动画"路径上的固定开销：预览页每个 pass 都会问一次，
+        // 每次都要 toLowerCase + 若干正则 —— 采样里 self+callee 共 580 ms（约 1.0 %）。
+        Boolean cached = IDEMPOTENT_CACHE.get(instructions);
+        if (cached != null) {
+            return cached;
+        }
+        boolean result = computeIsIdempotentRoamingAssignment(instructions);
+        if (IDEMPOTENT_CACHE.size() < IDEMPOTENT_CACHE_MAX) {
+            IDEMPOTENT_CACHE.put(instructions, result);
+        }
+        return result;
+    }
+
+    /** {@link #isIdempotentRoamingAssignment} 的缓存与缓存上限：模型作者写死的指令文本，
+     *  数量随已加载模型数增长而远小于这个上限；超限就退化成不缓存（仍然正确）。 */
+    private static final java.util.Map<String, Boolean> IDEMPOTENT_CACHE =
+        new java.util.concurrent.ConcurrentHashMap<>();
+    private static final int IDEMPOTENT_CACHE_MAX = 4096;
+
+    private static boolean computeIsIdempotentRoamingAssignment(String instructions) {
         if (!instructions.toLowerCase(java.util.Locale.ROOT)
             .contains("roaming.")) {
             return false;

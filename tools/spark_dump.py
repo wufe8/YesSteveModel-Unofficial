@@ -407,6 +407,9 @@ def main():
     ap.add_argument("--json")
     ap.add_argument("--paths", help="regex: print call paths to matching methods")
     ap.add_argument("--paths-limit", type=int, default=12)
+    ap.add_argument("--focus",
+                    help="regex: print the subtree under matching nodes (inclusive)")
+    ap.add_argument("--focus-depth", type=int, default=4)
     ap.add_argument("--class-self", action="store_true",
                     help="self time aggregated per class")
     ap.add_argument("--package-self", action="store_true",
@@ -456,6 +459,12 @@ def main():
         if args.paths:
             print()
             print_paths(root, args.paths, args.paths_limit)
+            continue
+
+        if args.focus:
+            print()
+            print_focus(root, args.focus, args.paths_limit, args.focus_depth,
+                        args.min)
             continue
 
         if args.class_self:

@@ -193,7 +193,7 @@ class AnimationControllerTimelineClockTest {
         AnimationEvent<StubAnimatable> event = new AnimationEvent<>(new StubAnimatable(), 0.0f, 0.0f, 0.0f, false,
             new ArrayList<>());
         event.setController(controller);
-        controller.process(seekTime, event, new ArrayList<IBone>(), new HashMap<>(), new MolangParser(), false);
+        controller.process(seekTime, event, new HashMap<>(), new HashMap<>(), new MolangParser(), false);
     }
 
     @Test

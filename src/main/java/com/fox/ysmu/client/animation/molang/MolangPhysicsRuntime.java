@@ -127,6 +127,7 @@ public final class MolangPhysicsRuntime {
         EntityPlayer player = animatable.getPlayer();
         ScopeKey key = ScopeKey.from(player, animatable.getMainModel());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
+        state.beginPass();
         ResourceLocation modelId = animatable.getMainModel();
         // Only inject roaming variables that belong to the current model.
         // Using getRoamingVarsForModel() instead of directly iterating
@@ -137,7 +138,7 @@ public final class MolangPhysicsRuntime {
             // ScopedMolangVariable（关键帧 Molang）能按多种写法命中同一变量；
             // 否则裸名引用（如 v.bq_eye）会因只存了 v.roaming.bq_eye 而读到 0。
             for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
-                OpenYsmPlayerControllerRuntime.injectRoamingVar(state.variables, "v.",
+                OpenYsmPlayerControllerRuntime.injectRoamingVar(state.variables, state.dirtyVariables, "v.",
                     entry.getKey(), entry.getValue(), modelId);
             }
             // car_stuff@player_ctrl_parallel_6.molang:
@@ -147,7 +148,7 @@ public final class MolangPhysicsRuntime {
             Double roamingCar = state.variables.get("v.roaming.car");
             if (roamingCar != null) {
                 double showCar = roamingCar > 0 ? 1.0 : 0.0;
-                state.variables.put("v.show_car", showCar);
+                state.putVariable("v.show_car", showCar);
                 OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("show_car", showCar);
             }
             // Also inject roaming values into MolangParser.VARIABLES so that
@@ -183,7 +184,7 @@ public final class MolangPhysicsRuntime {
         // @player_ctrl_pre_main.molang 开头: v.anim_ctrl=1;
         // 但我们不执行 .molang 文件，所以在这里设置默认值。
         if (!state.variables.containsKey("v.anim_ctrl")) {
-            state.variables.put("v.anim_ctrl", 1.0);
+            state.putVariable("v.anim_ctrl", 1.0);
         }
         state.physics.update(renderTicks);
         // Compute time delta for ysm.time_delta
@@ -380,7 +381,7 @@ public final class MolangPhysicsRuntime {
         if (context == null) {
             return false;
         }
-        context.state.variables.put(name, value);
+        context.state.putVariable(name, value);
         // 常驻变量（v.roaming.*）赋值必须"粘住"：动画/时间轴写完的值若是只留在本帧作用域里，
         // 下一帧 begin() 注入 ysm.json 默认值时就会被冲掉（轮盘"变身"只能生效一次的根因）。
         // 这里是所有 v.* 赋值路径的唯一汇聚点——关键帧表达式、嵌套赋值、时间轴指令都走它。
@@ -404,27 +405,56 @@ public final class MolangPhysicsRuntime {
      * {@link com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.RuntimeState#variables}.
      * Without this sync, variables only updated in keyframe Molang would
      * appear stuck at their initial value to the controller.
+     * <p>
+     * 只遍历 {@link ScopeState#dirtyVariables}（本帧写过的键）。原来每帧整表遍历一次，
+     * 而一帧要跑十来个控制器、每个都遍历一遍，实测 2.0 % 客户端线程。
      */
     public static void syncToRuntimeState(Map<String, Double> target) {
         FrameContext context = currentFrameContext;
         if (context == null) return;
-        for (Map.Entry<String, Double> entry : context.state.variables.entrySet()) {
-            String key = entry.getKey();
-            if (!key.startsWith("v.")) continue;
-            String bare = STRIPPED_NAMES.get(key);
-            if (bare == null) {
-                bare = key.substring(2);
-                STRIPPED_NAMES.put(key, bare);
+        ScopeState scope = context.state;
+        if (target.isEmpty()) {
+            // 新控制器（RuntimeState 刚建）：作用域表里还带着**前几帧**写进去的值，
+            // 那些不在本帧脏集里，所以这一次必须整表同步，之后靠脏集增量。
+            for (Map.Entry<String, Double> entry : scope.variables.entrySet()) {
+                String key = entry.getKey();
+                if (!key.startsWith("v.")) continue;
+                target.put(strippedName(key), entry.getValue());
             }
-            // Only write on an actual change: `target` is the RuntimeState's own map
-            // and lives across frames, so re-putting an unchanged value is pure work.
-            // (A keyframe that updates the scope later in the same frame still wins —
-            // the next controller to sync sees the new value and writes it.)
+            return;
+        }
+        // 增量：只处理本 pass / 上一 pass 写过的变量。值没变的不再 put
+        // （RuntimeState 的 map 跨帧存活）。这条路径等价于原来的整表遍历：整表里其它键的
+        // 值要么已经在 target 里，要么是新建 target 时由上面那条整表分支灌进去的。
+        syncNames(scope, scope.dirtyVariables, null, target);
+        syncNames(scope, scope.dirtyPreviousPass, scope.dirtyVariables, target);
+    }
+
+    /** 把 {@code names} 里当前存在的 {@code v.*} 值增量同步进 {@code target}；
+     *  {@code skip}（可为 null）里的名字跳过，用于遍历两个脏集时去重。 */
+    private static void syncNames(ScopeState scope, java.util.Set<String> names,
+        java.util.Set<String> skip, Map<String, Double> target) {
+        for (String key : names) {
+            if (skip != null && skip.contains(key)) continue;
+            if (!key.startsWith("v.")) continue;
+            Double value = scope.variables.get(key);
+            if (value == null) continue; // 同帧内被 clearVariable 移除
+            String bare = strippedName(key);
             Double previous = target.get(bare);
-            if (previous == null || !previous.equals(entry.getValue())) {
-                target.put(bare, entry.getValue());
+            if (previous == null || !previous.equals(value)) {
+                target.put(bare, value);
             }
         }
+    }
+
+    /** {@code "v.<name>"} -> {@code "<name>"}，命中缓存避免每次调用都 substring 分配。 */
+    private static String strippedName(String key) {
+        String bare = STRIPPED_NAMES.get(key);
+        if (bare == null) {
+            bare = key.substring(2);
+            STRIPPED_NAMES.put(key, bare);
+        }
+        return bare;
     }
 
     /**
@@ -840,6 +870,33 @@ public final class MolangPhysicsRuntime {
         private final MolangPhysicsState physics = new MolangPhysicsState();
         /** Regular HashMap is safe: all ScopeState access is on the client render thread. */
         private final Map<String, Double> variables = new java.util.HashMap<>();
+        /**
+         * 最近两个渲染 pass 里被写过的变量名。{@link #syncToRuntimeState} 只遍历这两个集合，
+         * 不再对每个控制器整表遍历一遍 —— 一帧要跑十来个控制器（预览页还有十三个模型），
+         * "控制器数 × 变量数" 次 map 查找实测占客户端线程 2.0 %。
+         *
+         * <p>为什么要**两个**：pass 与 pass 之间还有一条写入路径（{@code @sync} 脚本事件，
+         * 见 {@link #runWithVariableScope}），它写在最后一次 sync 之后。如果 begin() 直接清空，
+         * 那个写入的标记会被丢掉、值再也进不了控制器 —— 而旧的整表实现是能看见它的。
+         * 所以 begin() 把上一 pass 的集合"过继"到 {@code dirtyPreviousPass}，本 pass 的控制器
+         * 仍能读到；再上一 pass 的才丢弃（那些值早就在所有现存 RuntimeState 里了，
+         * 新建的 RuntimeState 由 {@code target.isEmpty()} 分支整表兜底）。
+         */
+        private final java.util.Set<String> dirtyVariables = new java.util.HashSet<>();
+        private final java.util.Set<String> dirtyPreviousPass = new java.util.HashSet<>();
+
+        /** 唯一的内部写入点：写值 + 标脏。 */
+        private void putVariable(String name, double value) {
+            variables.put(name, value);
+            dirtyVariables.add(name);
+        }
+
+        /** pass 开始：上一 pass 的脏集过继到 previous，本 pass 从空集开始。 */
+        private void beginPass() {
+            dirtyPreviousPass.clear();
+            dirtyPreviousPass.addAll(dirtyVariables);
+            dirtyVariables.clear();
+        }
     }
 
     private static final class ScopeKey {

@@ -313,6 +313,23 @@ public final class OpenYsmPlayerControllerRuntime {
      *  client thread to the {@code HashMap.put}/{@code String} work in here. */
     public static void injectRoamingVar(java.util.Map<String, Double> target, String keyPrefix,
         String varName, double value, ResourceLocation modelId) {
+        injectRoamingVar(target, null, keyPrefix, varName, value, modelId);
+    }
+
+    /**
+     * {@link #injectRoamingVar(java.util.Map, String, String, double, ResourceLocation)} 的重载：
+     * 额外把**真正写进去**的键收进 {@code dirtySink}。
+     *
+     * <p>作用域变量同步（{@code MolangPhysicsRuntime.syncToRuntimeState}）改成增量后，
+     * 所有绕过 {@code setVariable()} 直接写 map 的路径都必须自己标脏，否则那个变量对控制器
+     * 条件就是"永不更新"。本方法就是其中之一（{@link MolangPhysicsRuntime#begin} 每帧注入
+     * 常驻变量）。没写（值没变 / 主动跳过裸名别名）的键不入脏集 —— 值没变就不需要同步。
+     *
+     * @param dirtySink 可为 null（调用方不需要脏集时）
+     */
+    public static void injectRoamingVar(java.util.Map<String, Double> target,
+        java.util.Set<String> dirtySink, String keyPrefix, String varName, double value,
+        ResourceLocation modelId) {
         String plain = varName.startsWith(ROAMING_PREFIX) ? varName.substring(ROAMING_PREFIX.length()) : null;
         String plainLc = plain == null ? null : plain.toLowerCase(java.util.Locale.ROOT);
         boolean ownsBare = plain != null && isModelOwnedVar(modelId, plain);
@@ -338,6 +355,9 @@ public final class OpenYsmPlayerControllerRuntime {
             Double previous = target.get(key);
             if (previous == null || previous.doubleValue() != value) {
                 target.put(key, value);
+                if (dirtySink != null) {
+                    dirtySink.add(key);
+                }
             }
         }
     }
@@ -704,6 +724,25 @@ public final class OpenYsmPlayerControllerRuntime {
         return false;
     }
 
+    /**
+     * 这份模型漫游变量是否需要注入 {@code state}？需要时顺手记下"已注入"并返回 true。
+     *
+     * <p>同一个渲染 pass 内，所有控制器拿到的是 {@code frameRoamingCache} 里的**同一个 map 实例**；
+     * 而 {@code RuntimeState.variables} 跨帧存活。所以"同一个实例已经注入过"就说明这个状态里的值
+     * 已经是最新的，不必每控制器每 tick 再灌一遍（注入本身要按名派生若干别名键 + 若干次 map 操作，
+     * 是 predicate 路径上的固定开销）。换 pass 时 {@code getRoamingVarsForModel} 会给新实例，
+     * 轮盘改值同样如此 —— 那时重新注入，所以这里不会把值"冻住"。
+     *
+     * <p>空 map 直接返回 false（没有任何变量要注入）。
+     */
+    static boolean markRoamingInjectedIfNeeded(Map<String, Double> modelRoaming, RuntimeState state) {
+        if (modelRoaming.isEmpty() || modelRoaming == state.lastInjectedRoaming) {
+            return false;
+        }
+        state.lastInjectedRoaming = modelRoaming;
+        return true;
+    }
+
     private static PlayState tryApplyController(AnimationEvent<CustomPlayerEntity> event, EntityPlayer player,
         ResourceLocation animationId, String geckoControllerName, ControllerMatch match) {
         RuntimeState runtimeState = runtimeState(player, animationId, geckoControllerName, match.controller.name);
@@ -737,18 +776,21 @@ public final class OpenYsmPlayerControllerRuntime {
         // "v.bq_eye<=0" can find the value via localVariableValue("bq_eye")
         // even though the stored key is "roaming.bq_eye").
         Map<String, Double> modelRoaming = getRoamingVarsForModel(animationId);
-        if (!modelRoaming.isEmpty()) {
+        if (markRoamingInjectedIfNeeded(modelRoaming, runtimeState)) {
             for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
                 injectRoamingVar(runtimeState.variables, "", entry.getKey(), entry.getValue(), animationId);
             }
         }
-        // Debug: log roaming variables relevant to pants/coat switching
-        Double dbgHa = runtimeState.variables.get("ha");
-        Double dbgHb = runtimeState.variables.get("hb");
-        Double dbgVal = runtimeState.variables.get("value_kuzi");
-        if (Config.DEBUG_CONTROLLER && (dbgHa != null || dbgHb != null || dbgVal != null)) {
-            com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL] {} roaming: ha={} hb={} value_kuzi={} (all: {})",
-                geckoControllerName, dbgHa, dbgHb, dbgVal, runtimeState.variables);
+        // Debug: log roaming variables relevant to pants/coat switching.
+        // 三次 get 必须先判开关：这里是每控制器每 tick 的路径，关掉调试时不该白查三张表。
+        if (Config.DEBUG_CONTROLLER) {
+            Double dbgHa = runtimeState.variables.get("ha");
+            Double dbgHb = runtimeState.variables.get("hb");
+            Double dbgVal = runtimeState.variables.get("value_kuzi");
+            if (dbgHa != null || dbgHb != null || dbgVal != null) {
+                com.fox.ysmu.ysmu.LOG.debug("[YSMU-CTRL] {} roaming: ha={} hb={} value_kuzi={} (all: {})",
+                    geckoControllerName, dbgHa, dbgHb, dbgVal, runtimeState.variables);
+            }
         }
         OpenYsmControllerExpressionEvaluator.Context context = new OpenYsmControllerExpressionEvaluator.Context(
             event, player, runtimeState);
@@ -1831,11 +1873,17 @@ public final class OpenYsmPlayerControllerRuntime {
 
             if (isBlocking) {
                 state.lastSwingActive = player.isSwingInProgress;
+                state.lastSwingProgressInt = player.swingProgressInt;
                 state.variables.put("swing", 0.0d);
                 state.variables.put("swing_sword", 0.0d);
             } else {
-                boolean swingJustStarted = player.isSwingInProgress && !state.lastSwingActive;
-                boolean newSwing = swingJustStarted;
+                // 1.7.10 没有 1.9+ 的攻击冷却：挥到一半再点击会重新触发一次挥剑，而
+                // isSwingInProgress 一直是 true，只有 swingProgressInt 被重置为 -1 ——
+                // 只看布尔上升沿会漏掉"打断重挥"（模型把 v.swing 当一次性触发消费，
+                // 收不到新触发就只能等动画播完）。判定收在 SwingEdge，两处路径共用。
+                boolean newSwing = com.fox.ysmu.util.SwingEdge.isNewSwing(
+                    player.isSwingInProgress, player.swingProgressInt,
+                    state.lastSwingProgressInt, state.lastSwingActive);
                 if (Config.DEBUG_CONTROLLER && newSwing) {
                     ysmu.LOG.info("[YSMU-CTRL] {}: newSwing detected, swing={} lastSwingActive={}",
                         geckoControllerName, player.isSwingInProgress, state.lastSwingActive);
@@ -1862,6 +1910,7 @@ public final class OpenYsmPlayerControllerRuntime {
                     state.variables.put("swing", 0.0d);
                 }
                 state.lastSwingActive = player.isSwingInProgress;
+                state.lastSwingProgressInt = player.swingProgressInt;
             }
         }
     }
@@ -1872,6 +1921,12 @@ public final class OpenYsmPlayerControllerRuntime {
 
     private static List<ControllerMatch> resolveControllers(ControllerSet set, ResourceLocation animationId,
         String geckoControllerName) {
+        // 名字 → 匹配列表的解析只依赖这个模型的控制器表，缓存到 ControllerSet 上
+        // （set 发布后不再被改动，见 ControllerSet#routeCache 的说明）。
+        List<ControllerMatch> cached = set.routeCache.get(geckoControllerName);
+        if (cached != null) {
+            return cached;
+        }
         List<ControllerMatch> matches = new ArrayList<>();
         // 具名并行槽位的备用池必须先分流：它的名字也带 pre_parallel_/parallel_ 前缀，
         // 落到下面的数字槽位解析会得到一个 -1 然后什么都不匹配。
@@ -1880,7 +1935,9 @@ public final class OpenYsmPlayerControllerRuntime {
             if (namedRoute.controllerKey != null) {
                 addMatch(matches, set, namedRoute.controllerKey);
             }
-            return matches;
+            List<ControllerMatch> stored = matches.isEmpty() ? java.util.Collections.emptyList() : matches;
+            set.routeCache.put(geckoControllerName, stored);
+            return stored;
         }
         int preferredIndex = getParallelIndex(geckoControllerName);
         if (preferredIndex >= 0) {
@@ -1916,9 +1973,12 @@ public final class OpenYsmPlayerControllerRuntime {
         if (geckoControllerName.startsWith("player.")) {
             addMatch(matches, set, geckoControllerName.substring("player.".length()));
         }
+        // 缓存的是"解析结果"，调用方只遍历、不改。空结果也缓存（它是常态：
+        // 大多数控制器名在当前模型里没有对应定义）。
         if (geckoControllerName.endsWith("_controller")) {
             addMatch(matches, set, geckoControllerName.substring(0, geckoControllerName.length() - 11));
         }
+        // (缓存写入统一放在最后，见方法末尾)
         // 模糊匹配：player.post_main → player.post_main_<anything>
         // 用于车辆动画等带后缀的槽位控制器
         if (geckoControllerName.endsWith("_main") || geckoControllerName.endsWith("_hold")
@@ -1930,7 +1990,9 @@ public final class OpenYsmPlayerControllerRuntime {
                 }
             }
         }
-        return matches;
+        List<ControllerMatch> stored = matches.isEmpty() ? java.util.Collections.emptyList() : matches;
+        set.routeCache.put(geckoControllerName, stored);
+        return stored;
     }
 
     /**
@@ -2163,10 +2225,15 @@ public final class OpenYsmPlayerControllerRuntime {
          *  re-selected, so we must force setAnimation even though the
          *  animation name hasn't changed. */
         int lastActiveFrame = 0;
+        /** 上一次采样到的 swingProgressInt（1.7.10 打断重挥判定用）。 */
+        int lastSwingProgressInt = 0;
         double enteredTick;
         boolean lastSwingActive;
         /** Regular HashMap is safe: all RuntimeState access is on the client render thread. */
         final Map<String, Double> variables = new java.util.HashMap<>();
+        /** 上一次注入本状态的那份"模型漫游变量"map（按实例比较，见 tryApplyController）。
+         *  null = 还没注入过。 */
+        Map<String, Double> lastInjectedRoaming;
         /** Bounded timeline scheduler; non-null only while the merged path owns
          *  dispatch. Dropped together with the RuntimeState on reset/reload. */
         TimelineEventScheduler timelineScheduler;
@@ -2214,7 +2281,8 @@ public final class OpenYsmPlayerControllerRuntime {
         }
     }
 
-    private static final class ControllerMatch {
+    /** 包内可见：{@link OpenYsmControllerDefinitions.ControllerSet#routeCache} 缓存它。 */
+    static final class ControllerMatch {
         private final Controller controller;
 
         private ControllerMatch(Controller controller) {

@@ -20,6 +20,7 @@ import software.bernie.geckolib3.core.molang.MolangParser;
 import software.bernie.geckolib3.core.snapshot.BoneSnapshot;
 import software.bernie.geckolib3.core.snapshot.DirtyTracker;
 import software.bernie.geckolib3.core.util.MathUtil;
+import software.bernie.geckolib3.geo.render.built.GeoModel;
 import software.bernie.geckolib3.model.provider.data.EntityModelData;
 
 public class AnimationProcessor<T extends IAnimatable> {
@@ -28,6 +29,52 @@ public class AnimationProcessor<T extends IAnimatable> {
     private List<IBone> modelRendererList = new ArrayList();
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
     private final IAnimatableModel animatedModel;
+
+    /**
+     * 每个 {@link GeoModel} 的骨骼登记结果（骨骼表 + 名字索引），按 GeoModel 身份缓存。
+     *
+     * <p>为什么要缓存：模型预览页有十几个预览各自播不同的模型，而它们共用同一个
+     * GeckoLib 模型实例（{@code CustomPlayerRenderer#getGeoModelProvider()}），于是
+     * {@code AnimatedGeoModel#getModel()} 里的 {@code model != currentModel} 每次渲染都会成立
+     * —— 旧实现每次都 {@code clearModelRendererList()} + 递归重走整棵骨骼树 +
+     * {@code saveInitialSnapshot()}（VirtualBone 还会重新分配 BoneSnapshot）。
+     * 纯净预览页采样里这条路径 self 约 350-600 ms，随模型数线性增长。
+     *
+     * <p>用 {@link java.util.WeakHashMap}：GeoModel 由 {@code GeckoLibCache} 持有并且会被
+     * 资源生命周期淘汰，处理器不能强引用它们（否则淘汰失效）。
+     */
+    private final Map<GeoModel, ModelRegistration> registrations = new java.util.WeakHashMap<>();
+
+    /** 当前生效的登记结果；{@link #modelRendererList} 永远指向它的 {@link ModelRegistration#bones}。 */
+    private ModelRegistration currentRegistration = new ModelRegistration();
+
+    /** 一次模型登记的产物：骨骼表 + 名字索引。控制器直接复用后者，不再自己重建。 */
+    public static final class ModelRegistration {
+
+        private final List<IBone> bones = new ArrayList<>();
+        private final Map<String, IBone> byName = new HashMap<>();
+    }
+
+    /** YSMU: 切换当前模型。命中缓存（这个 GeoModel 登记过）就整体换上，
+     *  返回 true；未命中时装上空的登记结果并返回 false —— 调用方需要重新走一遍骨骼树。 */
+    public boolean selectModel(GeoModel model) {
+        ModelRegistration registration = registrations.get(model);
+        if (registration == null) {
+            registration = new ModelRegistration();
+            registrations.put(model, registration);
+            this.currentRegistration = registration;
+            this.modelRendererList = registration.bones;
+            return false;
+        }
+        this.currentRegistration = registration;
+        this.modelRendererList = registration.bones;
+        return true;
+    }
+
+    /** 当前模型的"骨骼名 → IBone"索引。控制器只读，不要改。 */
+    public Map<String, IBone> getBoneByNameMap() {
+        return currentRegistration.byName;
+    }
 
     /** YSMU: Clear the per-frame deduplication cache so the next tickAnimation()
      *  call is guaranteed to process animation even for the same entity+seekTime.
@@ -78,7 +125,8 @@ public class AnimationProcessor<T extends IAnimatable> {
             event.setController(controller);
 
             // Process animations and add new values to the point queues
-            controller.process(seekTime, event, modelRendererList, boneSnapshots, parser, crashWhenCantFindBone);
+            controller.process(seekTime, event, currentRegistration.byName, boneSnapshots, parser,
+                crashWhenCantFindBone);
 
             // Loop through every single bone and lerp each property
             for (BoneAnimationQueue boneAnimation : controller.getActiveBoneAnimationQueues()) {
@@ -321,10 +369,12 @@ public class AnimationProcessor<T extends IAnimatable> {
     public void registerModelRenderer(IBone modelRenderer) {
         modelRenderer.saveInitialSnapshot();
         modelRendererList.add(modelRenderer);
+        currentRegistration.byName.put(modelRenderer.getName(), modelRenderer);
     }
 
     public void clearModelRendererList() {
         this.modelRendererList.clear();
+        this.currentRegistration.byName.clear();
     }
 
     public List<IBone> getModelRendererList() {

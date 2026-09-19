@@ -29,6 +29,15 @@ final class OpenYsmControllerDefinitions {
          *  版本不匹配就重算（见 {@link NamedParallelSlots#scriptGeneration}）。 */
         final Map<String, NamedParallelSlots> namedParallelSlotCache =
             new java.util.concurrent.ConcurrentHashMap<>();
+        /** GeckoLib 控制器名 → 解析出的匹配列表
+         *  （{@link OpenYsmPlayerControllerRuntime#resolveControllers}）。
+         *  解析只看"这个 set 里有哪些控制器名"和传入的控制器名，所以按模型缓存即可；
+         *  挂在 set 上意味着注册时整个 set 被替换、clear() 时被移除，不可能读到过期结果
+         *  （set 发布后不再被改动：构建与合成隐式控制器都发生在 CONTROLLERS.put 之前）。
+         *  <p>池控制器的谓词每帧都要问一次（预览页 13 个模型各十来个控制器），
+         *  缓存掉的是每次一整个 ArrayList + 若干 ControllerMatch 的分配和一组 map 查找。 */
+        final Map<String, List<OpenYsmPlayerControllerRuntime.ControllerMatch>> routeCache =
+            new java.util.concurrent.ConcurrentHashMap<>();
     }
 
     /** 具名并行槽位表的缓存项：算出这份列表时的脚本表版本 + 结果。 */

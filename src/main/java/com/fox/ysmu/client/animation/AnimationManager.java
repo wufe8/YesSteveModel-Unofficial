@@ -1416,13 +1416,15 @@ public final class AnimationManager {
             swingProgressByPlayer.remove(playerId);
             return false;
         }
-        // swingProgressInt 在 1.7.10 中是递减的（从最大值→0）。
-        // 旧逻辑 currentProgress < previousProgress 在递减时每帧都 true，
-        // 导致 markNeedsReload() 每帧重置动画，swing_hand 永远播不出来。
-        // 改用 boolean 跟踪：只在新攻击的第一帧返回 true。
-        boolean wasAlreadySwinging = swingProgressByPlayer.containsKey(playerId);
-        swingProgressByPlayer.put(playerId, 0); // 仅用作标记
-        return !wasAlreadySwinging;
+        // map 里存**真实的 swingProgressInt**（原来是 0 仅当标记）。判定收在 SwingEdge：
+        // 1.7.10 里挥到一半再点击会把 swingProgressInt 重置为 -1 而 isSwingInProgress
+        // 一直是 true，只看布尔上升沿会漏掉"打断重挥"（连点时不重播挥剑动画）。
+        // 旧注释说"swingProgressInt 在 1.7.10 中递减"与 vanilla 源码不符：
+        // EntityLivingBase.updateArmSwingProgress() 是 ++swingProgressInt，只有自然结束才清零。
+        Integer last = swingProgressByPlayer.get(playerId);
+        int now = player.swingProgressInt;
+        swingProgressByPlayer.put(playerId, now);
+        return com.fox.ysmu.util.SwingEdge.isNewSwing(true, now, last == null ? 0 : last, last != null);
     }
 
     public PlayState predicateUse(AnimationEvent<CustomPlayerEntity> event) {

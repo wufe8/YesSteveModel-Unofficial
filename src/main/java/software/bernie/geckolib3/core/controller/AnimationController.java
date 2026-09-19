@@ -11,6 +11,7 @@ import java.util.HashSet;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.Objects;
 import java.util.Queue;
 import java.util.Set;
@@ -219,7 +220,7 @@ public class AnimationController<T extends IAnimatable> {
         // YSMU perf: Pre-built bone name → IBone map — populated once per process() call,
     // reused by both the transition and running branches to avoid a second
     // HashMap build and to enable lazy BoneAnimationQueue creation.
-    private HashMap<String, IBone> boneNameToBone = new HashMap<>();
+    private Map<String, IBone> boneNameToBone = new HashMap<>();
     // YSMU: tickOffset for animation frame time tracking
     public double tickOffset;
     // YSMU: the final playback tick of the frame currently being processed
@@ -625,10 +626,11 @@ public class AnimationController<T extends IAnimatable> {
      *
      * @param tick                   The current tick + partial tick
      * @param event                  The animation test event
-     * @param modelRendererList      The list of all AnimatedModelRender's
+     * @param boneByName             当前模型的"骨骼名 -> IBone"索引（由 AnimationProcessor 按模型
+     *                               维护并整体换掉，控制器直接复用，不再每帧自己从骨骼表重建）
      * @param boneSnapshotCollection The bone snapshot collection
      */
-    public void process(double tick, AnimationEvent<T> event, List<IBone> modelRendererList,
+    public void process(double tick, AnimationEvent<T> event, Map<String, IBone> boneByName,
         HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshotCollection, MolangParser parser,
         boolean crashWhenCantFindBone) {
         parser.setValue("query.life_time", tick / 20);
@@ -714,7 +716,7 @@ public class AnimationController<T extends IAnimatable> {
         // Defer queue creation until we know the controller is active (not STOP).
         // This saves 13%+ overhead for idle controllers that return STOP from
         // their predicate (e.g. OpenYSM slot controllers with no matching definition).
-        createInitialQueues(modelRendererList);
+        createInitialQueues(boneByName);
         if (justStartedTransition && (shouldResetTick || justStopped)) {
             justStopped = false;
             tick = adjustTick(actualTick);
@@ -1132,16 +1134,14 @@ public class AnimationController<T extends IAnimatable> {
     }
 
     // Helper method to populate all the initial animation point queues
-    private void createInitialQueues(List<IBone> modelRendererList) {
+    private void createInitialQueues(Map<String, IBone> boneByName) {
         boneAnimationQueues.clear();
         activeBoneAnimationQueues.clear();
-        // Build name→IBone map once; BoneAnimationQueue objects are created
-        // lazily in the transition/running branches only for bones that are
-        // actually animated, avoiding ~900 allocations for unanimated bones.
-        boneNameToBone.clear();
-        for (IBone modelRenderer : modelRendererList) {
-            boneNameToBone.put(modelRenderer.getName(), modelRenderer);
-        }
+        // 名字索引由 AnimationProcessor 按当前模型维护（模型切换时才换），这里整体换上即可。
+        // 旧实现每帧、每个控制器都把整张骨骼表重新 put 进一个 HashMap
+        // （预览页 13 个模型各十来个控制器，实测 self 624 ms + HashMap.clear 176 ms）。
+        // BoneAnimationQueue 仍然是懒创建：只有真的被动画引用到的骨骼才会有队列。
+        boneNameToBone = boneByName;
     }
 
     /** Ensures a BoneAnimationQueue exists for the given bone name, creating

@@ -117,9 +117,12 @@ public abstract class AnimatedGeoModel<T extends IAnimatable> extends GeoModelPr
             throw new GeoModelException(location, "Could not find model.");
         }
         if (model != currentModel) {
-            this.animationProcessor.clearModelRendererList();
-            for (GeoBone bone : model.topLevelBones) {
-                registerBone(bone);
+            // 命中骨骼登记缓存时只换引用：预览页十几个模型轮流用同一个模型实例，
+            // 旧实现每次切换都要清空 + 递归重走整棵骨骼树 + 重存初始快照。
+            if (!this.animationProcessor.selectModel(model)) {
+                for (GeoBone bone : model.topLevelBones) {
+                    registerBone(bone);
+                }
             }
             this.currentModel = model;
         }
