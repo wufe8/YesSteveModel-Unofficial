@@ -85,6 +85,30 @@ public final class MolangPhysicsRuntime {
 
     private MolangPhysicsRuntime() {}
 
+    // ── 每帧的模型求值次数（诊断） ──────────────────────────────────────────
+    //
+    // 模型的 Molang 状态里有大量"每次求值推进一步"的累加器（`temp.x = v.x; v.x = ...-0.01`）
+    // 和按求值采样的阈值判断。它们的推进速率 = 本帧的求值次数 × 帧率，所以"某个效果在
+    // 60 fps 看不见、高帧率下闪烁"这类现象，第一个要确认的数就是这里。F3（Shift 展开）会显示。
+    private static int evalsInFrame;
+    private static int evalsPerFrame;
+
+    /** 模型求值（= 一个模型 pass）计数 */
+    private static void noteEvaluation() {
+        evalsInFrame++;
+    }
+
+    /** 每个渲染帧调一次（{@code ClientEventHandler.onRenderTick}）：结算上一帧的求值次数。 */
+    public static void endRenderFrame() {
+        evalsPerFrame = evalsInFrame;
+        evalsInFrame = 0;
+    }
+
+    /** 上一渲染帧里模型被求值了几次（含所有玩家/所有模型）。 */
+    public static int evaluationsPerFrame() {
+        return evalsPerFrame;
+    }
+
     /**
      * Called at the start of each render frame for a player model.
      * Injects roaming variables set from outside the render loop (e.g. GUI)
@@ -95,6 +119,7 @@ public final class MolangPhysicsRuntime {
             currentFrameContext = null;
             return;
         }
+        noteEvaluation();
         // 模型 pass 入口：重置本 pass 的时间轴派发预算。帧计数由真实渲染帧推进
         // （ClientEventHandler.onRenderTick → advanceRenderFrame），**不能**在这里推进——
         // 一帧渲染 N 个模型会把计数推进 N 次，"停放超过 10 帧"的再入判定就会每帧误判。
@@ -363,6 +388,11 @@ public final class MolangPhysicsRuntime {
         return true;
     }
 
+    /** {@code "v.<name>"} -> {@code "<name>"}. Stripping the prefix allocates a new
+     *  String per entry per call, and {@link #syncToRuntimeState} walks the whole
+     *  scope table once per matching controller per frame. */
+    private static final Map<String, String> STRIPPED_NAMES = new java.util.concurrent.ConcurrentHashMap<>();
+
     /**
      * Syncs v.* variables set by animation keyframe Molang expressions
      * (e.g. {@code v.idle_time = v.idle_time + 3}) back into the controller's
@@ -380,8 +410,19 @@ public final class MolangPhysicsRuntime {
         if (context == null) return;
         for (Map.Entry<String, Double> entry : context.state.variables.entrySet()) {
             String key = entry.getKey();
-            if (key.startsWith("v.")) {
-                target.put(key.substring(2), entry.getValue());
+            if (!key.startsWith("v.")) continue;
+            String bare = STRIPPED_NAMES.get(key);
+            if (bare == null) {
+                bare = key.substring(2);
+                STRIPPED_NAMES.put(key, bare);
+            }
+            // Only write on an actual change: `target` is the RuntimeState's own map
+            // and lives across frames, so re-putting an unchanged value is pure work.
+            // (A keyframe that updates the scope later in the same frame still wins —
+            // the next controller to sync sees the new value and writes it.)
+            Double previous = target.get(bare);
+            if (previous == null || !previous.equals(entry.getValue())) {
+                target.put(bare, entry.getValue());
             }
         }
     }

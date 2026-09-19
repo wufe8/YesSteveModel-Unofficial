@@ -172,22 +172,67 @@ public final class OpenYsmPlayerControllerRuntime {
         return false;
     }
 
+    /** The prefix that marks a roaming variable in a model's declared names. */
+    private static final String ROAMING_PREFIX = "roaming.";
+
+    /** varName -> (keyPrefix -> the fully-qualified keys to write). See
+     *  {@link #injectRoamingVar}. */
+    private static final Map<String, Map<String, String[]>> ROAMING_KEYS = new ConcurrentHashMap<>();
+
+    /** Derive (once per varName+keyPrefix) every key {@link #injectRoamingVar} writes:
+     *  the original name, its lowercase form, and — for a {@code roaming.}-prefixed
+     *  name — the prefix-stripped bare name and its lowercase form. */
+    private static String[] deriveRoamingKeys(String keyPrefix, String varName) {
+        String lc = varName.toLowerCase(java.util.Locale.ROOT);
+        boolean hasPlain = varName.startsWith(ROAMING_PREFIX);
+        String plain = hasPlain ? varName.substring(ROAMING_PREFIX.length()) : null;
+        String lcPlain = plain != null ? plain.toLowerCase(java.util.Locale.ROOT) : null;
+        String[] keys = new String[4];
+        int n = 0;
+        keys[n++] = keyPrefix + varName;
+        if (!lc.equals(varName)) {
+            keys[n++] = keyPrefix + lc;
+        }
+        if (plain != null) {
+            keys[n++] = keyPrefix + plain;
+            if (!lcPlain.equals(plain)) {
+                keys[n++] = keyPrefix + lcPlain;
+            }
+        }
+        return n == 4 ? keys : java.util.Arrays.copyOf(keys, n);
+    }
+
+    private static String[] roamingKeys(String keyPrefix, String varName) {
+        Map<String, String[]> byPrefix = ROAMING_KEYS.get(varName);
+        if (byPrefix == null) {
+            byPrefix = new java.util.HashMap<>(2);
+            ROAMING_KEYS.put(varName, byPrefix);
+        }
+        String[] keys = byPrefix.get(keyPrefix);
+        if (keys == null) {
+            keys = deriveRoamingKeys(keyPrefix, varName);
+            byPrefix.put(keyPrefix, keys);
+        }
+        return keys;
+    }
+
     /** 把 roaming 变量注入目标 map：原 case + 小写 +（roaming. 前缀剥离后的）裸名 + 裸名小写，
      *  使控制器条件（RuntimeState，keyPrefix=""）与关键帧 Molang（ScopeState，keyPrefix="v."）
-     *  都能按多种写法命中同一变量。两处注入逻辑唯一实现，避免重复漂移。 */
+     *  都能按多种写法命中同一变量。两处注入逻辑唯一实现，避免重复漂移。
+     *
+     *  <p>Keys are derived once and cached ({@link #ROAMING_KEYS}) and a value is
+     *  only written when it actually changes. Both maps this feeds are plain
+     *  {@code HashMap}s that live across frames, and this method is called once per
+     *  roaming variable per frame per matching controller, so the unconditional
+     *  version rebuilt up to four Strings (plus two {@code toLowerCase}) and re-put
+     *  identical values every time: a client profile attributed 1.26 s of a 24.8 s
+     *  client thread to the {@code HashMap.put}/{@code String} work in here. */
     public static void injectRoamingVar(java.util.Map<String, Double> target, String keyPrefix,
         String varName, double value) {
-        target.put(keyPrefix + varName, value);
-        String lc = varName.toLowerCase(java.util.Locale.ROOT);
-        if (!lc.equals(varName)) {
-            target.put(keyPrefix + lc, value);
-        }
-        if (varName.startsWith("roaming.")) {
-            String plain = varName.substring("roaming.".length());
-            target.put(keyPrefix + plain, value);
-            String lcPlain = plain.toLowerCase(java.util.Locale.ROOT);
-            if (!lcPlain.equals(plain)) {
-                target.put(keyPrefix + lcPlain, value);
+        for (String key : roamingKeys(keyPrefix, varName)) {
+            Double previous = target.get(key);
+            if (previous == null || previous.doubleValue() != value) {
+                target.put(key, value);
             }
         }
     }
@@ -1520,16 +1565,27 @@ public final class OpenYsmPlayerControllerRuntime {
     private static void mergeBones(List<software.bernie.geckolib3.core.keyframe.BoneAnimation> target,
         List<software.bernie.geckolib3.core.keyframe.BoneAnimation> source,
         java.util.Set<String> ownedBones) {
-        for (software.bernie.geckolib3.core.keyframe.BoneAnimation incoming : source) {
-            int hit = -1;
-            for (int i = 0; i < target.size(); i++) {
-                if (target.get(i).boneName.equals(incoming.boneName)) {
-                    hit = i;
-                    break;
-                }
+        // Index `target` by bone name once per call. The previous linear scan made
+        // this O(bones²) every call, and the call runs once per frame for every
+        // multi-animation state; a client profile showed this method as the largest
+        // self-time on the YSMU side (1.0 s of a 24.8 s client thread), essentially
+        // all of it String.equals inside that scan.
+        java.util.Map<String, Integer> index = new java.util.HashMap<>(target.size() * 2 + 2);
+        for (int i = 0; i < target.size(); i++) {
+            // A null bone name never matched in the linear scan either
+            // (String.equals(null) is false), so keep it out of the index.
+            String name = target.get(i).boneName;
+            if (name != null) {
+                index.put(name, i);
             }
-            if (hit < 0) {
+        }
+        for (software.bernie.geckolib3.core.keyframe.BoneAnimation incoming : source) {
+            Integer hit = incoming.boneName == null ? null : index.get(incoming.boneName);
+            if (hit == null) {
                 // Not merged into anything yet, so the shared object is safe to reference.
+                if (incoming.boneName != null) {
+                    index.put(incoming.boneName, target.size());
+                }
                 target.add(incoming);
                 continue;
             }
@@ -1919,6 +1975,32 @@ public final class OpenYsmPlayerControllerRuntime {
     /** 测试用：当前帧计数。 */
     static int frameCounter() {
         return FRAME_COUNTER;
+    }
+
+    /**
+     * 判定为"再入"前允许停放的最大渲染帧数（即 {@link #RE_ENTRY_FRAMES}）。
+     *
+     * <p>给"某个 pass 的刷新间隔由限频策略决定，但它同时又是该模型唯一的动画 pass"的场景用
+     * （见 {@code HudPreviewCache}：第一人称下 HUD 纸娃娃是自身模型的唯一 pass）。那个间隔必须
+     * 留在本窗口内，否则限频会被 {@link #isReEntry} 误判成"模型被换走又换回来"，
+     * {@code setAnimation} 被重新装上、动画被钉回 tick 0。边界由
+     * {@code ControllerReEntryFrameTest} 锁定：差 10 帧不算再入，第 11 帧才算。</p>
+     */
+    public static int reEntryFrameWindow() {
+        return RE_ENTRY_FRAMES;
+    }
+
+    /**
+     * 任何"按自己的节奏刷新、但刷新就是该模型唯一一次动画推进"的 pass，两次之间允许停放的最大
+     * 渲染帧数（= 再入窗口留 2 帧余量）。
+     *
+     * <p>限频策略必须留在这个窗口内，否则 {@link #isReEntry} 会把限频误判成"模型被换走又换回来"，
+     * 于是并行控制器（眼睛/耳朵/尾巴/表情/物理时间轴）每次刷新都被重新装上、被钉回 tick 0 ——
+     * 表现是眨眼卡在过程中、尾巴僵住。目前有两处用：{@code HudPreviewCache}（第一人称的 HUD
+     * 纸娃娃）与 {@code PreviewRefreshPolicy}（模型选择页那一页缩略图）。</p>
+     */
+    public static int safePassWindowFrames() {
+        return RE_ENTRY_FRAMES - 2;
     }
 
     /**

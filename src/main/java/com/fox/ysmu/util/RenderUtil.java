@@ -60,19 +60,49 @@ public final class RenderUtil {
         LIGHT_AMBIENT_BOOST.flip();
     }
 
+    /**
+     * Depth of nested {@link #withGuiEntityLighting(Runnable)} scopes.
+     *
+     * <p>Nesting is real and common: {@link #renderPlayerEntity} wraps
+     * {@code RenderManager.renderEntityWithPosYaw}, which fires
+     * {@code RenderPlayerEvent.Pre}, which calls
+     * {@code ClientEventHandler.renderSelfGuiPlayer}, which wraps its own
+     * {@code renderer.doRender} call in a second scope.
+     */
+    private static int guiEntityLightingDepth = 0;
+
     public static void withGuiEntityLighting(Runnable renderAction) {
+        if (guiEntityLightingDepth > 0) {
+            // Nested scope: the outer scope captured the real state before anything
+            // was changed and will restore it on the way out, and the state applied
+            // here is exactly the state the outer scope applied. So the only thing a
+            // nested scope could add is redundant work — and the redundant work is
+            // the expensive kind: GuiEntityLightingState.capture() queries the driver
+            // three times (glIsEnabled), which measured ~4.8 % of the whole client
+            // thread in a 4K profile. Re-apply the state and leave the restore to the
+            // outermost scope.
+            guiEntityLightingDepth++;
+            try {
+                applyGuiEntityLighting();
+                renderAction.run();
+            } finally {
+                guiEntityLightingDepth--;
+            }
+            return;
+        }
+        // Outermost scope: capture what the driver actually has and put it back
+        // afterwards. Do NOT replace this with a cached/shadow copy of the enable
+        // bits — this class uses raw GL11 while vanilla RenderHelper and GeckoLib's
+        // GlStateManager toggle GL_COLOR_MATERIAL / GL_RESCALE_NORMAL behind our
+        // back, so a shadow would desync (that is what the 1.9a1-05 "hotbar stays
+        // darker" regression was about).
         GuiEntityLightingState state = GuiEntityLightingState.capture();
+        guiEntityLightingDepth++;
         try {
-            GL11.glEnable(GL12.GL_RESCALE_NORMAL);
-            GL11.glEnable(GL11.GL_COLOR_MATERIAL);
-            GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
-            setLightmapTextureEnabled(true);
-            OpenGlHelper.setLightmapTextureCoords(
-                OpenGlHelper.lightmapTexUnit,
-                GUI_LIGHTMAP_BRIGHTNESS,
-                GUI_LIGHTMAP_BRIGHTNESS);
+            applyGuiEntityLighting();
             renderAction.run();
         } finally {
+            guiEntityLightingDepth--;
             OpenGlHelper.setLightmapTextureCoords(
                 OpenGlHelper.lightmapTexUnit,
                 state.brightnessX,
@@ -82,6 +112,19 @@ public final class RenderUtil {
             setEnabled(GL11.GL_COLOR_MATERIAL, state.colorMaterialEnabled);
             GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
         }
+    }
+
+    /** The state {@link #withGuiEntityLighting} establishes for a GUI-entity draw.
+     *  Idempotent, so a nested scope can simply re-apply it. */
+    private static void applyGuiEntityLighting() {
+        GL11.glEnable(GL12.GL_RESCALE_NORMAL);
+        GL11.glEnable(GL11.GL_COLOR_MATERIAL);
+        GL11.glColor4f(1.0F, 1.0F, 1.0F, 1.0F);
+        setLightmapTextureEnabled(true);
+        OpenGlHelper.setLightmapTextureCoords(
+            OpenGlHelper.lightmapTexUnit,
+            GUI_LIGHTMAP_BRIGHTNESS,
+            GUI_LIGHTMAP_BRIGHTNESS);
     }
 
     private static void setLightmapTextureEnabled(boolean enabled) {
