@@ -331,18 +331,26 @@ public class ClientEventHandler {
      * 模型/贴图预览平铺页的共享预算速率。
      *
      * <p>默认只显示一行短行（避免在默认界面尺寸下把左列挤掉），按住 Shift 或 Ctrl 显示完整
-     * 明细。行的含义：</p>
+     * 明细 —— 明细同样拆成几条**短行**，因为 F3 右列右对齐：长行会向左伸出压到左列（默认
+     * 界面尺寸下左列能占到约 45 字符，右列只剩二十几个字符的空间）。行的含义：</p>
      * <ul>
-     *   <li>短行 {@code HUD FBO x Hz (xN/f)} —— 等效帧数 + 每渲染帧平均烘焙几次
+     *   <li>短行 {@code HUD FBO xHz xN/f} —— 等效帧数 + 每渲染帧平均烘焙几次
      *       （1.00 = 缓存完全没命中，最坏）。</li>
-     *   <li>明细里的 {@code target} —— 速率策略窗口内的平均目标；{@code frame} —— 实际帧率；
-     *       {@code sole driver} —— 第一人称（本 pass 是唯一动画 pass，间隔受控制器再入窗口
-     *       硬约束）。</li>
-     *   <li>{@code bake / blit} —— 一次重烘焙 / 一次缓存贴图拷贝的平均毫秒数；
-     *       {@code max gap} —— 窗口内相邻两次烘焙的最大帧间隔（对着 8 帧的上限看）。</li>
-     *   <li>{@code preview grid} —— 模型选择页那一页预览的整页预算：可见数量、每个预览的
-     *       目标 Hz、单次烘焙成本，以及最近一秒内实际出现的最大烘焙间隔（应 ≤ 8 帧；超过
-     *       说明有预览被跳过了，例如模型同步期间按设计不重烘焙）。只在预览页开着时出现。</li>
+     *   <li>{@code tgt} —— 速率策略窗口内的平均目标 Hz；{@code fps} —— 实际帧率；
+     *       {@code sole} —— 第一人称（本 pass 是唯一动画 pass，间隔受控制器再入窗口硬约束）。</li>
+     *   <li>{@code bake} —— 一次重烘焙的平均毫秒数；{@code gap} —— 窗口内相邻两次烘焙的最大
+     *       帧间隔（对着 8 帧的上限看）；{@code ev} —— 上一渲染帧里模型被求值了几次
+     *       （所有玩家/所有模型）。模型 Molang 里大量"每次求值推进一步"的累加器
+     *       （{@code temp.x = v.x; v.x = ...-0.01}）与按求值采样的阈值判断，推进速率
+     *       = {@code ev} × 帧率；"某个效果在 60 fps 看不见、高帧率下闪烁"这类现象先看它。
+     *       **它本来就会抖**：第一人称只有被 FBO 限频的纸娃娃一个 pass（0↔1），第三人称
+     *       加上每帧都跑的世界 pass（1↔2）—— 抖的正是缓存命中节奏，与短行的 {@code xN/f}
+     *       是同一件事。</li>
+     *   <li>{@code grid} —— 模型选择页那一页预览的整页预算：每个预览的目标 Hz、可见数量、
+     *       单次烘焙成本、最近一秒实际的最大烘焙间隔（应 ≤ 8 帧；超过说明有预览被跳过了，
+     *       例如模型同步期间按设计不重烘焙）。只在预览页开着时出现。</li>
+     *   <li>{@code blit}（缓存贴图拷贝耗时）实测恒为 0.0 ms（GL 调用是异步提交的），已从读数
+     *       里去掉；需要时看 {@code local/analysis/} 的采样记录。</li>
      * </ul>
      *
      * <p>Forge 的 {@code GuiIngameForge.renderHUDText} 每帧都发 {@code Text} 事件，但两张
@@ -357,35 +365,35 @@ public class ClientEventHandler {
             HudPreviewCache.Stats s = hudPreviewCache.stats();
 
             if (!s.cacheEnabled) {
-                event.right.add("\u00a7c[YSMU] HUD preview: FBO cache OFF (every frame)");
+                event.right.add("\u00a7c[YSMU] HUD preview: FBO OFF");
             } else {
                 // 短行：默认界面尺寸下也放得下的那一行。
                 event.right.add("\u00a7b[YSMU] HUD FBO \u00a7f" + fmtStat(s.bakeHz)
-                    + " Hz \u00a77(x" + fmtStat2(s.bakesPerFrame) + "/f)");
+                    + "Hz \u00a77x" + fmtStat2(s.bakesPerFrame) + "/f");
             }
 
             if (!isDebugDetailRequested()) {
                 return;
             }
+            // 明细拆成几条**短行**：F3 右列右对齐，长行会向左伸出压到左列
+            // （默认界面尺寸下左列能占到约 45 字符，右列只剩二十几个字符的空间）。
             if (s.cacheEnabled) {
-                event.right.add("\u00a7b[YSMU] HUD target \u00a7f" + fmtStat(s.targetHz)
-                    + " Hz\u00a77 frame " + fmtStat(s.frameHz)
-                    + (s.soleDriver ? " sole driver" : "")
-                    + ", bake \u00a7f" + fmtStat(s.bakeCostMs)
-                    + "\u00a77/blit " + fmtStat(s.blitCostMs)
-                    + " ms, max gap " + (s.maxGapFrames >= 0 ? s.maxGapFrames + "f" : "--"));
+                event.right.add("\u00a7b[YSMU] tgt \u00a7f" + fmtStat(s.targetHz)
+                    + " \u00a77fps" + Math.round(s.frameHz)
+                    + (s.soleDriver ? " sole" : ""));
+                event.right.add("\u00a7b[YSMU] bake \u00a7f" + fmtStat(s.bakeCostMs)
+                    + " \u00a77gap " + (s.maxGapFrames >= 0 ? s.maxGapFrames : "--")
+                    + " ev " + com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime
+                        .evaluationsPerFrame());
             }
-            event.right.add("\u00a7b[YSMU] model evals/frame \u00a7f"
-                + com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.evaluationsPerFrame());
             if (com.fox.ysmu.client.renderer.PreviewRefreshPolicy.visibleCount() > 0) {
                 int gridGap = com.fox.ysmu.client.renderer.PreviewRefreshPolicy.maxGapFrames();
-                event.right.add("\u00a7b[YSMU] preview grid \u00a7f"
+                event.right.add("\u00a7b[YSMU] grid \u00a7f"
                     + fmtStat(com.fox.ysmu.client.renderer.PreviewRefreshPolicy.targetHz())
-                    + " Hz/preview\u00a77 x"
+                    + "Hz \u00a77x"
                     + com.fox.ysmu.client.renderer.PreviewRefreshPolicy.visibleCount()
-                    + ", bake " + fmtStat2(
-                        com.fox.ysmu.client.renderer.PreviewRefreshPolicy.bakeCostMs())
-                    + " ms, max gap " + (gridGap >= 0 ? gridGap + "f" : "--"));
+                    + " bake " + fmtStat(com.fox.ysmu.client.renderer.PreviewRefreshPolicy.bakeCostMs())
+                    + " gap " + (gridGap >= 0 ? gridGap : "--"));
             }
         } catch (Throwable e) {
             suppressHandlerError("onDebugText", e);
