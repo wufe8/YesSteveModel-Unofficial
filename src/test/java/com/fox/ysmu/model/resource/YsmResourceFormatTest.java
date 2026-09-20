@@ -96,6 +96,78 @@ class YsmResourceFormatTest {
         assertTrue(data.getAnimation().containsKey(YsmControllerResources.ANIMATION_MAP_PREFIX + "main_controllers"));
     }
 
+    /**
+     * 文件夹动画写了 {@code "loop": "hold_on_last_frame"} 时，这个语义必须活着走完
+     * "文件夹 → RawYsmModel → 二进制缓存/同步 → 客户端动画 JSON" 全程。
+     *
+     * <p>回归点：{@code parseLoopMode} 曾把 hold_on_last_frame 编成 2，而
+     * {@code putLoopMode} 只认 3，于是 2 在写回客户端 JSON 时被整段丢掉、动画退回 PLAY_ONCE
+     * —— 控制器状态里"播完停在最后一帧"就变成"播完回 idle"。条件动画名路径（如
+     * {@code use_mainhand:sword}）由 {@code AnimationManager} 显式传 HOLD_ON_LAST_FRAME，
+     * 恰好掩盖了这个 bug，所以只有控制器的状态动画会暴露它。</p>
+     */
+    @Test
+    void holdOnLastFrameLoopSurvivesFolderSyncRoundTrip() throws Exception {
+        Path modelDir = tempDir.resolve("Hold Loop");
+        Files.createDirectories(modelDir.resolve("models"));
+        Files.createDirectories(modelDir.resolve("textures"));
+        Files.createDirectories(modelDir.resolve("animations"));
+        Files.write(modelDir.resolve("ysm.json"), ysmJson().getBytes(StandardCharsets.UTF_8));
+        Files.write(modelDir.resolve("models/main.json"), geometryJson("geometry.hold.main").getBytes(StandardCharsets.UTF_8));
+        Files.write(modelDir.resolve("models/arm.json"), geometryJson("geometry.hold.arm").getBytes(StandardCharsets.UTF_8));
+        Files.write(modelDir.resolve("textures/default.png"), PNG_1X1);
+        Files.write(
+            modelDir.resolve("animations/main.animation.json"),
+            holdLoopAnimationJson().getBytes(StandardCharsets.UTF_8));
+
+        RawYsmModel raw;
+        try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(modelDir)) {
+            raw = deserializer.deserialize();
+        }
+        assertEquals(3, animation(raw, "ctrl_block_pose").loopMode, "hold_on_last_frame 必须编码成上游的 3，不能是 2");
+
+        // 客户端适配器写回的动画 JSON：loop 字段必须在，且是 hold_on_last_frame
+        // （二进制往返后的纹理是加密态、isBridgeable 不成立，所以这一步用文件夹解析出的
+        // 那份 raw；loopMode 的保留由下面的二进制往返单独断言。）
+        ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, "hold_loop");
+        byte[] animationJson = data.getAnimation().get("main");
+        assertNotNull(animationJson, "客户端适配器没有产出 main 动画文件");
+        JsonObject animations = new JsonParser().parse(new String(animationJson, StandardCharsets.UTF_8))
+            .getAsJsonObject()
+            .getAsJsonObject("animations");
+        assertEquals(
+            "hold_on_last_frame",
+            animations.getAsJsonObject("ctrl_block_pose")
+                .get("loop")
+                .getAsString(),
+            "客户端动画 JSON 丢了 loop 字段，动画会退回 PLAY_ONCE");
+
+        // 二进制缓存/同步往返
+        RawYsmModel afterBinary;
+        try (YSMByteBuf serialized = YSMBinarySerializer.serialize(raw, 32, false)) {
+            try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(serialized.toArray(), 32)) {
+                afterBinary = deserializer.deserialize();
+            }
+        }
+        assertEquals(3, animation(afterBinary, "ctrl_block_pose").loopMode, "二进制缓存往返丢失了 loopMode");
+
+        // 编码表：未声明(2) 不写字段（缺省在 GeckoLib 里就是 PLAY_ONCE），显式 false(0) 写 false
+        JsonObject absent = new JsonObject();
+        RawYsmModelAdapter.putLoopMode(absent, 2);
+        assertFalse(absent.has("loop"), "未声明 loop 不能补默认值，否则所有没写 loop 的动画都会停在最后一帧");
+        JsonObject explicitOnce = new JsonObject();
+        RawYsmModelAdapter.putLoopMode(explicitOnce, 0);
+        assertFalse(explicitOnce.get("loop").getAsBoolean());
+    }
+
+    private static RawYsmModel.RawAnimation animation(RawYsmModel model, String name) {
+        RawYsmModel.RawAnimationFile file = model.mainEntity.animationFiles.get("main");
+        assertNotNull(file, "main 动画文件缺失");
+        RawYsmModel.RawAnimation anim = file.animations.get(name);
+        assertNotNull(anim, name + " 动画缺失");
+        return anim;
+    }
+
     @Test
     void rawGeometryWithoutSourceJsonCanGenerateLegacyGeometryJson() throws Exception {
         RawYsmModel source = new RawYsmModel();
@@ -655,6 +727,14 @@ class YsmResourceFormatTest {
         return "{"
             + "\"format_version\":\"1.8.0\","
             + "\"animations\":{\"idle\":{\"loop\":true,\"animation_length\":1.0,\"bones\":{\"root\":{\"rotation\":[0,0,0]}}}}"
+            + "}";
+    }
+
+    private static String holdLoopAnimationJson() {
+        return "{"
+            + "\"format_version\":\"1.8.0\","
+            + "\"animations\":{\"ctrl_block_pose\":{\"loop\":\"hold_on_last_frame\",\"animation_length\":1.0,"
+            + "\"bones\":{\"root\":{\"rotation\":{\"0.0\":[0,0,0],\"0.25\":[0,0,160]}}}}}"
             + "}";
     }
 

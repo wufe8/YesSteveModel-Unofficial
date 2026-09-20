@@ -1076,7 +1076,12 @@ public final class RawYsmModelAdapter {
         return json;
     }
 
-    private static void putLoopMode(JsonObject json, int loopMode) {
+    /**
+     * loopMode → 客户端动画 JSON 的 {@code loop} 字段。编码见
+     * {@link YSMFolderDeserializer#parseLoopMode}：1=loop、3=hold_on_last_frame、0=显式 false、
+     * 2=未声明（不写字段，GeckoLib 解析为 PLAY_ONCE，与上游一致）。
+     */
+    static void putLoopMode(JsonObject json, int loopMode) {
         if (loopMode == 1) {
             json.addProperty("loop", true);
         } else if (loopMode == 3) {
@@ -1084,6 +1089,8 @@ public final class RawYsmModelAdapter {
         } else if (loopMode == 0) {
             json.addProperty("loop", false);
         }
+        // 2 = 未声明：保持不写字段。不要在这里"补一个默认值"：缺省在 GeckoLib 里就是
+        // PLAY_ONCE，补成 hold_on_last_frame 会让所有没写 loop 的动画都停在最后一帧。
     }
 
     private static void putChannel(JsonObject bone, String channelName, List<RawYsmModel.RawKeyframe> keyframes) {

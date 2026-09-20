@@ -41,6 +41,29 @@
   `event.getAnimationTick() - state.enteredTick >= animationLength`；否则结合"是否本帧刚进入"
   返回 true/false。`anim_time_update` 驱动的动画另有分支，不在此判定。
 
+## `loop` 的编码与同步往返
+
+`loop` 在文件夹 JSON 里是 `true` / `false` / `"hold_on_last_frame"` / 缺省；进入 `RawYsmModel`
+后是一个整数 `loopMode`，并且**会跟着服务端缓存/同步的二进制一路走到客户端**，再由
+`RawYsmModelAdapter.putLoopMode` 写回动画 JSON。两端的编码表必须一致，且与上游 OpenYSM 一致：
+
+| 文件夹 JSON | `loopMode` | 客户端写回 |
+| --- | --- | --- |
+| `true` / `"true"` / `"loop"` | 1 | `"loop": true` |
+| `"hold_on_last_frame"` | 3 | `"loop": "hold_on_last_frame"` |
+| `false` | 0 | `"loop": false` |
+| 缺省 | 2 | 不写字段（GeckoLib 缺省 = `PLAY_ONCE`） |
+
+回归点：`YSMFolderDeserializer.parseLoopMode` 曾把 `"hold_on_last_frame"` 编成 **2**，而
+`putLoopMode` 只认 0/1/3 —— 2 落进"不写字段"分支，客户端动画退回 `PLAY_ONCE`。症状是
+**控制器状态里"播完停在最后一帧"变成"播完回 idle"**；条件动画名路径（`use_mainhand:sword`
+等）因为 `AnimationManager` 显式传 `HOLD_ON_LAST_FRAME`，把这个 bug 完全掩盖了。同一处编码
+错误也会写进导出的 `.ysm`。
+
+不变式：`loopMode` 的编码只在 `parseLoopMode` / `putLoopMode` 这一对函数里定义；改就两端
+一起改，并由 `YsmResourceFormatTest#holdOnLastFrameLoopSurvivesFolderSyncRoundTrip` 锁住。
+不要用"缺省时补一个默认值"的方式绕过：缺省的语义是 `PLAY_ONCE`，不是 `HOLD_ON_LAST_FRAME`。
+
 ## 教训
 
 同一格式语义在多个代码路径里各写一份常量就会漂移：同一批资料里能看到 0、-1、+∞ 三种缺省
@@ -52,6 +75,7 @@
 - 哨兵 `Double.MAX_VALUE` 会让以 `q.all_animations_finished` 为唯一出口的状态在"当前动画
   完全没有任何时间键"时永远无法离开该状态（`tick - entered >= MAX_VALUE` 恒 false）。
   这是理论推导，未在实机构造模型验证。
-- `anim_time_update` 动画、`HOLD_ON_LAST_FRAME`、`PLAY_ONCE` 的边界未在本文逐一展开。
+- `anim_time_update` 动画、`HOLD_ON_LAST_FRAME`、`PLAY_ONCE` 的播放边界未在本文逐一展开；
+  `loop` 的编码与同步往返见上一节。
 - 上游 OpenYSM 的文件夹路径缺省取 +∞ 这一具体 bug 只是本文的对照来源；YSMU 的修复状态以上
   面源码为准，未与官方 2.6.5 客户端逐例对照。

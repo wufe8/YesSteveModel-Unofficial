@@ -137,16 +137,50 @@ public class ConditionalUse {
             return EMPTY;
         }
         String innerName = InnerClassify.doClassifyTest(extraPre, player, isMainHand);
-        if (!innerName.isEmpty() && innerTest.contains(innerName)) {
-            return innerName;
-        }
         // 1.7.10: 使用getItemUseAction替代getUseAnimation
         EnumAction action = BackhandCompat.getItemInHand(player, isMainHand)
             .getItemUseAction();
-        if (this.extraTest.contains(action)) {
+        return classifyExtra(innerName, action);
+    }
+
+    /**
+     * 条件使用动画的命中顺序（独立方法，便于单测）：物品类别名（{@code :sword}/{@code :shield}/…）
+     * 优先于 {@code EnumAction} 名（{@code :block}/{@code :bow}/…）。
+     *
+     * // YSM-wiki: animation/condition/arm —— 上游 {@code use_mainhand:block} 来自 1.20 的
+     * {@code UseAnim.BLOCK}（只有盾牌会返回它）。1.7.10 没有 UseAnim，剑右键格挡返回的是
+     * {@code EnumAction.block}，所以 {@code :block} 会同时命中剑和盾；剑想单独覆盖必须用会
+     * 先命中的 {@code :sword}（别名见 {@link #resolveCategoryAlias}）。
+     */
+    String classifyExtra(String innerName, EnumAction action) {
+        String categoryName = resolveCategoryAlias(innerName);
+        if (categoryName != null && !categoryName.isEmpty() && innerTest.contains(categoryName)) {
+            return categoryName;
+        }
+        if (extraTest.contains(action)) {
             return extraPre + action.name()
                 .toLowerCase(Locale.US);
         }
         return EMPTY;
+    }
+
+    /**
+     * 物品类别名的等价别名解析：{@code <hand>:sword_block} 与 {@code <hand>:sword} 等价，
+     * 剑格挡时声明任意一个都能覆盖。{@code :sword_block} 是 YSMU 扩展名，语义比"用剑"更明确，
+     * 也能在上游改变 {@code :sword} 语义时提供一个稳定的名字。
+     *
+     * <p>原名字优先：两个都声明时返回 {@code :sword}，既有模型的行为不变。</p>
+     */
+    private String resolveCategoryAlias(String innerName) {
+        if (innerName == null) {
+            return null;
+        }
+        if (!innerTest.contains(innerName) && (extraPre + "sword").equals(innerName)) {
+            String alias = extraPre + "sword_block";
+            if (innerTest.contains(alias)) {
+                return alias;
+            }
+        }
+        return innerName;
     }
 }

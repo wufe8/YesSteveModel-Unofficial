@@ -925,9 +925,17 @@ public class YSMFolderDeserializer implements AutoCloseable {
         return result;
     }
 
-    private static int parseLoopMode(JsonElement loop) {
+    /**
+     * 文件夹动画 JSON 的 {@code loop} 字段 → OpenYSM 的 loopMode 编码。
+     *
+     * <p>编码与上游一致（OpenYSM {@code YSMFolderDeserializer}）：1=loop、3=hold_on_last_frame、
+     * 0=显式 false、2=未声明（默认）。**不能把 hold_on_last_frame 写成 2**：客户端适配器
+     * {@link RawYsmModelAdapter#putLoopMode} 只认 0/1/3，2 会被整段丢掉，客户端动画回到
+     * PLAY_ONCE —— 表现出来就是"控制器里写了 hold_on_last_frame，播完却回 idle"。</p>
+     */
+    static int parseLoopMode(JsonElement loop) {
         if (loop == null || loop.isJsonNull()) {
-            return 0;
+            return 2; // 未声明：上游同样写 2（客户端解析为 PLAY_ONCE）
         }
         if (loop.isJsonPrimitive() && loop.getAsJsonPrimitive().isBoolean()) {
             return loop.getAsBoolean() ? 1 : 0;
@@ -938,7 +946,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
                 return 1;
             }
             if ("hold_on_last_frame".equals(value)) {
-                return 2;
+                return 3;
             }
         }
         return 0;
