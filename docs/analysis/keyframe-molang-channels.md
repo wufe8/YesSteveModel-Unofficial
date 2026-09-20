@@ -39,6 +39,24 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
 `JsonKeyFrameUtils` 把每个分量 `parseExpression()` 成 `IValue`；非 `ConstantValue` 的会在每帧
 `get()`，所以这是**每帧驱动骨骼**（`scale` 给 0 就能隐藏部件，是常见的显隐手法）。
 
+### `query.position_delta`：两个入口共用一份增量
+
+同一个名字有两个入口，读的是同一份数据：
+
+| 写法 | 走哪条路 | 实现 |
+| --- | --- | --- |
+| 关键帧/时间轴 `q.position_delta(0)` | mclib 解析 → `QueryPositionDeltaFunction` | 读静态槽 |
+| `.molang` 脚本 / 控制器条件 `q.position_delta(0)` | `ScriptMolangParser` → `OpenYsmControllerExpressionEvaluator.Context.functionValue` | 同一个静态槽 |
+| 裸变量 `q.position_delta`（无参） | `parser.setValue` 的 `LazyVariable` supplier | 返回位移长度 |
+
+**坑在哪**：静态槽原来只在裸变量那个 supplier 里写，而 `LazyVariable` 只在**被读到**时才求值。
+模型如果只用函数版（例如 `car_stuff` 用 `q.position_delta(0/2)` 算 `t.speed_frame` 再累加成
+`v.wheel_rotate` 驱动轮胎），裸变量永远没人读 → 槽里恒为 0 → **位移存在但车轮不转**。
+现在增量由 `AnimationRegister.setEntityQueryValues` 每帧主动 `update()`，两个入口共用；
+`AnimationRegister.setPreviewParserValues` 会把槽归零，否则 GUI 预览会拿世界渲染最后一个
+玩家的位移驱动轮胎。回归测试：`QueryPositionDeltaTest`（`update()`/`delta()`/mclib 函数版读取；
+"每帧真的调用 update"要真实 `EntityPlayer`，只能实机验证）。
+
 ## ③ 时间轴（timeline）
 
 `timeline` 是**动画级**通道，在 `MolangInstructionExecutor` 里执行：

@@ -18,7 +18,7 @@
 | 常驻 | `default` 兜底模型：`GEO.touchIf/ANIM.touchIf` + `unloadIdleTextures` 跳过 | 它没有加密客户端缓存可恢复，释放后必然白模/崩溃 |
 | 抑制窗口 | `isIdleEvictionSuppressed()`：预览 GUI 打开时 **或** 关闭后 `GUI_POST_CLOSE_GRACE_SECONDS` 内，全部回收停止 | 避免"关一下再开"导致的反复重加载 |
 
-## 2. 派生状态必须遵守的三条不变式
+## 2. 派生状态必须遵守的四条不变式
 
 1. **生命周期要跟着资源走**。派生缓存只有两种合法挂法：
    - 挂在"随资源一起被替换/移除"的对象上（例如 `ControllerSet.namedParallelSlotCache`、
@@ -31,6 +31,18 @@
    新增的几何显存必须一起记，否则"用户设定的 `TEXTURE_VRAM_BUDGET_MB`"会被绕过。
 3. **不能指望 evict 兜底浏览页**。预览 GUI 打开期间回收是被抑制的（设计如此），
    所以任何"每个已加载模型一份"的堆/显存派生数据都会随浏览的模型数线性增长。
+4. **重加载的解析结果必须与首次同步的一致**。同一条资源有两条解析路径：首次同步
+   （`ClientModelManager.parseAnimationsToBundle`，eager）与懒加载重载
+   （`parseAnimationFromCache`）。两条路径各写一份过滤规则就会漂移，而漂移的后果不一定是
+   "少一条动画"——**同名动画会被后解析的那份覆盖**。实测：弹射物的
+   `arrow.animation.json` 声明了 `parallel0`（12 根骨）/ `parallel1`（1 根骨），而玩家的
+   `parallel1` 是"人形 / 兽形"两根根骨的缩放所在；懒加载路径少了"弹射物 key 不并进玩家
+   文件"这条过滤，重载后玩家的 `AllBody.scale` / `FOX.scale` 整条被替换掉 ⇒ 两种形态同时
+   显示。症状还带一个误导性的时间结构：`/ysm reload` 把**当前**模型换回 eager 解析，于是
+   "当前模型好了、上一个坏了"；`warmModel` 在同步登记缓存路径**之前**给进存档时的模型创建
+   了 ANIM 条目，所以连它也走懒加载重载 ⇒ 删掉 `config/ysmu/cache` 后所有模型一起坏。
+   两条路径现在共用 `isPlayerAnimationSourceKey()`；回归测试
+   `PlayerAnimationMergeFilterTest`。
 
 ## 3. 本次改动与这套机制的交叉检查
 

@@ -56,9 +56,30 @@ class MolangSyncSenderTest {
     }
 
     @Test
-    void throttleAllowsOnePerSecond() {
-        assertTrue(MolangSyncSender.allow(50));
-        assertFalse(MolangSyncSender.allow(50), "同一秒第二次应被限流");
-        assertTrue(MolangSyncSender.allow(51), "跨秒后应重新放行");
+    void repeatedIdenticalPayloadIsLimitedToOnePerSecond() {
+        // 模型把 ysm.sync 写在每帧脚本里且参数不变：压到每秒一次。
+        assertTrue(MolangSyncSender.allow(50, new int[] { 0, 0 }));
+        assertFalse(MolangSyncSender.allow(50, new int[] { 0, 0 }), "同一秒内同一参数的重复应被限流");
+        assertFalse(MolangSyncSender.allow(50, new int[] { 0, 0 }), "重复也不占每秒硬上限");
+        assertTrue(MolangSyncSender.allow(51, new int[] { 0, 0 }), "跨秒后应重新放行");
+    }
+
+    @Test
+    void changedPayloadIsAllowedImmediately() {
+        // 状态切换（某车辆模型用 ysm.sync(0,0/1) 传"鸣笛按下/松开"）必须立刻放行，
+        // 否则松手后长鸣笛要响到下一秒才停（上游没有限流，下一个 tick 就停）。
+        assertTrue(MolangSyncSender.allow(50, new int[] { 0, 0 }));
+        assertTrue(MolangSyncSender.allow(50, new int[] { 0, 1 }), "参数变了应立刻放行");
+        assertTrue(MolangSyncSender.allow(50, new int[] { 0, 0 }), "换回来同样立刻放行");
+    }
+
+    @Test
+    void alternatingPayloadsAreStillCappedPerSecond() {
+        // 每帧换一个参数属于刷屏，仍受每秒硬上限约束（上游是完全没有上限的）。
+        for (int i = 0; i < 4; i++) {
+            assertTrue(MolangSyncSender.allow(70, new int[] { i }), "第 " + (i + 1) + " 次应在额度内");
+        }
+        assertFalse(MolangSyncSender.allow(70, new int[] { 99 }), "超出每秒硬上限应被拒");
+        assertTrue(MolangSyncSender.allow(71, new int[] { 99 }), "跨秒后额度重置");
     }
 }

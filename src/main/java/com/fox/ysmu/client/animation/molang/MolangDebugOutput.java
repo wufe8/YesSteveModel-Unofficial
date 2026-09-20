@@ -65,7 +65,8 @@ public final class MolangDebugOutput {
             if (!throttledHinted) {
                 throttledHinted = true;
                 if (Config.DEBUG_ANIMATION) {
-                    ysmu.LOG.info("[YSMU-DEBUG-OUT] 每秒超过 {} 条，后续输出被限流（只提示一次）",
+                    ysmu.LOG.info(
+                        "[YSMU-DEBUG-OUT] more than {} lines per second; further output is throttled (noted once)",
                         MAX_PER_SECOND);
                 }
             }

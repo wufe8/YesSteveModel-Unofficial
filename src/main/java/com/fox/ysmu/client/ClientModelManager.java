@@ -148,6 +148,22 @@ public class ClientModelManager {
 
     private static final String PROJECTILE_KEY_PREFIX = "projectile_";
 
+    /**
+     * 该动画条目是否要并进**玩家**的合并动画文件。
+     *
+     * <p>{@link #parseAnimationsToBundle}（首次同步，eager）与
+     * {@link #parseAnimationFromCache}（懒加载重载）必须共用这一个判断。两条路径各写一份
+     * 过滤规则时就会漂移，而漂移的后果不是"少一条动画"：弹射物的动画文件用自己的 GeoModel
+     * id 注册，名字却会和玩家的并行动画槽位撞车 —— 箭矢的 {@code arrow.animation.json}
+     * 就声明了 {@code parallel0}（12 根骨）与 {@code parallel1}（1 根骨，{@code Board}），
+     * 一旦并进玩家文件就会把玩家自己的 {@code parallelN} 覆盖掉。玩家的
+     * {@code parallel1} 正是"人形 / 兽形"两根根骨的缩放所在，被覆盖后
+     * {@code AllBody.scale} / {@code FOX.scale} 全部丢失，两种形态就同时显示。</p>
+     */
+    static boolean isPlayerAnimationSourceKey(String key) {
+        return key != null && !key.isEmpty() && !key.startsWith(PROJECTILE_KEY_PREFIX);
+    }
+
     // ── Lazy reloading from encrypted client cache ────────────────────────
     /** Maps main model ID → cache file path (relative to CACHE_CLIENT) for re-reading from the encrypted client cache.
      *  <p>并发：写发生在同步/解析路径（含后台解析线程），读发生在资源懒加载的后台线程
@@ -1029,7 +1045,8 @@ public class ClientModelManager {
                     }
                 } else if (Config.DEBUG_CONTROLLER && LOGGED_STATIC_MAPPING_SKIP.add(molangFileName)) {
                     ysmu.LOG.info(
-                        "[YSMU-MOLANG] {} 是覆盖层槽位的控制脚本，跳过静态状态→动画提取（改由逐帧控制脚本按槽位生效）",
+                        "[YSMU-MOLANG] {} is an overlay-slot control script; skipping the static state->animation "
+                            + "extraction (the per-frame control script drives that slot instead)",
                         molangFileName);
                 }
                 // 过渡时长/重载提示按动画名共享给所有控制器（与槽位无关），照旧提取。
@@ -1044,7 +1061,8 @@ public class ClientModelManager {
                 bundle.projControllerFiles.put(projAnimId, animData);
                 continue;
             }
-            // Projectile animation keys: parsed as AnimationFile and registered under projectile GeoModel ID
+            // Projectile animation keys: parsed as AnimationFile and registered under projectile GeoModel ID.
+            // 它们**不**并进玩家文件（见 isPlayerAnimationSourceKey）。
             if (key.startsWith(PROJECTILE_KEY_PREFIX)) {
                 try {
                     AnimationFile projAnim = getAnimationFile(new String(animData, StandardCharsets.UTF_8));
@@ -1297,7 +1315,9 @@ public class ClientModelManager {
         return animationFile;
     }
 
-    private static AnimationFile mergeAnimationFile(AnimationFile main, AnimationFile other) {
+    /** 把 {@code other} 里的动画并进 {@code main}（同名时：incoming 非空就覆盖）。
+     *  package-private 供回归测试直接验证"后并进来的文件会覆盖同名动画"这一语义。 */
+    static AnimationFile mergeAnimationFile(AnimationFile main, AnimationFile other) {
         for (java.util.Map.Entry<String, Animation> entry : other.animations.entrySet()) {
             String name = entry.getKey();
             Animation incoming = entry.getValue();
@@ -1554,14 +1574,25 @@ public class ClientModelManager {
     @Nullable
     public static AnimationFile parseAnimationFromCache(ResourceLocation mainId) {
         ModelData data = loadLegacyModelData(mainId);
-        if (data == null) return null;
+        if (data == null) {
+            reportAnimReload(mainId, "no cached model data");
+            return null;
+        }
         Map<String, byte[]> animBytes = data.getAnimation();
-        if (animBytes == null || animBytes.isEmpty()) return null;
+        if (animBytes == null || animBytes.isEmpty()) {
+            reportAnimReload(mainId, "cached model data has no animation files");
+            return null;
+        }
 
         AnimationFile animFile = new AnimationFile();
         for (Map.Entry<String, byte[]> entry : animBytes.entrySet()) {
             String key = entry.getKey();
             byte[] animData = entry.getValue();
+            // 与 parseAnimationsToBundle 同一条过滤（共用 isPlayerAnimationSourceKey）。
+            // 少这条过滤时懒加载重载出来的玩家动画会被弹射物文件污染：弹射物的
+            // parallel0/parallel1 会覆盖玩家自己的同名动画，而玩家的 parallel1 正是形态
+            // 缩放所在 —— 表现为切到（或重载）该模型后"人形与兽形同时显示"。
+            if (!isPlayerAnimationSourceKey(key)) continue;
             // Skip molang function files and controller files — same filtering as
             // parseAnimationsToBundle. Controller JSON has no "animations" key
             // and would NPE in getAnimationFile().
@@ -1575,7 +1606,23 @@ public class ClientModelManager {
                 ysmu.LOG.warn("Failed to re-parse animation {} for model {}: {}", key, mainId, e.getMessage());
             }
         }
-        return animFile.animations.isEmpty() ? null : animFile;
+        if (animFile.animations.isEmpty()) {
+            reportAnimReload(mainId, "no animation survived parsing");
+            return null;
+        }
+        return animFile;
+    }
+
+    /** 每个 mainId 只报一次"懒加载取不到动画"的原因（{@code DebugModelLoad} 门控）。
+     *  懒加载失败以前完全静默：条目只进 FAILED 并每 2 s 重试一次，调用方看到的只有
+     *  "动画文件一直不在"。把原因打出来，才能区分"缓存路径没登记"和"解析出来是空的"。 */
+    private static final java.util.Set<ResourceLocation> ANIM_RELOAD_REPORTED =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    private static void reportAnimReload(ResourceLocation mainId, String reason) {
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD && ANIM_RELOAD_REPORTED.add(mainId)) {
+            ysmu.LOG.info("[YSMU-ASSET] animation reload failed for {}: {}", mainId, reason);
+        }
     }
 
     /**

@@ -151,9 +151,12 @@ public class AnimationRegister {
             functions.put("query.equipped_item_any_tag", QueryItemTagFunction.class);
             functions.put("query.equipped_item_all_tags", QueryItemTagFunction.class);
             // ysm.play_sound / stop_sound / stop_all_sounds：模型 Molang 音效播放（走 YSMSoundManager）。
-            functions.put("ysm.play_sound", YsmSoundFunction.class);
-            functions.put("ysm.stop_sound", YsmSoundFunction.class);
-            functions.put("ysm.stop_all_sounds", YsmSoundFunction.class);
+            // 三个名字各用一个**常量参数量**的子类：mclib 的 Function 构造器在子类字段赋值之前
+            // 就调用 getRequiredArguments() 校验实参，凡是按名字/字段推导参数量的实现都会恒定要求
+            // 2 个参数，把 1 参的 stop_sound('id') 与 0 参的 stop_all_sounds() 判成解析失败。
+            functions.put("ysm.play_sound", YsmSoundFunction.Play.class);
+            functions.put("ysm.stop_sound", YsmSoundFunction.Stop.class);
+            functions.put("ysm.stop_all_sounds", YsmSoundFunction.StopAll.class);
             // ysm.mod_version：1.7.10 模组版本是字符串、无统一数字语义，注册桩函数防报错刷屏。
             functions.put("ysm.mod_version", CtrlHoldFunction.class);
             // ysm.perlin_noise：3D 柏林噪声（返回 [0,1]），自实现。
@@ -445,15 +448,18 @@ public class AnimationRegister {
         parser.setValue("query.walk_distance", () -> player.distanceWalkedOnStepModified);
         parser.setValue("query.yaw_speed", queryValues.yawSpeed());
 
-        parser.setValue("query.position_delta", () -> {
-            double dx = player.posX - player.prevPosX;
-            double dy = player.posY - player.prevPosY;
-            double dz = player.posZ - player.prevPosZ;
-            QueryPositionDeltaFunction.dx = dx;
-            QueryPositionDeltaFunction.dy = dy;
-            QueryPositionDeltaFunction.dz = dz;
-            return Math.sqrt(dx*dx + dy*dy + dz*dz);
-        });
+        // query.position_delta(axis) 有两个入口：
+        //   * 关键帧/时间轴：mclib 的 QueryPositionDeltaFunction（无实体上下文，只能读静态槽）；
+        //   * .molang 脚本 / 控制器条件：OpenYsmControllerExpressionEvaluator.Context（同一个静态槽）。
+        // 静态槽以前只在这行**变量版**的 supplier 里写 —— 而 LazyVariable 只在被读到时才求值，
+        // 模型只用函数版时（例如把位移增量累加成轮胎转速）变量版永远不会被读，槽里恒为 0，
+        // 于是"速度"恒为 0。所以位置增量必须在这里每帧主动算一次，两个入口共用。
+        double deltaX = player.posX - player.prevPosX;
+        double deltaY = player.posY - player.prevPosY;
+        double deltaZ = player.posZ - player.prevPosZ;
+        QueryPositionDeltaFunction.update(deltaX, deltaY, deltaZ);
+        parser.setValue("query.position_delta",
+            () -> Math.sqrt(deltaX * deltaX + deltaY * deltaY + deltaZ * deltaZ));
     }
 
     private static void setStateQueryValues(MolangParser parser, EntityPlayer player, Minecraft mc) {
@@ -510,6 +516,9 @@ public class AnimationRegister {
         for (String name : PREVIEW_NEUTRAL_QUERIES) {
             parser.setValue(name, 0.0d);
         }
+        // 位置增量走的是 QueryPositionDeltaFunction 的静态槽，不是 parser 变量，
+        // 上面的循环清不到它 —— 不清的话预览会用世界渲染最后一个玩家的位移驱动轮子等骨骼。
+        QueryPositionDeltaFunction.clear();
     }
 
     /** 预览里必须归零的"玩家运动/视角"查询：只放会驱动位移、形变、累加的开量。 */

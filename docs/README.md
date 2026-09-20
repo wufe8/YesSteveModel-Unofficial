@@ -25,7 +25,7 @@
 | [`analysis/crash-report-log-spam.md`](analysis/crash-report-log-spam.md) | `Negative index in crash report handler` 刷屏的含义（每帧一份 `CrashReport`，不是崩溃）、定位方法与"每帧入口不许抛异常 / `catch (Throwable)`"的修法原则 |
 | [`analysis/sneak-animation-paths.md`](analysis/sneak-animation-paths.md) | 潜行动画的降级路径与判定树：legacy 与 OpenYSM 控制器谁负责、`hasControllerSneakHandling` 为什么不能写宽、Root 与循环检测 |
 | [`analysis/animation-controller-priority.md`](analysis/animation-controller-priority.md) | 控制器注册顺序与骨骼覆盖：后执行的控制器覆盖先执行的、每帧处理链、cap/parallel/main 的优先级 |
-| [`analysis/animation-length-semantics.md`](analysis/animation-length-semantics.md) | `animation_length` 缺省语义：缺省=最后关键帧、`Double.MAX_VALUE` 哨兵、循环/防滑步/动画完成三个消费点 |
+| [`analysis/animation-length-semantics.md`](analysis/animation-length-semantics.md) | `animation_length` 缺省语义：缺省=最后关键帧、`Double.MAX_VALUE` 哨兵、循环/防滑步/动画完成三个消费点；以及 `loop` 的 loopMode 编码与同步往返（hold_on_last_frame 丢失的回归点） |
 | [`analysis/geometry-cube-sanitization.md`](analysis/geometry-cube-sanitization.md) | 几何清理：负尺寸 cube 的两趟 `CULL_FRONT` 渲染、零面积 UV 面删除、何时保留/归一化 |
 | [`analysis/geometry-memory-lifecycle.md`](analysis/geometry-memory-lifecycle.md) | 几何/动画/贴图的动态卸载与重加载机制；派生缓存（顶点缓冲、按模型的身份缓存）必须遵守的三条不变式；渲染优化与它的交叉检查结论 |
 | [`analysis/roaming-variable-scope.md`](analysis/roaming-variable-scope.md) | 常驻变量 `v.roaming.*` 与 `v.*` 是两个命名空间；YSMU 为什么要写裸名别名、别名覆盖模型自己变量的现象与自校准修法、验证方式 |
@@ -33,6 +33,8 @@
 | [`analysis/molang-custom-functions.md`](analysis/molang-custom-functions.md) | `.molang` 自定义函数：`fn.*`/`args[]`/`t.*`/循环/事件订阅/动画控制脚本的已实现范围，以及 `state_pause`/`state_stop`/`reset` 播放语义、非主槽位等剩余缺口 |
 | [`analysis/performance-profiling.md`](analysis/performance-profiling.md) | 性能剖析方法论：1.7.10 可用工具、单实体渲染成本模型、FBO 预览缓存与 `GUI_MODEL_PREVIEW_REFRESH`、GPU 分析局限 |
 | [`analysis/debug-overlay.md`](analysis/debug-overlay.md) | Molang 调试覆盖层：设计 vs 实现逐项状态（快捷键/数据源/布局/键盘独占），以及设计稿里没有的 `@来源` 列与动态 `ctrl.*` |
+| [`analysis/blocking-animation-names.md`](analysis/blocking-animation-names.md) | 格挡条件动画名：剑格挡 `use_...:sword` / 等价别名 `:sword_block`、盾牌 `:block`/`:shield` 的命中顺序与回退路径、与上游 `UseAnim.BLOCK` 的差异及已知限制 |
+| [`analysis/ysm-sync.md`](analysis/ysm-sync.md) | `ysm.sync(...)` 到底影响什么：完整链路（模型脚本 → 上行包 → 服务端广播 → 接收端跑发起者模型的 `@sync`）、变量作用域与前提条件、它不影响什么、以及限流从"每秒 1 次丢包"改成"按参数区分"的语义 |
 
 ## 已提炼的原始笔记（仍在 `local/analysis/`，含更完整的证据）
 

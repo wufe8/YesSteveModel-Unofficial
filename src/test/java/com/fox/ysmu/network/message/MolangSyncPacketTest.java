@@ -143,18 +143,38 @@ class MolangSyncPacketTest {
         assertEquals(C2SMolangSync.MAX_ARGUMENTS - 1, decoded.getArguments()[C2SMolangSync.MAX_ARGUMENTS - 1]);
     }
 
-    /** 服务端限流：同一玩家约 1 秒一次，另一名玩家不受影响。 */
+    /**
+     * 服务端限流按**参数**区分：同一参数的重复每秒一次，参数变化（状态切换）立刻放行，
+     * 两者都受每秒硬上限约束；另一名玩家不受影响。
+     */
     @Test
-    void serverThrottleAllowsOneBroadcastPerPlayerPerSecond() {
+    void serverThrottleIsPayloadAware() {
         C2SMolangSync.resetThrottle();
         UUID sender = UUID.fromString("11111111-2222-3333-4444-555555555555");
         UUID other = UUID.fromString("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
 
-        assertTrue(C2SMolangSync.allowBroadcast(sender, 1_000L));
-        assertFalse(C2SMolangSync.allowBroadcast(sender, 1_500L), "同一秒内的第二次应被限流");
-        assertTrue(C2SMolangSync.allowBroadcast(sender, 2_000L), "满 1 秒后重新放行");
-        assertTrue(C2SMolangSync.allowBroadcast(other, 1_500L), "另一名玩家不受影响");
-        assertFalse(C2SMolangSync.allowBroadcast(null, 1_500L), "没有 UUID 一律不放行");
+        assertTrue(C2SMolangSync.allowBroadcast(sender, 1_000L, new int[] { 0, 0 }));
+        assertFalse(C2SMolangSync.allowBroadcast(sender, 1_500L, new int[] { 0, 0 }),
+            "同一秒内的同一参数应被限流");
+        // 松开按键只是换了个参数：必须立刻放行，否则长鸣笛要响到下一秒（上游下一个 tick 就停）。
+        assertTrue(C2SMolangSync.allowBroadcast(sender, 1_500L, new int[] { 0, 1 }), "参数变化应立刻放行");
+        assertTrue(C2SMolangSync.allowBroadcast(sender, 2_000L, new int[] { 0, 0 }), "满 1 秒后重新放行");
+
+        assertTrue(C2SMolangSync.allowBroadcast(other, 1_500L, new int[] { 0, 0 }), "另一名玩家不受影响");
+        assertFalse(C2SMolangSync.allowBroadcast(null, 1_500L, new int[] { 0, 0 }), "没有 UUID 一律不放行");
+    }
+
+    /** 硬上限：不停换参数也刷不过每秒 {@code MAX_BROADCASTS_PER_SECOND} 次（上游是无上限的）。 */
+    @Test
+    void serverThrottleBoundsPayloadChangesPerSecond() {
+        C2SMolangSync.resetThrottle();
+        UUID sender = UUID.fromString("11111111-2222-3333-4444-555555555555");
+
+        for (int i = 0; i < C2SMolangSync.MAX_BROADCASTS_PER_SECOND; i++) {
+            assertTrue(C2SMolangSync.allowBroadcast(sender, 5_000L, new int[] { i }), "第 " + (i + 1) + " 次应在额度内");
+        }
+        assertFalse(C2SMolangSync.allowBroadcast(sender, 5_500L, new int[] { 99 }), "超出每秒硬上限应被拒");
+        assertTrue(C2SMolangSync.allowBroadcast(sender, 6_000L, new int[] { 99 }), "跨秒后额度重置");
     }
 
     /**
@@ -174,7 +194,7 @@ class MolangSyncPacketTest {
             for (int i = 0; i < workers; i++) {
                 futures.add(pool.submit(() -> {
                     start.await();
-                    if (C2SMolangSync.allowBroadcast(sender, 1_000L)) {
+                    if (C2SMolangSync.allowBroadcast(sender, 1_000L, new int[] { 0, 0 })) {
                         allowed.incrementAndGet();
                     }
                     return null;

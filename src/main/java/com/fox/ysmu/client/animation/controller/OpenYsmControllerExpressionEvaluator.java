@@ -846,6 +846,16 @@ public final class OpenYsmControllerExpressionEvaluator {
             if ("query.position".equals(name) && arguments.size() >= 1) {
                 return queryPositionValue((int) arguments.get(0).asNumber());
             }
+            if ("query.position_delta".equals(name) && arguments.size() >= 1) {
+                // 关键帧路径由 mclib 的 QueryPositionDeltaFunction 处理，脚本 / 控制器条件
+                // （即 .molang 里的 q.position_delta(axis)）落在这里 —— 以前落到末尾的
+                // "Unsupported OpenYSM controller function" 并恒返回 0，于是脚本里
+                // math.sqrt(math.pow(q.position_delta(0),2)+…) 算出的速度恒为 0
+                // （某车辆模型的轮胎旋转就是这条）。增量由 AnimationRegister 每帧主动写入
+                // 静态槽（不是 LazyVariable，只在被读到时才算），两个入口读同一份。
+                int axis = (int) arguments.get(0).asNumber();
+                return com.fox.ysmu.client.animation.molang.QueryPositionDeltaFunction.delta(axis);
+            }
             // --- ysm.* 函数 ---
             // 键码是 GLFW 的（wiki），1.7.10 上要经 KeyboardCompat 换算成 LWJGL2；
             // 多参数语义是"任一按下即真"。
@@ -1026,7 +1036,11 @@ public final class OpenYsmControllerExpressionEvaluator {
                 // 动态计算结果缓存下来，供 debug overlay / /ysm query 读取
                 // （MolangParser.VARIABLES 里的静态注册值恒为 0）。
                 double finished = allAnimationsFinished() ? TRUE : FALSE;
-                String ctrlName = event.getController() == null ? "?" : event.getController().getName();
+                // 没有 AnimationEvent 的调用点（@player_init / @player_update / @sync 事件脚本，
+                // 见 OpenYsmScriptRuntime.runEvent）event 为 null：这些状态本来就算不出 finished，
+                // 归属键退化为 "?" 即可，不能在这里 NPE。
+                String ctrlName = event == null || event.getController() == null ? "?"
+                    : event.getController().getName();
                 if ("any_animation_finished".equals(name)) {
                     lastAnyAnimationFinished = finished;
                     LAST_ANIMATION_FINISHED.put(ctrlName + "|any_animation_finished", finished);
@@ -1384,7 +1398,10 @@ public final class OpenYsmControllerExpressionEvaluator {
          *  partial tick interpolation.  Implements query.position(index). */
         private double queryPositionValue(int index) {
             if (index < 0 || index > 2 || player == null) return 0.0d;
-            float partialTicks = event.getPartialTick();
+            // 事件脚本（@player_init / @player_update / @sync）没有 AnimationEvent，也就没有
+            // 渲染插值进度：用 1.0（当前位置）而不是 0（上一 tick 位置），否则脚本读到的是
+            // 落后一 tick 的坐标。控制器路径上仍用 event 的真实 partialTick。
+            float partialTicks = event != null ? event.getPartialTick() : 1.0f;
             switch (index) {
                 case 0:
                     return player.prevPosX + (player.posX - player.prevPosX) * partialTicks;
@@ -1433,7 +1450,7 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return player.isPlayerSleeping();
             }
             if ("swim".equals(name)) {
-                return player.isInWater() && Math.abs(event.getLimbSwingAmount()) > 0.05f;
+                return player.isInWater() && limbSwingAmount() > 0.05f;
             }
             if ("climb".equals(name) || "climbing".equals(name)) {
                 return player.isOnLadder();
@@ -1490,9 +1507,25 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return isOnGround() && player.isSprinting() && !player.isSneaking();
             }
             if ("walk".equals(name)) {
-                return isOnGround() && event.getLimbSwingAmount() > 0.05f && !player.isSneaking();
+                return isOnGround() && limbSwingAmount() > 0.05f && !player.isSneaking();
             }
             return false;
+        }
+
+        /**
+         * 摆臂幅度（{@code query.limb_swing_amount} 同口径），没有 AnimationEvent 时用实际水平位移近似。
+         * <p>
+         * 事件脚本（{@code @player_init} / {@code @player_update} / {@code @sync}）没有
+         * AnimationEvent（{@code OpenYsmScriptRuntime.runEvent} 传 {@code event = null}），
+         * 而 {@code ctrl.walk} / {@code ctrl.swim} 原来直接读 {@code event.getLimbSwingAmount()}，
+         * 于是一读 {@code ctrl.*} 就 NPE，整个脚本每帧失败。水平位移与
+         * {@code horizontalSpeed()}（{@code query.ground_speed}）同源，是这些调用点能拿到的最好近似。
+         */
+        private float limbSwingAmount() {
+            if (event != null) {
+                return Math.abs(event.getLimbSwingAmount());
+            }
+            return (float) horizontalSpeed();
         }
 
         /** ctrl.armor('chest'|'feet'|'legs'|'head', '$物品ID'|'empty'|'#tag')。

@@ -20,11 +20,26 @@ import com.fox.ysmu.ysmu;
  */
 public final class MolangSyncSender {
 
-    /** wiki 说"一次同步开销相当大"：同一秒内最多真的发一次。 */
-    private static final int MAX_PER_SECOND = 1;
+    /**
+     * 每秒最多真的发这么多次（含"状态变化"）。
+     * <p>
+     * 原来这里是"每秒固定 1 次、超出直接丢"，但 {@code ysm.sync} 在两个用途上语义不同：
+     * <ul>
+     *   <li><b>重复</b>：模型把 {@code ysm.sync} 写在每帧脚本里，参数一直不变 —— 这种要压掉；</li>
+     *   <li><b>状态变化</b>：模型用参数表示一个开关（某车辆模型用 {@code ysm.sync(0,0/1)}
+     *       传"鸣笛按下/松开"）—— 这种被压掉就是可见的行为差异：上游没有限流，
+     *       松开按键下一个 tick 就停，而 YSMU 会把"松开"压到下一秒，长鸣笛要响约 1 秒。</li>
+     * </ul>
+     * 所以判定改成按**参数**区分：参数变了立刻放行（只受这个硬上限约束），
+     * 参数没变的重复仍按每秒 1 次压掉（且不占用硬上限，模型每帧重试不会把额度吃光）。
+     */
+    private static final int MAX_PER_SECOND = 4;
 
     private static int windowSecond = -1;
     private static int windowCount;
+    /** 上一次真正发出去的参数：用来识别"同一状态的重复"。 */
+    private static int[] lastPayload;
+    private static int lastPayloadSecond = Integer.MIN_VALUE;
     private static boolean throttledHinted;
 
     private MolangSyncSender() {}
@@ -43,16 +58,20 @@ public final class MolangSyncSender {
         if (modelId == null) {
             return 0.0d;
         }
-        if (!allow(System.nanoTime() / 1_000_000_000L)) {
+        // 先算参数再判限流：判定本身要看参数有没有变化。
+        int[] values = toIntArray(arguments);
+        if (!allow(System.nanoTime() / 1_000_000_000L, values)) {
             if (!throttledHinted) {
                 throttledHinted = true;
                 if (Config.DEBUG_ANIMATION) {
-                    ysmu.LOG.info("[YSMU-SYNC] ysm.sync 每秒最多一次，后续调用被忽略（只提示一次）");
+                    ysmu.LOG.info(
+                        "[YSMU-SYNC] repeated ysm.sync calls are limited to once per second (and {} sends per "
+                            + "second in total); further calls are ignored (noted once)",
+                        MAX_PER_SECOND);
                 }
             }
             return 0.0d;
         }
-        int[] values = toIntArray(arguments);
         NetworkHandler.CHANNEL.sendToServer(new C2SMolangSync(modelId, values));
         if (Config.DEBUG_ANIMATION) {
             ysmu.LOG.info("[YSMU-SYNC] ysm.sync({}) sent for {}", java.util.Arrays.toString(values), modelId);
@@ -74,21 +93,38 @@ public final class MolangSyncSender {
         return values;
     }
 
-    static synchronized boolean allow(long nowSeconds) {
+    /**
+     * 限流判定（纯逻辑，便于单测）：见 {@link #MAX_PER_SECOND} 的说明。
+     * <ul>
+     *   <li>参数与上一次发出的一样 → 同一状态的重复 → 同一秒内只放行一次，且**不占**硬上限
+     *       （模型每帧重试不会把额度吃光）；</li>
+     *   <li>参数变了 → 状态切换 → 立刻放行；</li>
+     *   <li>无论哪种，每秒总数不超过 {@link #MAX_PER_SECOND}（防"每帧换一个参数"刷屏）。</li>
+     * </ul>
+     */
+    static synchronized boolean allow(long nowSeconds, int[] values) {
         if (nowSeconds != windowSecond) {
             windowSecond = (int) nowSeconds;
             windowCount = 0;
+        }
+        boolean samePayload = lastPayload != null && java.util.Arrays.equals(lastPayload, values);
+        if (samePayload && nowSeconds == lastPayloadSecond) {
+            return false;
         }
         if (windowCount >= MAX_PER_SECOND) {
             return false;
         }
         windowCount++;
+        lastPayload = values == null ? null : values.clone();
+        lastPayloadSecond = (int) nowSeconds;
         return true;
     }
 
     static synchronized void resetThrottle() {
         windowSecond = -1;
         windowCount = 0;
+        lastPayload = null;
+        lastPayloadSecond = Integer.MIN_VALUE;
         throttledHinted = false;
     }
 }

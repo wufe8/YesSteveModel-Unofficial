@@ -33,24 +33,69 @@ import software.bernie.geckolib3.core.molang.MolangStringPool;
  * <p>字符串参数经 {@link MolangStringPool} 池化为整数 id，求值时刻还原；
  * 实体上下文由 {@link ParticleEffectUtil#setCurrentEntity} 每帧写入，
  * 当前模型 id 由 {@link MolangPhysicsRuntime#getCurrentModelId} 提供。</p>
+ *
+ * <h3>为什么按名字拆成三个子类</h3>
+ * <p>{@link Function} 的构造器**在子类字段赋值之前**就调用 {@code getRequiredArguments()}
+ * 校验实参个数（{@code Function:11}）。所以"最少几个参数"只能由**类**决定，不能像原来那样
+ * 从构造器里才赋值的 {@code stop}/{@code stopAll} 字段推导 —— 旧实现读到的永远是未初始化的
+ * {@code false}，三个名字一律要求 2 个参数，于是 1 参的
+ * {@code ysm.stop_sound('id')}（文档允许的写法）和 0 参的 {@code ysm.stop_all_sounds()}
+ * 直接抛 "requires at least 2 arguments"，被 mclib 包成
+ * {@code MolangException: Couldn't parse '…' expression!}。</p>
+ * <p>后果远不止这一条语句：{@code .molang} 脚本是**整份先解析再执行**的
+ * （{@link MolangScriptInterpreter}），一条表达式解析失败会让整个文件永不执行 ——
+ * 某个模型的 {@code @player_update} 文件里同时放着按键鸣笛、随机鸣笛与轮胎旋转，
+ * 一处 1 参 {@code stop_sound} 就把这一整批逻辑全部废掉（实机日志：
+ * {@code [YSMU-MOLANG-SCRIPT] … player_update failed to execute}）。</p>
  */
-public class YsmSoundFunction extends Function {
+public abstract class YsmSoundFunction extends Function {
 
     private final boolean stopAll;
     private final boolean stop;
 
-    public YsmSoundFunction(IValue[] values, String name) throws Exception {
+    YsmSoundFunction(IValue[] values, String name, boolean stop, boolean stopAll) throws Exception {
         super(values, name);
-        this.stopAll = name != null && name.contains("stop_all");
-        this.stop = !stopAll && name != null && name.contains("stop_sound");
+        this.stop = stop;
+        this.stopAll = stopAll;
     }
 
-    @Override
-    public int getRequiredArguments() {
-        if (stopAll) {
+    /** {@code ysm.play_sound(id, sound_name, flags?, volume?, pitch?)}：至少 2 个参数。 */
+    public static final class Play extends YsmSoundFunction {
+
+        public Play(IValue[] values, String name) throws Exception {
+            super(values, name, false, false);
+        }
+
+        @Override
+        public int getRequiredArguments() {
+            return 2;
+        }
+    }
+
+    /** {@code ysm.stop_sound(id, global?)}：至少 1 个参数。 */
+    public static final class Stop extends YsmSoundFunction {
+
+        public Stop(IValue[] values, String name) throws Exception {
+            super(values, name, true, false);
+        }
+
+        @Override
+        public int getRequiredArguments() {
+            return 1;
+        }
+    }
+
+    /** {@code ysm.stop_all_sounds(global?)}：可以 0 个参数。 */
+    public static final class StopAll extends YsmSoundFunction {
+
+        public StopAll(IValue[] values, String name) throws Exception {
+            super(values, name, false, true);
+        }
+
+        @Override
+        public int getRequiredArguments() {
             return 0;
         }
-        return stop ? 1 : 2;
     }
 
     @Override
