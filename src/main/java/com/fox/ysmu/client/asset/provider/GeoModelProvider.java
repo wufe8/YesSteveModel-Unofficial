@@ -35,6 +35,9 @@ public final class GeoModelProvider implements AssetProvider<ResourceLocation, G
             // reloaded GeoModel (dropping previously injected VirtualBones); forget the
             // injection flag so they are re-injected from the (reloaded) animation.
             com.fox.ysmu.client.model.CustomPlayerModel.clearInjectedCache(geoId);
+            // 还要让模型实例松开对这份几何的强引用（currentModel / 骨骼登记）——
+            // 只从 GeckoLibCache 里移除的话，堆内存释放不掉，见 onGeoModelReleased 的说明。
+            com.fox.ysmu.client.model.CustomPlayerModel.onGeoModelReleased(geo);
         }
     }
 

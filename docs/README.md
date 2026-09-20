@@ -27,6 +27,7 @@
 | [`analysis/animation-controller-priority.md`](analysis/animation-controller-priority.md) | 控制器注册顺序与骨骼覆盖：后执行的控制器覆盖先执行的、每帧处理链、cap/parallel/main 的优先级 |
 | [`analysis/animation-length-semantics.md`](analysis/animation-length-semantics.md) | `animation_length` 缺省语义：缺省=最后关键帧、`Double.MAX_VALUE` 哨兵、循环/防滑步/动画完成三个消费点 |
 | [`analysis/geometry-cube-sanitization.md`](analysis/geometry-cube-sanitization.md) | 几何清理：负尺寸 cube 的两趟 `CULL_FRONT` 渲染、零面积 UV 面删除、何时保留/归一化 |
+| [`analysis/geometry-memory-lifecycle.md`](analysis/geometry-memory-lifecycle.md) | 几何/动画/贴图的动态卸载与重加载机制；派生缓存（顶点缓冲、按模型的身份缓存）必须遵守的三条不变式；渲染优化与它的交叉检查结论 |
 | [`analysis/roaming-variable-scope.md`](analysis/roaming-variable-scope.md) | 常驻变量 `v.roaming.*` 与 `v.*` 是两个命名空间；YSMU 为什么要写裸名别名、别名覆盖模型自己变量的现象与自校准修法、验证方式 |
 | [`analysis/keyframe-molang-channels.md`](analysis/keyframe-molang-channels.md) | 模型里 Molang 的四条通道（脚本函数 / 关键帧值 / timeline / 动画控制脚本）各由哪段代码执行、事件触发顺序、`@sync` 的包与限流、以及 `ctrl.state_pause`/`state_stop`/`reset` 尚未接线的边界 |
 | [`analysis/molang-custom-functions.md`](analysis/molang-custom-functions.md) | `.molang` 自定义函数：`fn.*`/`args[]`/`t.*`/循环/事件订阅/动画控制脚本的已实现范围，以及 `state_pause`/`state_stop`/`reset` 播放语义、非主槽位等剩余缺口 |

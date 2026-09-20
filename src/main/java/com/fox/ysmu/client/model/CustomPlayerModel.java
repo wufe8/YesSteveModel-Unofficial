@@ -409,6 +409,34 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         INJECTED_LOCATIONS.remove(location);
     }
 
+    /**
+     * 资源框架释放一份几何（{@code ReleaseMode.DROP_HEAP}）时调用，把 {@code model}
+     * 转达给渲染器持有的那一个模型实例，让它松手（丢骨骼登记 + 清 {@code currentModel}）。
+     *
+     * <p>见 {@link AnimatedGeoModel#onModelReleased(GeoModel)}：不这么做的话，"最后渲染过的
+     * 那份几何"会一直被强引用，{@code DROP_HEAP} 只搬走了 GeckoLibCache 里的登记项，
+     * 堆内存并没有真的释放。渲染器实例在客户端初始化后才存在，所以这里全程容错：
+     * 拿不到实例（关服/早期）就没有东西需要松手。
+     */
+    public static void onGeoModelReleased(GeoModel model) {
+        if (model == null) {
+            return;
+        }
+        try {
+            com.fox.ysmu.client.renderer.CustomPlayerRenderer renderer =
+                com.fox.ysmu.client.ClientProxy.getInstance();
+            if (renderer == null) {
+                return;
+            }
+            AnimatedGeoModel provider = renderer.getGeoModelProvider();
+            if (provider != null) {
+                provider.onModelReleased(model);
+            }
+        } catch (Throwable ignored) {
+            // 未初始化 / 正在关闭：没有需要松手的登记项。
+        }
+    }
+
     private void injectVirtualBones(ResourceLocation location) {
         AnimationFile animFile = GeckoLibCache.getInstance().getAnimations().get(location);
         if (animFile == null) return;

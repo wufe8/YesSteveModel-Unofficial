@@ -76,6 +76,29 @@ public class AnimationProcessor<T extends IAnimatable> {
         return currentRegistration.byName;
     }
 
+    /**
+     * 资源框架把某个 {@link GeoModel} 释放（{@code ReleaseMode.DROP_HEAP}）时调用：
+     * 丢掉它的骨骼登记结果。
+     *
+     * <p>为什么必须显式丢：弱键只保证"键不可达时条目会消失"，但只要还有别的地方强引用这份
+     * 几何（{@link software.bernie.geckolib3.model.AnimatedGeoModel#getCurrentModel()} 就是
+     * 一个），条目就一直活着，骨骼表连同它引用的 cube 几何也跟着留在堆上 —— 这一侧的
+     * 释放就白做了。释放后若再渲染到它，拿到的必然是重新解析出来的**新** GeoModel 对象，
+     * 身份缓存未命中会重建，所以丢掉是安全的。
+     */
+    public void forgetModel(GeoModel model) {
+        if (model == null) {
+            return;
+        }
+        ModelRegistration removed = registrations.remove(model);
+        if (removed != null && removed == currentRegistration) {
+            // 控制器还各自持有这份 byName 的引用（它们会在下一次 process() 换成新模型的），
+            // 处理器自己至少不能再钉着它。
+            currentRegistration = new ModelRegistration();
+            modelRendererList = currentRegistration.bones;
+        }
+    }
+
     /** YSMU: Clear the per-frame deduplication cache so the next tickAnimation()
      *  call is guaranteed to process animation even for the same entity+seekTime.
      *  Used by GUI preview rendering (ModelButton FBOs) where multiple renders of

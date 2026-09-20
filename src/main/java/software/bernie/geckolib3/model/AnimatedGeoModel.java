@@ -133,6 +133,24 @@ public abstract class AnimatedGeoModel<T extends IAnimatable> extends GeoModelPr
         return currentModel;
     }
 
+    /**
+     * 资源框架释放这份几何（{@code ReleaseMode.DROP_HEAP}，见 {@code GeoModelProvider}）时调用。
+     *
+     * <p>两件事：让处理器丢掉骨骼登记；清掉 {@link #currentModel} 对它的强引用 ——
+     * 后者只被赋新值、从不置空，于是"最后渲染过的那份几何"即使被淘汰也永远释放不掉
+     * （骨骼表引用的 cube 几何跟着一起留）。释放后若再次渲染到该模型，取到的是重新解析出的
+     * 新对象，会正常重建。
+     */
+    public void onModelReleased(GeoModel model) {
+        if (model == null) {
+            return;
+        }
+        this.animationProcessor.forgetModel(model);
+        if (this.currentModel == model) {
+            this.currentModel = null;
+        }
+    }
+
     @Override
     public double getCurrentTick() {
         return (Minecraft.getSystemTime() / 50d);

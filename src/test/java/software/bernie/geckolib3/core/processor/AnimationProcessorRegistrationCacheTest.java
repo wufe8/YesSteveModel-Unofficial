@@ -89,4 +89,29 @@ class AnimationProcessorRegistrationCacheTest {
         assertEquals(1, processor.getModelRendererList()
             .size(), "换模型要整体换骨骼表，不是往里追加");
     }
+
+    /**
+     * 资源框架释放几何（{@code DROP_HEAP}）时必须显式让它松手：弱键只保证"键不可达时条目
+     * 消失"，而 {@code AnimatedGeoModel.currentModel} 等地方还强引用着这份几何，条目会一直
+     * 活着，骨骼表连同 cube 几何也留在堆上。释放后再渲染到它是重新解析出的新对象，
+     * 必须走"重新登记"。
+     */
+    @Test
+    void aReleasedModelDropsItsRegistration() throws Exception {
+        AnimationProcessor<IAnimatable> processor = processor();
+        GeoModel model = model("released_bone");
+
+        assertFalse(processor.selectModel(model));
+        register(processor, model);
+        assertEquals(1, processor.getBoneByNameMap()
+            .size());
+
+        processor.forgetModel(model);
+
+        assertEquals(0, processor.getBoneByNameMap()
+            .size(), "释放后处理器不能再钉着这份骨骼表");
+        assertEquals(0, processor.getModelRendererList()
+            .size());
+        assertFalse(processor.selectModel(model), "释放后再见到它必须重新登记（重建骨骼表）");
+    }
 }
