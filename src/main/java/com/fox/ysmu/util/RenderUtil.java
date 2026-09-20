@@ -366,10 +366,66 @@ public final class RenderUtil {
         GlStateManager.popMatrix();
     }
 
-    public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
+    /** 作废某模型的姿态签名（见 {@link PreviewPoseCache}）：FBO 被重建、翻页/换模型、
+     *  悬停或 gui 动画切换后调用，下一次渲染必然执行。 */
+    public static void invalidatePreviewPose(ResourceLocation modelId) {
+        PreviewPoseCache.invalidate(modelId);
+    }
+
+    /** 全部作废（模型重载 / 断线时用）。 */
+    public static void clearPreviewPoseCache() {
+        PreviewPoseCache.clear();
+    }
+
+    /** 姿态量化的步长：1/64（旋转 0.9°、位移 1/64 格）。见 {@link #quantize}。 */
+    private static final float POSE_QUANTUM = 64.0F;
+
+    /** 把骨骼分量量化成整数：小于一个步长的移动不触发重画。误差上限步长的一半，
+     *  在缩略图尺寸下是亚像素。 */
+    private static int quantize(float value) {
+        return Math.round(value * POSE_QUANTUM);
+    }
+
+    /**
+     * 模型骨骼的姿态签名：每根骨的旋转/位移/缩放/隐藏，加几何对象与贴图身份。
+     * 相同 = 再画一次会得到逐像素一样的画面。
+     */
+    private static long previewPoseSignature(AnimatedGeoModel provider, GeoModel model, ResourceLocation textureId) {
+        long h = 1125899906842597L;
+        h = h * 31 + System.identityHashCode(model);
+        if (textureId != null) {
+            h = h * 31 + textureId.hashCode();
+        }
+        if (provider != null) {
+            // getModelRendererList() 返回的是 raw List（vendored GeckoLib 的泛型擦除），所以显式转换。
+            for (Object entry : provider.getAnimationProcessor()
+                .getModelRendererList()) {
+                software.bernie.geckolib3.core.processor.IBone bone =
+                    (software.bernie.geckolib3.core.processor.IBone) entry;
+                // 量化到 1/64：旋转 0.9°、位移 1/64 格（scale 30 时约 0.25 px）—— 都在亚像素级，
+                // 所以"没有大变化就不重画"不会看出来；而模型的 idle/preview 动画每帧都在微小移动，
+                // 用逐位比较的话签名永远不同、一次也省不下来（实测探针里顶点速率毫无下降）。
+                h = h * 31 + quantize(bone.getRotationX());
+                h = h * 31 + quantize(bone.getRotationY());
+                h = h * 31 + quantize(bone.getRotationZ());
+                h = h * 31 + quantize(bone.getPositionX());
+                h = h * 31 + quantize(bone.getPositionY());
+                h = h * 31 + quantize(bone.getPositionZ());
+                h = h * 31 + quantize(bone.getScaleX());
+                h = h * 31 + quantize(bone.getScaleY());
+                h = h * 31 + quantize(bone.getScaleZ());
+                if (bone.isHidden()) {
+                    h = h * 31 + 1;
+                }
+            }
+        }
+        return h;
+    }
+
+    public static boolean renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, Consumer<CustomPlayerEntity> consumer) {
         if (player == null) {
-            return;
+            return false;
         }
         RENDERING_IN_INVENTORY = true;
         try {
@@ -381,13 +437,15 @@ public final class RenderUtil {
                 // predicateMain/predicateCap check player==null for GUI path.
                 entity.setPlayer(null);
                 consumer.accept(entity);
-                renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity);
+                return renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId,
+                    renderer, entity);
             }
         } catch (Exception e) {
             suppressRenderError("renderEntityInInventory[" + modelId + "]", e);
         } finally {
             RENDERING_IN_INVENTORY = false;
         }
+        return false;
     }
 
     public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
@@ -401,11 +459,27 @@ public final class RenderUtil {
 
     /** 带预览旋转开关的完整版：disablePreviewRotation=true 时固定正面视角
      *  （renderModel 内通过 yOffset/不旋转实现），ModelButton 预览页使用。 */
-    public static void renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
+    /** @return {@code true} = 这一帧真的提交了几何；{@code false} = 姿态没变，复用了缓存的画面
+     *  （调用方据此决定要不要把耗时喂给刷新预算）。 */
+    public static boolean renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, Consumer<CustomPlayerEntity> consumer,
         boolean disablePreviewRotation) {
+        return renderEntityInInventory(pPosX, pPosY, pScale, player, modelId, textureId, consumer,
+            disablePreviewRotation, null);
+    }
+
+    /**
+     * 缩略图烘焙用：允许"姿态没变就跳过几何提交"，并把 FBO 的清除推迟到真正要画的时候。
+     *
+     * @param clearBeforeDraw 只在确实要画之前调用一次（见 {@link #renderModel}）。
+     * @return {@code true} = 真的提交了几何；{@code false} = 复用了上一帧缓存的画面（调用方
+     *         据此决定要不要把耗时喂给刷新预算 —— 跳过时不应喂，否则频率会被推高、tick 变多）。
+     */
+    public static boolean renderEntityInInventory(int pPosX, int pPosY, int pScale, EntityPlayer player,
+        ResourceLocation modelId, ResourceLocation textureId, Consumer<CustomPlayerEntity> consumer,
+        boolean disablePreviewRotation, Runnable clearBeforeDraw) {
         if (player == null) {
-            return;
+            return false;
         }
         RENDERING_IN_INVENTORY = true;
         try {
@@ -452,28 +526,45 @@ public final class RenderUtil {
                 if (software.bernie.geckolib3.resource.GeckoLibCache.getInstance()
                     .getGeoModels()
                     .get(previewMainId) == null) {
-                    return;
+                    return false;
                 }
-                renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId, renderer, entity, disablePreviewRotation);
+                return renderModel((double) pPosX, (double) pPosY, (float) pScale, player, modelId, textureId,
+                    renderer, entity, disablePreviewRotation, clearBeforeDraw, true);
             }
         } catch (Exception e) {
             suppressRenderError("renderEntityInInventory(" + modelId + ",disablePreviewRotation)", e);
         } finally {
             RENDERING_IN_INVENTORY = false;
         }
+        return false;
     }
 
-    private static void renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
+    private static boolean renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, GeoReplacedEntityRenderer renderer,
         CustomPlayerEntity entity) {
-        renderModel(pPosX, pPosY, pScale, player, modelId, textureId, renderer, entity, false);
+        return renderModel(pPosX, pPosY, pScale, player, modelId, textureId, renderer, entity, false, null, false);
     }
 
-    private static void renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
+    private static boolean renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
         ResourceLocation modelId, ResourceLocation textureId, GeoReplacedEntityRenderer renderer,
         CustomPlayerEntity entity, boolean disablePreviewRotation) {
+        return renderModel(pPosX, pPosY, pScale, player, modelId, textureId, renderer, entity,
+            disablePreviewRotation, null, false);
+    }
+
+    /**
+     * @param clearBeforeDraw 只有**确实要画**的时候才调用（调用方传进来的 FBO 清除动作）。
+     *        必需这么一个回调：否则"先清空 FBO 再发现姿态没变而跳过"会留下空白缩略图。
+     * @param allowPoseSkip 是否允许"姿态与上次相同就跳过几何提交"。纹理页那些"同一个模型换贴图"
+     *        的按钮不要开（同一模型不同贴图会互相顶掉签名，开了没有收益）；缩略图页开。
+     */
+    private static boolean renderModel(double pPosX, double pPosY, float pScale, EntityPlayer player,
+        ResourceLocation modelId, ResourceLocation textureId, GeoReplacedEntityRenderer renderer,
+        CustomPlayerEntity entity, boolean disablePreviewRotation, Runnable clearBeforeDraw,
+        boolean allowPoseSkip) {
         // Suppress sound playback during GUI preview rendering — GeckoLib animation
         // keyframes would otherwise play sounds when just hovering over a model button.
+        boolean[] rendered = { false };
         YSMSoundManager.setPreviewRendering(true);
         try {
         ResourceLocation mainModelId = ModelIdUtil.getMainId(modelId);
@@ -579,8 +670,12 @@ public final class RenderUtil {
                 if (renderer.getGeoModelProvider() instanceof IAnimatableModel) {
                     ((IAnimatableModel<CustomPlayerEntity>) renderer.getGeoModelProvider()).setLivingAnimations(entity, entity.hashCode(), predicate);
                 }
+                if (clearBeforeDraw != null) {
+                    clearBeforeDraw.run();
+                }
                 Minecraft.getMinecraft().getTextureManager().bindTexture(provider.getTextureLocation(entity));
                 renderer.render(model, entity, 0, 1.0f, 1.0f, 1.0f, 1.0f);
+                rendered[0] = true;
             } else {
                 withGuiEntityLighting(() -> {
                     AnimatedGeoModel provider = renderer.getGeoModelProvider();
@@ -590,8 +685,23 @@ public final class RenderUtil {
                     if (renderer.getGeoModelProvider() instanceof IAnimatableModel) {
                         ((IAnimatableModel<CustomPlayerEntity>) renderer.getGeoModelProvider()).setLivingAnimations(entity, entity.hashCode(), predicate);
                     }
+                    // 姿态与上一次真正画出去的完全相同 → 跳过几何提交，FBO 里的画面直接复用
+                    // （此时**不能**清 FBO）。只跳过几何，动画 tick（上面那句 setLivingAnimations）
+                    // 照常跑：眨眼要靠它推进才知道"什么时候变了"。
+                    if (allowPoseSkip) {
+                        com.fox.ysmu.util.GeoStats.notePoseCheck();
+                        if (PreviewPoseCache.shouldSkip(mainModelId,
+                            previewPoseSignature(provider, model, textureId))) {
+                            com.fox.ysmu.util.GeoStats.notePoseSkip();
+                            return;
+                        }
+                    }
+                    if (clearBeforeDraw != null) {
+                        clearBeforeDraw.run();
+                    }
                     Minecraft.getMinecraft().getTextureManager().bindTexture(provider.getTextureLocation(entity));
                     renderer.render(model, entity, 0, 1.0f, 1.0f, 1.0f, 1.0f);
+                    rendered[0] = true;
                 });
             }
         } finally {
@@ -616,6 +726,7 @@ public final class RenderUtil {
         } finally {
             YSMSoundManager.setPreviewRendering(false);
         }
+        return rendered[0];
     }
 
     /**

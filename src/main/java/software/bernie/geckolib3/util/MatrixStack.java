@@ -26,6 +26,11 @@ public class MatrixStack {
 
     private Matrix4f tempModelMatrix = new Matrix4f();
     private Matrix3f tempNormalMatrix = new Matrix3f();
+    // YSMU perf: cube 专用矩阵（见 beginCube）——没有自身旋转时直接引用栈顶，不拷贝。
+    private final Matrix4f cubeModel = new Matrix4f();
+    private final Matrix3f cubeNormal = new Matrix3f();
+    private Matrix4f cubeModelRef = cubeModel;
+    private Matrix3f cubeNormalRef = cubeNormal;
     // YSMU perf: Pre-allocated temp matrices — avoids 6× new Matrix4f() + 4× new Matrix3f()
     // per bone in transformBone() and rotate(GeoCube).
     private final Matrix4f tempTransform = new Matrix4f();
@@ -298,6 +303,79 @@ public class MatrixStack {
             this.tempNormalMatrix.mul(this.tempNormalTransform);
         }
         normalStack[depth - 1].mul(this.tempNormalMatrix);
+    }
+
+    /**
+     * YSMU perf: 算出这个 cube 的最终矩阵（栈顶 × 它的局部变换 {@code T(pivot)·Rz·Ry·Rx·T(-pivot)}），
+     * **不改动栈**，随后用 {@link #getCubeModelMatrix()}/{@link #getCubeNormalMatrix()} 取。
+     *
+     * <p>为什么不让 cube 入栈：旧实现是 {@code push() → moveToPivot → rotate → moveBackFromPivot → pop()}
+     * —— 每个 cube 一次 16+9 个浮点拷贝的入栈、两次多余的平移乘法、三次旋转乘法（外加法线侧
+     * 六次），而 cube 的数量通常比骨骼多一到两个数量级，一次烘焙要发几百到几千个。合成之后：
+     * <ul>
+     *   <li>自身旋转为 0 的 cube（绝大多数）→ 局部变换恰好是单位矩阵，**直接引用栈顶，零拷贝零乘法**；</li>
+     *   <li>有旋转的 cube → 1 次 4x4 乘法 + 1 次 3x3 乘法，拷进专用的 cube 矩阵。</li>
+     * </ul>
+     *
+     * <p>对调用方语义不变：改前"push + renderCube + pop"得到的最终矩阵，与这里算出的
+     * {@code 栈顶 × 局部} 完全相同；而 renderCube 不再改栈，所以外层的 push/pop 变成可省的
+     * 冗余（{@code IGeoRenderer.renderBoneCubes} 已去掉）。
+     */
+    public void beginCube(GeoCube cube) {
+        float rx = cube.rotation.x;
+        float ry = cube.rotation.y;
+        float rz = cube.rotation.z;
+        if (rx == 0f && ry == 0f && rz == 0f) {
+            // T(p) × T(-p) = I：栈顶就是它。
+            this.cubeModelRef = modelStack[depth - 1];
+            this.cubeNormalRef = normalStack[depth - 1];
+            return;
+        }
+        float px = cube.pivot.x / 16f;
+        float py = cube.pivot.y / 16f;
+        float pz = cube.pivot.z / 16f;
+
+        this.tempModelMatrix.setIdentity();
+        this.tempModelMatrix.m03 = px;
+        this.tempModelMatrix.m13 = py;
+        this.tempModelMatrix.m23 = pz;
+        this.tempTransform.rotZ(rz);
+        this.tempModelMatrix.mul(this.tempTransform);
+        this.tempTransform.rotY(ry);
+        this.tempModelMatrix.mul(this.tempTransform);
+        this.tempTransform.rotX(rx);
+        this.tempModelMatrix.mul(this.tempTransform);
+        this.tempTransform.setIdentity();
+        this.tempTransform.m03 = -px;
+        this.tempTransform.m13 = -py;
+        this.tempTransform.m23 = -pz;
+        this.tempModelMatrix.mul(this.tempTransform);
+
+        this.cubeModel.set(modelStack[depth - 1]);
+        this.cubeModel.mul(this.tempModelMatrix);
+        this.cubeModelRef = this.cubeModel;
+
+        this.tempNormalMatrix.setIdentity();
+        this.tempNormalTransform.rotZ(rz);
+        this.tempNormalMatrix.mul(this.tempNormalTransform);
+        this.tempNormalTransform.rotY(ry);
+        this.tempNormalMatrix.mul(this.tempNormalTransform);
+        this.tempNormalTransform.rotX(rx);
+        this.tempNormalMatrix.mul(this.tempNormalTransform);
+
+        this.cubeNormal.set(normalStack[depth - 1]);
+        this.cubeNormal.mul(this.tempNormalMatrix);
+        this.cubeNormalRef = this.cubeNormal;
+    }
+
+    /** 当前 cube 的最终模型矩阵（{@link #beginCube} 之后有效）。只读。 */
+    public Matrix4f getCubeModelMatrix() {
+        return cubeModelRef;
+    }
+
+    /** 当前 cube 的最终法线矩阵（{@link #beginCube} 之后有效）。只读。 */
+    public Matrix3f getCubeNormalMatrix() {
+        return cubeNormalRef;
     }
 
     public void rotate(GeoCube bone) {

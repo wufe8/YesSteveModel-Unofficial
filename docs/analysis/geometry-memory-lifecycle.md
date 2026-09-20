@@ -62,7 +62,25 @@
 5. 验收：单元测试只能覆盖预算/淘汰策略；实机检查"长时间翻页后堆与显存不涨"，
    必要时加一个按模型/按类别的占用读数（现有 F3 只报 HUD/预览 FBO 的频率与耗时）。
 
-## 5. 相关代码位置
+## 5. 几何提交优化的分批与它的资源影响
+
+- **第一批（已做）**：只动 CPU 侧 —— cube 局部变换合成一次并去掉 cube 级 push/pop
+  （`MatrixStack.beginCube`，与旧三步序列数值等价，`MatrixStackCubeTransformTest` 锁住）、
+  `renderCube` 里把颜色提到 cube 级、法线提到面级、顶点变换展开成标量乘法。
+  **不新增任何 GPU 资源、不缓存任何几何派生数据**，所以与本文第 2 节的三条不变式没有交叉，
+  也不需要新的释放钩子。
+- **第二批（未做，视采样结果）**：把逐顶点 `Tessellator.addVertexWithUV` 换成向它的原始缓冲
+  批量写入（省掉每顶点的分支/游标维护）。这一步会**直接依赖 Tessellator 的内部布局**，
+  而且 Angelica 的 `TessellatorStreamingDrawer`/`VertexFormat` 也在读同一块缓冲，必须先确认
+  格式一致、并保留走 API 的退化路径。
+- 若将来引入 per-model 顶点缓冲（VBO），按第 2、4 节：弱键 + `release()` 里删 GL 对象 +
+  计入显存账 + 自带上限。
+- 顺带记一笔**渲染路径上的死开关**：`GeoBone.dontRender`（来自模型里的 `neverRender`）与
+  `cubesAreHidden`/`setCubesHidden` 目前都没有任何消费者（`grep` 只有定义处）。
+  实现它们会让"标了 neverRender 的骨骼"从此不渲染 —— 那是**可见的行为变化**，需要先对
+  官方客户端确认语义（当前模型库里实测 0 个 `neverRender`，所以不是现实问题）。
+
+## 6. 相关代码位置
 
 - `client/asset/{AssetCache,AssetManager,AssetHandle,ReleaseMode}.java`、`asset/provider/{GeoModelProvider,AnimationProvider}.java`
 - `client/ClientModelManager.java`：`unloadUnusedCaches()`、`unloadIdleTextures()`、`isIdleEvictionSuppressed()`、`TEXTURE_*` 常量、`ensureTexturesLoaded()`、`restoreTextureData()`

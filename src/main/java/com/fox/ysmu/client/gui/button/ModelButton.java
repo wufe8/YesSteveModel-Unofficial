@@ -53,6 +53,9 @@ public class ModelButton extends GuiButton {
     private boolean modelCacheWasHovered = false;
     private int modelCacheFramesUntilRefresh = 0;
     private int modelCacheLastRefreshInterval = -1;
+    /** 上一次烘焙用的 FBO 尺寸：尺寸一变说明 FBO 被重建，缓存画面作废、姿态签名也要作废。 */
+    private int modelCacheFbW = -1;
+    private int modelCacheFbH = -1;
     /** 自动模式的墙钟累加器；只在 {@code Config.GUI_MODEL_PREVIEW_REFRESH < 0} 时使用。 */
     private final PreviewRefreshPolicy.Tracker previewRefresh = new PreviewRefreshPolicy.Tracker();
 
@@ -288,6 +291,18 @@ public class ModelButton extends GuiButton {
             int scale = new ScaledResolution(mc, mc.displayWidth, mc.displayHeight).getScaleFactor();
             int fbW = this.width * scale;
             int fbH = (this.height - 20) * scale;
+            // FBO 尺寸变了（窗口缩放 / 换了 GUI scale）→ 里面的画面作废，必须重画一次：
+            // 姿态签名可能没变（模型静止），只有这里知道"缓存内容已经没了"。
+            if (fbW != modelCacheFbW || fbH != modelCacheFbH) {
+                modelCacheFbW = fbW;
+                modelCacheFbH = fbH;
+                RenderUtil.invalidatePreviewPose(mainModelId);
+            }
+            // 悬停/焦点动画切换、翻页或模型被标记为脏：这些变化不一定体现在骨骼姿态里
+            // （可能是换了动画、换了贴图），所以一律作废签名强制重绘。
+            if (hoverChanged || animChanged || modelCacheDirty) {
+                RenderUtil.invalidatePreviewPose(mainModelId);
+            }
 
             // Ensure FBO exists with correct size (the outer if already determined
             // that a re-render is needed — don't gate on checkAndResize's return
@@ -295,8 +310,8 @@ public class ModelButton extends GuiButton {
             fboCache.checkAndResize(fbW, fbH, 0);
             fboCache.bind();
                 GL11.glViewport(0, 0, fbW, fbH);
-                GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
-                GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+                // 注意：这里**不**清 FBO。清除动作作为回调传给 RenderUtil，只有真的决定要画时
+                // 才执行 —— 姿态没变会被跳过，先清就会留下空白缩略图。
 
                 GL11.glMatrixMode(GL11.GL_PROJECTION);
                 GL11.glPushMatrix();
@@ -312,7 +327,7 @@ public class ModelButton extends GuiButton {
                     // Preview uses the model's default_texture, not the first texture.
                     final ResourceLocation previewTex = ClientModelManager.resolveDefaultTexture(mainModelId, modelInfo.getRight());
                     long bakeStart = System.nanoTime();
-                    RenderUtil.renderEntityInInventory(
+                    boolean poseRendered = RenderUtil.renderEntityInInventory(
                         this.xPosition + this.width / 2, this.yPosition + this.height / 2 + 20, 30,
                         mc.thePlayer, modelInfo.getLeft(), previewTex,
                         entity -> {
@@ -328,9 +343,17 @@ public class ModelButton extends GuiButton {
                                 entity.setPreviewAnimation("");
                             }
                         },
-                        disablePreviewRotation);
+                        disablePreviewRotation,
+                        () -> {
+                            GL11.glClearColor(0.0F, 0.0F, 0.0F, 0.0F);
+                            GL11.glClear(GL11.GL_COLOR_BUFFER_BIT | GL11.GL_DEPTH_BUFFER_BIT);
+                        });
                     // 自动模式的花费换算：整页共享预算 ÷ 可见数量 ÷ 这个单次成本。
-                    PreviewRefreshPolicy.noteBake((System.nanoTime() - bakeStart) / 1.0e6F);
+                    // 姿态没变时跳过了几何提交（只剩动画 tick），**不能**把那点耗时喂给预算：
+                    // 否则估计成本会塌到零、频率被推到上限，而每次 tick 的开销反而成倍增加。
+                    if (poseRendered) {
+                        PreviewRefreshPolicy.noteBake((System.nanoTime() - bakeStart) / 1.0e6F);
+                    }
                 } finally {
                     GL11.glMatrixMode(GL11.GL_PROJECTION);
                     GL11.glPopMatrix();

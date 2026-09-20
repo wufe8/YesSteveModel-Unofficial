@@ -116,6 +116,8 @@ public class AnimationProcessor<T extends IAnimatable> {
     // model mismatch issues.
     public void tickAnimation(IAnimatable entity, Integer uniqueID, double seekTime, AnimationEvent event,
         MolangParser parser, boolean crashWhenCantFindBone) {
+        // TEMP probe: 见 com.fox.ysmu.util.GeoStats
+        com.fox.ysmu.util.GeoStats.noteAnimTick();
         AnimationRenderState renderState = AnimationRenderState.from(seekTime, event);
         if (renderState.equals(animatedEntities.get(uniqueID))) {
             return;

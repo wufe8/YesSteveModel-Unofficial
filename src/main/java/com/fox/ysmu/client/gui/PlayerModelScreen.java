@@ -334,8 +334,12 @@ public class PlayerModelScreen extends GuiScreen {
         String pageInfo = String.format("%d/%d", page + 1, this.maxPage + 1);
         this.drawString(fontRendererObj, pageInfo, x + 138 + (282 - fontRendererObj.getStringWidth(pageInfo)) / 2, y + 223 - fontRendererObj.FONT_HEIGHT / 2, 0xF3EFE0);
 
-        String debugInfo = String.format("%s-%s", "1.7.10", Tags.VERSION)
-            + "  |  " + com.fox.ysmu.client.renderer.PreviewRefreshPolicy.describeMode();
+        // 预览刷新状态单独一行、放在版本号上面：两者原本拼在一行（"1.7.10-<版本> | preview FBO .."），
+        // 从左下角一直伸到"前一页/后一页"按钮底下，被按钮挡住后恰好把频率读数盖掉。
+        // 频率是这一页最常看的一个数，所以它单独占一行（约 20 字符，不会碰到按钮）。
+        this.drawString(fontRendererObj, com.fox.ysmu.client.renderer.PreviewRefreshPolicy.describeMode(),
+            x + 2, y + 216, 0x777777);
+        String debugInfo = String.format("%s-%s", "1.7.10", Tags.VERSION);
         this.drawString(fontRendererObj, debugInfo, x + 2, y + 226, 0x555555);
         // super.render -> super.drawScreen, 这会绘制所有按钮
         super.drawScreen(mouseX, mouseY, partialTicks);

@@ -53,6 +53,7 @@ public interface IGeoRenderer<T> {
             renderRecursively(tess, animatable, group, red, green, blue, alpha);
         }
 
+        com.fox.ysmu.util.GeoStats.noteFlush();
         Tessellator.instance.draw();
 
         renderAfter(model, animatable, partialTicks, red, green, blue, alpha);
@@ -167,15 +168,15 @@ public interface IGeoRenderer<T> {
         }
 
         if (!anyNeg) {
-            // Single pass: all cubes are positive-size
+            // Single pass: all cubes are positive-size.
+            // renderCube 不再改动矩阵栈（见 MatrixStack#beginCube），所以这里不需要 push/pop。
             for (GeoCube cube : bone.childCubes) {
-                MATRIX_STACK.push();
                 renderCube(builder, cube, red, green, blue, alpha);
-                MATRIX_STACK.pop();
             }
             return;
         }
 
+        com.fox.ysmu.util.GeoStats.noteFlush();
         Tessellator.instance.draw();
 
         // ── Pass 1: negative-size cubes (CULL_FRONT → back faces only) ──
@@ -184,10 +185,9 @@ public interface IGeoRenderer<T> {
         GL11.glCullFace(GL11.GL_FRONT);
         for (GeoCube cube : bone.childCubes) {
             if (!cube.hasNegSize) continue;
-            MATRIX_STACK.push();
             renderCube(builder, cube, red, green, blue, alpha);
-            MATRIX_STACK.pop();
         }
+        com.fox.ysmu.util.GeoStats.noteFlush();
         Tessellator.instance.draw();
         GL11.glCullFace(GL11.GL_BACK);
         GL11.glDisable(GL11.GL_CULL_FACE);
@@ -196,25 +196,33 @@ public interface IGeoRenderer<T> {
         Tessellator.instance.startDrawing(GL11.GL_QUADS);
         for (GeoCube cube : bone.childCubes) {
             if (cube.hasNegSize) continue;
-            MATRIX_STACK.push();
             renderCube(builder, cube, red, green, blue, alpha);
-            MATRIX_STACK.pop();
         }
+        com.fox.ysmu.util.GeoStats.noteFlush();
         Tessellator.instance.draw();
 
         Tessellator.instance.startDrawing(GL11.GL_QUADS);
     }
 
     default void renderCube(Tessellator builder, GeoCube cube, float red, float green, float blue, float alpha) {
-        MATRIX_STACK.moveToPivot(cube);
-        MATRIX_STACK.rotate(cube);
-        MATRIX_STACK.moveBackFromPivot(cube);
+        // 原来这里是 push + moveToPivot + rotate + moveBackFromPivot + pop（入栈拷贝 25 个浮点、
+        // 5 次模型矩阵乘法 + 6 次法线矩阵乘法）。现在算出 cube 的最终矩阵但**不入栈**：
+        // 没有自身旋转的 cube（绝大多数）直接引用栈顶，零拷贝零乘法。
+        MATRIX_STACK.beginCube(cube);
+        // TEMP probe: 见 com.fox.ysmu.util.GeoStats（定位几何提交用，定位完删）
+        com.fox.ysmu.util.GeoStats.noteCube(cube.quads.length * 4);
 
         boolean flat = !cube.mesh && (cube.size.x == 0 || cube.size.y == 0 || cube.size.z == 0);
         if (flat) {
             GlStateManager.enablePolygonOffset();
             GlStateManager.doPolygonOffset(-1.0F, -10.0F);
         }
+
+        // 颜色在整个 draw 里是常量：原来每个顶点调一次 setColorRGBA_F（每 cube 24 次），
+        // 提到 cube 一级。Tessellator 里它只是一个字段，后面的 addVertex 读它。
+        builder.setColorRGBA_F(red, green, blue, alpha);
+        final javax.vecmath.Matrix4f model = MATRIX_STACK.getCubeModelMatrix();
+        final javax.vecmath.Matrix3f normalMatrix = MATRIX_STACK.getCubeNormalMatrix();
 
         for (GeoQuad quad : cube.quads) {
             if (quad == null) continue;
@@ -225,8 +233,7 @@ public interface IGeoRenderer<T> {
                 RENDER_TEMP_NORMAL.set(quad.normalVector);
             }
 
-            MATRIX_STACK.getNormalMatrix()
-                .transform(RENDER_TEMP_NORMAL);
+            normalMatrix.transform(RENDER_TEMP_NORMAL);
 
             /*
              * Fix shading dark shading for flat cubes + compatibility wish Optifine shaders
@@ -241,14 +248,19 @@ public interface IGeoRenderer<T> {
                 RENDER_TEMP_NORMAL.z *= -1;
             }
 
-            for (GeoVertex vertex : quad.vertices) {
-                RENDER_TEMP_VEC.set(vertex.position.x, vertex.position.y, vertex.position.z, 1.0F);
+            // 法线是"每个面"的量：原来每个顶点调一次 setNormal（4 倍冗余），提到面一级。
+            builder.setNormal(RENDER_TEMP_NORMAL.x, RENDER_TEMP_NORMAL.y, RENDER_TEMP_NORMAL.z);
 
-                MATRIX_STACK.getModelMatrix()
-                    .transform(RENDER_TEMP_VEC);
-                builder.setColorRGBA_F(red, green, blue, alpha);
-                builder.setNormal(RENDER_TEMP_NORMAL.x, RENDER_TEMP_NORMAL.y, RENDER_TEMP_NORMAL.z);
-                builder.addVertexWithUV(RENDER_TEMP_VEC.x, RENDER_TEMP_VEC.y, RENDER_TEMP_VEC.z,
+            for (GeoVertex vertex : quad.vertices) {
+                // 展开 4x4 × vec4：省掉 RENDER_TEMP_VEC 的 set/读回和 vecmath 的通用实现。
+                // 结果与 `model.transform(vec4(x, y, z, 1))` 逐位相同（只取了 xyz）。
+                final float vx = vertex.position.x;
+                final float vy = vertex.position.y;
+                final float vz = vertex.position.z;
+                builder.addVertexWithUV(
+                    model.m00 * vx + model.m01 * vy + model.m02 * vz + model.m03,
+                    model.m10 * vx + model.m11 * vy + model.m12 * vz + model.m13,
+                    model.m20 * vx + model.m21 * vy + model.m22 * vz + model.m23,
                     vertex.textureU, vertex.textureV);
             }
         }
