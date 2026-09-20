@@ -142,6 +142,98 @@ public final class OpenYsmAnimationControllerRegistry {
         return set != null && set.controllers.containsKey(controllerName);
     }
 
+    /**
+     * {@code player.<slot>_<后缀>} 的槽位族名（{@code slot}，如 {@code pre_main}）；不是
+     * 槽位后缀控制器返回 {@code null}（基槽位 {@code player.pre_main} 本身也算"不是"）。
+     * <p>
+     * 官方对同一槽位下带后缀的名字也发独立控制器（OpenYSM {@code ControllerSlotBinder} 的
+     * {@code controllerNameMatcher = ^player\.<slot>(_.+){0,1}$}），族名就是匹配到的那一段。
+     */
+    public static String slotFamilyOf(String controllerName) {
+        if (controllerName == null) {
+            return null;
+        }
+        String name = controllerName.startsWith("player.")
+            ? controllerName.substring("player.".length())
+            : controllerName;
+        for (String slot : com.fox.ysmu.util.ControllerUtils.OPENYSM_SLOTS) {
+            if (name.length() > slot.length() + 1
+                && name.startsWith(slot)
+                && name.charAt(slot.length()) == '_') {
+                return slot;
+            }
+        }
+        return null;
+    }
+
+    /** 槽位后缀控制器的一项：承载它的池控制器需要知道"属于哪个槽位族"以及要跑哪个 JSON 控制器。 */
+    public static final class SlotExtra {
+
+        /** 槽位族名（{@code pre_main} / {@code post_main} / …），决定 Root 骨骼与组顺序的处理。 */
+        public final String family;
+        /**
+         * 控制脚本槽位名（{@code <slot>_<后缀>}）。
+         * 官方对 {@code @player_ctrl_<slot>_<后缀>.molang} 也发控制器，所以池控制器同样按这个名字
+         * 去查控制脚本；模型没写这个脚本时查不到，回落到 JSON 控制器。
+         */
+        public final String controlSlot;
+        /** 当前模型里这个后缀对应的 JSON 控制器键（{@code ControllerSet#controllers} 里的原拼写）。 */
+        public final String controllerKey;
+
+        SlotExtra(String family, String controlSlot, String controllerKey) {
+            this.family = family;
+            this.controlSlot = controlSlot;
+            this.controllerKey = controllerKey;
+        }
+
+        @Override
+        public String toString() {
+            return controllerKey;
+        }
+    }
+
+    /**
+     * 当前模型的槽位后缀控制器路由表：第 i 项由第 i 个池控制器
+     * （{@code openysm_slot_extra_<i>_controller}）承载。
+     * <p>
+     * 顺序按名字**小写形式**排序（{@code TreeMap}），理由与
+     * wiki「动画控制器」2.6.3 的"同一组内的控制器按名称字母序排序后依次加载"一致，
+     * 也让路由表在同一份模型内稳定可复现。只收 {@code set.controllers} 里真实存在的条目
+     * （带 states 的）：只声明空 states 的占位名没有状态机可跑，占了池位就是浪费。
+     * <p>
+     * 列表按模型缓存在 {@link ControllerSet} 上，池控制器的谓词每帧都会问一次。
+     */
+    public static List<SlotExtra> slotExtraControllers(ResourceLocation animationId) {
+        ControllerSet set = animationId == null ? null : CONTROLLERS.get(animationId);
+        if (set == null) {
+            return Collections.emptyList();
+        }
+        List<SlotExtra> cached = set.slotExtraCache;
+        if (cached != null) {
+            return cached;
+        }
+        // key 用小写形式去重（同一个槽位可能同时写了 player. 前缀与短名），value 保留首次见到的拼写。
+        java.util.TreeMap<String, SlotExtra> ordered = new java.util.TreeMap<>();
+        for (String name : set.controllers.keySet()) {
+            if (name == null) {
+                continue;
+            }
+            String family = slotFamilyOf(name);
+            if (family == null) {
+                continue;
+            }
+            int suffixStart = (name.startsWith("player.") ? "player.".length() : 0) + family.length() + 1;
+            String suffix = name.substring(suffixStart);
+            String controlSlot = family + "_" + suffix;
+            ordered.putIfAbsent(controlSlot.toLowerCase(java.util.Locale.ROOT), new SlotExtra(family, controlSlot, name));
+        }
+        List<SlotExtra> list = ordered.isEmpty()
+            ? Collections.emptyList()
+            : new ArrayList<>(ordered.values());
+        set.slotExtraCache = list;
+        return list;
+    }
+
     /** True when the model declares any parallel controller
      *  ({@code player.pre_parallel_*} / {@code player.parallel_*}).
      *  <p>A model that ships parallel controllers owns those animations: it

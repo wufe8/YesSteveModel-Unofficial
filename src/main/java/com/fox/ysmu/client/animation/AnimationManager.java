@@ -287,6 +287,11 @@ public final class AnimationManager {
             || geckoControllerName.startsWith("parallel_extra_")) {
             return null;
         }
+        // 槽位后缀备用池（openysm_slot_extra_N_controller）同理：要控制的是运行时路由到的
+        // player.<slot>_<后缀>（如 pre_main_mecha_mgr），名字只有运行时路由知道。
+        if (geckoControllerName.startsWith(com.fox.ysmu.util.ControllerUtils.SLOT_EXTRA_CONTROLLER_PREFIX)) {
+            return null;
+        }
         if (geckoControllerName.startsWith("player.")) {
             return geckoControllerName.substring("player.".length());
         }
@@ -324,6 +329,10 @@ public final class AnimationManager {
         if (animId == null
             || !com.fox.ysmu.client.animation.molang.MolangScriptRegistry.hasScripts(animId)) {
             return null;
+        }
+        // 槽位后缀备用池：名字里没有槽位名，按当前模型路由到 player.<slot>_<后缀> 对应的脚本槽位。
+        if (OpenYsmPlayerControllerRuntime.isSlotExtraController(name)) {
+            return OpenYsmPlayerControllerRuntime.slotExtraControlSlot(animId, name);
         }
         return OpenYsmPlayerControllerRuntime.namedParallelControlSlot(animId, name);
     }
@@ -480,7 +489,8 @@ public final class AnimationManager {
             // 骨骼关键帧与 timeline/音效/粒子事件都吃同一个 tick。先按"不动内置逻辑"处理。
             if (Config.DEBUG_CONTROLLER && LOGGED_CONTROL_SCRIPT.add(animId + "|" + slot + "|pause")) {
                 com.fox.ysmu.ysmu.LOG.info(
-                    "[YSMU-CTRLSCRIPT] {} slot '{}' requested state_pause — GeckoLib 无暂停原语，保持内置逻辑",
+                    "[YSMU-CTRLSCRIPT] {} slot '{}' requested state_pause - GeckoLib has no pause-without-stopping-clock "
+                        + "primitive, keeping the built-in logic",
                     animId, slot);
             }
             return null;
@@ -488,7 +498,9 @@ public final class AnimationManager {
         if (result.reset()) {
             // wiki：ctrl.reset = 立刻重置控制器至初始状态、粗暴中止当前动画，并含 indicate_reload。
             if (Config.DEBUG_CONTROLLER && LOGGED_CONTROL_SCRIPT.add(animId + "|" + slot + "|reset")) {
-                com.fox.ysmu.ysmu.LOG.info("[YSMU-CTRLSCRIPT] {} slot '{}' ctrl.reset -> 中止当前动画并重置控制器状态",
+                com.fox.ysmu.ysmu.LOG.info(
+                    "[YSMU-CTRLSCRIPT] {} slot '{}' ctrl.reset -> aborting the current animation and resetting the "
+                        + "controller state",
                     animId, slot);
             }
             return new ControlScriptDecision(null, true, true);
@@ -500,7 +512,8 @@ public final class AnimationManager {
             // 被写成 0，见那里的 TODO）。所以这里只能做到"中止"，"平滑"要改 vendored 才能做。
             if (Config.DEBUG_CONTROLLER && LOGGED_CONTROL_SCRIPT.add(animId + "|" + slot + "|stop")) {
                 com.fox.ysmu.ysmu.LOG.info(
-                    "[YSMU-CTRLSCRIPT] {} slot '{}' state_stop -> 中止当前动画（平滑淡出未实现）",
+                    "[YSMU-CTRLSCRIPT] {} slot '{}' state_stop -> aborting the current animation (smooth fade-out "
+                        + "not implemented)",
                     animId, slot);
             }
             return new ControlScriptDecision(null, true, false);

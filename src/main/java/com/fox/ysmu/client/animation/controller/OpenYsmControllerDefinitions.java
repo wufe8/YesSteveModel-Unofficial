@@ -38,6 +38,10 @@ final class OpenYsmControllerDefinitions {
          *  缓存掉的是每次一整个 ArrayList + 若干 ControllerMatch 的分配和一组 map 查找。 */
         final Map<String, List<OpenYsmPlayerControllerRuntime.ControllerMatch>> routeCache =
             new java.util.concurrent.ConcurrentHashMap<>();
+        /** 槽位后缀控制器的池路由表（见
+         *  {@link OpenYsmAnimationControllerRegistry#slotExtraControllers}）。
+         *  只依赖"这个 set 里有哪些控制器名"，注册后不再变化，所以懒算一次即可。 */
+        volatile List<OpenYsmAnimationControllerRegistry.SlotExtra> slotExtraCache;
     }
 
     /** 具名并行槽位表的缓存项：算出这份列表时的脚本表版本 + 结果。 */

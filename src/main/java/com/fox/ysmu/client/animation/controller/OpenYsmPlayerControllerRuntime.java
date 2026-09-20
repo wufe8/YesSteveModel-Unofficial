@@ -1130,11 +1130,20 @@ public final class OpenYsmPlayerControllerRuntime {
         // keep Root so sneaking_Control's crouch lowering [0,-7.625,0] and the
         // walk body bob are not silently stripped.
         String ctrlName = event.getController().getName();
-        boolean excludeRoot = ctrlName != null
-            && !MAIN_CONTROLLER.equals(ctrlName)
-            && !OPENYSM_PRE_MAIN_CONTROLLER.equals(ctrlName)
-            && !ctrlName.startsWith("parallel_")
-            && !ctrlName.startsWith("pre_parallel_");
+        boolean excludeRoot;
+        if (isSlotExtraController(ctrlName)) {
+            // 池承载的槽位后缀控制器与它的**基槽位控制器**同样处理 Root：只有玩家主动画
+            // （main_controller）与 player.pre_main 保留 Root。pre_main 的后缀控制器必须保留 ——
+            // 那类动画（形态切换/起飞降落）整段都是全身 Root 位移，剔掉 Root 就等于没动。
+            OpenYsmAnimationControllerRegistry.SlotExtra slotExtra = routeSlotExtra(animationId, ctrlName);
+            excludeRoot = slotExtra == null || !"pre_main".equals(slotExtra.family);
+        } else {
+            excludeRoot = ctrlName != null
+                && !MAIN_CONTROLLER.equals(ctrlName)
+                && !OPENYSM_PRE_MAIN_CONTROLLER.equals(ctrlName)
+                && !ctrlName.startsWith("parallel_")
+                && !ctrlName.startsWith("pre_parallel_");
+        }
         // Resolve every contributing animation once. The list feeds both the bone
         // merge and the bounded timeline scheduler (see buildTimelineContributors) —
         // it is never rebuilt per frame beyond this single pass.
@@ -1919,7 +1928,60 @@ public final class OpenYsmPlayerControllerRuntime {
     private static final java.util.regex.Pattern PARALLEL_EXTRA_CONTROLLER =
         java.util.regex.Pattern.compile("^(?:player\\.)?(pre_parallel|parallel)_extra_(\\d+)_controller$");
 
-    private static List<ControllerMatch> resolveControllers(ControllerSet set, ResourceLocation animationId,
+    /** 槽位后缀控制器的共享备用池控制器名：{@code openysm_slot_extra_<序号>_controller}。 */
+    private static final java.util.regex.Pattern SLOT_EXTRA_CONTROLLER =
+        java.util.regex.Pattern.compile("^"
+            + java.util.regex.Pattern.quote(com.fox.ysmu.util.ControllerUtils.SLOT_EXTRA_CONTROLLER_PREFIX)
+            + "(\\d+)_controller$");
+
+    /** 名字是不是槽位后缀备用池控制器。谓词路径每帧都问，所以先用廉价的 startsWith 挡掉绝大多数。 */
+    public static boolean isSlotExtraController(String geckoControllerName) {
+        return geckoControllerName != null
+            && geckoControllerName.startsWith(com.fox.ysmu.util.ControllerUtils.SLOT_EXTRA_CONTROLLER_PREFIX)
+            && SLOT_EXTRA_CONTROLLER.matcher(geckoControllerName).matches();
+    }
+
+    /**
+     * 槽位后缀池控制器的路由：第 i 个池控制器承载当前模型第 i 个
+     * {@code player.<slot>_<后缀>}（见
+     * {@link OpenYsmAnimationControllerRegistry#slotExtraControllers}）。
+     *
+     * <p>池控制器名里没有模型信息，所以路由必须按当前模型算——与具名并行槽位同样的理由：
+     * {@code registerControllers} 对每个 animatable 只跑一次，而模型可以随时切换。</p>
+     *
+     * @return 路由到的条目；不是池控制器、或该下标在当前模型里没有对应后缀控制器时返回 {@code null}
+     */
+    public static OpenYsmAnimationControllerRegistry.SlotExtra routeSlotExtra(ResourceLocation animationId,
+        String geckoControllerName) {
+        if (animationId == null || geckoControllerName == null) {
+            return null;
+        }
+        java.util.regex.Matcher matcher = SLOT_EXTRA_CONTROLLER.matcher(geckoControllerName);
+        if (!matcher.matches()) {
+            return null;
+        }
+        int index = Integer.parseInt(matcher.group(1));
+        java.util.List<OpenYsmAnimationControllerRegistry.SlotExtra> entries =
+            OpenYsmAnimationControllerRegistry.slotExtraControllers(animationId);
+        return index < entries.size() ? entries.get(index) : null;
+    }
+
+    /**
+     * 池控制器本帧应该交给动画控制脚本的**槽位名**（{@code <slot>_<后缀>}）。
+     * <p>
+     * {@code AnimationManager.controlSlotName()} 对池名故意返回 null（模型里没有这个槽位名，
+     * 真正的名字只有这里知道），所以那里必须补上这次路由 —— 与具名并行槽位
+     * （{@link #namedParallelControlSlot}）完全同一个套路。
+     *
+     * @return 槽位名；不是池控制器、或没路由到条目时返回 {@code null}
+     */
+    public static String slotExtraControlSlot(ResourceLocation animationId, String geckoControllerName) {
+        OpenYsmAnimationControllerRegistry.SlotExtra route = routeSlotExtra(animationId, geckoControllerName);
+        return route == null ? null : route.controlSlot;
+    }
+
+    /** 包内可见（单测直接断言"名字 → 匹配列表"）：{@link ControllerSet#routeCache} 缓存它。 */
+    static List<ControllerMatch> resolveControllers(ControllerSet set, ResourceLocation animationId,
         String geckoControllerName) {
         // 名字 → 匹配列表的解析只依赖这个模型的控制器表，缓存到 ControllerSet 上
         // （set 发布后不再被改动，见 ControllerSet#routeCache 的说明）。
@@ -1934,6 +1996,19 @@ public final class OpenYsmPlayerControllerRuntime {
         if (namedRoute != null) {
             if (namedRoute.controllerKey != null) {
                 addMatch(matches, set, namedRoute.controllerKey);
+            }
+            List<ControllerMatch> stored = matches.isEmpty() ? java.util.Collections.emptyList() : matches;
+            set.routeCache.put(geckoControllerName, stored);
+            return stored;
+        }
+        // 槽位后缀控制器的共享备用池：名字里没有模型信息，路由按当前模型算
+        // （wiki「动画控制器」2.6.3：同一组内的控制器按名称字母序排序后依次加载；
+        // 官方对 player.pre_main_* 这类带后缀的名字也各发一个独立控制器）。
+        if (isSlotExtraController(geckoControllerName)) {
+            OpenYsmAnimationControllerRegistry.SlotExtra slotExtra =
+                routeSlotExtra(animationId, geckoControllerName);
+            if (slotExtra != null) {
+                addMatch(matches, set, slotExtra.controllerKey);
             }
             List<ControllerMatch> stored = matches.isEmpty() ? java.util.Collections.emptyList() : matches;
             set.routeCache.put(geckoControllerName, stored);
@@ -1980,12 +2055,18 @@ public final class OpenYsmPlayerControllerRuntime {
         }
         // (缓存写入统一放在最后，见方法末尾)
         // 模糊匹配：player.post_main → player.post_main_<anything>
-        // 用于车辆动画等带后缀的槽位控制器
+        // 用于车辆动画等带后缀的槽位控制器。
+        // 已经被槽位后缀备用池承载的那些**不在这里**再加一遍：池控制器会让它们各自作为独立
+        // 控制器运行（与官方一致），而基槽位的这条模糊规则是"取第一个非空匹配"，两者同时命中
+        // 就是同一份动画在两个控制器里各播一遍 —— 骨骼结果一样，但 timeline/音效/粒子关键帧
+        // 会触发两次。只有池放不下（配置调小、或模型的槽位后缀比池大）时才退回这条老路径。
         if (geckoControllerName.endsWith("_main") || geckoControllerName.endsWith("_hold")
             || geckoControllerName.endsWith("_swing") || geckoControllerName.endsWith("_use")) {
             String prefix = geckoControllerName + "_";
+            java.util.List<OpenYsmAnimationControllerRegistry.SlotExtra> poolExtras =
+                OpenYsmAnimationControllerRegistry.slotExtraControllers(animationId);
             for (String key : set.controllers.keySet()) {
-                if (key.startsWith(prefix)) {
+                if (key.startsWith(prefix) && !isClaimedBySlotExtraPool(poolExtras, key)) {
                     addMatch(matches, set, key);
                 }
             }
@@ -1993,6 +2074,27 @@ public final class OpenYsmPlayerControllerRuntime {
         List<ControllerMatch> stored = matches.isEmpty() ? java.util.Collections.emptyList() : matches;
         set.routeCache.put(geckoControllerName, stored);
         return stored;
+    }
+
+    /**
+     * 这个后缀控制器是否已经由槽位后缀备用池承载（即池下标 &lt; {@code Config.SLOT_EXTRA_CONTROLLERS}）。
+     * <p>
+     * 池承载的必须从基槽位的模糊匹配里排除，否则同一份动画会在基槽位控制器和池控制器里各播一遍
+     * （骨骼结果相同，但每份 {@code RuntimeState} 各自推进 timeline，音效/粒子/自定义指令会触发两次）。
+     * 池放不下的（配置调小、或模型声明的后缀比池大）返回 false，由基槽位的"第一个非空匹配"兜底。
+     */
+    private static boolean isClaimedBySlotExtraPool(
+        java.util.List<OpenYsmAnimationControllerRegistry.SlotExtra> poolExtras, String controllerKey) {
+        if (controllerKey == null || poolExtras.isEmpty()) {
+            return false;
+        }
+        int carried = Math.min(Config.SLOT_EXTRA_CONTROLLERS, poolExtras.size());
+        for (int i = 0; i < carried; i++) {
+            if (controllerKey.equals(poolExtras.get(i).controllerKey)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -2281,9 +2383,9 @@ public final class OpenYsmPlayerControllerRuntime {
         }
     }
 
-    /** 包内可见：{@link OpenYsmControllerDefinitions.ControllerSet#routeCache} 缓存它。 */
+    /** 包内可见：{@link OpenYsmControllerDefinitions.ControllerSet#routeCache} 缓存它，单测读 {@code controller.name}。 */
     static final class ControllerMatch {
-        private final Controller controller;
+        final Controller controller;
 
         private ControllerMatch(Controller controller) {
             this.controller = controller;

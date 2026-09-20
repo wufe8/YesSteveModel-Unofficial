@@ -192,12 +192,18 @@ public class AnimationProcessor<T extends IAnimatable> {
                     float valueX = MathUtil.lerpValues(rXPoint, controller.easingType, controller.customEasingMethod);
                     float valueY = MathUtil.lerpValues(rYPoint, controller.easingType, controller.customEasingMethod);
                     float valueZ = MathUtil.lerpValues(rZPoint, controller.easingType, controller.customEasingMethod);
-                    pointData.rotationValueX += valueX;
-                    pointData.rotationValueY += valueY;
-                    pointData.rotationValueZ += valueZ;
-                    bone.setRotationX(valueX + initialSnapshot.rotationValueX);
-                    bone.setRotationY(valueY + initialSnapshot.rotationValueY);
-                    bone.setRotationZ(valueZ + initialSnapshot.rotationValueZ);
+                    // YSMU: wiki「并行动画」——`parallel` 族的旋转是"特殊的混合"：与低优先级层相加，
+                    // 而不是覆盖（"这个混合仅会混合旋转，不会混合位移和缩放"；OpenYSM 对 parallel
+                    // 注册 deprecatedMode=true，走 vector3f.add(value)）。position/scale 仍然覆盖。
+                    // 不这样做的话，一个"pre_parallel 转轮胎 + parallel 转向"的模型里，后处理的
+                    // parallel 会把整条 rotation 向量覆盖掉，轮胎就不转了。
+                    boolean additive = controller.isAdditiveRotation();
+                    pointData.rotationValueX = combineRotation(pointData.rotationValueX, valueX, additive);
+                    pointData.rotationValueY = combineRotation(pointData.rotationValueY, valueY, additive);
+                    pointData.rotationValueZ = combineRotation(pointData.rotationValueZ, valueZ, additive);
+                    bone.setRotationX(pointData.rotationValueX + initialSnapshot.rotationValueX);
+                    bone.setRotationY(pointData.rotationValueY + initialSnapshot.rotationValueY);
+                    bone.setRotationZ(pointData.rotationValueZ + initialSnapshot.rotationValueZ);
                     snapshot.rotationValueX = bone.getRotationX();
                     snapshot.rotationValueY = bone.getRotationY();
                     snapshot.rotationValueZ = bone.getRotationZ();
@@ -352,6 +358,22 @@ public class AnimationProcessor<T extends IAnimatable> {
             }
         }
         manager.isFirstTick = false;
+    }
+
+    /**
+     * YSMU: 一个骨骼的 rotation 通道被多个控制器依次写时的取值规则。
+     *
+     * <p>wiki「并行动画」：{@code parallel} 族是"特殊的混合动画"——它的旋转与**低优先级层相加**，
+     * 而不是覆盖（"这个混合仅会混合旋转，不会混合位移和缩放"）。OpenYSM 的实现同样是相加：
+     * parallel 族注册 {@code deprecatedMode=true}，{@code AnimationProcessor} 对它们走
+     * {@code vector3f.add(value)}，其余控制器走覆盖。位移/缩放两条通道不走这个函数。</p>
+     *
+     * @param previous 本帧已由低优先级控制器写下的 rotation 偏移分量
+     * @param value    当前控制器这一帧的 rotation 偏移分量
+     * @param additive 当前控制器是否属于 {@code parallel} 族
+     */
+    static float combineRotation(float previous, float value, boolean additive) {
+        return additive ? previous + value : value;
     }
 
     private HashMap<String, DirtyTracker> createNewDirtyTracker() {

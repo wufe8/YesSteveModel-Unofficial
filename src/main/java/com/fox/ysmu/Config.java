@@ -148,6 +148,15 @@ public class Config {
      * 0 = 关闭具名并行槽位（池不注册，具名槽位不播放）。
      */
     public static int NAMED_PARALLEL_EXTRA_SLOTS = ControllerUtils.DEFAULT_NAMED_PARALLEL_EXTRA_SLOTS;
+    /**
+     * 槽位后缀控制器（{@code player.<slot>_<后缀>}，slot ∈ {@link ControllerUtils#OPENYSM_SLOTS}）
+     * 备用池大小。官方把同一槽位下所有名字都当成独立控制器加载并按名字母序叠加，所以一个槽位
+     * 可以同时挂 {@code @player_ctrl_<slot>.molang} 控制脚本和若干 JSON 控制器；YSMU 的
+     * GeckoLib 控制器是按名字固定的（一个槽位一个），只能用一个跨槽位共享的池承载后缀控制器。
+     * 池是每个实体注册的控制器，所以有上限（{@link ControllerUtils#MAX_SLOT_EXTRA_CONTROLLERS}）；
+     * 0 = 关闭（后缀控制器不播放）。
+     */
+    public static int SLOT_EXTRA_CONTROLLERS = ControllerUtils.DEFAULT_SLOT_EXTRA_CONTROLLERS;
     public static int THREAD_COUNT = 4;
     public static int BANDWIDTH_LIMIT = 0;
     public static int PLAYER_SYNC_TIMEOUT = 60;
@@ -267,6 +276,7 @@ public class Config {
         ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Use the unified model sync protocol (covers all model formats: folders, BOM+YSGP and legacy bare-YSGP .ysm). When disabled or version-mismatched, falls back to the legacy MD5/AES sync", load);
         MOLANG_CONTROL_SCRIPTS = syncBoolean("MolangControlScripts", "animation", MOLANG_CONTROL_SCRIPTS, "Execute @player_ctrl_<slot>.molang animation-control scripts every frame (wiki: molang/script). When disabled only the statically extracted state->animation mapping is used", load);
         NAMED_PARALLEL_EXTRA_SLOTS = syncInt("NamedParallelExtraSlots", "animation", NAMED_PARALLEL_EXTRA_SLOTS, "Extra pool controllers registered per parallel family (pre_parallel/parallel) to carry model-named parallel slots (player.pre_parallel_<name>). Each entity registers 2x this many extra controllers, so it is bounded; raise only if a model declares more named slots than the default. 0 disables named parallel slots.", 0, ControllerUtils.MAX_NAMED_PARALLEL_EXTRA_SLOTS, load);
+        SLOT_EXTRA_CONTROLLERS = syncInt("SlotExtraControllers", "animation", SLOT_EXTRA_CONTROLLERS, "Extra pool controllers, shared by all eight player.<slot> slots and routed per model, carrying suffix controllers such as player.pre_main_<suffix> or player.post_main_<suffix>. Upstream registers every name matching ^player\\.<slot>(_.+)?$ as its own controller, so one slot can host a control script plus several JSON controllers; each entity registers this many extra controllers, so it is bounded. Raise only if a model declares more suffixed controllers than the default. 0 disables suffix slot controllers.", 0, ControllerUtils.MAX_SLOT_EXTRA_CONTROLLERS, load);
         THREAD_COUNT = syncInt("ThreadCount", "ysm_sync", THREAD_COUNT, "Target worker count for YSM model sync tasks", 1, 32, load);
         BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
         PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);

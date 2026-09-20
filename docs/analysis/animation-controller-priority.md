@@ -4,13 +4,27 @@
 **控制器注册顺序决定骨骼最终值**这一机制在当前源码中依然成立，且未被任何已提炼文档覆盖，
 故据此写成此文；原文行号对应提交 `9de7944`，之后会漂移，本文改用类/方法名定位。
 
-## 核心不变量：后执行的控制器覆盖先执行的
+## 核心不变量：后执行的控制器覆盖先执行的（**旋转例外：`parallel` 族相加**）
 
 `AnimationProcessor.tickAnimation` 按 `AnimationData.getAnimationControllers().values()` 的
 注册顺序遍历控制器（该 map 是 `LinkedHashMap`，插入序 = 注册序），控制器里直接对骨骼调
 `bone.setRotationX/Y/Z` 与 set position/scale。同一骨骼同一通道被后面的控制器写到就是后者
 生效；某个控制器没动画该骨骼，就保留前者的值。**要调某个骨骼的最终姿态，第一步是确认谁
 最后写它。**
+
+**例外**：wiki「并行动画」写明 `parallel` 族"**采用了特殊的混合动画**……这个混合仅会混合旋转，
+不会混合位移和缩放"——它的 rotation 与低优先级层**相加**而不是覆盖（OpenYSM 的对照实现：
+`parallel` 族注册 `deprecatedMode=true`，processor 对它们走 `vector3f.add(value)`，其余走
+覆盖）。实现点是 `AnimationProcessor.combineRotation(previous, value, additive)`，开关是
+`AnimationController#setAdditiveRotation`：`CustomPlayerEntity` 只给 `parallel_0..7_controller`
+与 `parallel_extra_*_controller` 打开，`pre_parallel*` 保持覆盖。
+
+改成相加是为了修一个可见 bug：模型把轮胎自转写在 `pre_parallel2`
+（`rotation=[v.wheel_rotate,0,0]`）、把前轮转向写在 `parallel4`（`rotation=[0,转向角,0]`）。
+`parallel*` 注册在 `pre_parallel*` 之后，按"后写覆盖"处理时前轮的**整条 rotation 向量**被
+`parallel4` 覆盖成 X=0 → **只有后轮转**。相加后前轮 = 自转 + 转向，两条通道各管一个分量。
+
+回归测试：`ParallelRotationBlendTest`（wiki 的 10+25=35 例子 + 注册时只给 `parallel` 族打开）。
 
 ## 固定注册顺序（`CustomPlayerEntity.registerControllers`）
 

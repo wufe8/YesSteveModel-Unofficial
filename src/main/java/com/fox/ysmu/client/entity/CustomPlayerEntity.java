@@ -95,6 +95,19 @@ public class CustomPlayerEntity implements IAnimatable {
             new AnimationController(this, USE_CONTROLLER, Config.ANIMATION_TRANSITION_TICKS, manager::predicateUse));
         data.addAnimationController(
             new AnimationController(this, OPENYSM_POST_USE_CONTROLLER, 0, manager::predicateOpenYsmSlot));
+        // 槽位后缀控制器（player.<slot>_<后缀>）的共享备用池。
+        // 官方把同一槽位下**所有**匹配 ^player\.<slot>(_.+)?$ 的名字都注册成独立控制器
+        // （OpenYSM ControllerSlotBinder），一个槽位可以同时挂 @player_ctrl_<slot>.molang
+        // 控制脚本和若干 JSON 状态机；YSMU 的 GeckoLib 控制器是按名字固定的，一个槽位只有一个，
+        // 所以这些后缀控制器只能靠固定池 + 运行时路由承载（同具名并行槽位的做法）。
+        // 位置放在所有基槽位之后、cap_controller 之前：wiki 的组顺序把 player.post_main_*
+        // 排在 player.main 之后（本库里出现最多的就是这一族），而池只有一个位置；
+        // 代价是 player.pre_main 后缀（形态切换那类全身动画）也会覆盖身体动画的重叠骨骼，
+        // 而不是反过来被身体动画覆盖。
+        for (int i = 0; i < Config.SLOT_EXTRA_CONTROLLERS; i++) {
+            data.addAnimationController(new AnimationController(this,
+                slotExtraControllerName(i), 0, manager::predicateOpenYsmSlot));
+        }
         // 轮盘动画（cap 控制器：extra0..7 / gui 预览的 hover/focus）在并行族**之前**注册。
         // wiki「并行动画」：pre_parallel 优先级最低（会被主动画覆盖），parallel **优先级最高**
         // （不同 parallel 之间数字越大越高）。GeckoLib 按控制器注册顺序逐骨覆盖，所以
@@ -107,13 +120,17 @@ public class CustomPlayerEntity implements IAnimatable {
             String controllerName = String.format("parallel_%d_controller", i);
             String animationName = String.format("parallel%d", i);
             data.addAnimationController(
-                new AnimationController<>(this, controllerName, 0, e -> manager.predicateParallel(e, animationName)));
+                new AnimationController<>(this, controllerName, 0, e -> manager.predicateParallel(e, animationName))
+                    // wiki「并行动画」：parallel 族是特殊混合动画，**旋转相加**而不是覆盖
+                    // （仅旋转，不含位移/缩放）。见 AnimationController#additiveRotation。
+                    .setAdditiveRotation(true));
         }
         // 高优先级并行族的具名槽位，同样的固定池（parallel_* 有旋转叠加语义，
         // 池控制器走同一条 predicateOpenYsmSlot → tryApplyController 混合路径）。
         for (int i = 0; i < Config.NAMED_PARALLEL_EXTRA_SLOTS; i++) {
             data.addAnimationController(new AnimationController(this,
-                String.format("parallel_extra_%d_controller", i), 0, manager::predicateOpenYsmSlot));
+                String.format("parallel_extra_%d_controller", i), 0, manager::predicateOpenYsmSlot)
+                    .setAdditiveRotation(true));
         }
         // 为每个盔甲槽位注册控制器，使用1-4的索引值。
         // 必须排在并行族**之后**：wiki「护甲动画」要求并行动画把护甲组缩放设成 0、

@@ -221,6 +221,12 @@ public class AnimationController<T extends IAnimatable> {
     // reused by both the transition and running branches to avoid a second
     // HashMap build and to enable lazy BoneAnimationQueue creation.
     private Map<String, IBone> boneNameToBone = new HashMap<>();
+    // YSMU: wiki「并行动画」——`parallel` 族是"特殊的混合动画"，旋转与低优先级层**相加**
+    // （"这个混合仅会混合旋转，不会混合位移和缩放"；OpenYSM 对 parallel 注册 deprecatedMode=true，
+    // 走 `vector3f.add(value)`）。由 CustomPlayerEntity 在注册 parallel 族控制器时打开，
+    // AnimationProcessor 据此决定写回 rotation 时是累加还是覆盖。
+    // 注意 pre_parallel 族**不是**叠加语义（它优先级最低、被主动画覆盖），不要一起打开。
+    private boolean additiveRotation;
     // YSMU: tickOffset for animation frame time tracking
     public double tickOffset;
     // YSMU: the final playback tick of the frame currently being processed
@@ -567,6 +573,17 @@ public class AnimationController<T extends IAnimatable> {
      */
     public String getName() {
         return name;
+    }
+
+    /** YSMU: 见 {@link #additiveRotation}。由宿主在注册 `parallel` 族控制器时打开。 */
+    public AnimationController<T> setAdditiveRotation(boolean additive) {
+        this.additiveRotation = additive;
+        return this;
+    }
+
+    /** YSMU: 该控制器的 rotation 是否与低优先级层相加（`parallel` 族）。 */
+    public boolean isAdditiveRotation() {
+        return this.additiveRotation;
     }
 
     /**
