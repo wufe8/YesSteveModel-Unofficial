@@ -265,6 +265,10 @@ public final class AnimationManager {
     private static final java.util.Set<String> LOGGED_CONTROL_SCRIPT = java.util.concurrent.ConcurrentHashMap
         .newKeySet();
 
+    /** {@code [YSMU-PAR] suppressed} 的去重键（模型|控制器|pending，见 {@code predicateParallel}）。 */
+    private static final java.util.Set<String> PAR_SUPPRESSED_LOGGED =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
     /**
      * GeckoLib 控制器名 → wiki 的槽位名（{@code @player_ctrl_<槽位>.molang} 里那个槽位）。
      *
@@ -815,9 +819,19 @@ public final class AnimationManager {
             }
             if (Config.DEBUG_CONTROLLER && parallelSlot) {
                 // 这个分支还包含"动画文件里还没有这条动画"（懒加载/惰性重载途中）——
-                // 以前它是完全静默的 STOP，正是本轮排查卡住的地方。
-                ysmu.LOG.info("[YSMU-PAR] {} suppressed (no such animation in the loaded file: '{}')", geckoName,
-                    animationName);
+                // 以前它是完全静默的 STOP，正是本轮排查卡住的地方。把"还在懒加载"与
+                // "文件在但没这条"分开打出来：前者等下一帧就有，后者才是模型的问题。
+                //
+                // 按 (模型, 控制器, pending) 去重：这个分支每帧都会走到（模型本来就没定义
+                // 某个数字槽位是常态），不去重时一个不存在的槽位每秒能刷出上百行、把日志
+                // 淹掉，而它要表达的信息只有"哪个槽位最终没播、是加载中还是真没有"。
+                boolean pending = com.fox.ysmu.client.asset.AssetManager.anim(animId)
+                    .isPending();
+                if (PAR_SUPPRESSED_LOGGED.add(animId + "|" + geckoName + "|" + pending)) {
+                    ysmu.LOG.info(
+                        "[YSMU-PAR] {} model={} suppressed (no such animation in the loaded file: '{}', pending={})",
+                        geckoName, animId, animationName, pending);
+                }
             }
             return PlayState.STOP;
         }

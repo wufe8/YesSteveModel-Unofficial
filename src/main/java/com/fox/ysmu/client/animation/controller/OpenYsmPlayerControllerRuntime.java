@@ -1087,9 +1087,18 @@ public final class OpenYsmPlayerControllerRuntime {
         // 否则 空闲 等引用 "empty" 的状态会被过滤为无动画，回到 all_animations_finished
         // 误判的旧 bug 路径。
         if (file == null || file.getAnimation(animationName) == null) {
-            OpenYsmAnimationControllerRegistry.warnOnce(
-                "missing-animation:" + animationId + ":" + animationName,
-                "OpenYSM controller selected missing animation " + animationName + " for " + animationId);
+            // "还没加载回来"不是"模型缺这条动画"：懒加载模式下重动画文件要等
+            // AssetManager.anim(mainId).get() 的后台解密+解析写完 GeckoLibCache 才存在，
+            // 这期间这里对所有名字都返回 false（模型渲染成绑定姿势），但报出来的却像模型
+            // 缺陷。两者对调用方都是一样的 STOP，只有日志要分开：
+            //   - isPending() → 加载中/待加载，静默等下一帧；
+            //   - 否则 → 文件确实在、名字确实不在，报一次（每 模型×名字）。
+            if (!com.fox.ysmu.client.asset.AssetManager.anim(animationId)
+                .isPending()) {
+                OpenYsmAnimationControllerRegistry.warnOnce(
+                    "missing-animation:" + animationId + ":" + animationName,
+                    "OpenYSM controller selected missing animation " + animationName + " for " + animationId);
+            }
             return false;
         }
         return true;
@@ -1206,8 +1215,10 @@ public final class OpenYsmPlayerControllerRuntime {
         if (Config.DEBUG_CONTROLLER && ctrlName != null
             && (ctrlName.startsWith("pre_parallel_") || ctrlName.startsWith("parallel_"))
             && allowDebugLog("CTRL-ANIM-" + ctrlName)) {
-            ysmu.LOG.info("[YSMU-CTRL-ANIM] {} state='{}' animations={} mergedBones={}",
-                ctrlName, state.name, animationNames,
+            // 带模型 id：这条日志不带来源时，多模型（世界渲染 + GUI 预览）同时输出会无法
+            // 归因到具体模型，排查"某个模型状态不对"时看不出是谁。
+            ysmu.LOG.info("[YSMU-CTRL-ANIM] {} model={} state='{}' animations={} mergedBones={}",
+                ctrlName, animationId, state.name, animationNames,
                 mergedBones == null ? -1 : mergedBones.size());
         }
         software.bernie.geckolib3.core.builder.Animation mergedAnim = null;
@@ -1344,8 +1355,8 @@ public final class OpenYsmPlayerControllerRuntime {
             // setAnimation to reset tick to 0 as expected.
             AnimationBuilder builder = new AnimationBuilder().addAnimation(finalName, finalLoop);
             if (Config.DEBUG_CONTROLLER && allowDebugLog("CTRL-PLAY-" + ctrlName)) {
-                ysmu.LOG.info("[YSMU-CTRL-PLAY] {} state='{}' playing='{}' animations={} sameState={}",
-                    ctrlName, state.name, finalName, animationNames, sameState);
+                ysmu.LOG.info("[YSMU-CTRL-PLAY] {} model={} state='{}' playing='{}' animations={} sameState={}",
+                    ctrlName, animationId, state.name, finalName, animationNames, sameState);
             }
             if (sameState) {
                 // Preserve playback position: the animation continues from where it

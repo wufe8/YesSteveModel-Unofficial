@@ -58,6 +58,9 @@ public final class AssetCache<K, V> {
     private final AssetProvider<K, V> provider;
     private final long failedRetryMs;
     private final ConcurrentHashMap<K, Entry<V>> entries = new ConcurrentHashMap<>();
+    /** 每个 key 只报一次"加载成功"/"加载返回 null"（见 {@link #reportLoad}）。 */
+    private final java.util.Set<K> loadedReported = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final java.util.Set<K> nullReported = java.util.concurrent.ConcurrentHashMap.newKeySet();
     /** 清空代次：{@link #clear()} 自增。后台加载在提交时记下代次，主线程应用结果前比对，
      *  不一致说明中途发生过 clear（断线/资源重载），必须丢弃结果而不是 apply。 */
     private final java.util.concurrent.atomic.AtomicLong generation =
@@ -243,6 +246,7 @@ public final class AssetCache<K, V> {
                         e.value = value;
                         e.setState(State.READY);
                         e.lastUsed = System.currentTimeMillis();
+                        reportLoad(key, true);
                     } catch (Throwable t) {
                         ysmu.LOG.warn("Failed to apply {}: {}", key, t.getMessage());
                         e.setState(State.FAILED);
@@ -251,9 +255,31 @@ public final class AssetCache<K, V> {
                 } else {
                     e.setState(State.FAILED);
                     e.failedAt = System.currentTimeMillis();
+                    reportLoad(key, false);
                 }
             });
         });
+    }
+
+    /**
+     * 每次会话里每个 key 报一次加载结果（{@code DebugModelLoad} 门控）。
+     *
+     * <p>懒加载链条上"后台解密/解析拿不到资源"以前是完全静默的：条目只进 FAILED 并每
+     * {@link #failedRetryMs} 重试一次，调用方看到的只是"资源一直不在"。而"资源不在"
+     * 既可能是加载中、也可能是加载失败，两者的排查方向完全不同（前者等，后者修）。
+     * 这条日志把两者分开，也让"模型渲染成绑定姿势"这类症状能直接定位到资源层。</p>
+     */
+    private void reportLoad(K key, boolean ok) {
+        if (!com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            return;
+        }
+        if (ok) {
+            if (loadedReported.add(key)) {
+                ysmu.LOG.info("[YSMU-ASSET] loaded and applied {}", key);
+            }
+        } else if (nullReported.add(key)) {
+            ysmu.LOG.info("[YSMU-ASSET] {} load returned null (will retry every {} ms)", key, failedRetryMs);
+        }
     }
 
     /** 立即释放指定资源（READY→ABSENT 并调用 provider.release；未加载时为 no-op）。
@@ -269,6 +295,12 @@ public final class AssetCache<K, V> {
     private void release(K key, Entry<V> e) {
         if (!e.cas(State.READY, State.ABSENT) && !e.cas(State.LOADING, State.ABSENT)) {
             return;
+        }
+        if (com.fox.ysmu.Config.DEBUG_MODEL_LOAD) {
+            // 释放是"资源消失"的另一个来源：只记"加载成功"看不出"刚加载完就被回收"这种
+            // 释放/重载来回抖的循环，而那正是"模型时好时坏"的一类根因。
+            ysmu.LOG.info("[YSMU-ASSET] released {} (was {})", key,
+                e.value == null ? "loading" : "ready");
         }
         try {
             provider.release(key, e.value, provider.defaultReleaseMode());
