@@ -212,6 +212,18 @@ public final class NetworkHandler {
             Side.CLIENT);
     }
 
+    /**
+     * 上游 Bukkit 侧 NPC 集成的包组（给 NPC / 非本地实体指定模型）。**本树没有接上**：
+     * 这里注册的三个 clientbound 包（{@code OpenModelGuiMessage} / {@code SyncNpcDataMessage} /
+     * {@code UpdateNpcDataMessage}）在整个仓库里都没有发送方，于是
+     * {@code OpenModelGuiMessage.CURRENT_NPC_ID} 恒为 -1、{@code NPCData} 恒为空、
+     * {@code CustomPlayerRenderer} 里的 {@code NPCData.contains(pid)} 分支不可达，
+     * {@code SetNpcModelAndTexture} 也因此收不到请求（真收到了会明确报一条 WARN）。
+     *
+     * <p>保留 id 与类是有意的：这里用显式 discriminator 注册，删掉一个不会让其它 id 位移，
+     * 但外部/旧版对端发过来会变成 unknown discriminator；将来真要做 NPC 支持时这也是一套
+     * 现成接口。1.7.10 端目前只支持玩家模型。</p>
+     */
     private static void initBukkit() {
         CHANNEL.registerMessage(
             OpenModelGuiMessage.Handler.class,

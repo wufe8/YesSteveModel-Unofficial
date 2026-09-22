@@ -104,6 +104,8 @@ Optional-mod integration must be **capability-probed, never version-gated**: dec
 
 The one-shot `[YSMU-COMPAT]` WARN for "the optional mod is not installed / this slot has no 1.7.10 analogue" is **intended output, not noise to silence**: the model really did use a query the target environment cannot answer, and that is an in-scope expected error. Keep it WARN and unconditional (per-key deduplicated) rather than moving it behind `Config.DEBUG_*` or demoting it to INFO; a review that flags these lines as defects is re-opening a settled decision. Only rate-limit or consolidate them if a real log-spam report arrives.
 
+The other member of that family is "NPC model switching is not implemented in the 1.7.10 port" from `SetNpcModelAndTexture.Handler`: the NPC chain (`OpenModelGuiMessage`, `NPCData`, `SyncNpcDataMessage`, `UpdateNpcDataMessage`, the renderer's `NPCData` branch) is upstream Bukkit-side scaffolding that was never wired here, so the request can only be a request the target cannot serve. Keep it a per-`npcId` WARN — the alternative (a silent `return null`, which is what it used to be) is the failure mode this convention exists to avoid.
+
 1.7.10 has no offhand slot, no data-driven item tags and no modern capability lifecycle; map 1.20.1 checks onto vanilla/GTNH behaviour or an existing compat wrapper instead of copying them.
 
 ## Coding Conventions

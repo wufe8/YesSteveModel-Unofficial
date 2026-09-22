@@ -79,6 +79,8 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
             ExtendedModelInfo eep = ExtendedModelInfo.get(player);
             if (eep != null) {
                 this.animatable.setPlayer(player);
+                // NPCData 在本树恒为空（NPC 链没有发送方，见 NetworkHandler#initBukkit），
+                // 这个分支不可达；保留是因为它是"非玩家实体用自己的模型"的接入点。
                 if (NPCData.contains(pid)) {
                     Pair<ResourceLocation, ResourceLocation> data = NPCData.getData(pid);
                     newModel = ModelIdUtil.getMainId(data.left());
