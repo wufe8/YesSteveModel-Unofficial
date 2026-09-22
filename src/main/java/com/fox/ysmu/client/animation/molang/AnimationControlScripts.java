@@ -39,13 +39,15 @@ public final class AnimationControlScripts {
         try {
             // prepare、宿主作用域创建、求值、结果收集都可能有第三方/宿主代码参与，
             // 任何一个环节抛出 RuntimeException 都不能改变动画。
-            String prepared = MolangScriptInterpreter.prepare(body);
+            String prepared = MolangScriptInterpreter.prepareCached(body);
             if (prepared.trim()
                 .isEmpty()) {
                 return new AnimationControlResult();
             }
             AnimationControlScope scope = new AnimationControlScope(innerScope.get());
-            double predicate = MolangScriptInterpreter.evaluate(prepared, scope);
+            // 已经 prepare 过，走 evaluatePrepared：否则 evaluate 会把 prepare 再跑一遍
+            // （剥注释 + 整串小写 + args 改写，三步都幂等，第二遍纯浪费）。
+            double predicate = MolangScriptInterpreter.evaluatePrepared(prepared, scope);
             result = scope.result();
             result.setAction(AnimationControlScope.actionOf(predicate));
         } catch (RuntimeException e) {

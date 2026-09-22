@@ -26,10 +26,27 @@ import software.bernie.geckolib3.geo.render.built.GeoModel;
 class AnimationProcessorRegistrationCacheTest {
 
     private static GeoModel model(String boneName) throws Exception {
+        return modelWithBones(boneName);
+    }
+
+    /** 同一个 geometry 里放多个骨骼，允许重名（用来钉住 getBone 的同名取舍）。 */
+    /** 供同包的 {@code AnimationProcessorTickTableTest} 复用，避免复制一份建模/登记代码。 */
+    static GeoModel modelWithBones(String... boneNames) throws Exception {
+        StringBuilder bones = new StringBuilder();
+        for (int i = 0; i < boneNames.length; i++) {
+            if (i > 0) {
+                bones.append(',');
+            }
+            bones.append("{\"name\":\"")
+                .append(boneNames[i])
+                .append("\",\"pivot\":[0,0,0],")
+                .append("\"cubes\":[{\"origin\":[-1,0,-1],\"size\":[2,2,2],\"uv\":[0,0]}]}");
+        }
         String json = "{\"format_version\":\"1.12.0\",\"minecraft:geometry\":[{"
             + "\"description\":{\"identifier\":\"geometry.test\",\"texture_width\":64,\"texture_height\":64},"
-            + "\"bones\":[{\"name\":\"" + boneName + "\",\"pivot\":[0,0,0],"
-            + "\"cubes\":[{\"origin\":[-1,0,-1],\"size\":[2,2,2],\"uv\":[0,0]}]}]}]}";
+            + "\"bones\":["
+            + bones
+            + "]}]}";
         RawGeoModel raw = Converter.fromJsonString(json);
         return GeoBuilder.getGeoBuilder("ysmu")
             .constructGeoModel(RawGeometryTree.parseHierarchy(raw));
@@ -39,7 +56,8 @@ class AnimationProcessorRegistrationCacheTest {
         return new AnimationProcessor<>(null);
     }
 
-    private static void register(AnimationProcessor<IAnimatable> processor, GeoModel model) {
+    /** 供同包的 {@code AnimationProcessorTickTableTest} 复用。 */
+    static void register(AnimationProcessor<IAnimatable> processor, GeoModel model) {
         for (GeoBone bone : model.topLevelBones) {
             processor.registerModelRenderer(bone);
         }
@@ -88,6 +106,64 @@ class AnimationProcessorRegistrationCacheTest {
             .getName());
         assertEquals(1, processor.getModelRendererList()
             .size(), "换模型要整体换骨骼表，不是往里追加");
+    }
+
+    /**
+     * {@link AnimationProcessor#getBone(String)} 现在走名字索引，不再是
+     * {@code modelRendererList.stream().filter(...).findFirst()}（实测独占客户端线程 2.0%），
+     * 但**同名骨骼的取舍必须一致**：旧实现返回最先登记的那个。
+     */
+    @Test
+    void getBoneFindsByNameAndKeepsFirstWinsOrder() throws Exception {
+        AnimationProcessor<IAnimatable> processor = processor();
+        GeoModel model = modelWithBones("first", "second");
+        assertFalse(processor.selectModel(model));
+        // 几何解析器会把 JSON 里的重名骨骼合并，所以同名只能在解析后直接改出来。
+        GeoBone first = model.topLevelBones.get(0);
+        GeoBone second = model.topLevelBones.get(1);
+        second.name = first.name;
+        register(processor, model);
+
+        assertSame(first, processor.getBone("first"), "同名骨骼要返回最先登记的那个（旧 findFirst 语义）");
+        assertEquals(null, processor.getBone("no_such_bone"), "没有的骨骼必须返回 null");
+
+        // 控制器读的是 byName（last-wins），和 getBone 不是同一份索引，不能互相带偏。
+        assertSame(
+            second,
+            processor.getBoneByNameMap()
+                .get("first"),
+            "byName 仍是 last-wins");
+    }
+
+    /**
+     * 清空骨骼表后 {@code getBone} 必须返回 null —— 旧实现扫的是空表，新索引若漏清就会返回
+     * 已经废掉的骨骼。
+     */
+    @Test
+    void getBoneIsClearedWithTheModelRendererList() throws Exception {
+        AnimationProcessor<IAnimatable> processor = processor();
+        GeoModel model = model("goner");
+        assertFalse(processor.selectModel(model));
+        register(processor, model);
+        assertSame(model.topLevelBones.get(0), processor.getBone("goner"));
+
+        processor.clearModelRendererList();
+
+        assertEquals(null, processor.getBone("goner"), "骨骼表清空后名字索引也必须清空");
+    }
+
+    /** 释放几何后同一个名字不能再命中已经丢掉的登记结果。 */
+    @Test
+    void getBoneIsClearedWhenTheModelIsReleased() throws Exception {
+        AnimationProcessor<IAnimatable> processor = processor();
+        GeoModel model = model("freed");
+        assertFalse(processor.selectModel(model));
+        register(processor, model);
+        assertSame(model.topLevelBones.get(0), processor.getBone("freed"));
+
+        processor.forgetModel(model);
+
+        assertEquals(null, processor.getBone("freed"), "释放后不能再命中旧骨骼");
     }
 
     /**

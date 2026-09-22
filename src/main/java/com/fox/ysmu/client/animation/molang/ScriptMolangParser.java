@@ -36,7 +36,15 @@ import software.bernie.geckolib3.core.molang.MolangStringPool;
  */
 final class ScriptMolangParser extends MolangParser {
 
-    private final MolangScriptInterpreter.MolangScriptScope scope;
+    /**
+     * 当前这次执行的作用域。
+     *
+     * <p><b>可变</b>：这个 parser 会被 {@code MolangScriptInterpreter} 跨帧复用（缓存解析好的 AST），
+     * 每次执行前用 {@link #resetFor} 换绑到新的 scope。AST 里所有"会随执行变化"的引用都指向
+     * **这个 parser**（{@link FrameVariable} / {@link ArgsGetFunction} / {@link ScriptFunctionCall} /
+     * {@link ScopeFunction}），求值时再从这里读当前 scope 与帧栈 —— 所以换绑 scope 就够了。</p>
+     */
+    private MolangScriptInterpreter.MolangScriptScope scope;
     /** 本执行里出现过的变量名 → 动态取值的 LazyVariable（取值时按当前帧解析）。 */
     private final Map<String, LazyVariable> variables = new HashMap<>();
     /** {@code t.*} 的调用帧栈；栈底是脚本文本自己那一层，永远不空。 */
@@ -50,6 +58,30 @@ final class ScriptMolangParser extends MolangParser {
     ScriptMolangParser(MolangScriptInterpreter.MolangScriptScope scope) {
         this.scope = scope;
         this.localFrames.push(new HashMap<>());
+    }
+
+    /**
+     * 把这次执行换绑到 {@code newScope}，并把"本次执行"的状态清干净，让同一个 parser
+     * （连同它解析好的 AST）可以跨帧复用。
+     *
+     * <p>哪些要清、哪些不能清：</p>
+     * <ul>
+     *   <li>{@code variables} <b>不能清</b> —— AST 里的 {@link FrameVariable} 就靠这张表持有，
+     *       清掉会让已解析的表达式拿到另一批变量对象；它们的取值本来就是动态的
+     *       （{@code readVariable} 读当前的 scope 与帧栈），换绑后自然读到新值。</li>
+     *   <li>{@code localFrames} / {@code argumentFrames} / {@code writtenVariables} / {@code callDepth}
+     *       是"本次执行"的状态，必须复位，否则上一个 tick 的 {@code t.*} 与写入会漏进来。</li>
+     *   <li>{@code preparedFunctions} 是 {@code fn.*} 函数体的解析缓存，函数体文本不变，
+     *       保留即可（这正是复用 parser 的第二个收益）。</li>
+     * </ul>
+     */
+    void resetFor(MolangScriptInterpreter.MolangScriptScope newScope) {
+        this.scope = newScope;
+        this.localFrames.clear();
+        this.localFrames.push(new HashMap<>());
+        this.argumentFrames.clear();
+        this.writtenVariables.clear();
+        this.callDepth = 0;
     }
 
     // ---- 变量读写（t.* 走帧栈，其余走覆盖层 + 宿主） ----
@@ -159,7 +191,7 @@ final class ScriptMolangParser extends MolangParser {
         if (body == null) {
             return 0.0d;
         }
-        String prepared = MolangScriptInterpreter.prepare(body);
+        String prepared = MolangScriptInterpreter.prepareCached(body);
         if (prepared.trim()
             .isEmpty()) {
             return 0.0d;
@@ -167,8 +199,12 @@ final class ScriptMolangParser extends MolangParser {
         this.callDepth++;
         pushCallFrame(arguments);
         try {
-            MolangScriptInterpreter.Node root =
-                new MolangScriptInterpreter.ScriptParser(prepared, this).parseScript();
+            // 函数体文本是模型里写死的常量，而且这个 parser 会被跨帧复用 —— 解析一次就够。
+            MolangScriptInterpreter.Node root = this.preparedFunctions.get(prepared);
+            if (root == null) {
+                root = new MolangScriptInterpreter.ScriptParser(prepared, this).parseScript();
+                this.preparedFunctions.put(prepared, root);
+            }
             MolangScriptInterpreter.ScriptRuntime runtime =
                 new MolangScriptInterpreter.ScriptRuntime(this.scope, this);
             double value = root.eval(runtime);
@@ -178,6 +214,9 @@ final class ScriptMolangParser extends MolangParser {
             this.callDepth--;
         }
     }
+
+    /** {@code fn.*} 函数体（已预处理文本）→ 解析好的 AST。见 {@link #invoke}。 */
+    private final Map<String, MolangScriptInterpreter.Node> preparedFunctions = new HashMap<>();
 
     // ---- mclib 的函数构造 ----
 
@@ -191,7 +230,7 @@ final class ScriptMolangParser extends MolangParser {
             return new ScriptFunctionCall(first, parseArguments(args), this);
         }
         if (!this.functions.containsKey(first) && !first.startsWith("!") && !first.startsWith("-")) {
-            return new ScopeFunction(first, parseArguments(args), this.scope);
+            return new ScopeFunction(first, parseArguments(args), this);
         }
         return super.createFunction(first, args);
     }
@@ -255,15 +294,19 @@ final class ScriptMolangParser extends MolangParser {
         }
     }
 
-    /** 内置函数表里没有的名字：转发给宿主 scope（宿主的函数表）。 */
+    /**
+     * 内置函数表里没有的名字：转发给宿主 scope（宿主的函数表）。
+     *
+     * <p>注意这里持的是 **parser** 而不是 scope：parser 会被跨帧复用、scope 每帧换绑，
+     * 若在解析期把 scope 存成 final 字段，复用后就会一直问第一帧的那个 scope。</p>
+     */
     private static final class ScopeFunction extends Function {
 
-        private final MolangScriptInterpreter.MolangScriptScope scope;
+        private final ScriptMolangParser parser;
 
-        ScopeFunction(String name, List<IValue> values, MolangScriptInterpreter.MolangScriptScope scope)
-            throws Exception {
+        ScopeFunction(String name, List<IValue> values, ScriptMolangParser parser) throws Exception {
             super(values.toArray(new IValue[0]), name);
-            this.scope = scope;
+            this.parser = parser;
         }
 
         @Override
@@ -272,7 +315,7 @@ final class ScriptMolangParser extends MolangParser {
             for (IValue value : this.args) {
                 arguments.add(toArgument(value.get()));
             }
-            return this.scope.functionValue(this.name, arguments);
+            return this.parser.scope.functionValue(this.name, arguments);
         }
     }
 

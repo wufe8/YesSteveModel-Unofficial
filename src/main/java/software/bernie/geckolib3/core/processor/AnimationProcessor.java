@@ -7,8 +7,6 @@ import java.util.Map;
 
 import org.apache.commons.lang3.tuple.Pair;
 
-import com.google.common.collect.Maps;
-
 import software.bernie.geckolib3.core.IAnimatable;
 import software.bernie.geckolib3.core.IAnimatableModel;
 import software.bernie.geckolib3.core.controller.AnimationController;
@@ -53,6 +51,14 @@ public class AnimationProcessor<T extends IAnimatable> {
 
         private final List<IBone> bones = new ArrayList<>();
         private final Map<String, IBone> byName = new HashMap<>();
+        /**
+         * {@link #getBone(String)} 用的同名索引，保留**最先**登记的同名骨骼。
+         *
+         * <p>不能复用 {@link #byName}：那个是 last-wins（控制器按它取骨骼，改语义风险大），
+         * 而旧的 {@code getBone} 是 {@code modelRendererList.stream().filter(...).findFirst()}，
+         * 即 first-wins。同名骨骼极罕见，但两者行为不同，所以分开维护、各按各的语义。</p>
+         */
+        private final Map<String, IBone> byNameFirst = new HashMap<>();
     }
 
     /** YSMU: 切换当前模型。命中缓存（这个 GeoModel 登记过）就整体换上，
@@ -135,7 +141,7 @@ public class AnimationProcessor<T extends IAnimatable> {
         // Store the current value of each bone rotation/position/scale
         updateBoneSnapshots(manager.getBoneSnapshotCollection());
         HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshots = manager.getBoneSnapshotCollection();
-        HashMap<String, PointData> pointDataGroup = Maps.newHashMap();
+        HashMap<String, PointData> pointDataGroup = new HashMap<>(capacityForBones(modelRendererList.size()));
         for (AnimationController<T> controller : manager.getAnimationControllers()
             .values()) {
             if (reloadAnimations) {
@@ -156,11 +162,14 @@ public class AnimationProcessor<T extends IAnimatable> {
             // Loop through every single bone and lerp each property
             for (BoneAnimationQueue boneAnimation : controller.getActiveBoneAnimationQueues()) {
                 IBone bone = boneAnimation.bone;
-                BoneSnapshot snapshot = boneSnapshots.get(bone.getName())
+                // 骨名一次取出：下面 boneSnapshots / pointDataGroup / modelTracker 三张表都用它。
+                // 旧的写法每个 (骨骼 × 控制器 × tick) 要 getName() 四次、哈希四次。
+                String boneName = bone.getName();
+                BoneSnapshot snapshot = boneSnapshots.get(boneName)
                     .getRight();
                 BoneSnapshot initialSnapshot = bone.getInitialSnapshot();
-                pointDataGroup.putIfAbsent(bone.getName(), new PointData());
-                PointData pointData = pointDataGroup.get(bone.getName());
+                // computeIfAbsent 一次查找拿到 PointData；旧写法 putIfAbsent + get 是两次。
+                PointData pointData = pointDataGroup.computeIfAbsent(boneName, k -> new PointData());
 
                 AnimationPoint rXPoint = boneAnimation.rotationXQueue.poll();
                 AnimationPoint rYPoint = boneAnimation.rotationYQueue.poll();
@@ -175,7 +184,7 @@ public class AnimationProcessor<T extends IAnimatable> {
                 AnimationPoint sZPoint = boneAnimation.scaleZQueue.poll();
 
                 // If there's any rotation points for this bone
-                DirtyTracker dirtyTracker = modelTracker.get(bone.getName());
+                DirtyTracker dirtyTracker = modelTracker.get(boneName);
                 if (dirtyTracker == null) {
                     if (rXPoint != null) rXPoint.recycle();
                     if (rYPoint != null) rYPoint.recycle();
@@ -358,6 +367,8 @@ public class AnimationProcessor<T extends IAnimatable> {
             }
         }
         manager.isFirstTick = false;
+        // 归还 createNewDirtyTracker() 从池里取走的那一层（见该方法：表按嵌套深度复用）。
+        releaseDirtyTracker();
     }
 
     /**
@@ -376,35 +387,95 @@ public class AnimationProcessor<T extends IAnimatable> {
         return additive ? previous + value : value;
     }
 
-    private HashMap<String, DirtyTracker> createNewDirtyTracker() {
-        HashMap<String, DirtyTracker> tracker = new HashMap<>();
-        for (IBone bone : modelRendererList) {
-            tracker.put(bone.getName(), new DirtyTracker(false, false, false, bone));
+    /**
+     * 每个 tick 一张「骨骼名 → DirtyTracker」表。表里的 DirtyTracker 携带的是**本 tick**
+     * 的"有没有动过"标记，所以每次调用都必须从"三个标记全 false"开始。
+     *
+     * <p>旧实现是每个 tick 新建一张表 + 每根骨骼 {@code new DirtyTracker(...)}；实测
+     * {@code createNewDirtyTracker} 独占客户端线程 18.5ms/s，是动画 tick 子树里最大的
+     * 单项 self（分配 + 逐骨骼 map 写入）。</p>
+     *
+     * <p>复用而不是新建：骨骼表（{@link ModelRegistration#bones}）不变时，键集与
+     * DirtyTracker 对象都原样留着，只需把三个标记复位。用**嵌套深度**索引一个池，
+     * 是为了让嵌套的 tickAnimation（同一个 processor 在渲染过程中被再次推进）各自
+     * 拿到独立的表，而不是互踩标记 —— 每层结束时调 {@link #releaseDirtyTracker()} 归还。</p>
+     */
+    private final List<TrackerSlot> trackerPool = new ArrayList<>();
+    private int trackerDepth;
+
+    private static final class TrackerSlot {
+
+        private final HashMap<String, DirtyTracker> trackers = new HashMap<>();
+        /**
+         * 建表时那一份骨骼表。{@code ModelRegistration.bones} 是稳定对象（换模型 /
+         * 重新登记 / clearModelRendererList 都会换引用），所以身份比较就能判断
+         * "键集还对不对"，不必逐个键核对。
+         */
+        private List<IBone> builtFor;
+    }
+
+    HashMap<String, DirtyTracker> createNewDirtyTracker() {
+        int depth = trackerDepth++;
+        TrackerSlot slot;
+        if (depth < trackerPool.size()) {
+            slot = trackerPool.get(depth);
+        } else {
+            slot = new TrackerSlot();
+            trackerPool.add(slot);
+        }
+        HashMap<String, DirtyTracker> tracker = slot.trackers;
+        if (slot.builtFor != modelRendererList) {
+            // 骨骼表换了（首次 / 换模型 / 重新登记）：整表重建
+            tracker.clear();
+            for (IBone bone : modelRendererList) {
+                tracker.put(bone.getName(), new DirtyTracker(false, false, false, bone));
+            }
+            slot.builtFor = modelRendererList;
+            return tracker;
+        }
+        // 骨骼表没变：键和 DirtyTracker 对象都留着，只复位三个"本 tick 是否动过"的标记。
+        for (DirtyTracker tracked : tracker.values()) {
+            tracked.hasRotationChanged = false;
+            tracked.hasPositionChanged = false;
+            tracked.hasScaleChanged = false;
         }
         return tracker;
     }
 
-    private void updateBoneSnapshots(HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshotCollection) {
+    /** 见 {@link #createNewDirtyTracker()}：一层 tick 结束，归还池里这一层。 */
+    void releaseDirtyTracker() {
+        if (trackerDepth > 0) {
+            trackerDepth--;
+        }
+    }
+
+    /** 让 {@code n} 个键一次装进 HashMap 而不触发 resize 的初始容量。 */
+    private static int capacityForBones(int n) {
+        return Math.max(16, (int) (n / 0.75F) + 1);
+    }
+
+    void updateBoneSnapshots(HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshotCollection) {
         for (IBone bone : modelRendererList) {
-            if (!boneSnapshotCollection.containsKey(bone.getName())) {
-                boneSnapshotCollection.put(bone.getName(), Pair.of(bone, new BoneSnapshot(bone.getInitialSnapshot())));
-            }
+            // computeIfAbsent 一次查找，替代旧的 containsKey + put 两次（骨骼数 × tick）。
+            boneSnapshotCollection.computeIfAbsent(
+                bone.getName(),
+                name -> Pair.of(bone, new BoneSnapshot(bone.getInitialSnapshot())));
         }
     }
 
     /**
      * Gets a bone by name.
      *
+     * <p>走 {@link ModelRegistration#byNameFirst}（first-wins，与旧的 stream+findFirst 一致）。
+     * 以前这里是 {@code modelRendererList.stream().filter(...).findFirst()} —— 每次调用都线性
+     * 扫过整张骨骼表并逐个比较字符串；Molang 的骨骼查询函数（如 {@code ysm.bone_rotation}）
+     * 每次关键帧求值都会调它，实测独占客户端线程 2.0%。</p>
+     *
      * @param boneName The bone name
-     * @return the bone
+     * @return the bone, or null when this model has no such bone
      */
     public IBone getBone(String boneName) {
-        return modelRendererList.stream()
-            .filter(
-                x -> x.getName()
-                    .equals(boneName))
-            .findFirst()
-            .orElse(null);
+        return currentRegistration.byNameFirst.get(boneName);
     }
 
     /**
@@ -417,11 +488,15 @@ public class AnimationProcessor<T extends IAnimatable> {
         modelRenderer.saveInitialSnapshot();
         modelRendererList.add(modelRenderer);
         currentRegistration.byName.put(modelRenderer.getName(), modelRenderer);
+        currentRegistration.byNameFirst.putIfAbsent(modelRenderer.getName(), modelRenderer);
     }
 
     public void clearModelRendererList() {
         this.modelRendererList.clear();
         this.currentRegistration.byName.clear();
+        // Must clear alongside byName: after a clear the old getBone() scanned an empty
+        // list and returned null, so a surviving index entry would be a behaviour change.
+        this.currentRegistration.byNameFirst.clear();
     }
 
     public List<IBone> getModelRendererList() {

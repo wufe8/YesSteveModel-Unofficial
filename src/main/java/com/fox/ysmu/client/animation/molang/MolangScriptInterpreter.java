@@ -2,6 +2,7 @@ package com.fox.ysmu.client.animation.molang;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import com.eliotlash.mclib.math.IValue;
 
@@ -161,17 +162,139 @@ public final class MolangScriptInterpreter {
         if (script == null) {
             return 0.0d;
         }
-        String prepared = prepare(script);
-        if (prepared.trim()
+        return evaluatePrepared(prepare(script), scope);
+    }
+
+    /**
+     * 求值一段**已经过 {@link #prepare(String)}** 的脚本正文。
+     *
+     * <p>为什么要有这个入口：{@code AnimationControlScripts.evaluate} 为了先判断"正文是不是空的"
+     * 已经调过一次 {@link #prepare(String)}，若再调 {@link #evaluate(String, MolangScriptScope)}，
+     * prepare 就会跑第二遍（剥注释 + 整串小写 + {@code args[]} 改写，都是整串扫描）。
+     * 这三步都是幂等的（{@code MolangArgsRewriter} 的类注释明确写了"改写是幂等的"，
+     * 剥注释与"字符串外小写"对已处理文本同样是不动点），所以第二遍是纯浪费 ——
+     * VisualVM 采样里 {@code prepare → lowerCase} 出现两个节点、各约 3ms/s，就是它。</p>
+     *
+     * @param prepared {@link #prepare(String)} 的返回值（也接受未预处理文本，只是没有省下开销）
+     * @param scope    变量 / 函数 / 参数来源
+     * @return 有 {@code return} 用它，否则用最后一条语句的值；空脚本为 0
+     */
+    public static double evaluatePrepared(String prepared, MolangScriptScope scope) {
+        if (prepared == null || prepared.trim()
             .isEmpty()) {
             return 0.0d;
         }
+        CachedScript cached = cachedScript(prepared, scope);
+        if (cached == null) {
+            // 重入（递归的 fn.* 又跑同一段脚本）：那个 parser 的帧栈外层还在用，
+            // 退回"现场新建一套"—— 与缓存出现之前的行为完全一致。
+            return evaluateFresh(prepared, scope);
+        }
+        cached.inUse = true;
+        try {
+            cached.parser.resetFor(scope);
+            ScriptRuntime runtime = new ScriptRuntime(scope, cached.parser);
+            double value = cached.root.eval(runtime);
+            return runtime.returned ? runtime.returnValue : value;
+        } finally {
+            cached.inUse = false;
+        }
+    }
+
+    /** 不查缓存、现场建 parser + 解析 + 求值（首次进入缓存，或条目正在被使用）。 */
+    private static double evaluateFresh(String prepared, MolangScriptScope scope) {
         ScriptMolangParser leafParser = new ScriptMolangParser(scope);
         ScriptRuntime runtime = new ScriptRuntime(scope, leafParser);
         Node root = new ScriptParser(prepared, leafParser).parseScript();
         double value = root.eval(runtime);
         return runtime.returned ? runtime.returnValue : value;
     }
+
+    /**
+     * 「已预处理正文 → 解析好的 AST」的缓存；返回可用的条目，条目正在被使用（重入）时返回
+     * {@code null}。
+     *
+     * <p>为什么可以缓存 AST：所有会随执行变化的东西都指向 {@link ScriptMolangParser}
+     * （{@code FrameVariable} / {@code ArgsGetFunction} / {@code ScriptFunctionCall} /
+     * {@code ScopeFunction}），而它在求值时读的是**当前换绑**的 scope 与帧栈
+     * （见 {@code ScriptMolangParser#resetFor}）。于是同一段脚本只解析一次，
+     * 之后每帧只是换 scope 重跑。</p>
+     *
+     * <p>首次见到一段脚本时，parser 是用**真实 scope** 建的、解析也在真实 scope 下完成 ——
+     * 与缓存出现之前的路径逐字一致，不做"用 null scope 预解析"的花活。</p>
+     *
+     * <p>ThreadLocal + 容量封顶：求值可能发生在不同线程上，各自持有一份互不干扰；
+     * 脚本种类超限时整表清空。</p>
+     */
+    private static CachedScript cachedScript(String prepared, MolangScriptScope scope) {
+        Map<String, CachedScript> cache = SCRIPT_AST_CACHE.get();
+        CachedScript entry = cache.get(prepared);
+        if (entry != null) {
+            return entry.inUse ? null : entry;
+        }
+        ScriptMolangParser parser = new ScriptMolangParser(scope);
+        Node root = new ScriptParser(prepared, parser).parseScript();
+        entry = new CachedScript(parser, root);
+        if (cache.size() >= SCRIPT_AST_CACHE_LIMIT) {
+            cache.clear();
+        }
+        cache.put(prepared, entry);
+        return entry;
+    }
+
+    /** 见 {@link #cachedScript(String, MolangScriptScope)}：一段脚本的 parser + AST + 占用标记。 */
+    private static final class CachedScript {
+
+        private final ScriptMolangParser parser;
+        private final Node root;
+        /** 正在求值中。递归 fn.* 命中同一条目时不能复用其帧栈，改为现场新建。 */
+        private boolean inUse;
+
+        private CachedScript(ScriptMolangParser parser, Node root) {
+            this.parser = parser;
+            this.root = root;
+        }
+    }
+
+    /** 见 {@link #cachedScript(String, MolangScriptScope)}：每线程一份，键是已预处理正文。 */
+    private static final ThreadLocal<Map<String, CachedScript>> SCRIPT_AST_CACHE = ThreadLocal
+        .withInitial(java.util.LinkedHashMap::new);
+
+    /** {@link #cachedScript(String, MolangScriptScope)} 的容量上限。 */
+    private static final int SCRIPT_AST_CACHE_LIMIT = 256;
+
+    /**
+     * {@link #prepare(String)} 的带缓存版本：同一段正文只跑一次剥注释 / 小写 / args 改写。
+     *
+     * <p>{@code prepare} 是**纯函数**（只依赖入参文本），而脚本文本是模型包里写死的常量，
+     * 每 tick 都会用同一段正文进来（{@code AnimationControlScripts} 每个槽位一次、
+     * {@code ScriptMolangParser.invoke} 每个 {@code fn.*} 一次）。
+     * 用 ThreadLocal 是因为求值可能发生在不同线程上（渲染线程 / 指令路径），
+     * 各自持有一份互不干扰；容量封顶以防脚本种类无界增长。</p>
+     */
+    public static String prepareCached(String script) {
+        if (script == null || script.isEmpty()) {
+            return script;
+        }
+        Map<String, String> cache = PREPARED_CACHE.get();
+        String prepared = cache.get(script);
+        if (prepared == null) {
+            prepared = prepare(script);
+            if (cache.size() >= PREPARED_CACHE_LIMIT) {
+                // 只有脚本种类数超过上限才会走到这里：整套清掉重来，避免无界增长。
+                cache.clear();
+            }
+            cache.put(script, prepared);
+        }
+        return prepared;
+    }
+
+    /** 见 {@link #prepareCached(String)}：每线程一份，键是原始正文。 */
+    private static final ThreadLocal<Map<String, String>> PREPARED_CACHE = ThreadLocal
+        .withInitial(java.util.LinkedHashMap::new);
+
+    /** {@link #prepareCached(String)} 的容量上限。 */
+    private static final int PREPARED_CACHE_LIMIT = 512;
 
     /**
      * 解析前的整篇预处理：剥注释 → 字符串外统一小写（与 {@code MolangParser.parseExpression}

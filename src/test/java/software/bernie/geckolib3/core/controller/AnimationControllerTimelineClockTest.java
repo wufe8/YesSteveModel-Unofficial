@@ -12,8 +12,10 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
 
 import com.fox.ysmu.client.animation.controller.TimelineEventScheduler;
+import com.eliotlash.mclib.math.IValue;
 
 import software.bernie.geckolib3.core.AnimationState;
+import software.bernie.geckolib3.core.ConstantValue;
 import software.bernie.geckolib3.core.IAnimatable;
 import software.bernie.geckolib3.core.IAnimatableModel;
 import software.bernie.geckolib3.core.builder.Animation;
@@ -21,6 +23,8 @@ import software.bernie.geckolib3.core.builder.AnimationBuilder;
 import software.bernie.geckolib3.core.builder.ILoopType;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.core.keyframe.EventKeyFrame;
+import software.bernie.geckolib3.core.keyframe.KeyFrame;
+import software.bernie.geckolib3.core.keyframe.KeyFrameLocation;
 import software.bernie.geckolib3.core.manager.AnimationData;
 import software.bernie.geckolib3.core.manager.AnimationFactory;
 import software.bernie.geckolib3.core.molang.MolangParser;
@@ -448,5 +452,65 @@ class AnimationControllerTimelineClockTest {
                     java.util.Collections.singletonList(
                         new TimelineEventScheduler.Event(0.0d, "inc")))),
             true);
+    }
+
+    /**
+     * {@link AnimationController#getCurrentKeyFrameLocation} 的 KfCache 索引缓存。
+     *
+     * <p>回归点（VisualVM 采样）：命中缓存的分支里原本写的是
+     * {@code kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(...)} —— 手里
+     * 已经拿到了 entry，却又查一次表、还分配一个 lambda（实测独占客户端线程 9.2ms/s）。
+     * 这里钉住重构后**结果完全不变**：单调推进、同一关键帧内推进、跳到后面的关键帧、
+     * 超过末尾、以及 tick 回退（循环回绕）后重新全扫。</p>
+     */
+    @Test
+    void keyFrameLocationCacheFollowsTheSameFramesAsAFullScan() {
+        Harness harness = new Harness();
+        // 三个关键帧，长度 1 / 2 / 3 → 累计结束时刻 1 / 3 / 6
+        ArrayList<KeyFrame<IValue>> frames = new ArrayList<>();
+        frames.add(frame(1.0d));
+        frames.add(frame(2.0d));
+        frames.add(frame(3.0d));
+
+        // 首次调用：从 0 全扫
+        assertEquals(frames.get(0), harness.controller.getCurrentKeyFrameLocation(frames, 0.5d).currentFrame);
+        assertEquals(0.5d, harness.controller.getCurrentKeyFrameLocation(frames, 0.5d).currentTick, 1.0e-9d);
+
+        // 同一关键帧内往前推（走过的就是原来 computeIfAbsent 那一支）
+        KeyFrameLocation<KeyFrame<IValue>> same = harness.controller.getCurrentKeyFrameLocation(frames, 0.9d);
+        assertSame(frames.get(0), same.currentFrame, "同一关键帧内推进不能换帧");
+        assertEquals(0.9d, same.currentTick, 1.0e-9d);
+
+        // 进入第二个关键帧（累计 1）
+        KeyFrameLocation<KeyFrame<IValue>> second = harness.controller.getCurrentKeyFrameLocation(frames, 1.5d);
+        assertSame(frames.get(1), second.currentFrame);
+        assertEquals(0.5d, second.currentTick, 1.0e-9d, "tick 是相对本关键帧起点的偏移");
+
+        // 跳到第三个关键帧（累计 3）
+        KeyFrameLocation<KeyFrame<IValue>> third = harness.controller.getCurrentKeyFrameLocation(frames, 5.0d);
+        assertSame(frames.get(2), third.currentFrame);
+        assertEquals(2.0d, third.currentTick, 1.0e-9d);
+
+        // 超过末尾：停在最后一帧，tick 就是传入的绝对 tick
+        KeyFrameLocation<KeyFrame<IValue>> past = harness.controller.getCurrentKeyFrameLocation(frames, 7.0d);
+        assertSame(frames.get(2), past.currentFrame);
+        assertEquals(7.0d, past.currentTick, 1.0e-9d);
+
+        // tick 回退（动画循环回绕）：缓存条目被丢掉，重新全扫回第一帧
+        KeyFrameLocation<KeyFrame<IValue>> rewound = harness.controller.getCurrentKeyFrameLocation(frames, 0.25d);
+        assertSame(frames.get(0), rewound.currentFrame, "回绕后必须从第一帧重新开始");
+        assertEquals(0.25d, rewound.currentTick, 1.0e-9d);
+
+        // 边界：判定是"累计结束时刻严格大于 ageInTicks"，所以 age == 上一帧的累计结束时刻
+        // （这里 1.0，也就是第一帧的结束）就已经进入下一帧，且偏移为 0。
+        KeyFrameLocation<KeyFrame<IValue>> boundary = harness.controller.getCurrentKeyFrameLocation(frames, 1.0d);
+        assertSame(frames.get(1), boundary.currentFrame, "age == 第一帧累计结束时刻时应进入第二帧");
+        assertEquals(0.0d, boundary.currentTick, 1.0e-9d);
+        // 紧接着用同一个 age 再问一次，结果必须一样（缓存刚被回绕清掉，走的是全扫路径）
+        assertSame(frames.get(1), harness.controller.getCurrentKeyFrameLocation(frames, 1.0d).currentFrame);
+    }
+
+    private static KeyFrame<IValue> frame(double length) {
+        return new KeyFrame<>(length, ConstantValue.fromDouble(length), ConstantValue.fromDouble(length));
     }
 }

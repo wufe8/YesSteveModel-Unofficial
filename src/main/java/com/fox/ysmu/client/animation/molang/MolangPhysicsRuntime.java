@@ -133,6 +133,9 @@ public final class MolangPhysicsRuntime {
         // Using getRoamingVarsForModel() instead of directly iterating
         // PENDING_ROAMING prevents cross-model variable contamination.
         Map<String, Double> modelRoaming = OpenYsmPlayerControllerRuntime.getRoamingVarsForModel(modelId);
+        // 显示名一帧只算一次：下面注 roaming 的循环要写进 GLOBAL_VAR_OWNER，FrameContext 也要用它
+        // 做跨模型隔离比较（见 FrameContext#displayName）。
+        String frameDisplayName = modelId == null ? null : getModelDisplayName(modelId);
         if (!modelRoaming.isEmpty()) {
             // 注入 v. 前缀 + 原 case + 小写 + 去 "roaming." 前缀的裸名，使
             // ScopedMolangVariable（关键帧 Molang）能按多种写法命中同一变量；
@@ -169,14 +172,14 @@ public final class MolangPhysicsRuntime {
                 String varKey = "v." + roamingEntry.getKey();
                 MolangParser.VARIABLES.computeIfAbsent(varKey,
                     k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
-                GLOBAL_VAR_OWNER.put(varKey, getModelDisplayName(modelId));
+                GLOBAL_VAR_OWNER.put(varKey, frameDisplayName);
                 // Strip "roaming." prefix so v.roaming.bq_eye also sets v.bq_eye
                 String roamingKey = roamingEntry.getKey();
                 if (roamingKey.startsWith("roaming.")) {
                     String plainKey = "v." + roamingKey.substring("roaming.".length());
                     MolangParser.VARIABLES.computeIfAbsent(plainKey,
                         k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
-                    GLOBAL_VAR_OWNER.put(plainKey, getModelDisplayName(modelId));
+                    GLOBAL_VAR_OWNER.put(plainKey, frameDisplayName);
                 }
             }
         }
@@ -192,7 +195,7 @@ public final class MolangPhysicsRuntime {
             timeDelta = (float) ((renderTicks - prevRenderTicks) / 20.0);
         }
         prevRenderTicks = renderTicks;
-        currentFrameContext = new FrameContext(modelId, state, processor);
+        currentFrameContext = new FrameContext(modelId, state, processor, frameDisplayName);
         // .molang 事件订阅（@player_init / @player_update）在这里触发：
         // 漫游变量已经注入完毕（wiki 要求 roaming 同步早于 player_init），
         // 而 setMolangQueries 正是"每次更新玩家动画之前"。
@@ -762,11 +765,29 @@ public final class MolangPhysicsRuntime {
         private final ResourceLocation modelId;
         private final ScopeState state;
         private final AnimationProcessor<?> processor;
+        /**
+         * 本帧模型的可读显示名，构造时算一次。
+         *
+         * <p>{@link #getGlobalScopedValue} 与 {@link #noteGlobalVarOwner} 每次读写一个全局
+         * {@code v.*} 都要拿它与 {@link #GLOBAL_VAR_OWNER} 里的来源比较；以前两处各自现算
+         * 一次 {@link #getModelDisplayName(ResourceLocation)}（去子段建 ResourceLocation +
+         * 查 MODEL_DISPLAY_NAMES + hex 解码 + substring），而一帧内 modelId 是固定的 ——
+         * 这是纯重复计算，实测占客户端线程约 1.8%（其中 ModelIdUtil 一侧 1.2%、
+         * MolangPhysicsRuntime 一侧 0.6%）。</p>
+         */
+        private final String displayName;
 
         private FrameContext(ResourceLocation modelId, ScopeState state, AnimationProcessor<?> processor) {
+            this(modelId, state, processor, modelId == null ? null : getModelDisplayName(modelId));
+        }
+
+        /** 已经算好显示名的重载：调用方同一帧内还要用同一个名字写 GLOBAL_VAR_OWNER。 */
+        private FrameContext(ResourceLocation modelId, ScopeState state, AnimationProcessor<?> processor,
+            String displayName) {
             this.modelId = modelId;
             this.state = state;
             this.processor = processor;
+            this.displayName = displayName;
         }
     }
 
@@ -789,7 +810,7 @@ public final class MolangPhysicsRuntime {
     public static void noteGlobalVarOwner(String varName) {
         FrameContext context = currentFrameContext;
         if (context != null && context.modelId != null) {
-            GLOBAL_VAR_OWNER.put(varName, getModelDisplayName(context.modelId));
+            GLOBAL_VAR_OWNER.put(varName, context.displayName);
         }
     }
 
@@ -801,7 +822,7 @@ public final class MolangPhysicsRuntime {
      *  没有并发遍历风险。无来源记录的变量（系统注册等）不隔离。 */
     public static double getGlobalScopedValue(String name, double fallback) {
         FrameContext ctx = currentFrameContext;
-        String current = ctx == null || ctx.modelId == null ? null : getModelDisplayName(ctx.modelId);
+        String current = ctx == null ? null : ctx.displayName;
         return isGlobalVarReadable(GLOBAL_VAR_OWNER.get(name), current) ? fallback : 0.0D;
     }
 
