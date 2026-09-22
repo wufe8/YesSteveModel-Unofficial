@@ -49,30 +49,44 @@ public class SetModelAndTexture implements IMessage {
 
         private void handleEEP(SetModelAndTexture message, EntityPlayerMP sender) {
             ExtendedModelInfo modelInfo = ExtendedModelInfo.get(sender);
-            if (modelInfo != null) {
-                ResourceLocation modelLoc = message.modelId.isEmpty() ? null : new ResourceLocation(message.modelId);
-                ResourceLocation textureLoc = message.selectTexture.isEmpty() ? null
-                    : new ResourceLocation(message.selectTexture);
-                // 服务端白名单校验：客户端只能选择服务器上真实存在的模型，防止伪造
-                // 任意 modelId 广播给周围玩家，导致其他客户端尝试加载不存在的模型。
-                // 模型 ID 以 ResourceLocation path 段为准（可能带 domain，如
-                // "ysmu:model" 或 "model"）；纹理 ID 需以该模型 ID 为前缀
-                // （"model/texture" 或 "model/main"）。不合法则整体忽略本次设置。
-                if (modelLoc != null && !isAllowedModel(modelLoc)) {
-                    return;
-                }
-                if (textureLoc != null && modelLoc != null
-                    && !isTextureOfModel(textureLoc, modelLoc)) {
-                    return;
-                }
-                modelInfo.setModelAndTexture(modelLoc, textureLoc);
+            if (modelInfo == null) {
+                return;
             }
+            // 空 id：早先的注释把它当"回默认模型"，但没有任何调用方发空 id，也没有任何地方
+            // 把它解析成默认模型；按原样透传只会把 EEP 的 modelId / selectTexture 置成 null，
+            // 之后 saveNBTData()（每次 dirty 广播都调）与渲染路径就 NPE。整条消息忽略。
+            if (message.modelId.isEmpty() || message.selectTexture.isEmpty()) {
+                return;
+            }
+            ResourceLocation modelLoc;
+            ResourceLocation textureLoc;
+            try {
+                modelLoc = new ResourceLocation(message.modelId);
+                textureLoc = new ResourceLocation(message.selectTexture);
+            } catch (RuntimeException e) {
+                // 1.7.10 的 ResourceLocation 对非法字符直接抛异常，而白名单校验在解析之后，
+                // 所以伪造的 id 会在校验之前就把整条栈打进日志（每个包一条，可刷屏）。丢弃。
+                return;
+            }
+            // 服务端白名单校验：客户端只能选择服务器上真实存在的模型，防止伪造
+            // 任意 modelId 广播给周围玩家，导致其他客户端尝试加载不存在的模型。
+            // 模型 ID 以 ResourceLocation path 段为准（可能带 domain，如
+            // "ysmu:model" 或 "model"）；纹理 ID 需以该模型 ID 为前缀
+            // （"model/texture" 或 "model/main"）。不合法则整体忽略本次设置。
+            if (!isAllowedModel(modelLoc)) {
+                return;
+            }
+            if (!isTextureOfModel(textureLoc, modelLoc)) {
+                return;
+            }
+            modelInfo.setModelAndTexture(modelLoc, textureLoc);
         }
 
         /**
          * 校验模型 ID 是否存在于服务端模型白名单（OpenYSM 同步索引或 legacy 缓存）。
          * 忽略 domain 段：客户端可能发 "ysmu:model" 或 "model"，服务端 key 为
-         * 内部 ID（不含 domain）。空 ID（回默认模型）视为合法。
+         * 内部 ID（不含 domain）。空 path（例如 {@code "ysmu:"}）按"默认模型"放行 ——
+         * 真正会造成 null 字段的空字符串 id 已经在 {@link #handleEEP} 里挡掉了。
          */
         private static boolean isAllowedModel(ResourceLocation modelLoc) {
             String path = modelLoc.getResourcePath();

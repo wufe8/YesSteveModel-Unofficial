@@ -869,6 +869,23 @@ public final class AnimationManager {
      *  When it transitions from CONTINUE to STOP, we clean up cap sounds. */
     private static boolean capWasPlaying = false;
 
+    /**
+     * 报一次"cap 控制器开始播某条外部动画"（来源 + 动画名 + 模型）。
+     *
+     * <p>轮盘/EEP 触发的动画不属于模型文件，出了问题在日志里没有归属：症状看起来像"模型
+     * 自己做了一次变身"，实际是别处触发的动画被重放。这条线把"谁触发的、在哪个模型上"
+     * 补上，和 {@code [YSMU-CTRL-PLAY]} 的 {@code model=} 同一目的。</p>
+     *
+     * <p>用 {@code capWasPlaying} 的上升沿去重（不需要额外的集合）：一次连续播放只报一次，
+     * 中途被打断再播会再报一次 —— 那正是要看见的。</p>
+     */
+    private static void noteCapAnimationStart(String source, ResourceLocation animId, String animationName) {
+        if (!Config.DEBUG_CONTROLLER) {
+            return;
+        }
+        ysmu.LOG.info("[YSMU-CAP] {} animation '{}' starts on model={}", source, animationName, animId);
+    }
+
     public PlayState predicateCap(AnimationEvent<CustomPlayerEntity> event) {
         CustomPlayerEntity animatable = event.getAnimatable();
         EntityPlayer player = animatable.getPlayer();
@@ -914,6 +931,9 @@ public final class AnimationManager {
             && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
             String wheelAnimName = getCurrentWheelAnimName();
             if (wheelAnimName != null) {
+                if (!capWasPlaying) {
+                    noteCapAnimationStart("wheel", animatable.getAnimation(), wheelAnimName);
+                }
                 capWasPlaying = true;
                 return playAnimation(event, wheelAnimName);
             }
@@ -921,6 +941,9 @@ public final class AnimationManager {
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
             String anim = eep.getAnimation();
+            if (!capWasPlaying) {
+                noteCapAnimationStart("eep", animatable.getAnimation(), anim);
+            }
             // When a PLAY_ONCE animation finishes naturally (controller
             // transitions to Stopped), clean up to prevent infinite restart.
             // EEP animations are expected to play once and only once — the

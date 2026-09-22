@@ -1,7 +1,5 @@
 package com.fox.ysmu.eep; // 建议放在 eep 包下
 
-import com.fox.ysmu.network.NetworkHandler;
-import com.fox.ysmu.network.message.SyncModelInfo;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.nbt.NBTTagCompound;
@@ -34,7 +32,33 @@ public class ExtendedModelInfo implements IExtendedEntityProperties {
         this.player = player;
     }
 
+    /**
+     * 换模型（可同时换贴图）。**模型变了就把待播动画一起作废。**
+     *
+     * <p>{@code play_animation} + {@code animation} 记的是"轮盘/指令在这个模型上触发的
+     * 那条动画"，而动画名是按*当前模型文件*里的名字查的：同名动画在另一个模型里完全可以
+     * 是别的东西。不一起清掉的实测症状：在 A 上按过轮盘"变身"后切到 B，EEP 仍带着
+     * {@code play_animation=true} + {@code extra0}，切模型这条 dirty 广播把它原样发给
+     * 客户端，B 就自己播了一遍"变身"，并顺手改掉 B 的 {@code v.roaming.a/b}。</p>
+     *
+     * <p>放在这个唯一的赋值点上：客户端 GUI（{@code ModelButton.doPress} 的乐观更新）
+     * 与服务端 {@code SetModelAndTexture} 都走这里，两条路各自清一次，不存在"谁先到"的
+     * 时序问题。贴图按钮会把当前模型原样传进来，因此换贴图不会误伤正在播的动画。</p>
+     *
+     * <p>{@code modelId == null} 直接拒绝：模型 id 是这份状态的键，NBT 同步
+     * （{@link #saveNBTData}）和渲染（{@code CustomPlayerRenderer}）都对它直接
+     * {@code toString()} / 比较，写进 null 等于埋一个跨线程的 NPE，而不是"回默认模型"。
+     * 调用方都保证非空，网络层也会先拦掉空 id。</p>
+     */
     public void setModelAndTexture(ResourceLocation modelId, ResourceLocation selectTexture) {
+        if (modelId == null) {
+            return;
+        }
+        ResourceLocation oldBase = ModelIdUtil.getModelIdFromSubId(this.modelId);
+        ResourceLocation newBase = ModelIdUtil.getModelIdFromSubId(modelId);
+        if (!oldBase.equals(newBase)) {
+            stopAnimation();
+        }
         this.modelId = modelId;
         this.selectTexture = selectTexture;
         markDirty();

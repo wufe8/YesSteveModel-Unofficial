@@ -109,3 +109,30 @@ v.bq_qx2 = v.roaming.bq_qx2 ? v.roaming.bq_qx2-1 : <自动分支>
 
 验证：`RoamingIsolationTest` 6 条。客户端配方：模型 A 声明 `roaming.x` 并在轮盘里设成 2；
 模型 B 不声明，在**控制器条件**里读 `v.x`，应收敛到 0 而不是 2。
+
+## 另一条跨模型串值通道：待播动画（与常驻变量无关）
+
+排查"切模型后自动播了一次变身"时容易先怀疑常驻变量，但那条路是隔离的（见上表）。真正的
+通道是**外部动画的触发记录**：
+
+| 记录 | 存哪 | 键 | 什么时候清 |
+| --- | --- | --- | --- |
+| `play_animation` + `animation` | `ExtendedModelInfo`（按玩家，随 NBT 广播） | 动画名 | 客户端：动画自然播完（**不同步给服务端**）；服务端：只在收到移动键的 `.stop` 时 |
+| `lock_wheel` + `wheel_anim` + `currentWheelAnim` | `PENDING_ROAMING`（全局扁平表）+ `AnimationManager` 静态字段 | 动画名 | 轮盘：把锁关掉时 |
+
+两条都是"按名字"记的，而名字只在触发它的那个模型文件里有意义 ⇒ 换模型必须作废，否则新模型
+会按同名找到**另一条完全不相干的动画**。实测症状：在 A 按过轮盘"变身"（`extra0`：time 轴
+`1.2083: v.roaming.a=1-v.roaming.b;`，模型侧只由这条时间轴写形态状态）后切到 B，B 自己播
+一遍"变身"，顺带改掉 B 的 `v.roaming.a/b` —— 看起来像常驻变量串值，实际是**动画被重放**，
+状态是被重放的动画改的。
+
+修法：`ExtendedModelInfo.setModelAndTexture()`（客户端 GUI 乐观更新与服务端
+`SetModelAndTexture` 共用的唯一赋值点）在模型真的变（按 `getModelIdFromSubId` 归一后比较）
+时 `stopAnimation()`；回归测试 `ExtendedModelInfoModelSwitchTest`。只靠
+`CustomPlayerRenderer` 里"模型变了就 `stopAnimation()`"的守卫不够：`ModelButton.doPress()`
+会**乐观地**先把 EEP 的 modelId 改掉，守卫那一帧在服务端广播（仍带着旧模型的
+`play_animation=true`）到达之前就用掉了，广播到达时 modelId 已经相同。
+
+`lock_wheel` 那条通道仍然存在（轮盘锁是用户的显式选择，暂不在换模型时作废）。两条通道的
+触发现场都可以从 `[YSMU-CAP] <source> animation '<名字>' starts on model=<id>` 读出来
+（`DebugController` 门控，按上升沿去重，所以重放会再报一次）。
