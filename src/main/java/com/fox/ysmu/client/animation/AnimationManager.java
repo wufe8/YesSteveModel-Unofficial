@@ -966,9 +966,10 @@ public final class AnimationManager {
                 com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
                 return PlayState.STOP;
             }
-            if ("extra1".equals(anim)) anim = "extra1";
-            else if ("extra2".equals(anim)) anim = "extra2";
-            else if ("extra3".equals(anim)) anim = "extra3";
+            // 这里曾有一张 extra1/2/3 → hd_a_1/2/3 的别名表，79ad6416 把目标改成了源、从此是
+            // 空操作，所以删掉。不要恢复：内置 wine_fox 的 08_sta 这类模型**同时**声明
+            // extra1..3 与 hd_a_1..3，两边是不同的动画，别名会把轮盘里的 extra1 悄悄改指到
+            // hd_a_1；而轮盘按钮的键与动画名本来就是同名直查。
             capWasPlaying = true;
             return playAnimation(event, anim);
         }
