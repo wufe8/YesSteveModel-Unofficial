@@ -581,67 +581,39 @@ public final class OpenYsmControllerExpressionEvaluator {
         }
         return null;
     }
+
     /**
-     * Static helper for debug queries — evaluates a ctrl.* state using only
-     * the player reference, without needing AnimationEvent or RuntimeState.
-     * LimbSwing-dependent states (swim/sneak/run/walk) are approximated.
+     * 控制器路径能回答的 {@code ctrl.*} 状态名。调试叠加层/命令的枚举与
+     * {@link #evaluateCtrlState} 的合法性检查都读这一份，避免再抄一份漏项的实现。
+     */
+    public static final java.util.List<String> CONTROLLER_STATE_NAMES = java.util.Collections.unmodifiableList(
+        java.util.Arrays.asList(
+            "idle", "death", "sleep", "swim", "climb", "climbing",
+            "ladder_up", "ladder_stillness", "ladder_down",
+            "ride", "ride_pig", "boat", "sit",
+            "elytra_fly", "fly", "swim_stand",
+            "attacked", "jump", "sneak", "sneaking", "run", "walk"));
+
+    /**
+     * Static helper for debug queries — evaluates a {@code ctrl.*} state using only the
+     * player reference, without needing an AnimationEvent or a RuntimeState.
+     * <p>
+     * 必须与控制器路径**同源**：这里以前自己抄了一份判定，{@code ctrl.idle} 的排除列表漏了
+     * {@code walk}/{@code run}（还有 fly/elytra_fly），于是叠加层和 {@code /ysm query} 在走路时
+     * 显示 {@code ctrl.idle=1}，而模型看到的却是 0。YSM 的 {@code ctrl.*} 是优先级状态机
+     * ——{@code CtrlBinding.evaluateState} 从最高优先级往下取第一个成立的谓词，run 先于 walk、
+     * walk 先于 idle（idle 的谓词恒真）——走路时命中 walk，idle 必为 0。两套口径不一致时
+     * 排查会直接走错方向：实测某模型"移动中挥剑走的是移动版分支"，叠加层却报 idle=1。
+     * <p>
+     * 没有 AnimationEvent 时摆臂类状态退化为实际水平位移，这与控制器路径自己的做法一致
+     * （{@code Context.limbSwingAmount()} 在 event 为 null 时就走这条路），不引入新的近似。
+     *
+     * @return 状态成立 1、不成立 0；名字不是已知状态时返回 NaN（调用方据此显示"未知变量"）
      */
     public static double evaluateCtrlState(String name, EntityPlayer player) {
+        if (!CONTROLLER_STATE_NAMES.contains(name)) return Double.NaN;
         if (player == null) return FALSE;
-        if ("death".equals(name)) return player.isDead ? TRUE : FALSE;
-        if ("sleep".equals(name)) return player.isPlayerSleeping() ? TRUE : FALSE;
-        if ("swim".equals(name)) return player.isInWater() ? TRUE : FALSE;
-        if ("climb".equals(name) || "climbing".equals(name)) return player.isOnLadder() ? TRUE : FALSE;
-        if ("ladder_up".equals(name)) return (player.isOnLadder() && evalMotionY(player, 0.1) > 0) ? TRUE : FALSE;
-        if ("ladder_stillness".equals(name)) return (player.isOnLadder() && evalMotionY(player, 0.1) == 0) ? TRUE : FALSE;
-        if ("ladder_down".equals(name)) return (player.isOnLadder() && evalMotionY(player, 0.1) < 0) ? TRUE : FALSE;
-        if ("ride_pig".equals(name)) return player.ridingEntity instanceof net.minecraft.entity.passive.EntityPig ? TRUE : FALSE;
-        if ("boat".equals(name)) return player.ridingEntity instanceof net.minecraft.entity.item.EntityBoat ? TRUE : FALSE;
-        if ("ride".equals(name) || "sit".equals(name)) return player.isRiding() ? TRUE : FALSE;
-        if ("elytra_fly".equals(name)) return com.fox.ysmu.compat.EtFuturumCompat.isElytraFlying(player) ? TRUE : FALSE;
-        if ("fly".equals(name)) return evalIsFlying(player) ? TRUE : FALSE;
-        if ("swim_stand".equals(name)) return player.isInWater() ? TRUE : FALSE;
-        if ("attacked".equals(name)) return player.hurtTime > 0 ? TRUE : FALSE;
-        if ("jump".equals(name)) {
-            if (evalIsFlying(player) || player.isRiding() || evalIsOnGround(player) || player.isInWater()) return FALSE;
-            return evalMotionY(player, 0.0) != 0 ? TRUE : FALSE;
-        }
-        if ("sneak".equals(name)) {
-            // 与 Context.isControllerStateDirect 一致：用实际水平位移判断移动，
-            // 不用 limbSwingAmount（1.7.10 潜行时会在 0.05 阈值下震荡）。
-            boolean moving = evalHorizontalMoving(player);
-            return (evalIsOnGround(player) && player.isSneaking() && moving) ? TRUE : FALSE;
-        }
-        if ("sneaking".equals(name)) {
-            boolean moving = evalHorizontalMoving(player);
-            return (evalIsOnGround(player) && player.isSneaking() && !moving) ? TRUE : FALSE;
-        }
-        if ("run".equals(name)) {
-            return (evalIsOnGround(player) && player.isSprinting() && !player.isSneaking()) ? TRUE : FALSE;
-        }
-        if ("walk".equals(name)) {
-            boolean moving = Math.abs(player.motionX) > 0.001 || Math.abs(player.motionZ) > 0.001;
-            // 潜行时 walk/run 应返回 false（sneak 与 walk/run 互斥），
-            // 否则步行中按下潜行时 N_walk 等移动状态的 End_Move 条件
-            // (!ctrl.walk&&!ctrl.run||ctrl.idle) 永不满足，控制器卡在
-            // 慢跑/疾跑状态继续播放 walk/run 动画。
-            return (evalIsOnGround(player) && !player.isSprinting() && !player.isSneaking() && moving) ? TRUE : FALSE;
-        }
-        if ("idle".equals(name)) {
-            if (player.isDead || player.isPlayerSleeping() || player.isInWater()
-                || player.isOnLadder() || player.isRiding() || player.hurtTime > 0
-                || !evalIsOnGround(player) || player.isSprinting() || player.isSneaking()) return FALSE;
-            return TRUE;
-        }
-        return Double.NaN;
-    }
-
-    private static boolean evalIsFlying(EntityPlayer player) {
-        if (com.fox.ysmu.compat.EtFuturumCompat.isElytraFlying(player)) return true;
-        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer) {
-            return player.capabilities.isFlying;
-        }
-        return com.fox.ysmu.client.animation.RemotePlayerMotionStates.isFlying(player);
+        return new Context(null, player, null).isControllerState(name) ? TRUE : FALSE;
     }
 
     /**
@@ -651,31 +623,6 @@ public final class OpenYsmControllerExpressionEvaluator {
     private static double netHeadYaw(EntityPlayer player) {
         return net.minecraft.util.MathHelper
             .wrapAngleTo180_float(player.rotationYawHead - player.renderYawOffset);
-    }
-
-    private static boolean evalIsOnGround(EntityPlayer player) {
-        if (player == net.minecraft.client.Minecraft.getMinecraft().thePlayer) {
-            return player.onGround;
-        }
-        return com.fox.ysmu.client.animation.RemotePlayerMotionStates.isOnGround(player);
-    }
-
-    /** 用实际水平位移（每 tick 位移 ×20 米/秒）判断玩家是否在水平移动。
-     *  与 Context.horizontalSpeed()/query.ground_speed 一致；不用 limbSwingAmount，
-     *  因为 1.7.10 潜行速度只有正常走的 0.3 倍，平滑后的 limbSwingAmount 在小步
-     *  移动/转向时会在 0.05 阈值附近震荡，导致 sneak/sneaking 判定不稳定。 */
-    private static boolean evalHorizontalMoving(EntityPlayer player) {
-        double dx = player.posX - player.prevPosX;
-        double dz = player.posZ - player.prevPosZ;
-        return Math.sqrt(dx * dx + dz * dz) * 20.0d > 0.05d;
-    }
-
-    private static int evalMotionY(EntityPlayer player, double threshold) {
-        double motionY = player == net.minecraft.client.Minecraft.getMinecraft().thePlayer
-            ? player.motionY : (player.posY - player.prevPosY) * 2.0d;
-        if (motionY > threshold) return 1;
-        if (motionY < -threshold) return -1;
-        return 0;
     }
 
     static final class Context implements ConditionScope {
@@ -1507,7 +1454,13 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return isOnGround() && player.isSprinting() && !player.isSneaking();
             }
             if ("walk".equals(name)) {
-                return isOnGround() && limbSwingAmount() > 0.05f && !player.isSneaking();
+                // YSM-wiki: controller「变量（全是布尔值变量）」—— walk 与 run 是**互斥的两个状态**，
+                // 不是"跑起来也算在走"：YSM 的 ctrl.* 是优先级状态机（OpenYSM
+                // CtrlBinding.evaluateState 从最高优先级往下取第一个成立的谓词，run/walk/idle
+                // 同优先级、按注册序 run 先于 walk），疾跑时命中 run，ctrl.walk 必为 0。
+                // 少了 !isSprinting，"先判 walk 再判 run"的脚本会在疾跑时命中走路分支
+                // （第一方 wine_fox 的 15_kluonoa 就是 ctrl.walk ? 正常_行走 : ctrl.run ? 正常_奔跑）。
+                return isOnGround() && limbSwingAmount() > 0.05f && !player.isSneaking() && !player.isSprinting();
             }
             return false;
         }

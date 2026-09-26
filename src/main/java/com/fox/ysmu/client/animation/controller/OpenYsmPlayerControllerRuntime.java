@@ -1316,11 +1316,18 @@ public final class OpenYsmPlayerControllerRuntime {
         runtimeState.lastSelectedAnimationState = state.name;
         runtimeState.lastSelectedAnimation = primaryName;
         // Configure the bounded timeline scheduler before any early return below.
-        // It takes isReEntry explicitly: a re-entry (and, inside, a model/state or
-        // final-name change) must reset the cursors even when the animation name list
+        // It takes the restart signal explicitly: a re-entry (and, inside, a model/state
+        // or final-name change) must reset the cursors even when the animation name list
         // is unchanged.
+        // 还必须带上"这一步会 setAnimation 归零"（`!sameState`）：状态名相同不代表没换状态。
+        // 空状态连续跳转允许一帧内 A ->（空状态）-> A 的自环（实测某模型每次挥剑都走
+        // `挥剑_default -> default -> 挥剑_default`），此时名字没变、骨头动画确实从 tick 0
+        // 重播了，但只按名字判断的话时间轴游标会走"重锚"路径（不回放已跳过的区间），
+        // 于是动画 t=0 的那些 timeline 指令（模型用它做逐次挥剑的变体计数 v.qh、随机
+        // v.random）**只执行第一次**：站起来看到的挥剑变体永远不变，而模型在 YSM 里是
+        // 一次挥剑换一个变体。
         configureTimeline(runtimeState, state, animationId, animationNames, contributors,
-            mergedLength, mergedAnim, finalName, isReEntry);
+            mergedLength, mergedAnim, finalName, isReEntry || !sameState);
         boolean skipSetAnimation = false;
         if (sameAnim) {
             // Same state + same animation → skip setAnimation to preserve keyframe
@@ -1396,7 +1403,7 @@ public final class OpenYsmPlayerControllerRuntime {
     private static void configureTimeline(RuntimeState runtimeState, State state, ResourceLocation animationId,
         List<String> animationNames, List<software.bernie.geckolib3.core.builder.Animation> contributors,
         double mergedLength, software.bernie.geckolib3.core.builder.Animation mergedAnim, String finalName,
-        boolean reEntry) {
+        boolean forceRestart) {
         if (mergedAnim == null) {
             clearTimeline(runtimeState, animationId, state.name, finalName);
             return;
@@ -1405,7 +1412,11 @@ public final class OpenYsmPlayerControllerRuntime {
         boolean nameChanged = finalName == null ? runtimeState.lastTimelineFinalName != null
             : !finalName.equals(runtimeState.lastTimelineFinalName);
         boolean stateChanged = !state.name.equals(runtimeState.lastTimelineState);
-        boolean restart = reEntry || modelChanged || nameChanged || stateChanged
+        // `forceRestart` covers what the name comparison cannot see: a self-loop through
+        // an empty state (A -> 空 -> A, the pack's per-swing default attack) restarts the
+        // animation from tick 0 while the state name stays the same, and the model's
+        // tick-0 timeline instructions must run again for each of those entries.
+        boolean restart = forceRestart || modelChanged || nameChanged || stateChanged
             || runtimeState.timelineScheduler == null || !runtimeState.timelineScheduler.isStarted();
         String key = animationId + "|" + finalName + "|" + animationNames;
         if (key.equals(runtimeState.timelineProgramKey) && runtimeState.timelineScheduler != null && !restart) {

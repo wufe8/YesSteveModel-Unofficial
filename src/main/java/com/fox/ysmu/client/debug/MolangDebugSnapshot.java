@@ -220,12 +220,9 @@ public final class MolangDebugSnapshot {
         // ctrl.* 动态状态 — 使用 evaluator 的实时评估
         EntityPlayer p = Minecraft.getMinecraft().thePlayer;
         if (p != null) {
-            String[] ctrlStates = {"idle", "death", "sleep", "swim", "climb", "climbing",
-                "ladder_up", "ladder_stillness", "ladder_down",
-                "ride", "ride_pig", "boat", "sit",
-                "elytra_fly", "fly", "swim_stand",
-                "attacked", "jump", "sneak", "sneaking", "run", "walk"};
-            for (String s : ctrlStates) {
+            // 状态名与判定都来自控制器路径那一份，别在这里再抄一个列表
+            // （抄漏 walk 就会显示"走路时 ctrl.idle=1"）。
+            for (String s : OpenYsmControllerExpressionEvaluator.CONTROLLER_STATE_NAMES) {
                 result.put("ctrl." + s,
                     OpenYsmControllerExpressionEvaluator.evaluateCtrlState(s, p));
             }
@@ -333,15 +330,9 @@ public final class MolangDebugSnapshot {
     private static void addDynamicCtrlStates(Map<String, Double> result) {
         EntityPlayer p = Minecraft.getMinecraft().thePlayer;
         if (p == null) return;
-        String[] ctrlStates = {"idle", "death", "sleep", "swim", "climb", "climbing",
-            "ladder_up", "ladder_stillness", "ladder_down",
-            "ride", "ride_pig", "boat", "sit",
-            "elytra_fly", "fly", "swim_stand",
-            "attacked", "jump", "sneak", "sneaking", "run", "walk"};
-        for (String s : ctrlStates) {
+        for (String s : OpenYsmControllerExpressionEvaluator.CONTROLLER_STATE_NAMES) {
             result.put("ctrl." + s,
-                com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
-                    .evaluateCtrlState(s, p));
+                OpenYsmControllerExpressionEvaluator.evaluateCtrlState(s, p));
         }
     }
 

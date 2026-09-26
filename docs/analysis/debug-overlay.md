@@ -29,8 +29,12 @@
 
 - **来源列 `@模型`**：`MolangPhysicsRuntime.getGlobalVarSource` + 当前玩家模型，用来定位
   "重名 `v.*` 被别的模型的 timeline 写进全局变量表"造成的跨模型串变量（最右列蓝色 `@…`）。
-- **动态 `ctrl.*`**：`getAllVariables()` 对一组固定状态名调
+- **动态 `ctrl.*`**：`getAllVariables()` 对
+  `OpenYsmControllerExpressionEvaluator.CONTROLLER_STATE_NAMES` 里的状态名调
   `OpenYsmControllerExpressionEvaluator.evaluateCtrlState`，而不是读静态注册值。
+  状态名单与判定规则都只有一份（`evaluateCtrlState` 直接委托控制器路径的
+  `Context.isControllerState`）：以前这里抄过一份判定，`ctrl.idle` 的排除列表漏了
+  `walk`/`run`，走路时叠加层报 `idle=1` 而模型看到的是 `0`，按它排查会走错方向。
 - **动画完成查询的真实值**：`query.any_animation_finished` / `query.all_animations_finished`
   的静态注册值恒为 0，覆盖层改用求值缓存的真实值，并补充每个控制器单独的
   `query.<q>@<geckoControllerName>`。
