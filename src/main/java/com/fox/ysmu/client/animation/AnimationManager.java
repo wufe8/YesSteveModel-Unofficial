@@ -1337,20 +1337,13 @@ public final class AnimationManager {
             return controllerState;
         }
 
-        // 如果模型有 swing 相关的 OpenYSM 控制器（player.post_swing 等），
-        // 则跳过 legacy 回退路径，避免 swing:sword/swing_hand（来自默认模型
-        // 骨骼）与模型自身的攻击动画并行叠加导致骨骼变换冲突甚至模型消失。
-        // 但需要清空 GeckoLib 的旧动画数据，防止"串动"。
-        // 注意: 仅当 OpenYSM 控制器实际产生了动画时才跳过 legacy。
-        // 如果控制器存在但没有任何可播放的动画（tryApply 返回 null），
-        // 仍需回退到 legacy 系统播放默认挥动动画。
+        // 走到这里只有一个前提：上面的 tryApply 返回了 null，即 OpenYSM 控制器这一帧
+        // 没有产出任何动画（产出过就已经 return controllerState 了）。所以 legacy 回退
+        // 必须照常进行 —— 包括模型自己声明了 swing 控制器的情况：那种控制器在非剑类
+        // 物品上往往只播一个空动画（例如 default 状态），硬件的 swing 槽要负责把
+        // 挥动演出来。曾有一个"模型有自己的 swing 控制器就跳过 legacy"的分支，但它的
+        // 第一个条件就是上面那个恒为 false 的标志，从来没有生效过；不要把它改回来。
         ResourceLocation animId = getAnimationId(event);
-        boolean modelHasOwnSwingCtrl = openYsmProducedAnimation
-            && OpenYsmPlayerControllerRuntime.hasAnyController(animId)
-            && (OpenYsmAnimationControllerRegistry.hasController(animId, "player.post_swing")
-                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.pre_swing")
-                || OpenYsmAnimationControllerRegistry.hasController(animId, "player.swing")
-                || OpenYsmAnimationControllerRegistry.hasController(animId, "swing"));
 
         UUID pid = player.getUniqueID();
         boolean nowSwinging = player.isSwingInProgress;
@@ -1380,55 +1373,18 @@ public final class AnimationManager {
                 event.getController()
                     .adjustTick(0);
             }
-            // 模型有自己的 swing 控制器 → 检查是否需要跳过 legacy 回退路径。
-            // 当 OpenYSM controller 仅处理剑/矛类攻击（v.swing_sword 仅在
-            // ctrl.swing(':sword') 时被设置）时，非剑类物品（空手、斧头等）
-            // 的挥动在 OpenYSM 侧无实际动画（default 状态播放 attack_empty
-            // 空动画），需要让传统路径来提供 swing_hand/swing:axe 等。
+            // 剑/矛类攻击在 OpenYSM 侧（v.swing_sword 只在 ctrl.swing(':sword') 时置位）
+            // 由模型自己的控制器演出；非剑类物品（空手、斧头、镐等）在 OpenYSM 侧没有
+            // 实际动画（default 状态是空动画），所以下面的传统回退路径要照常提供
+            // swing_hand / swing:axe 等。
             String conditionalAnimation = findSwingAnimation(event, player);
-            if (modelHasOwnSwingCtrl) {
-                // 只有剑/矛类的传统动画会与 OpenYSM 的攻击动画冲突
-                if ("swing:sword".equals(conditionalAnimation)
-                    || "swing:spear".equals(conditionalAnimation)) {
-                    // 跳过 legacy 回退 —— OpenYSM 控制器会处理剑/矛攻击。
-                    // 清空 currentAnimationBuilder 并返回 STOP，防止 GeckoLib
-                    // 残留旧动画数据导致"串动"到下一次挥动或其他动作。
-                    event.getController().currentAnimationBuilder = new AnimationBuilder();
-                    com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
-                    return PlayState.STOP;
-                }
-                // 非剑类（空手、斧头、镐等）→ 不走 OpenYSM 控制器，
-                // 让传统回退路径（swing_hand / swing:axe 等）正常播放。
-            }
-
-            /*
-            // 模型自定义 combo：检查是否有 Attackdown3/4/5 系列动画
-            // 从 .molang 函数文件的 swing 控制器提取：v.attackStage 决定用哪个
-            boolean hasCombo = animationExistsInFile(animId, "Attackdown3");
-            if (hasCombo) {
-                if (newSwing) {
-                    Integer stage = swingComboStage.get(pid);
-                    if (stage == null) stage = 0;
-                    stage = (stage % 3) + 1; // 1→2→3→1 循环
-                    swingComboStage.put(pid, stage);
-                    // 新攻击阶段，触发 markNeedsReload 让 setAnimation 生效
-                    event.getController().markNeedsReload();
-                }
-                Integer currentStage = swingComboStage.get(pid);
-                if (currentStage != null && currentStage >= 1 && currentStage <= 3) {
-                    String comboAnim = DEFAULT_COMBO_ANIMS[currentStage - 1];
-                    if (animationExistsInFile(animId, comboAnim)) {
-                        return playAnimation(event, comboAnim, ILoopType.EDefaultLoopTypes.LOOP);
-                    }
-                }
-            }
-            */
-
             if (StringUtils.isNoneBlank(conditionalAnimation)) {
                 boolean exists = animationExistsInFile(animId, conditionalAnimation);
                 if (Config.DEBUG_CONTROLLER) {
-                    ysmu.LOG.info("[YSMU-SWING] legacy: conditionalAnimation='{}' exists={} modelHasOwnSwingCtrl={}",
-                        conditionalAnimation, exists, modelHasOwnSwingCtrl);
+                    ysmu.LOG.info(
+                        "[YSMU-SWING] legacy: conditionalAnimation='{}' exists={}",
+                        conditionalAnimation,
+                        exists);
                 }
                 if (exists) {
                     return playAnimation(event, conditionalAnimation, ILoopType.EDefaultLoopTypes.PLAY_ONCE);

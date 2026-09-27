@@ -17,6 +17,8 @@
 | `plot_anim_probe.py` | 解析 `[YSMU-KF]` / `[YSMU-BONE]` 探针行（探针本身已从源码移除，只能用留档日志；需要重跑就用 `git show c5f3cbb:<文件>` 取回），输出文本统计 + ASCII 图 + CSV + 无依赖 SVG（`--png` 需要 matplotlib） |
 | `vendor_imagestream.py` | 生成 ImageStream/WebP 解码相关的 vendored 代码 |
 | `spark_dump.py` | 读 spark 采样数据（`https://bytebin.lucko.me/<code>` 的原始 `application/x-spark-sampler`），自己算 self（独占）时间并打印调用树 / 调用路径 / 按类·按包的 self 排行。**不要用网页版数字**，见"排查坑" |
+| `gc_log_summary.py` | 汇总 JVM 统一 GC 日志（`-Xlog:gc*`）：GC 次数、STW 暂停总时长/最长、**分配速率**（按暂停回收量估算）、Full GC 后的存活堆。内存优化的"churn 侧"就看它 |
+| `heap_hist_diff.py` | 对比两份 `jcmd <pid> GC.class_histogram` 的**存活集**直方图：按类给 Δbytes/Δobjects，并标出新增/消失的常驻结构。内存优化的"常驻侧"就看它 |
 | `scan_named_parallel_slots.py` | 扫描模型目录树（默认 `res`），统计每个模型声明的**具名**并行槽位（`(player.)?(pre_parallel\|parallel)_<非数字>`，来源同运行时：`controller/*.json` 键名 + `<描述>@player_ctrl_<槽位>.molang` 文件名）与**数字**槽位数量，用来判断 `NamedParallelExtraSlots` 该设多大 |
 
 典型用法：
@@ -39,6 +41,12 @@
     python tools/spark_dump.py p.sparkprofile --thread Client --class-self --package-self --top 40
     python tools/spark_dump.py p.sparkprofile --thread Client --paths "<方法名正则>"   # 谁调用的
     python tools/spark_dump.py p.sparkprofile --thread Client --focus "<方法名正则>"   # 子树
+
+    # 内存：churn（分配速率/暂停）与常驻（Full GC 后的存活集）分开量，别混着比
+    java -Xms4G -Xmx4G -XX:+UseG1GC -Xlog:gc*:file=logs/gc.log:time,uptime,level,tags:filecount=5,filesize=20M ...
+    python tools/gc_log_summary.py logs/gc.log --per-minute
+    jcmd <pid> GC.class_histogram > local/logs/live-<版本>.txt
+    python tools/heap_hist_diff.py local/logs/live-旧.txt local/logs/live-新.txt --only com.fox.ysmu
 
 ## 排查坑（踩过的，别再踩）
 
@@ -102,3 +110,35 @@
 20. 探针是**临时**的：问题查清就删掉，源码里只留 `Config.DEBUG_*` 开关 + 频率限制的诊断
     （`[YSMU-SOUND-PROBE]`、`allowDebugLog(tag)`）。骨骼/关键帧类探针写死了具体模型的骨骼名，
     留着只会误导后来人；要重跑用 `git show <sha>:<path>` 取回。
+
+**内存（和 CPU 采样一样有口径坑）**
+
+21. **堆直方图有两条完全不同的路，先分清再比**：
+    - `jcmd <pid> GC.class_histogram` —— **会先做一次 Full GC，只数可达对象**，这是"常驻占用"，
+      跨版本可比（`tools/heap_hist_diff.py` 比的就是它）；
+    - `jcmd <pid> GC.class_histogram -all` —— 不回收、**连不可达对象一起数**，
+      它其实在量"分配速率"（同一份构建换个时刻能差一倍以上）。
+    实测（JDK 25，一个一边造垃圾一边持有 50MB 的进程）：默认 53.8M / 79,716 个对象，
+    `-all` 137.0M / 84,161 个对象，多出来的 83M 全是当时还没被回收的垃圾。
+    **VisualVM sampler 导出的直方图属于后者**（所以能看到 `jdk.internal.vm.FillerElement[]`
+    这种 TLAB 填充、以及成百万个"上一帧刚被换掉"的动画队列 —— 2026-09-27 那份 3.45 GiB 的快照就是）。
+22. **不要比"当前堆 / 峰值堆"**：那是 GC 时机、`-Xmx`、ergonomics 的产物，不是代码的性质。
+    要比的是三件事：① Full GC 后的**存活集**（直方图）；② **分配速率**与每秒 GC 次数
+    （GC 日志 / JFR 分配采样）；③ **STW 暂停总时长**（用户真正感觉到的卡顿）。
+    帧率另外用 F3 记 —— CPU/内存优化最终都只体现在帧率上（和坑 5 同源）。
+    A/B 两次测量请**固定 `-Xms` 与 `-Xmx`、固定 GC、固定场景脚本与时长**，最好等世界/模型加载
+    稳定 60s 后再开始，并在同一个时刻（例如预览页静置 10 秒后）取存活集。
+23. **不同 GC 之间的内存数字不可比**：ZGC（尤其 JDK 21+ 分代 ZGC）会主动把内存要满、
+    日志事件名也不同；G1 的"回收量/暂停"更适合看 churn。要 A/B 就固定一种（目前用 G1），
+    ZGC 只在"玩家实际用什么"这一层单独确认。
+24. **JFR 的 `jdk.ObjectAllocationSample.weight` 不可全信**：它是"距上次采样之间分配的字节数"的估算，
+    在分配速率极高时会由个别样本垄断 —— 实测一次 69s 的录制里，**单个 `Double` 样本的 weight
+    就有 171.5 GB，占总权重 217.9 GiB 的 68%**，于是 `jfr view allocation-by-class` 报出
+    "`java.lang.Double` 占 79.67%"，而按**样本数**（1,156/18,982 = 6.1%）与瞬时直方图的垃圾构成
+    （Double 48 MiB / 总量 1797 MiB = 2.7%）看都只有几个百分点。
+    结论：**用样本数或 `jfr view allocation-by-site` 的调用点排序做归因，再用瞬时直方图交叉验证**，
+    不要直接引用 weight 百分比。`jfr print --events jdk.ObjectAllocationSample --stack-depth 8` 的输出
+    可以按调用点自行聚合（帧行格式是 `method(...) line: N`，`...` 表示被截断）。
+25. 想在 VisualVM 里快速拿到**近存活集**的视图：进入固定场景 → 静置 10 秒 →
+    点 Sampler 里的 **Perform GC** → 立刻导直方图。等价于 `jcmd GC.class_histogram`
+    （记得别在 GC 前那一瞬间导，那份是含垃圾的）。

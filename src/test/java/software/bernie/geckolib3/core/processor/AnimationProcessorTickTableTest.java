@@ -167,6 +167,62 @@ class AnimationProcessorTickTableTest {
     }
 
     /**
+     * 槽位是**按模型**（骨骼表身份）复用的，不只是按调用深度：换到别的模型再换回来，
+     * 必须拿回同一批 DirtyTracker / PointData 对象。
+     *
+     * <p>回归点（预览页实测）：只按深度复用时，每个烘焙都在换模型 → 换回来等于重建，
+     * {@code createNewDirtyTracker} 12.2 样本/s、DirtyTracker 5.5 样本/s、
+     * 瞬时垃圾里还有 9 万个 PointData。
+     */
+    @Test
+    void trackerAndPointDataAreReusedWhenTheSameModelComesBack() throws Exception {
+        AnimationProcessor<IAnimatable> processor = new AnimationProcessor<>(null);
+        GeoModel modelA = model("bone_a", "bone_b");
+        assertFalse(processor.selectModel(modelA));
+        AnimationProcessorRegistrationCacheTest.register(processor, modelA);
+        HashMap<String, DirtyTracker> first = processor.createNewDirtyTracker();
+        HashMap<String, PointData> firstPoints = processor.pointDataGroupForThisTick();
+        DirtyTracker trackerA = first.get("bone_a");
+        PointData pointDataA = new PointData();
+        firstPoints.put("bone_a", pointDataA);
+        processor.releaseDirtyTracker();
+
+        GeoModel modelB = AnimationProcessorRegistrationCacheTest.modelWithBones("bone_c");
+        assertFalse(processor.selectModel(modelB));
+        AnimationProcessorRegistrationCacheTest.register(processor, modelB);
+        processor.createNewDirtyTracker();
+        processor.pointDataGroupForThisTick();
+        processor.releaseDirtyTracker();
+
+        assertTrue(processor.selectModel(modelA), "换回同一个 GeoModel 应命中登记缓存");
+        HashMap<String, DirtyTracker> again = processor.createNewDirtyTracker();
+        HashMap<String, PointData> againPoints = processor.pointDataGroupForThisTick();
+        processor.releaseDirtyTracker();
+        assertSame(trackerA, again.get("bone_a"), "换回来必须复用同一批 DirtyTracker");
+        assertSame(pointDataA, againPoints.get("bone_a"), "换回来必须复用同一批 PointData");
+    }
+
+    /** 骨骼表被原地清空并重新登记时，它的槽位必须失效（否则会盯着上一批键/IBone）。 */
+    @Test
+    void clearingTheBoneListDropsItsReusedSlot() throws Exception {
+        AnimationProcessor<IAnimatable> processor = new AnimationProcessor<>(null);
+        GeoModel model = model("bone_a", "bone_b");
+        assertFalse(processor.selectModel(model));
+        AnimationProcessorRegistrationCacheTest.register(processor, model);
+        HashMap<String, DirtyTracker> before = processor.createNewDirtyTracker();
+        DirtyTracker stale = before.get("bone_a");
+        processor.releaseDirtyTracker();
+
+        processor.clearModelRendererList();
+        AnimationProcessorRegistrationCacheTest.register(processor, model);
+
+        HashMap<String, DirtyTracker> after = processor.createNewDirtyTracker();
+        processor.releaseDirtyTracker();
+        assertNotNull(after.get("bone_a"), "重新登记后键要齐全");
+        assertFalse(stale == after.get("bone_a"), "原地重建骨骼表后不能复用旧 DirtyTracker");
+    }
+
+    /**
      * BoneSnapshot 表：只补缺失的键 —— 已有的条目（连同它保存的快照值）不能被覆盖。
      * 这是 {@code containsKey + put} 改成 {@code computeIfAbsent} 时必须保持不变的行为。
      */

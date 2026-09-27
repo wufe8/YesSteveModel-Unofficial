@@ -97,6 +97,10 @@ public class AnimationProcessor<T extends IAnimatable> {
             return;
         }
         ModelRegistration removed = registrations.remove(model);
+        if (removed != null) {
+            // 这个模型的 tick 槽位跟着一起丢，别让它的 tracker/PointData 留在池里。
+            dropTrackerSlots(removed.bones);
+        }
         if (removed != null && removed == currentRegistration) {
             // 控制器还各自持有这份 byName 的引用（它们会在下一次 process() 换成新模型的），
             // 处理器自己至少不能再钉着它。
@@ -122,7 +126,7 @@ public class AnimationProcessor<T extends IAnimatable> {
     // model mismatch issues.
     public void tickAnimation(IAnimatable entity, Integer uniqueID, double seekTime, AnimationEvent event,
         MolangParser parser, boolean crashWhenCantFindBone) {
-        // TEMP probe: 见 com.fox.ysmu.util.GeoStats
+        // 诊断计数：只有 Config.DEBUG_MODEL_RENDER 打开时才真的自增（见 GeoStats）。
         com.fox.ysmu.util.GeoStats.noteAnimTick();
         AnimationRenderState renderState = AnimationRenderState.from(seekTime, event);
         if (renderState.equals(animatedEntities.get(uniqueID))) {
@@ -396,45 +400,92 @@ public class AnimationProcessor<T extends IAnimatable> {
      * {@code createNewDirtyTracker} 独占客户端线程 18.5ms/s，是动画 tick 子树里最大的
      * 单项 self（分配 + 逐骨骼 map 写入）。</p>
      *
-     * <p>复用而不是新建：骨骼表（{@link ModelRegistration#bones}）不变时，键集与
-     * DirtyTracker 对象都原样留着，只需把三个标记复位。用**嵌套深度**索引一个池，
-     * 是为了让嵌套的 tickAnimation（同一个 processor 在渲染过程中被再次推进）各自
-     * 拿到独立的表，而不是互踩标记 —— 每层结束时调 {@link #releaseDirtyTracker()} 归还。</p>
+     * <p>复用而不是新建：同一份骨骼表（{@link ModelRegistration#bones}）的槽位跨 tick 留着，
+     * 只把三个标记复位 —— 而槽位是**按模型**（骨骼表身份）索引的，不是按调用深度：
+     * 预览页每个烘焙都在换模型，只按深度复用等于每次换模型都把整表重建一遍
+     * （实测预览页 {@code createNewDirtyTracker} 12.2 样本/s、DirtyTracker 5.5 样本/s、
+     * 瞬时垃圾里还有 9 万个 PointData）。</p>
+     *
+     * <p>键是（骨骼表身份, 嵌套深度）：<b>模型</b>这一维让预览页反复换模型时不再重建，
+     * <b>深度</b>这一维保持"嵌套的 tickAnimation 各自拿到独立的表、不互踩标记"
+     * （同一个模型在一次渲染里被推进两次时，内层不能复位外层的标记）。</p>
      */
-    private final List<TrackerSlot> trackerPool = new ArrayList<>();
+    private final Map<List<IBone>, TrackerSlot[]> trackerSlots = new java.util.IdentityHashMap<>();
+    /** 每个嵌套层当前用的槽位（下标 = 深度），给 pointDataGroupForThisTick 用。 */
+    private TrackerSlot[] activeSlots = new TrackerSlot[4];
     private int trackerDepth;
+    /** 所有（模型 × 层）槽位总数，用于封顶。 */
+    private int trackerSlotCount;
+    /**
+     * 槽位总数上限。每个槽位约为"骨骼数 × 约 110 B"（DirtyTracker + PointData
+     * 各一个 map 条目），64 个槽位 ≈ 3 MB，够覆盖一页预览的模型 + 世界里的若干玩家模型；
+     * 超了整体丢弃（下一次 tick 重建，代价只是一次骨骼循环），保证占用有界。
+     */
+    private static final int MAX_TRACKER_SLOTS = 64;
 
     private static final class TrackerSlot {
 
         private final HashMap<String, DirtyTracker> trackers = new HashMap<>();
         /**
-         * 建表时那一份骨骼表。{@code ModelRegistration.bones} 是稳定对象（换模型 /
-         * 重新登记 / clearModelRendererList 都会换引用），所以身份比较就能判断
-         * "键集还对不对"，不必逐个键核对。
+         * 建表时那一份骨骼表（键就是它，留一份引用便于诊断/断言）。
          */
         private List<IBone> builtFor;
         /**
          * 同一 tick 的「骨骼名 → PointData」表（每个动画点的累加结果）。
          * 和 trackers 一样是"每 tick 一张、内容只与本 tick 有关"的临时表：
-         * 骨骼表不变时键与 PointData 对象都留着，只把三个分量复位；
-         * 换骨骼表才整表丢掉。首次分配按骨骼数预置容量，避免逐骨骼 resize。
+         * 同一模型的键与 PointData 对象都留着，只把三个分量复位。
+         * 首次分配按骨骼数预置容量，避免逐骨骼 resize。
          */
         private HashMap<String, PointData> pointData;
-        private List<IBone> pointDataBuiltFor;
+    }
+
+    /** 取（当前模型, 当前嵌套深度）的槽位（没有就建），并压进这一层。 */
+    private TrackerSlot acquireTrackerSlot() {
+        TrackerSlot[] byDepth = trackerSlots.get(modelRendererList);
+        if (byDepth == null) {
+            if (trackerSlotCount >= MAX_TRACKER_SLOTS) {
+                // 兜底：模型太多（且都不是当前这个）时整体丢弃，避免无界增长。
+                trackerSlots.clear();
+                trackerSlotCount = 0;
+            }
+            byDepth = new TrackerSlot[4];
+            trackerSlots.put(modelRendererList, byDepth);
+        }
+        if (trackerDepth >= byDepth.length) {
+            byDepth = java.util.Arrays.copyOf(byDepth, trackerDepth * 2);
+            trackerSlots.put(modelRendererList, byDepth);
+        }
+        TrackerSlot slot = byDepth[trackerDepth];
+        if (slot == null) {
+            slot = new TrackerSlot();
+            byDepth[trackerDepth] = slot;
+            trackerSlotCount++;
+        }
+        if (trackerDepth == activeSlots.length) {
+            activeSlots = java.util.Arrays.copyOf(activeSlots, trackerDepth * 2);
+        }
+        activeSlots[trackerDepth] = slot;
+        trackerDepth++;
+        return slot;
+    }
+
+    /** 丢掉某个骨骼表的所有槽位（原地清空骨骼表 / 模型被释放时用）。 */
+    private void dropTrackerSlots(List<IBone> bones) {
+        TrackerSlot[] removed = trackerSlots.remove(bones);
+        if (removed != null) {
+            for (TrackerSlot slot : removed) {
+                if (slot != null) {
+                    trackerSlotCount--;
+                }
+            }
+        }
     }
 
     HashMap<String, DirtyTracker> createNewDirtyTracker() {
-        int depth = trackerDepth++;
-        TrackerSlot slot;
-        if (depth < trackerPool.size()) {
-            slot = trackerPool.get(depth);
-        } else {
-            slot = new TrackerSlot();
-            trackerPool.add(slot);
-        }
+        TrackerSlot slot = acquireTrackerSlot();
         HashMap<String, DirtyTracker> tracker = slot.trackers;
         if (slot.builtFor != modelRendererList) {
-            // 骨骼表换了（首次 / 换模型 / 重新登记）：整表重建
+            // 这个槽位是新建的（或骨骼表被原地改过）：整表重建
             tracker.clear();
             for (IBone bone : modelRendererList) {
                 tracker.put(bone.getName(), new DirtyTracker(false, false, false, bone));
@@ -442,13 +493,18 @@ public class AnimationProcessor<T extends IAnimatable> {
             slot.builtFor = modelRendererList;
             return tracker;
         }
-        // 骨骼表没变：键和 DirtyTracker 对象都留着，只复位三个"本 tick 是否动过"的标记。
+        // 同一个模型的第二次及以后：键和 DirtyTracker 对象都留着，只复位三个标记。
         for (DirtyTracker tracked : tracker.values()) {
             tracked.hasRotationChanged = false;
             tracked.hasPositionChanged = false;
             tracked.hasScaleChanged = false;
         }
         return tracker;
+    }
+
+    /** 骨骼表被原地改动（{@code clearModelRendererList}）时丢掉它的槽位，强制重建。 */
+    private void invalidateTrackerSlot() {
+        dropTrackerSlots(modelRendererList);
     }
 
     /**
@@ -462,27 +518,22 @@ public class AnimationProcessor<T extends IAnimatable> {
      * {@code parallel} 族的旋转是**相加**的，必须从 0 开始，不能沿用上一 tick 的值。
      */
     HashMap<String, PointData> pointDataGroupForThisTick() {
-        TrackerSlot slot = trackerPool.get(trackerDepth - 1);
+        TrackerSlot slot = activeSlots[trackerDepth - 1];
         if (slot.pointData == null) {
             slot.pointData = new HashMap<>(capacityForBones(modelRendererList.size()));
         }
+        // 槽位是按模型索引的，键集天然只属于这个模型；把上一 tick 的累加值清零即可。
         HashMap<String, PointData> group = slot.pointData;
-        if (slot.pointDataBuiltFor != modelRendererList) {
-            // 骨骼表换了：键是骨骼名，旧键没有意义，整表丢掉重建。
-            group.clear();
-            slot.pointDataBuiltFor = modelRendererList;
-            return group;
-        }
         for (PointData pointData : group.values()) {
             pointData.reset();
         }
         return group;
     }
 
-    /** 见 {@link #createNewDirtyTracker()}：一层 tick 结束，归还池里这一层。 */
+    /** 见 {@link #createNewDirtyTracker()}：一层 tick 结束，弹出这一层的槽位。 */
     void releaseDirtyTracker() {
         if (trackerDepth > 0) {
-            trackerDepth--;
+            activeSlots[--trackerDepth] = null;
         }
     }
 
@@ -532,6 +583,7 @@ public class AnimationProcessor<T extends IAnimatable> {
     }
 
     public void clearModelRendererList() {
+        invalidateTrackerSlot();
         this.modelRendererList.clear();
         this.currentRegistration.byName.clear();
         // Must clear alongside byName: after a clear the old getBone() scanned an empty

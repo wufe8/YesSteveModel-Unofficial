@@ -112,7 +112,8 @@ public class ClientEventHandler {
         com.fox.ysmu.client.renderer.PreviewRefreshPolicy.beginFrame();
         // 结算上一帧的模型求值次数（诊断：模型里的"每次求值推进一步"累加器靠它换算速率）。
         com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.endRenderFrame();
-        // TEMP probe: 几何提交/动画 tick 的每秒次数（满 5 秒才打一行 INFO，见 GeoStats）。
+        // 几何提交/动画 tick 的每秒次数（满 5 秒最多一行 INFO，且只在
+        // Config.DEBUG_MODEL_RENDER 打开时计数，见 GeoStats）。
         com.fox.ysmu.util.GeoStats.publishIfDue();
     }
 

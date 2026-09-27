@@ -54,7 +54,7 @@ public interface IGeoRenderer<T> {
         }
 
         com.fox.ysmu.util.GeoStats.noteFlush();
-        Tessellator.instance.draw();
+        com.fox.ysmu.util.TessellatorBufferKeep.draw(Tessellator.instance);
 
         renderAfter(model, animatable, partialTicks, red, green, blue, alpha);
         // GlStateManager.disableRescaleNormal();
@@ -177,7 +177,7 @@ public interface IGeoRenderer<T> {
         }
 
         com.fox.ysmu.util.GeoStats.noteFlush();
-        Tessellator.instance.draw();
+        com.fox.ysmu.util.TessellatorBufferKeep.draw(Tessellator.instance);
 
         // ── Pass 1: negative-size cubes (CULL_FRONT → back faces only) ──
         Tessellator.instance.startDrawing(GL11.GL_QUADS);
@@ -188,7 +188,7 @@ public interface IGeoRenderer<T> {
             renderCube(builder, cube, red, green, blue, alpha);
         }
         com.fox.ysmu.util.GeoStats.noteFlush();
-        Tessellator.instance.draw();
+        com.fox.ysmu.util.TessellatorBufferKeep.draw(Tessellator.instance);
         GL11.glCullFace(GL11.GL_BACK);
         GL11.glDisable(GL11.GL_CULL_FACE);
 
@@ -199,7 +199,7 @@ public interface IGeoRenderer<T> {
             renderCube(builder, cube, red, green, blue, alpha);
         }
         com.fox.ysmu.util.GeoStats.noteFlush();
-        Tessellator.instance.draw();
+        com.fox.ysmu.util.TessellatorBufferKeep.draw(Tessellator.instance);
 
         Tessellator.instance.startDrawing(GL11.GL_QUADS);
     }
@@ -209,7 +209,7 @@ public interface IGeoRenderer<T> {
         // 5 次模型矩阵乘法 + 6 次法线矩阵乘法）。现在算出 cube 的最终矩阵但**不入栈**：
         // 没有自身旋转的 cube（绝大多数）直接引用栈顶，零拷贝零乘法。
         MATRIX_STACK.beginCube(cube);
-        // TEMP probe: 见 com.fox.ysmu.util.GeoStats（定位几何提交用，定位完删）
+        // 诊断计数：只有 Config.DEBUG_MODEL_RENDER 打开时才真的自增（见 GeoStats）。
         com.fox.ysmu.util.GeoStats.noteCube(cube.quads.length * 4);
 
         boolean flat = !cube.mesh && (cube.size.x == 0 || cube.size.y == 0 || cube.size.z == 0);

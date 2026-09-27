@@ -432,7 +432,7 @@ public abstract class GeoReplacedEntityRenderer<T extends IAnimatable> extends R
                     y + d14 * (double) (f3 * f3 + f3) * 0.5D + (double) ((24.0F - (float) j) / 18.0F + 0.125F) + 0.025D,
                     z + d15 * (double) f3);
             }
-            tessellator.draw();
+            com.fox.ysmu.util.TessellatorBufferKeep.draw(tessellator);
             tessellator.startDrawing(5);
 
             for (int k = 0; k <= 24; ++k) {
@@ -459,7 +459,7 @@ public abstract class GeoReplacedEntityRenderer<T extends IAnimatable> extends R
                     z + d15 * (double) f7 + 0.025D);
             }
 
-            tessellator.draw();
+            com.fox.ysmu.util.TessellatorBufferKeep.draw(tessellator);
             GlStateManager.enableLighting();
             GlStateManager.enableTexture2D();
             GlStateManager.enableCull();

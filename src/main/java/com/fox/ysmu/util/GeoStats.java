@@ -1,9 +1,10 @@
 package com.fox.ysmu.util;
 
+import com.fox.ysmu.Config;
 import com.fox.ysmu.ysmu;
 
 /**
- * **临时诊断探针**：几何提交与动画 tick 的调用次数。
+ * 几何提交与动画 tick 的调用次数诊断（常驻，但默认关闭）。
  *
  * <p>spark 的采样器只记时间、不记次数，"每个模型一次烘焙到底发了多少个立方体/顶点、
  * 刷了几次 Tessellator、tick 了几次动画"从采样里推不出来。排查几何提交要不要走批量写入
@@ -15,9 +16,10 @@ import com.fox.ysmu.ysmu;
  *   <li>{@code animTick} —— {@code AnimationProcessor.tickAnimation} 次数。</li>
  * </ul>
  *
- * <p>每 5 秒打一行 INFO（一次 {@code System.currentTimeMillis()} + 比较，其余都是自增），
- * 同时在 F3 明细里显示。**定位完就删**（AGENTS.md 的诊断约定：探针是临时的，永久保留的
- * 诊断必须同时满足"Config.DEBUG_* 开关"与"限流"）。
+ * <p>按 AGENTS.md 的诊断约定保留：**只在 {@code Config.DEBUG_MODEL_LOAD + DEBUG_MODEL_RENDER}
+ * 同时打开时计数与打点**（这两个开关的既有语义就是"子域需要主开关"，见 Config 里的说明），
+ * 且每 5 秒最多一行 INFO（一次 {@code System.currentTimeMillis()} + 比较，其余都是自增）。
+ * 开关关闭时每个 note 方法只做一次静态字段读取 + 提前返回，F3 明细读到的是最后一次窗口的值。
  */
 public final class GeoStats {
 
@@ -38,34 +40,57 @@ public final class GeoStats {
 
     private GeoStats() {}
 
+    /** 只在调试开关打开时计数；关闭时所有 note 都是"读一个静态字段 + 返回"。 */
+    private static boolean enabled() {
+        return Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_RENDER;
+    }
+
     /** 一个 cube 被提交（{@code vertexCount} = 它发出的顶点数）。 */
     public static void noteCube(int vertexCount) {
+        if (!enabled()) {
+            return;
+        }
         cubes++;
         vertices += vertexCount;
     }
 
     /** 我们自己调了一次 {@code Tessellator.draw()}。 */
     public static void noteFlush() {
+        if (!enabled()) {
+            return;
+        }
         flushes++;
     }
 
     /** 一次姿态检查（缩略图烘焙时算签名的次数）。 */
     public static void notePoseCheck() {
+        if (!enabled()) {
+            return;
+        }
         poseChecks++;
     }
 
     /** 姿态签名与上次相同 → 跳过了几何提交。 */
     public static void notePoseSkip() {
+        if (!enabled()) {
+            return;
+        }
         poseSkips++;
     }
 
     /** 一次 {@code AnimationProcessor.tickAnimation}。 */
     public static void noteAnimTick() {
+        if (!enabled()) {
+            return;
+        }
         animTicks++;
     }
 
     /** 每帧调一次；满 5 秒才真正算一次平均并打日志。 */
     public static void publishIfDue() {
+        if (!enabled()) {
+            return;
+        }
         long now = System.currentTimeMillis();
         if (windowStart == 0L) {
             windowStart = now;

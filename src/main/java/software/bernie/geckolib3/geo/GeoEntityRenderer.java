@@ -429,7 +429,7 @@ public abstract class GeoEntityRenderer<T extends EntityLivingBase & IAnimatable
                     z + d15 * (double) f3);
             }
 
-            tessellator.draw();
+            com.fox.ysmu.util.TessellatorBufferKeep.draw(tessellator);
             tessellator.startDrawing(5);
 
             for (int k = 0; k <= 24; ++k) {
@@ -456,7 +456,7 @@ public abstract class GeoEntityRenderer<T extends EntityLivingBase & IAnimatable
                     z + d15 * (double) f7 + 0.025D);
             }
 
-            tessellator.draw();
+            com.fox.ysmu.util.TessellatorBufferKeep.draw(tessellator);
             GlStateManager.enableLighting();
             GlStateManager.enableTexture2D();
             GlStateManager.enableCull();
