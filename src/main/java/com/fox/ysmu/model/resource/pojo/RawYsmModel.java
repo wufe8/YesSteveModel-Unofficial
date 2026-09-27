@@ -120,12 +120,142 @@ public class RawYsmModel {
         public List<RawKeyframe> scale = new ArrayList<>();
     }
 
+    /**
+     * 一个关键帧的三轴取值（post 与可选的 pre）。
+     *
+     * <p>旧表示是两个 {@code Object[3]}，每个数值都装成一个 {@code Float}。VisualVM 堆快照
+     * （2026-09-27）里 852,711 个 RawKeyframe 对应着约 5.19M 个 {@code java.lang.Float} 和
+     * {@code Object[]} 总数（3.13M）里的一大半 —— 而这些 raw POJO 会被
+     * {@code ServerModelManager.RAW_MODEL_INFO} 长期持有（集成服务端还要靠它重新序列化模型
+     * 发给客户端），所以这是常驻占用而不是一次性垃圾。
+     *
+     * <p>现在数值内联成 6 个 float（post 三轴 + pre 三轴），通道类型压进一个 int
+     * （每通道 2 bit：缺省 / 数值 / 表达式）；只有真的出现 Molang 表达式（罕见）时才额外分配
+     * 一个 {@code String[3]}。通道语义与旧的 {@code Object[]} 一一对应：
+     * 数值 → 0x01、字符串 → 0x02、缺省 → 两者都不是，
+     * {@link #setPostData}/{@link #setPreData} 保留旧写法作为构造入口。
+     */
     public static class RawKeyframe {
+
+        /** 通道没有值（二进制里 datatype 既不是 0x01 也不是 0x02）。 */
+        public static final int CHANNEL_ABSENT = 0;
+        /** 通道是一个数值。 */
+        public static final int CHANNEL_NUMBER = 1;
+        /** 通道是一个 Molang 表达式字符串。 */
+        public static final int CHANNEL_EXPRESSION = 2;
+
         public float timestamp;
         public int interpolationMode;
-        public Object[] postData = new Object[] { 0f, 0f, 0f };
-        public Object[] preData = new Object[] { 0f, 0f, 0f };
         public boolean hasPreData;
+
+        private float postX;
+        private float postY;
+        private float postZ;
+        private float preX;
+        private float preY;
+        private float preZ;
+        /** 每通道 2 bit：bit 0..5 = post 的 xyz，bit 6..11 = pre 的 xyz。 */
+        private int kinds;
+        /** 表达式通道的文本；只有出现过表达式才分配。 */
+        private String[] postExpressions;
+        private String[] preExpressions;
+
+        /** 通道类型：{@link #CHANNEL_ABSENT} / {@link #CHANNEL_NUMBER} / {@link #CHANNEL_EXPRESSION}。 */
+        public int kind(boolean pre, int axis) {
+            return (kinds >>> (kindShift(pre, axis))) & 3;
+        }
+
+        /** 数值通道的值（{@link #kind} 为 {@link #CHANNEL_NUMBER} 时才有意义）。 */
+        public float number(boolean pre, int axis) {
+            switch (axis) {
+                case 0:
+                    return pre ? preX : postX;
+                case 1:
+                    return pre ? preY : postY;
+                default:
+                    return pre ? preZ : postZ;
+            }
+        }
+
+        /** 表达式通道的文本（{@link #kind} 为 {@link #CHANNEL_EXPRESSION} 时才有意义）。 */
+        public String expression(boolean pre, int axis) {
+            String[] expressions = pre ? preExpressions : postExpressions;
+            return expressions == null ? null : expressions[axis];
+        }
+
+        public void setNumber(boolean pre, int axis, float value) {
+            switch (axis) {
+                case 0:
+                    if (pre) {
+                        preX = value;
+                    } else {
+                        postX = value;
+                    }
+                    break;
+                case 1:
+                    if (pre) {
+                        preY = value;
+                    } else {
+                        postY = value;
+                    }
+                    break;
+                default:
+                    if (pre) {
+                        preZ = value;
+                    } else {
+                        postZ = value;
+                    }
+                    break;
+            }
+            setKind(pre, axis, CHANNEL_NUMBER);
+        }
+
+        public void setExpression(boolean pre, int axis, String value) {
+            if (pre) {
+                if (preExpressions == null) {
+                    preExpressions = new String[3];
+                }
+                preExpressions[axis] = value;
+            } else {
+                if (postExpressions == null) {
+                    postExpressions = new String[3];
+                }
+                postExpressions[axis] = value;
+            }
+            setKind(pre, axis, CHANNEL_EXPRESSION);
+        }
+
+        /** 旧写法（{@code Object[3]}）的构造入口：数值 / 字符串 / null(=缺省)。 */
+        public void setPostData(Object[] values) {
+            setSide(false, values);
+        }
+
+        /** 见 {@link #setPostData}。 */
+        public void setPreData(Object[] values) {
+            setSide(true, values);
+        }
+
+        private void setSide(boolean pre, Object[] values) {
+            for (int axis = 0; axis < 3; axis++) {
+                Object value = values != null && values.length > axis ? values[axis] : null;
+                if (value instanceof Number) {
+                    setNumber(pre, axis, ((Number) value).floatValue());
+                } else if (value != null) {
+                    setExpression(pre, axis, value.toString());
+                } else {
+                    setKind(pre, axis, CHANNEL_ABSENT);
+                }
+            }
+        }
+
+        private static int kindShift(boolean pre, int axis) {
+            return (pre ? 3 : 0) * 2 + axis * 2;
+        }
+
+        private void setKind(boolean pre, int axis, int kind) {
+            int shift = kindShift(pre, axis);
+            kinds = (kinds & ~(3 << shift)) | (kind << shift);
+        }
     }
 
     public static class RawTimelineEvent {

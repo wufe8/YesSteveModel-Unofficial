@@ -932,20 +932,25 @@ public class YSMBinaryDeserializer implements AutoCloseable {
                 ysmu.LOG.info("[YSMU-MODEL]  " + label + " kf[" + i + "] hasPre={} (unexpected!)", hasPreVal);
             }
             if (kf.hasPreData) {
+                // 旧语义：这一侧的三个通道以 0f（数值）为底，读到的通道覆盖它 —— 缺省通道
+                // 因此是"数值 0"，与另一侧的"缺省"（null → JSON 字符串 "0"）并不相同，
+                // 这里保持原样。postData 只是临时数组，装进 RawKeyframe 后即被丢弃。
+                Object[] postData = new Object[] { 0f, 0f, 0f };
                 for (int j = 0; j < 3; j++) {
                     byte datatype = reader.readByte();
                     if (datatype == 0x01) {
-                        kf.postData[j] = reader.readFloat();
+                        postData[j] = reader.readFloat();
                     } else if (datatype == 0x02) {
-                        kf.postData[j] = reader.readString();
+                        postData[j] = reader.readString();
                     }
                 }
 
-                kf.preData = firstData;
+                kf.setPreData(firstData);
+                kf.setPostData(postData);
                 kf.hasPreData = true;
             } else {
 
-                kf.postData = firstData;
+                kf.setPostData(firstData);
                 kf.hasPreData = false;
             }
             channel.add(kf);

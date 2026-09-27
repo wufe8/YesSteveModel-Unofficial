@@ -244,13 +244,31 @@ public class YSMBinarySerializer {
             buf.writeVarInt(kf.interpolationMode);
 
             if (kf.hasPreData) {
-                for (int i = 0; i < 3; i++) writeMolangValue(buf, kf.preData[i]);
+                for (int i = 0; i < 3; i++) writeMolangValue(buf, kf, true, i);
                 buf.writeVarInt(1);
-                for (int i = 0; i < 3; i++) writeMolangValue(buf, kf.postData[i]);
+                for (int i = 0; i < 3; i++) writeMolangValue(buf, kf, false, i);
             } else {
-                for (int i = 0; i < 3; i++) writeMolangValue(buf, kf.postData[i]);
+                for (int i = 0; i < 3; i++) writeMolangValue(buf, kf, false, i);
                 buf.writeVarInt(0);
             }
+        }
+    }
+
+    /** 关键帧单个通道：数值 → 0x01 + float，表达式 → 0x02 + string（与旧 Object[] 表示同字节）。 */
+    private static void writeMolangValue(YSMByteBuf buf, RawYsmModel.RawKeyframe keyframe, boolean pre, int axis) {
+        switch (keyframe.kind(pre, axis)) {
+            case RawYsmModel.RawKeyframe.CHANNEL_NUMBER:
+                buf.writeByte((byte) 0x01);
+                buf.writeFloat(keyframe.number(pre, axis));
+                break;
+            case RawYsmModel.RawKeyframe.CHANNEL_EXPRESSION:
+                buf.writeByte((byte) 0x02);
+                buf.writeString(keyframe.expression(pre, axis));
+                break;
+            default:
+                // 旧实现到这里会对 null 解引用（NPE）。缺省通道只会在二进制里出现未知
+                // datatype 时产生，写回去时同样按"无法表示"处理，但给出可读的报错。
+                throw new IllegalArgumentException("Unknown molang value type: absent channel");
         }
     }
 

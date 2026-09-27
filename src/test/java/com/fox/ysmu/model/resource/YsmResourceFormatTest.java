@@ -363,7 +363,7 @@ class YsmResourceFormatTest {
         sceneBone.boneName = "SceneRoot";
         RawYsmModel.RawKeyframe hiddenScale = new RawYsmModel.RawKeyframe();
         hiddenScale.timestamp = 0.0f;
-        hiddenScale.postData = new Object[] { 0f, 0f, 0f };
+        hiddenScale.setPostData(new Object[] { 0f, 0f, 0f });
         sceneBone.scale.add(hiddenScale);
         idle.boneAnimations.add(sceneBone);
         RawYsmModel.RawBoneAnimation tailBone = new RawYsmModel.RawBoneAnimation();
@@ -371,7 +371,7 @@ class YsmResourceFormatTest {
         RawYsmModel.RawKeyframe tailStart = new RawYsmModel.RawKeyframe();
         tailStart.timestamp = 0.0f;
         tailStart.interpolationMode = 2;
-        tailStart.postData = new Object[] { 0f, "math.sin(query.anim_time*360)*30", 0f };
+        tailStart.setPostData(new Object[] { 0f, "math.sin(query.anim_time*360)*30", 0f });
         tailBone.rotation.add(tailStart);
         idle.boneAnimations.add(tailBone);
         RawYsmModel.RawBoneAnimation blendedBone = new RawYsmModel.RawBoneAnimation();
@@ -379,12 +379,12 @@ class YsmResourceFormatTest {
         RawYsmModel.RawKeyframe blendStart = new RawYsmModel.RawKeyframe();
         blendStart.timestamp = 0.0f;
         blendStart.interpolationMode = 2;
-        blendStart.postData = new Object[] { 0f, 0f, 0f };
+        blendStart.setPostData(new Object[] { 0f, 0f, 0f });
         blendedBone.rotation.add(blendStart);
         RawYsmModel.RawKeyframe blendEnd = new RawYsmModel.RawKeyframe();
         blendEnd.timestamp = 0.5f;
         blendEnd.interpolationMode = 2;
-        blendEnd.postData = new Object[] { 10f, 0f, 0f };
+        blendEnd.setPostData(new Object[] { 10f, 0f, 0f });
         blendedBone.rotation.add(blendEnd);
         idle.boneAnimations.add(blendedBone);
         animationFile.animations.put(idle.name, idle);
@@ -423,6 +423,140 @@ class YsmResourceFormatTest {
         assertFalse(blendedRotation.getAsJsonObject("0.0").has("vector"));
         assertTrue(blendedRotation.getAsJsonObject("0.0").has("post"));
         assertEquals("catmullrom", blendedRotation.getAsJsonObject("0.5").get("lerp_mode").getAsString());
+    }
+
+    /**
+     * 紧凑表示的通道语义本身：数值 / 表达式 / 缺省三种类型能分别写读，互不串味。
+     *
+     * <p>缺省通道在这里只做表示层断言：二进制的写方本来就表达不了"缺省"
+     * （旧表示是数组里的 null，{@code writeMolangValue} 会直接 NPE），
+     * 只有读到未知 datatype 时才会产生，所以它不该被"补成 0"。
+     */
+    @Test
+    void compactKeyframeChannelsKeepNumberExpressionAndAbsentApart() {
+        RawYsmModel.RawKeyframe keyframe = new RawYsmModel.RawKeyframe();
+        keyframe.setPostData(new Object[] { 1.5f, "v.qh + 1", null });
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_NUMBER, keyframe.kind(false, 0));
+        assertEquals(1.5f, keyframe.number(false, 0), 1.0e-6f);
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_EXPRESSION, keyframe.kind(false, 1));
+        assertEquals("v.qh + 1", keyframe.expression(false, 1));
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_ABSENT, keyframe.kind(false, 2));
+        assertNull(keyframe.expression(false, 2));
+
+        // pre 侧独立编码，不受 post 影响
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_ABSENT, keyframe.kind(true, 0));
+        keyframe.setExpression(true, 2, "math.random(-30, 30)");
+        keyframe.setNumber(true, 0, 8f);
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_NUMBER, keyframe.kind(true, 0));
+        assertEquals(8f, keyframe.number(true, 0), 1.0e-6f);
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_EXPRESSION, keyframe.kind(true, 2));
+        assertEquals("math.random(-30, 30)", keyframe.expression(true, 2));
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_ABSENT, keyframe.kind(true, 1));
+        // 表达式改成数值（同一个通道不能同时是两种类型）
+        keyframe.setNumber(true, 2, 2f);
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_NUMBER, keyframe.kind(true, 2));
+        assertEquals(2f, keyframe.number(true, 2), 1.0e-6f);
+    }
+
+    /**
+     * RawKeyframe 的紧凑表示（数值内联 + 每通道 2bit 类型）必须在
+     * "序列化 → 反序列化 → 适配成 legacy JSON" 这条链上与旧的 Object[] 表示逐值等价：
+     * 数值 / 表达式 / 缺省三种通道、以及带 pre / 不带 pre 的关键帧都要覆盖。
+     */
+    @Test
+    void compactKeyframeChannelsSurviveTheBinaryRoundTripAndTheLegacyConversion() throws Exception {
+        RawYsmModel source = new RawYsmModel();
+        source.formatVersion = 32;
+        source.properties.sha256 = "compact-channels";
+        source.properties.defaultTexture = "default";
+        source.mainEntity.mainModel = geometryWithFlatCube(1, "geometry.main");
+        source.mainEntity.armModel = geometryWithFlatCube(2, "geometry.arm");
+        RawYsmModel.RawTexture texture = new RawYsmModel.RawTexture();
+        texture.name = "default";
+        texture.sourceFileName = "default.png";
+        texture.hash = "texture-hash";
+        texture.width = 1;
+        texture.height = 1;
+        texture.imageFormat = 2;
+        texture.unknownFlag = 1;
+        texture.data = PNG_1X1;
+        source.mainEntity.textures.put(texture.name, texture);
+
+        RawYsmModel.RawAnimationFile animationFile = new RawYsmModel.RawAnimationFile();
+        animationFile.animType = 1;
+        RawYsmModel.RawAnimation mixed = new RawYsmModel.RawAnimation();
+        mixed.name = "mixed";
+        mixed.length = 1.0f;
+        mixed.loopMode = 1;
+
+        RawYsmModel.RawBoneAnimation mixedBone = new RawYsmModel.RawBoneAnimation();
+        mixedBone.boneName = "Mixed";
+        // 数值 / 表达式 / 缺省 三种通道混在一个关键帧里
+        RawYsmModel.RawKeyframe numberAndExpression = new RawYsmModel.RawKeyframe();
+        numberAndExpression.timestamp = 0.0f;
+        numberAndExpression.setPostData(new Object[] { 1.5f, "math.sin(q.anim_time)*2", 0.25f });
+        mixedBone.rotation.add(numberAndExpression);
+        // 带 pre 的关键帧（两个数组都要过一遍二进制读写）
+        RawYsmModel.RawKeyframe withPre = new RawYsmModel.RawKeyframe();
+        withPre.timestamp = 0.5f;
+        withPre.interpolationMode = 2;
+        withPre.hasPreData = true;
+        withPre.setPreData(new Object[] { 0f, 0f, 0f });
+        withPre.setPostData(new Object[] { 2f, 3f, 4f });
+        mixedBone.rotation.add(withPre);
+        // 单关键帧 + t=0 + 无 pre：走 putChannel 的快捷分支
+        RawYsmModel.RawKeyframe singleNumber = new RawYsmModel.RawKeyframe();
+        singleNumber.timestamp = 0.0f;
+        singleNumber.setPostData(new Object[] { 0f, 0f, 0f });
+        mixedBone.scale.add(singleNumber);
+        mixed.boneAnimations.add(mixedBone);
+        animationFile.animations.put(mixed.name, mixed);
+        source.mainEntity.animationFiles.put("main", animationFile);
+
+        byte[] bytes;
+        try (YSMByteBuf serialized = YSMBinarySerializer.serialize(source, 32, false)) {
+            bytes = serialized.toArray();
+        }
+
+        RawYsmModel decoded;
+        try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(bytes, 32)) {
+            decoded = deserializer.deserialize();
+        }
+
+        RawYsmModel.RawKeyframe decodedMixed = decoded.mainEntity.animationFiles.get("main")
+            .animations.get("mixed").boneAnimations.get(0).rotation.get(0);
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_NUMBER, decodedMixed.kind(false, 0));
+        assertEquals(1.5f, decodedMixed.number(false, 0), 1.0e-6f);
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_EXPRESSION, decodedMixed.kind(false, 1));
+        assertEquals("math.sin(q.anim_time)*2", decodedMixed.expression(false, 1));
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_NUMBER, decodedMixed.kind(false, 2));
+        assertEquals(0.25f, decodedMixed.number(false, 2), 1.0e-6f);
+        assertFalse(decodedMixed.hasPreData);
+
+        RawYsmModel.RawKeyframe decodedPre = decoded.mainEntity.animationFiles.get("main")
+            .animations.get("mixed").boneAnimations.get(0).rotation.get(1);
+        assertTrue(decodedPre.hasPreData);
+        assertEquals(0f, decodedPre.number(true, 0), 1.0e-6f);
+        assertEquals(RawYsmModel.RawKeyframe.CHANNEL_NUMBER, decodedPre.kind(true, 2));
+        assertEquals(4f, decodedPre.number(false, 2), 1.0e-6f);
+
+        ModelData data = RawYsmModelAdapter.toLegacyModelData(decoded, "compact_anim");
+        JsonObject root = new JsonParser().parse(new String(data.getAnimation().get("main"), StandardCharsets.UTF_8))
+            .getAsJsonObject();
+        JsonObject bones = root.getAsJsonObject("animations").getAsJsonObject("mixed").getAsJsonObject("bones");
+        JsonObject mixedNode = bones.getAsJsonObject("Mixed");
+        // 两个关键帧 → rotation 是按时间索引的对象；单关键帧 + t=0 的 scale 走快捷路径 → 数组
+        JsonObject rotationByTime = mixedNode.getAsJsonObject("rotation");
+        JsonArray firstRotation = rotationByTime.getAsJsonArray("0.0");
+        assertEquals(1.5d, firstRotation.get(0).getAsDouble(), 1.0e-6d);
+        assertEquals("math.sin(q.anim_time)*2", firstRotation.get(1).getAsString());
+        assertEquals(0.25d, firstRotation.get(2).getAsDouble(), 1.0e-6d);
+        JsonObject preFrame = rotationByTime.getAsJsonObject("0.5");
+        assertEquals(0d, preFrame.getAsJsonArray("pre").get(0).getAsDouble(), 1.0e-6d);
+        assertEquals(3d, preFrame.getAsJsonArray("post").get(1).getAsDouble(), 1.0e-6d);
+        assertEquals("catmullrom", preFrame.get("lerp_mode").getAsString());
+        JsonArray singleScale = mixedNode.getAsJsonArray("scale");
+        assertEquals(0d, singleScale.get(0).getAsDouble(), 1.0e-6d);
     }
 
     @Test

@@ -1100,7 +1100,7 @@ public final class RawYsmModelAdapter {
         if (keyframes.size() == 1) {
             RawYsmModel.RawKeyframe keyframe = keyframes.get(0);
             if (!keyframe.hasPreData && isZeroTime(keyframe.timestamp)) {
-                bone.add(channelName, molangArray(keyframe.postData));
+                bone.add(channelName, molangArray(keyframe, false));
                 return;
             }
         }
@@ -1114,7 +1114,7 @@ public final class RawYsmModelAdapter {
     private static JsonElement createKeyframeJson(RawYsmModel.RawKeyframe keyframe) {
         String lerpMode = lerpMode(keyframe.interpolationMode);
         if (!keyframe.hasPreData) {
-            JsonArray value = molangArray(keyframe.postData);
+            JsonArray value = molangArray(keyframe, false);
             if (StringUtils.isBlank(lerpMode)) {
                 return value;
             }
@@ -1124,8 +1124,8 @@ public final class RawYsmModelAdapter {
             return json;
         }
         JsonObject json = new JsonObject();
-        json.add("pre", molangArray(keyframe.preData));
-        json.add("post", molangArray(keyframe.postData));
+        json.add("pre", molangArray(keyframe, true));
+        json.add("post", molangArray(keyframe, false));
         if (StringUtils.isNotBlank(lerpMode)) {
             json.addProperty("lerp_mode", lerpMode);
         }
@@ -1142,10 +1142,25 @@ public final class RawYsmModelAdapter {
         return "";
     }
 
-    private static JsonArray molangArray(Object[] values) {
+    /**
+     * 关键帧一侧的三轴 JSON。与旧的 {@code Object[]} 表示逐值对应：
+     * 数值 → {@code JsonPrimitive(Number)}、表达式 → {@code JsonPrimitive(String)}、
+     * 缺省 → 字符串 {@code "0"}（旧代码里缺省是数组里的 null 元素，走的就是 {@code molangValue(null)}）。
+     */
+    private static JsonArray molangArray(RawYsmModel.RawKeyframe keyframe, boolean pre) {
         JsonArray array = new JsonArray();
         for (int i = 0; i < 3; i++) {
-            array.add(molangValue(values != null && values.length > i ? values[i] : Float.valueOf(0f)));
+            switch (keyframe.kind(pre, i)) {
+                case RawYsmModel.RawKeyframe.CHANNEL_NUMBER:
+                    array.add(new JsonPrimitive(Float.valueOf(keyframe.number(pre, i))));
+                    break;
+                case RawYsmModel.RawKeyframe.CHANNEL_EXPRESSION:
+                    array.add(new JsonPrimitive(keyframe.expression(pre, i)));
+                    break;
+                default:
+                    array.add(new JsonPrimitive("0"));
+                    break;
+            }
         }
         return array;
     }

@@ -807,7 +807,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
             String strVal = element.getAsJsonPrimitive().isNumber()
                 ? Float.toString(element.getAsFloat())
                 : element.getAsString();
-            kf.postData = new Object[]{strVal, strVal, strVal};
+            kf.setPostData(new Object[]{strVal, strVal, strVal});
             channel.add(kf);
             return;
         }
@@ -822,7 +822,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
             kf.timestamp = 0f;
             kf.interpolationMode = 0;
             kf.hasPreData = false;
-            kf.postData = readMolangArray(element.getAsJsonArray());
+            kf.setPostData(readMolangArray(element.getAsJsonArray()));
             channel.add(kf);
             return;
         }
@@ -854,7 +854,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
         if (element.isJsonArray()) {
             // [x, y, z] — simple array
             kf.hasPreData = false;
-            kf.postData = readMolangArray(element.getAsJsonArray());
+            kf.setPostData(readMolangArray(element.getAsJsonArray()));
             return kf;
         }
         if (!element.isJsonObject()) {
@@ -863,7 +863,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
             String str = element.getAsJsonPrimitive().isNumber()
                 ? Float.toString(element.getAsFloat())
                 : element.getAsString();
-            kf.postData = new Object[]{str, str, str};
+            kf.setPostData(new Object[]{str, str, str});
             return kf;
         }
         JsonObject obj = element.getAsJsonObject();
@@ -874,22 +874,22 @@ public class YSMFolderDeserializer implements AutoCloseable {
             JsonElement preElem = hasPre ? obj.get("pre") : null;
             if (hasPre) {
                 if (preElem.isJsonArray()) {
-                    kf.preData = readMolangArray(preElem.getAsJsonArray());
+                    kf.setPreData(readMolangArray(preElem.getAsJsonArray()));
                 } else {
                     String s = preElem.getAsJsonPrimitive().isNumber()
                         ? Float.toString(preElem.getAsFloat())
                         : preElem.getAsString();
-                    kf.preData = new Object[]{s, s, s};
+                    kf.setPreData(new Object[]{s, s, s});
                 }
             }
             JsonElement postElem = obj.get("post");
             if (postElem.isJsonArray()) {
-                kf.postData = readMolangArray(postElem.getAsJsonArray());
+                kf.setPostData(readMolangArray(postElem.getAsJsonArray()));
             } else {
                 String s = postElem.getAsJsonPrimitive().isNumber()
                     ? Float.toString(postElem.getAsFloat())
                     : postElem.getAsString();
-                kf.postData = new Object[]{s, s, s};
+                kf.setPostData(new Object[]{s, s, s});
             }
             if (obj.has("lerp_mode")) {
                 String lm = obj.get("lerp_mode").getAsString();
@@ -901,7 +901,7 @@ public class YSMFolderDeserializer implements AutoCloseable {
         // Unknown object format — treat as [val, val, val] from "vector" or just skip
         if (obj.has("vector")) {
             kf.hasPreData = false;
-            kf.postData = readMolangArray(obj.getAsJsonArray("vector"));
+            kf.setPostData(readMolangArray(obj.getAsJsonArray("vector")));
             return kf;
         }
         return null;

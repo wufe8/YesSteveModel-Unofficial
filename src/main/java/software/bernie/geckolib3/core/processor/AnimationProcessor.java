@@ -141,7 +141,8 @@ public class AnimationProcessor<T extends IAnimatable> {
         // Store the current value of each bone rotation/position/scale
         updateBoneSnapshots(manager.getBoneSnapshotCollection());
         HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshots = manager.getBoneSnapshotCollection();
-        HashMap<String, PointData> pointDataGroup = new HashMap<>(capacityForBones(modelRendererList.size()));
+        // YSMU: 与本 tick 的 DirtyTracker 表同一个复用槽位（见 pointDataGroupForThisTick）。
+        HashMap<String, PointData> pointDataGroup = pointDataGroupForThisTick();
         for (AnimationController<T> controller : manager.getAnimationControllers()
             .values()) {
             if (reloadAnimations) {
@@ -412,6 +413,14 @@ public class AnimationProcessor<T extends IAnimatable> {
          * "键集还对不对"，不必逐个键核对。
          */
         private List<IBone> builtFor;
+        /**
+         * 同一 tick 的「骨骼名 → PointData」表（每个动画点的累加结果）。
+         * 和 trackers 一样是"每 tick 一张、内容只与本 tick 有关"的临时表：
+         * 骨骼表不变时键与 PointData 对象都留着，只把三个分量复位；
+         * 换骨骼表才整表丢掉。首次分配按骨骼数预置容量，避免逐骨骼 resize。
+         */
+        private HashMap<String, PointData> pointData;
+        private List<IBone> pointDataBuiltFor;
     }
 
     HashMap<String, DirtyTracker> createNewDirtyTracker() {
@@ -442,6 +451,34 @@ public class AnimationProcessor<T extends IAnimatable> {
         return tracker;
     }
 
+    /**
+     * 本 tick 的 PointData 表，复用 {@link #createNewDirtyTracker()} 刚刚取到的那一层
+     * 槽位（所以必须在它之后、{@link #releaseDirtyTracker()} 之前调用）。
+     *
+     * <p>旧实现每 tick {@code new HashMap<>(capacityForBones(n))} + 每骨骼
+     * {@code computeIfAbsent(…, k -> new PointData())}：堆快照里 493,170 个 PointData
+     * 与 268,149 个 HashMap$Node[] 里的一部分就是它。PointData 携带的只是"本 tick 各控制器
+     * 累加出来的旋转分量"，所以键集与对象都能跨 tick 留着，只把分量清零 ——
+     * {@code parallel} 族的旋转是**相加**的，必须从 0 开始，不能沿用上一 tick 的值。
+     */
+    HashMap<String, PointData> pointDataGroupForThisTick() {
+        TrackerSlot slot = trackerPool.get(trackerDepth - 1);
+        if (slot.pointData == null) {
+            slot.pointData = new HashMap<>(capacityForBones(modelRendererList.size()));
+        }
+        HashMap<String, PointData> group = slot.pointData;
+        if (slot.pointDataBuiltFor != modelRendererList) {
+            // 骨骼表换了：键是骨骼名，旧键没有意义，整表丢掉重建。
+            group.clear();
+            slot.pointDataBuiltFor = modelRendererList;
+            return group;
+        }
+        for (PointData pointData : group.values()) {
+            pointData.reset();
+        }
+        return group;
+    }
+
     /** 见 {@link #createNewDirtyTracker()}：一层 tick 结束，归还池里这一层。 */
     void releaseDirtyTracker() {
         if (trackerDepth > 0) {
@@ -456,10 +493,13 @@ public class AnimationProcessor<T extends IAnimatable> {
 
     void updateBoneSnapshots(HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshotCollection) {
         for (IBone bone : modelRendererList) {
-            // computeIfAbsent 一次查找，替代旧的 containsKey + put 两次（骨骼数 × tick）。
-            boneSnapshotCollection.computeIfAbsent(
-                bone.getName(),
-                name -> Pair.of(bone, new BoneSnapshot(bone.getInitialSnapshot())));
+            // 一次查找替代旧的 containsKey + put 两次（骨骼数 × tick）。
+            // 这里不能用 computeIfAbsent：它的 lambda 捕获了 bone，于是**每骨骼每 tick**
+            // 都会分配一个 lambda 实例（堆快照里 765,772 个 AnimationProcessor$$Lambda）。
+            String name = bone.getName();
+            if (boneSnapshotCollection.get(name) == null) {
+                boneSnapshotCollection.put(name, Pair.of(bone, new BoneSnapshot(bone.getInitialSnapshot())));
+            }
         }
     }
 

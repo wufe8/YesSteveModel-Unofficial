@@ -117,6 +117,56 @@ class AnimationProcessorTickTableTest {
     }
 
     /**
+     * PointData 表：和 DirtyTracker 表同一个复用槽位，键与对象跨 tick 留着，
+     * 但每个分量必须从 0 开始 —— {@code parallel} 族的旋转是**相加**的
+     * （见 AnimationProcessor.combineRotation），沿用上一个 tick 的值会逐帧累积。
+     *
+     * <p>回归点（VisualVM 直方图）：旧实现每 tick {@code new HashMap<>(…)} + 每骨骼
+     * {@code computeIfAbsent(…, k -> new PointData())}，堆里同时有 493,170 个 PointData。
+     */
+    @Test
+    void pointDataTableIsReusedButEveryComponentStartsAtZero() throws Exception {
+        AnimationProcessor<IAnimatable> processor = registered("bone_a", "bone_b");
+
+        processor.createNewDirtyTracker();
+        HashMap<String, PointData> first = processor.pointDataGroupForThisTick();
+        PointData accumulated = new PointData();
+        accumulated.rotationValueX = 5f;
+        accumulated.rotationValueY = 6f;
+        accumulated.rotationValueZ = 7f;
+        first.put("bone_a", accumulated);
+        processor.releaseDirtyTracker();
+
+        processor.createNewDirtyTracker();
+        HashMap<String, PointData> second = processor.pointDataGroupForThisTick();
+        assertSame(first, second, "PointData 表必须跨 tick 复用");
+        assertSame(accumulated, second.get("bone_a"), "PointData 对象也要复用");
+        assertEquals(0f, accumulated.rotationValueX, "上一 tick 的累加值不能漏进来");
+        assertEquals(0f, accumulated.rotationValueY, "上一 tick 的累加值不能漏进来");
+        assertEquals(0f, accumulated.rotationValueZ, "上一 tick 的累加值不能漏进来");
+        processor.releaseDirtyTracker();
+    }
+
+    /** 换模型（骨骼表换了引用）时，PointData 表也必须丢掉上一个模型的键。 */
+    @Test
+    void pointDataTableRebuildsWhenTheModelChanges() throws Exception {
+        AnimationProcessor<IAnimatable> processor = registered("bone_a", "bone_b");
+        processor.createNewDirtyTracker();
+        HashMap<String, PointData> before = processor.pointDataGroupForThisTick();
+        before.put("bone_a", new PointData());
+        processor.releaseDirtyTracker();
+
+        GeoModel other = AnimationProcessorRegistrationCacheTest.modelWithBones("bone_c");
+        assertFalse(processor.selectModel(other));
+        AnimationProcessorRegistrationCacheTest.register(processor, other);
+
+        processor.createNewDirtyTracker();
+        HashMap<String, PointData> after = processor.pointDataGroupForThisTick();
+        assertNull(after.get("bone_a"), "上一个模型的骨骼不能残留");
+        processor.releaseDirtyTracker();
+    }
+
+    /**
      * BoneSnapshot 表：只补缺失的键 —— 已有的条目（连同它保存的快照值）不能被覆盖。
      * 这是 {@code containsKey + put} 改成 {@code computeIfAbsent} 时必须保持不变的行为。
      */

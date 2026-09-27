@@ -42,6 +42,7 @@ import software.bernie.geckolib3.core.event.ParticleKeyFrameEvent;
 import software.bernie.geckolib3.core.event.SoundKeyframeEvent;
 import software.bernie.geckolib3.core.event.predicate.AnimationEvent;
 import software.bernie.geckolib3.core.keyframe.AnimationPoint;
+import software.bernie.geckolib3.core.keyframe.AnimationPointQueue;
 import software.bernie.geckolib3.core.keyframe.BoneAnimation;
 import software.bernie.geckolib3.core.keyframe.BoneAnimationQueue;
 import software.bernie.geckolib3.core.keyframe.EventKeyFrame;
@@ -723,8 +724,8 @@ public class AnimationController<T extends IAnimatable> {
             // other controllers (e.g. cap_controller's "hover" pose lingers
             // after the hover ends, corrupting the main controller's preview
             // animation).
-            this.boneAnimationQueues.clear();
-            this.activeBoneAnimationQueues.clear();
+            // 只需要倒掉待消费的点：queue 对象本身留着下帧复用（见 createInitialQueues）。
+            discardPendingPoints();
             // YSMU: no playback while stopped; the next running frame re-anchors.
             this.lastSyncActualTick = -1.0d;
             return;
@@ -1152,13 +1153,51 @@ public class AnimationController<T extends IAnimatable> {
 
     // Helper method to populate all the initial animation point queues
     private void createInitialQueues(Map<String, IBone> boneByName) {
-        boneAnimationQueues.clear();
+        if (boneNameToBone != boneByName) {
+            // 换了模型（或首次）：旧队列绑的是上一个模型的 IBone，不能跨模型复用。
+            // 名字索引由 AnimationProcessor 按当前模型维护（模型切换时才换），这里整体换上即可。
+            // 旧实现每帧、每个控制器都把整张骨骼表重新 put 进一个 HashMap
+            // （预览页 13 个模型各十来个控制器，实测 self 624 ms + HashMap.clear 176 ms）。
+            // BoneAnimationQueue 仍然是懒创建：只有真的被动画引用到的骨骼才会有队列。
+            discardPendingPoints();
+            boneAnimationQueues.clear();
+            boneNameToBone = boneByName;
+            return;
+        }
+        // 同一个模型：queue 对象（每骨骼 1 个 + 9 条 LinkedList）留着下一帧继续用。
+        // 旧实现每帧 clear() 整张表再逐个懒创建，于是每帧都要重新 new 一遍 ——
+        // 实测堆里同时躺着 539,173 个 BoneAnimationQueue 与 4,852,557 条
+        // AnimationPointQueue（= 539,173 × 9），全是等 GC 的垃圾，占了 Eden 的一大块。
+        // 真正需要清空的只有"上一帧没被 AnimationProcessor poll 走的动画点"，而那只可能
+        // 出现在上一帧的活跃骨骼上，所以只处理 activeBoneAnimationQueues 就够了。
+        discardPendingPoints();
+    }
+
+    /** 倒掉上一帧没被消费的动画点，把 AnimationPoint 还回对象池；queue 对象本身保留复用。 */
+    private void discardPendingPoints() {
+        for (int i = 0, size = activeBoneAnimationQueues.size(); i < size; i++) {
+            recycleQueue(activeBoneAnimationQueues.get(i));
+        }
         activeBoneAnimationQueues.clear();
-        // 名字索引由 AnimationProcessor 按当前模型维护（模型切换时才换），这里整体换上即可。
-        // 旧实现每帧、每个控制器都把整张骨骼表重新 put 进一个 HashMap
-        // （预览页 13 个模型各十来个控制器，实测 self 624 ms + HashMap.clear 176 ms）。
-        // BoneAnimationQueue 仍然是懒创建：只有真的被动画引用到的骨骼才会有队列。
-        boneNameToBone = boneByName;
+    }
+
+    private static void recycleQueue(BoneAnimationQueue queue) {
+        recycle(queue.rotationXQueue);
+        recycle(queue.rotationYQueue);
+        recycle(queue.rotationZQueue);
+        recycle(queue.positionXQueue);
+        recycle(queue.positionYQueue);
+        recycle(queue.positionZQueue);
+        recycle(queue.scaleXQueue);
+        recycle(queue.scaleYQueue);
+        recycle(queue.scaleZQueue);
+    }
+
+    private static void recycle(AnimationPointQueue queue) {
+        AnimationPoint point;
+        while ((point = queue.poll()) != null) {
+            point.recycle();
+        }
     }
 
     /** Ensures a BoneAnimationQueue exists for the given bone name, creating
@@ -1199,11 +1238,11 @@ public class AnimationController<T extends IAnimatable> {
         }
     }
 
-    // Helper method to transform a KeyFrameLocation to an AnimationPoint
+    // Helper method to transform the current keyframe into an AnimationPoint
     private AnimationPoint getAnimationPointAtTick(List<KeyFrame<IValue>> frames, double tick, boolean isRotation,
         Axis axis) {
-        KeyFrameLocation<KeyFrame<IValue>> location = getCurrentKeyFrameLocation(frames, tick);
-        KeyFrame<IValue> currentFrame = location.currentFrame;
+        findCurrentKeyFrame(frames, tick);
+        KeyFrame<IValue> currentFrame = currentKeyFrame;
         double startValue = currentFrame.getStartValueDouble();
         double endValue = currentFrame.getEndValueDouble();
 
@@ -1224,7 +1263,8 @@ public class AnimationController<T extends IAnimatable> {
             }
         }
 
-        return AnimationPoint.obtain(currentFrame, location.currentTick, currentFrame.getLengthPrimitive(), startValue, endValue);
+        return AnimationPoint.obtain(currentFrame, currentKeyFrameTick, currentFrame.getLengthPrimitive(), startValue,
+            endValue);
     }
 
     /** Cache entry for {@link #getCurrentKeyFrameLocation} — remembers the last
@@ -1247,15 +1287,24 @@ public class AnimationController<T extends IAnimatable> {
     }
     private java.util.IdentityHashMap<List<KeyFrame<IValue>>, KfCacheEntry> kfCache;
 
+    /** {@link #findCurrentKeyFrame} 的两个结果。写成字段而不是每帧 new 一个
+     *  {@code KeyFrameLocation} —— 堆快照里同时躺着 173 万个，全是这一处造的垃圾。 */
+    private KeyFrame<IValue> currentKeyFrame;
+    private double currentKeyFrameTick;
+
     /**
-     * Returns the current keyframe object, plus how long the previous keyframes
-     * have taken (aka elapsed animation time).
-     * Uses a per-list index cache to avoid re-scanning from index 0 every call
+     * 定位 {@code ageInTicks} 落在哪个关键帧，结果写进 {@link #currentKeyFrame} /
+     * {@link #currentKeyFrameTick}（当前关键帧 + 该帧内已经过的时间）。
+     *
+     * <p>用一份可变的"当前帧位置"而不是每次返回新对象：调用方
+     * （{@link #getAnimationPointAtTick}）每帧每通道都要问一次，而且拿到后立刻就
+     * 用掉，没有重入的可能。
+     *
+     * <p>Uses a per-list index cache to avoid re-scanning from index 0 every call
      * — tick increases monotonically within a running animation, so we can
      * start from the last known position and only scan forward.
      **/
-    KeyFrameLocation<KeyFrame<IValue>> getCurrentKeyFrameLocation(List<KeyFrame<IValue>> frames,
-        double ageInTicks) {
+    void findCurrentKeyFrame(List<KeyFrame<IValue>> frames, double ageInTicks) {
         if (kfCache != null) {
             KfCacheEntry cached = kfCache.get(frames);
             if (cached != null) {
@@ -1271,7 +1320,9 @@ public class AnimationController<T extends IAnimatable> {
                     // kfCache.computeIfAbsent(frames, k -> new KfCacheEntry()).set(...) —— 又查一次表、
                     // 又分配一个 lambda（实测 Map.computeIfAbsent 独占客户端线程 9.2ms/s）。
                     cached.set(cached.index, cached.cumulativeTime, ageInTicks);
-                    return new KeyFrameLocation<>(frame, tick);
+                    currentKeyFrame = frame;
+                    currentKeyFrameTick = tick;
+                    return;
                 } else {
                     // Moved to a later keyframe — scan from cached index + 1
                     double totalTimeTracker = cached.cumulativeTime;
@@ -1281,14 +1332,18 @@ public class AnimationController<T extends IAnimatable> {
                         if (newTotal > ageInTicks) {
                             double tick = ageInTicks - totalTimeTracker;
                             cached.set(i, newTotal, ageInTicks);
-                            return new KeyFrameLocation<>(frame, tick);
+                            currentKeyFrame = frame;
+                            currentKeyFrameTick = tick;
+                            return;
                         }
                         totalTimeTracker = newTotal;
                     }
                     // Past all frames — return last
                     int last = frames.size() - 1;
                     cached.set(last, totalTimeTracker, ageInTicks);
-                    return new KeyFrameLocation<>(frames.get(last), ageInTicks);
+                    currentKeyFrame = frames.get(last);
+                    currentKeyFrameTick = ageInTicks;
+                    return;
                 }
             }
         }
@@ -1306,7 +1361,9 @@ public class AnimationController<T extends IAnimatable> {
                     kfCache = new java.util.IdentityHashMap<>();
                 }
                 kfCache.put(frames, new KfCacheEntry(i, totalTimeTracker, ageInTicks));
-                return new KeyFrameLocation<>(frame, tick);
+                currentKeyFrame = frame;
+                currentKeyFrameTick = tick;
+                return;
             }
         }
         int last = frames.size() - 1;
@@ -1314,7 +1371,15 @@ public class AnimationController<T extends IAnimatable> {
             kfCache = new java.util.IdentityHashMap<>();
         }
         kfCache.put(frames, new KfCacheEntry(last, totalTimeTracker, ageInTicks));
-        return new KeyFrameLocation<>(frames.get(last), ageInTicks);
+        currentKeyFrame = frames.get(last);
+        currentKeyFrameTick = ageInTicks;
+    }
+
+    /** 旧的"返回一个新对象"取法，保留给测试；生产路径见 {@link #findCurrentKeyFrame}。 */
+    KeyFrameLocation<KeyFrame<IValue>> getCurrentKeyFrameLocation(List<KeyFrame<IValue>> frames,
+        double ageInTicks) {
+        findCurrentKeyFrame(frames, ageInTicks);
+        return new KeyFrameLocation<>(currentKeyFrame, currentKeyFrameTick);
     }
 
     private void resetEventKeyFrames() {

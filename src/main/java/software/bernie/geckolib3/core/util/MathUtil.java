@@ -16,34 +16,35 @@ public class MathUtil {
      */
     public static float lerpValues(AnimationPoint animationPoint, EasingType easingType,
         Function<Double, Double> customEasingMethod) {
-        // Safety: pooled AnimationPoint should always have valid tick values
-        if (animationPoint.currentTick == null || animationPoint.animationEndTick == null) {
-            return 0f;
-        }
+        // AnimationPoint 的四个字段现在是基本类型（见 AnimationPoint 的注释），所以不再有
+        // "池里拿出来的点还没填值"这种 null 情况：一个没被 obtain 过的点是全 0，
+        // 下面第一个判断就会把它送到 animationEndValue（同样是 0），与旧的 null 兜底等价。
         if (animationPoint.currentTick >= animationPoint.animationEndTick) {
-            return animationPoint.animationEndValue != null
-                ? animationPoint.animationEndValue.floatValue() : 0f;
-        }
-        if (animationPoint.currentTick == 0 && animationPoint.animationEndTick == 0) {
-            return animationPoint.animationEndValue != null
-                ? animationPoint.animationEndValue.floatValue() : 0f;
+            return (float) animationPoint.animationEndValue;
         }
 
         if (easingType == EasingType.CUSTOM && customEasingMethod != null) {
             return lerpValues(
                 customEasingMethod.apply(animationPoint.currentTick / animationPoint.animationEndTick),
-                animationPoint.animationStartValue != null ? animationPoint.animationStartValue : 0,
-                animationPoint.animationEndValue != null ? animationPoint.animationEndValue : 0);
+                animationPoint.animationStartValue,
+                animationPoint.animationEndValue);
         } else if (easingType == EasingType.NONE && animationPoint.keyframe != null) {
             easingType = animationPoint.keyframe.easingType;
         }
+        double percent = animationPoint.currentTick / animationPoint.animationEndTick;
+        // YSMU perf: Linear 是 KeyFrame 的默认缓动（绝大多数关键帧都是它），NONE 也一样 ——
+        // EasingManager.getEasingFuncImpl 对这两者走 default 分支，返回的 in(linear) 里
+        // in() 原样返回、linear(t)=t，所以缓动结果就是 percent 本身。直接算掉，省掉每次调用
+        // 一次 new EasingFunctionArgs + 两次 Double 装箱（Function<Double,Double> 的参数与返回值）
+        // + 一次 Memoizer 查表（它的 key 还会被缓存长期留住：堆快照里 106,851 个）。
+        if (easingType == EasingType.Linear || easingType == EasingType.NONE) {
+            return lerpValues(percent, animationPoint.animationStartValue, animationPoint.animationEndValue);
+        }
         double ease = EasingManager.ease(
-            animationPoint.currentTick / animationPoint.animationEndTick,
+            percent,
             easingType,
             animationPoint.keyframe == null ? null : animationPoint.keyframe.easingArgs);
-        return lerpValues(ease,
-            animationPoint.animationStartValue != null ? animationPoint.animationStartValue : 0,
-            animationPoint.animationEndValue != null ? animationPoint.animationEndValue : 0);
+        return lerpValues(ease, animationPoint.animationStartValue, animationPoint.animationEndValue);
     }
 
     /**
