@@ -151,17 +151,12 @@ public final class OpenYsmPlayerControllerRuntime {
         if (varName == null) {
             return;
         }
-        String name = varName;
-        if (name.startsWith("variable.")) {
-            name = name.substring("variable.".length());
-        }
-        if (name.startsWith("v.")) {
-            name = name.substring(2);
-        }
-        if (!name.startsWith("roaming.")) {
+        RoamingName info = roamingName(varName);
+        if (!info.isRoamingName()) {
             // 只有常驻变量会被默认值每帧回写；其它 v.* 没有这条写回，不必记录。
             return;
         }
+        String name = info.container;
         PENDING_ROAMING.put(name, value);
         markRoamingExplicit(modelId, name);
         invalidateFrameRoamingCache();
@@ -204,10 +199,8 @@ public final class OpenYsmPlayerControllerRuntime {
         if (declared.contains(varName)) {
             return true;
         }
-        if (varName.startsWith(ROAMING_PREFIX)) {
-            return declared.contains(varName.substring(ROAMING_PREFIX.length()));
-        }
-        return declared.contains(ROAMING_PREFIX + varName);
+        RoamingName info = roamingName(varName);
+        return info.plain != null ? declared.contains(info.plain) : declared.contains(info.prefixed);
     }
 
     /** 判断某变量是否在指定模型上被显式设置。全局标记（无模型上下文写入）对所有模型生效。 */
@@ -229,14 +222,94 @@ public final class OpenYsmPlayerControllerRuntime {
      *  {@link #injectRoamingVar}. */
     private static final Map<String, Map<String, String[]>> ROAMING_KEYS = new ConcurrentHashMap<>();
 
+    /** 由 varName 派生出来的全部字符串，按 varName 记忆化。
+     *
+     *  <p>这些派生（剥 {@code roaming.} 前缀、{@code toLowerCase}、拼 {@code keyPrefix}
+     *  别名键、拼自校准 tag）原本在**每帧 x 每个常驻变量 x 每个命中控制器**上重算一遍；实机
+     *  JFR 里 {@code injectRoamingVar:316/333/337} 与 {@code noteRoamingWrite:159} 合计占掉
+     *  约 20% 的分配样本（byte[] + String + substring）。派生只依赖 varName 本身，缓存一次即可。</p>
+     */
+    static final class RoamingName {
+
+        /** varName 的小写形式。 */
+        final String lc;
+        /** {@code roaming.} 之后的名字（无该前缀时为 null），即注入用的裸名。 */
+        final String plain;
+        /** 裸名的小写（无前缀时 null）。 */
+        final String plainLc;
+        /** {@code ROAMING_PREFIX} + varName，供反查 declared 集合用。 */
+        final String prefixed;
+        /** 只剥 {@code variable.} / {@code v.}、保留 {@code roaming.} 的名字（noteRoamingWrite 用）。 */
+        final String container;
+
+        private final String aliasBare;
+        private final String aliasBareLc;
+        private final String aliasV;
+        private final String aliasVLc;
+
+        RoamingName(String varName) {
+            this.lc = varName.toLowerCase(java.util.Locale.ROOT);
+            boolean hasPlain = varName.startsWith(ROAMING_PREFIX);
+            this.plain = hasPlain ? varName.substring(ROAMING_PREFIX.length()) : null;
+            this.plainLc = plain == null ? null : plain.toLowerCase(java.util.Locale.ROOT);
+            this.prefixed = ROAMING_PREFIX + varName;
+            this.aliasBare = plain;
+            this.aliasBareLc = plainLc == null || plainLc.equals(plain) ? plain : plainLc;
+            this.aliasV = plain == null ? null : "v." + plain;
+            this.aliasVLc = plain == null ? null : (plain.equals(aliasBareLc) ? aliasV : "v." + plainLc);
+            String name = varName;
+            if (name.startsWith("variable.")) {
+                name = name.substring("variable.".length());
+            }
+            if (name.startsWith("v.")) {
+                name = name.substring(2);
+            }
+            this.container = name;
+        }
+
+        /** keyPrefix 对应的裸名别名键（无裸名时为 null）。 */
+        String alias(String keyPrefix) {
+            return keyPrefix.isEmpty() ? aliasBare : aliasV;
+        }
+
+        String aliasLc(String keyPrefix) {
+            return keyPrefix.isEmpty() ? aliasBareLc : aliasVLc;
+        }
+
+        boolean isRoamingName() {
+            return container.startsWith(ROAMING_PREFIX);
+        }
+    }
+
+    private static final Map<String, RoamingName> ROAMING_NAMES = new ConcurrentHashMap<>();
+
+    /** 取（并按需计算）varName 的派生字符串；调用点在每帧热路径上。 */
+    static RoamingName roamingName(String varName) {
+        RoamingName cached = ROAMING_NAMES.get(varName);
+        if (cached != null) {
+            return cached;
+        }
+        RoamingName created = new RoamingName(varName);
+        ROAMING_NAMES.put(varName, created);
+        return created;
+    }
+
+    /** (modelId -> 裸名 -> 自校准 tag)：tag 也只拼一次，热路径不再产生临时 String。 */
+    private static final Map<ResourceLocation, Map<String, String>> ROAMING_TAGS = new ConcurrentHashMap<>();
+
+    private static String roamingTag(ResourceLocation modelId, String plain) {
+        return ROAMING_TAGS.computeIfAbsent(modelId, k -> new ConcurrentHashMap<>())
+            .computeIfAbsent(plain, p -> modelId + "|" + p);
+    }
+
     /** Derive (once per varName+keyPrefix) every key {@link #injectRoamingVar} writes:
      *  the original name, its lowercase form, and — for a {@code roaming.}-prefixed
      *  name — the prefix-stripped bare name and its lowercase form. */
     private static String[] deriveRoamingKeys(String keyPrefix, String varName) {
-        String lc = varName.toLowerCase(java.util.Locale.ROOT);
-        boolean hasPlain = varName.startsWith(ROAMING_PREFIX);
-        String plain = hasPlain ? varName.substring(ROAMING_PREFIX.length()) : null;
-        String lcPlain = plain != null ? plain.toLowerCase(java.util.Locale.ROOT) : null;
+        RoamingName info = roamingName(varName);
+        String lc = info.lc;
+        String plain = info.plain;
+        String lcPlain = info.plainLc;
         String[] keys = new String[4];
         int n = 0;
         keys[n++] = keyPrefix + varName;
@@ -330,18 +403,20 @@ public final class OpenYsmPlayerControllerRuntime {
     public static void injectRoamingVar(java.util.Map<String, Double> target,
         java.util.Set<String> dirtySink, String keyPrefix, String varName, double value,
         ResourceLocation modelId) {
-        String plain = varName.startsWith(ROAMING_PREFIX) ? varName.substring(ROAMING_PREFIX.length()) : null;
-        String plainLc = plain == null ? null : plain.toLowerCase(java.util.Locale.ROOT);
+        RoamingName info = roamingName(varName);
+        String plain = info.plain;
         boolean ownsBare = plain != null && isModelOwnedVar(modelId, plain);
+        String alias = info.alias(keyPrefix);
+        String aliasLc = info.aliasLc(keyPrefix);
         for (String key : roamingKeys(keyPrefix, varName)) {
-            if (plain != null && (key.equals(keyPrefix + plain) || key.equals(keyPrefix + plainLc))) {
+            if (alias != null && (key.equals(alias) || key.equals(aliasLc))) {
                 // 裸名别名：模型自己也会写这个名字时不能注入（否则就是覆盖模型的变量）。
                 if (ownsBare) {
                     continue;
                 }
                 if ("v.".equals(keyPrefix) && modelId != null) {
                     // 自校准：上一次注入后，这个键是否被模型自己改写成了别的值？
-                    String tag = modelId + "|" + plain;
+                    String tag = roamingTag(modelId, plain);
                     Double injected = LAST_INJECTED_ALIAS.get(tag);
                     Double current = target.get(key);
                     if (injected != null && current != null && current.doubleValue() != injected.doubleValue()) {
@@ -1742,6 +1817,39 @@ public final class OpenYsmPlayerControllerRuntime {
      *       toggles changed nothing but their own checkbox.</li>
      *  </ol>
      */
+    /** {@code mergeBones} 的骨骼名索引表按**嵌套深度**复用；用 ThreadLocal 是因为深度栈
+     *  不能跨线程共享（客户端线程与脚本/网络线程都可能走到控制器）。为什么不用单例：
+     *  {@code applyAnimations} 可能被嵌套触发（控制器 predicate 里再次 tryApply），单例会被
+     *  内层覆盖；按深度分槽后每层拿到自己的表，用完 clear 归还 —— 和 AnimationProcessor 的
+     *  tick 槽位同一套思路。 */
+    private static final ThreadLocal<MergeIndexScratch> MERGE_INDEX = ThreadLocal
+        .withInitial(MergeIndexScratch::new);
+
+    private static final class MergeIndexScratch {
+
+        private final java.util.List<java.util.Map<String, Integer>> slots = new java.util.ArrayList<>();
+        private int depth;
+
+        java.util.Map<String, Integer> acquire() {
+            if (depth > 64) {
+                // 异常路径导致深度漂移时的自愈：丢掉这一轮的槽位，从 0 重新开始。
+                depth = 0;
+            }
+            if (depth == slots.size()) {
+                slots.add(new java.util.HashMap<>());
+            }
+            java.util.Map<String, Integer> map = slots.get(depth++);
+            map.clear();
+            return map;
+        }
+
+        void release() {
+            if (depth > 0) {
+                depth--;
+            }
+        }
+    }
+
     private static void mergeBones(List<software.bernie.geckolib3.core.keyframe.BoneAnimation> target,
         List<software.bernie.geckolib3.core.keyframe.BoneAnimation> source,
         java.util.Set<String> ownedBones) {
@@ -1750,7 +1858,7 @@ public final class OpenYsmPlayerControllerRuntime {
         // multi-animation state; a client profile showed this method as the largest
         // self-time on the YSMU side (1.0 s of a 24.8 s client thread), essentially
         // all of it String.equals inside that scan.
-        java.util.Map<String, Integer> index = new java.util.HashMap<>(target.size() * 2 + 2);
+        java.util.Map<String, Integer> index = MERGE_INDEX.get().acquire();
         for (int i = 0; i < target.size(); i++) {
             // A null bone name never matched in the linear scan either
             // (String.equals(null) is false), so keep it out of the index.
@@ -1800,6 +1908,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 merged.scaleKeyFrames = incoming.scaleKeyFrames;
             }
         }
+        MERGE_INDEX.get().release();
     }
 
     /** True when the channel carries at least one keyframe, i.e. the animation

@@ -142,3 +142,51 @@
 25. 想在 VisualVM 里快速拿到**近存活集**的视图：进入固定场景 → 静置 10 秒 →
     点 Sampler 里的 **Perform GC** → 立刻导直方图。等价于 `jcmd GC.class_histogram`
     （记得别在 GC 前那一瞬间导，那份是含垃圾的）。
+26. **交 jar 之前必须确认它是 reobf 过的**。增量构建（`build -x test`，以及中途跑过的
+    `compileJava --rerun-tasks`）实测会让 `build/libs/<name>.jar` 变成**未 reobf** 的 dev 类：
+    MC 成员名仍是 MCP 名，进游戏就在第一次用到时抛 `NoSuchFieldError`/`NoSuchMethodError`。
+    2026-09-28 那次"加载期崩溃"就是这么来的 —— `GeoReplacedEntityRenderer.<init>` 里
+    `this.renderManager = RenderManager.instance` 没被改成 `field_76990_c`，在
+    `new CustomPlayerRenderer()` 直接抛 `NoSuchFieldError`；更坑的是它又被下面第 27 条的
+    log4j 问题盖成了 `NoClassDefFoundError: ...RendererLivingEntity`，看起来像另一回事。
+    一行自检（应为 `field_76990_c`；出现 `renderManager` 就是没 reobf）：
+
+    ```bash
+    unzip -p build/libs/<name>.jar software/bernie/geckolib3/geo/GeoReplacedEntityRenderer.class > /tmp/c.class
+    javap -p -c /tmp/c.class | grep -m1 putfield
+    ```
+
+    更通用的一条（对任意类都适用，输出应为 0）：
+
+    ```bash
+    javap -p -c -classpath build/libs/<name>.jar software.bernie.geckolib3.geo.GeoEntityRenderer \
+      | grep -cE "Field net/minecraft/[a-zA-Z/]*\.[a-z][a-zA-Z]*:"
+    ```
+
+    出问题就用 `./gradlew clean build`（已实测 4 分钟、26 个 task 全跑）重新出一份。
+27. **FML 记录 mod 初始化失败时，报错本身会被 log4j 顶掉**。FML 走
+    `FMLLog.log(Level, Throwable, ...)` → log4j 的 `ThrowableProxy` 会按异常栈里的类名去
+    `loadClass` 解析 package data；栈里只要有运行世界的 MC 类，RFB 的
+    `RfbSystemClassLoader.getClassBytes(name)` 就会因为"按运行世界类名找资源、而 jar 里只有
+    混淆名"（`boh.class` 在、`net/minecraft/.../RendererLivingEntity.class` 不在）抛
+    `ClassNotFoundException: Class bytes are null for ...`，把真实异常整条替换掉 —— 于是
+    crash report 里只剩这条二次错误，`Potion`/`EffectRenderer`/`RenderArrow` 这些同签名崩溃
+    都是这个成因，跟被点名的类无关。
+    取真实异常的办法：在可能抛出的入口外面 `try { ... } catch (Throwable t) { t.printStackTrace(); throw ... }`
+    —— `printStackTrace` 只写文本、不做类解析，会以 `[STDERR]` 明文落进 `latest.log`
+    （`ClientProxy.init` 上临时加过一次，见 commit `ea17b8a`）。
+28. **`int[]` 缩回不是"只在我们自己的 draw 里"发生的**。1.7.10 补丁版 `Tessellator.draw()` 里那段
+    "容量 > 0x20000 且没用满 1/8 就缩回 256 KiB"（`rawBufferSize = 0x10000; rawBuffer = new int[…]`）
+    在本环境里**实际执行的是 Angelica 那份**：`TessellatorStreamingDrawer.draw()` 里有同一段
+    （Angelica 的 Mixin 接管了 `draw`）。判别方法：JFR 里 `Tessellator.func_78381_a` 从不作为
+    分配点出现，而 `TessellatorStreamingDrawer.draw:<行号>` 是 20~30% 的样本。
+    因为 `rawBufferIndex <= rawBufferSize < (rawBufferSize << 3)` 恒成立，这个条件等价于
+    "**容量超过 512 KiB 就缩**"，与用量无关 —— 所以"把我们自己的 draw 包起来、事后把大缓冲装回去"
+    这类做**必然无效**：预览页里每次 `FboCache.draw`（模型按钮的 FBO 烘焙）和 GUI/字体的 draw 都走
+    同一个共享实例、又不在包裹范围内，装回去的大缓冲立刻又被它们缩掉，下一批继续
+    `Arrays.copyOf` 长回来（实测 `Arrays.copyOf <- Tessellator.func_78377_a <- IGeoRenderer.renderCube`
+    占 49.6% 样本）。
+    可行的做法是**让容量永远不超过 0x20000**：我们自己提交顶点时按用量切批
+    （快满先 `draw()` + `startDrawing()`），并在 draw 前把容量写回 ≤ 0x20000（只写 int、不换数组）。
+    另一个量级提示：这类多 MB 的 humongous `int[]` 分配会带来**秒级 young GC 暂停**
+    （实测 1155s 处 3.998s、959s 处 2.792s），比吞吐更值得优先处理。

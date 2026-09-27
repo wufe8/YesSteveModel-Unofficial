@@ -136,6 +136,23 @@ public interface IGeoRenderer<T> {
     }
 
     /**
+     * 一批顶点快塞满共享 Tessellator 的 raw 缓冲时先 flush 再重新开一批（调用点在
+     * {@link #renderCube} 的**每个面**之前 —— 一个 mesh cube 可能自己就超过预留量）。
+     *
+     * <p>见 {@link com.fox.ysmu.util.TessellatorBufferKeep}：只要容量不超过 0x20000
+     * （512 KiB），原版补丁与 Angelica 的 {@code TessellatorStreamingDrawer} 里那段
+     * "容量大就缩回 256 KiB"的分支就永远不执行，{@code func_78377_a} 也就不会每帧
+     * {@code Arrays.copyOf} 把缓冲翻倍长回来。代价是超大模型会多几次 draw（每批
+     * ≈ 0x20000 个 int ≈ 1.5 万顶点 ≈ 3.8 千个 quad），比起每帧数 MB 的拷贝划算。</p>
+     */
+    static void flushBatchIfNearlyFull(Tessellator builder) {
+        if (com.fox.ysmu.util.TessellatorBufferKeep.nearlyFull(builder)) {
+            com.fox.ysmu.util.TessellatorBufferKeep.draw(builder);
+            builder.startDrawing(GL11.GL_QUADS);
+        }
+    }
+
+    /**
      * Renders a bone's child cubes, handling negative-size outline geometry.
      * <p>
      * Some models use a negative-size cube as a slightly larger outline wrapper
@@ -226,6 +243,9 @@ public interface IGeoRenderer<T> {
 
         for (GeoQuad quad : cube.quads) {
             if (quad == null) continue;
+            // 切批只能在"面"边界：法线是 setNormal 按面设置的，切在面中间会让部分顶点丢掉法线。
+            // mesh cube 的面数和顶点数都可能很大，一个 cube 就可能超过预留量，所以粒度取到面。
+            flushBatchIfNearlyFull(builder);
             // Fresh copy for normal transforms + flat shading workaround
             if (quad.normalVector == null) {
                 RENDER_TEMP_NORMAL.set(quad.normal.getX(), quad.normal.getY(), quad.normal.getZ());
