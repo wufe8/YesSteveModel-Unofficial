@@ -17,6 +17,28 @@ import org.junit.jupiter.api.Test;
  */
 class PreviewPoseCacheTest {
 
+    @Test
+    void exactZeroScaleCannotAliasAThinVisibleBone() {
+        com.fox.ysmu.client.animation.VirtualBone bone = new com.fox.ysmu.client.animation.VirtualBone("flat");
+        bone.setScaleZ(0f);
+        long hidden = PreviewPoseCache.appendBone(7L, bone);
+        bone.setScaleZ(.001f);
+        long visible = PreviewPoseCache.appendBone(7L, bone);
+        org.junit.jupiter.api.Assertions.assertNotEquals(hidden, visible);
+        PreviewPoseCache.clear();
+        assertFalse(PreviewPoseCache.shouldSkip(A, hidden));
+        assertFalse(PreviewPoseCache.shouldSkip(A, visible), "Zero-to-nonzero scale must redraw even inside one quantum");
+        PreviewPoseCache.clear();
+    }
+
+    @Test
+    void continuousSubQuantumMotionStillReusesSignature() {
+        com.fox.ysmu.client.animation.VirtualBone bone = new com.fox.ysmu.client.animation.VirtualBone("still");
+        long before = PreviewPoseCache.appendBone(7L, bone);
+        bone.setPositionX(.001f);
+        org.junit.jupiter.api.Assertions.assertEquals(before, PreviewPoseCache.appendBone(7L, bone));
+    }
+
     private static final ResourceLocation A = new ResourceLocation("ysmu", "_test_pose_a");
     private static final ResourceLocation B = new ResourceLocation("ysmu", "_test_pose_b");
 

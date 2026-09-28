@@ -115,6 +115,7 @@ public interface IGeoRenderer<T> {
                 ITextureObject overrideTex = Minecraft.getMinecraft()
                     .getTextureManager().getTexture(bone.textureOverride);
                 if (overrideTex != null) {
+                    flushBatch(builder);
                     GlStateManager.bindTexture(overrideTex.getGlTextureId());
                 }
             }
@@ -123,6 +124,7 @@ public interface IGeoRenderer<T> {
 
             // Restore the original texture binding after rendering this bone's cubes.
             if (savedTextureId >= 0) {
+                flushBatch(builder);
                 GlStateManager.bindTexture(savedTextureId);
             }
         }
@@ -147,8 +149,51 @@ public interface IGeoRenderer<T> {
      */
     static void flushBatchIfNearlyFull(Tessellator builder) {
         if (com.fox.ysmu.util.TessellatorBufferKeep.nearlyFull(builder)) {
-            com.fox.ysmu.util.TessellatorBufferKeep.draw(builder);
-            builder.startDrawing(GL11.GL_QUADS);
+            flushBatch(builder);
+        }
+    }
+
+    /** Submit before a GL state change; a restarted batch has no vertex attributes set. */
+    static void flushBatch(Tessellator builder) {
+        com.fox.ysmu.util.GeoStats.noteFlush();
+        com.fox.ysmu.util.TessellatorBufferKeep.draw(builder);
+        builder.startDrawing(GL11.GL_QUADS);
+    }
+
+    /** State boundary separated from vertex emission so consecutive flat cubes share one batch. */
+    default void setCubePolygonOffset(boolean flat) {
+        if (flat) {
+            GlStateManager.enablePolygonOffset();
+            GlStateManager.doPolygonOffset(-1.0F, -10.0F);
+        } else {
+            GlStateManager.disablePolygonOffset();
+            GlStateManager.doPolygonOffset(0.0F, 0.0F);
+        }
+    }
+
+    /** sign: 0 = all cubes, -1 = negative-size, +1 = positive-size; preserve source order. */
+    default void renderCubeGroup(Tessellator builder, GeoBone bone, int sign,
+        float red, float green, float blue, float alpha) {
+        boolean offset = false;
+        try {
+            for (GeoCube cube : bone.childCubes) {
+                if (sign < 0 && !cube.hasNegSize || sign > 0 && cube.hasNegSize) continue;
+                boolean flat = !cube.mesh && (cube.size.x == 0 || cube.size.y == 0 || cube.size.z == 0);
+                if (flat != offset) {
+                    flushBatch(builder);
+                    setCubePolygonOffset(flat);
+                    offset = flat;
+                }
+                renderCube(builder, cube, red, green, blue, alpha);
+            }
+        } finally {
+            if (offset) {
+                try {
+                    flushBatch(builder);
+                } finally {
+                    setCubePolygonOffset(false);
+                }
+            }
         }
     }
 
@@ -187,9 +232,7 @@ public interface IGeoRenderer<T> {
         if (!anyNeg) {
             // Single pass: all cubes are positive-size.
             // renderCube 不再改动矩阵栈（见 MatrixStack#beginCube），所以这里不需要 push/pop。
-            for (GeoCube cube : bone.childCubes) {
-                renderCube(builder, cube, red, green, blue, alpha);
-            }
+            renderCubeGroup(builder, bone, 0, red, green, blue, alpha);
             return;
         }
 
@@ -200,10 +243,7 @@ public interface IGeoRenderer<T> {
         Tessellator.instance.startDrawing(GL11.GL_QUADS);
         GL11.glEnable(GL11.GL_CULL_FACE);
         GL11.glCullFace(GL11.GL_FRONT);
-        for (GeoCube cube : bone.childCubes) {
-            if (!cube.hasNegSize) continue;
-            renderCube(builder, cube, red, green, blue, alpha);
-        }
+        renderCubeGroup(builder, bone, -1, red, green, blue, alpha);
         com.fox.ysmu.util.GeoStats.noteFlush();
         com.fox.ysmu.util.TessellatorBufferKeep.draw(Tessellator.instance);
         GL11.glCullFace(GL11.GL_BACK);
@@ -211,10 +251,7 @@ public interface IGeoRenderer<T> {
 
         // ── Pass 2: positive-size cubes (normal depth testing) ──
         Tessellator.instance.startDrawing(GL11.GL_QUADS);
-        for (GeoCube cube : bone.childCubes) {
-            if (cube.hasNegSize) continue;
-            renderCube(builder, cube, red, green, blue, alpha);
-        }
+        renderCubeGroup(builder, bone, 1, red, green, blue, alpha);
         com.fox.ysmu.util.GeoStats.noteFlush();
         com.fox.ysmu.util.TessellatorBufferKeep.draw(Tessellator.instance);
 
@@ -229,15 +266,6 @@ public interface IGeoRenderer<T> {
         // 诊断计数：只有 Config.DEBUG_MODEL_RENDER 打开时才真的自增（见 GeoStats）。
         com.fox.ysmu.util.GeoStats.noteCube(cube.quads.length * 4);
 
-        boolean flat = !cube.mesh && (cube.size.x == 0 || cube.size.y == 0 || cube.size.z == 0);
-        if (flat) {
-            GlStateManager.enablePolygonOffset();
-            GlStateManager.doPolygonOffset(-1.0F, -10.0F);
-        }
-
-        // 颜色在整个 draw 里是常量：原来每个顶点调一次 setColorRGBA_F（每 cube 24 次），
-        // 提到 cube 一级。Tessellator 里它只是一个字段，后面的 addVertex 读它。
-        builder.setColorRGBA_F(red, green, blue, alpha);
         final javax.vecmath.Matrix4f model = MATRIX_STACK.getCubeModelMatrix();
         final javax.vecmath.Matrix3f normalMatrix = MATRIX_STACK.getCubeNormalMatrix();
 
@@ -246,6 +274,8 @@ public interface IGeoRenderer<T> {
             // 切批只能在"面"边界：法线是 setNormal 按面设置的，切在面中间会让部分顶点丢掉法线。
             // mesh cube 的面数和顶点数都可能很大，一个 cube 就可能超过预留量，所以粒度取到面。
             flushBatchIfNearlyFull(builder);
+            // startDrawing clears hasColor. Set all face attributes AFTER any capacity flush.
+            builder.setColorRGBA_F(red, green, blue, alpha);
             // Fresh copy for normal transforms + flat shading workaround
             if (quad.normalVector == null) {
                 RENDER_TEMP_NORMAL.set(quad.normal.getX(), quad.normal.getY(), quad.normal.getZ());
@@ -285,10 +315,6 @@ public interface IGeoRenderer<T> {
             }
         }
 
-        if (flat) {
-            GlStateManager.disablePolygonOffset();
-            GlStateManager.doPolygonOffset(0.0F, 0.0F);
-        }
     }
 
     /*

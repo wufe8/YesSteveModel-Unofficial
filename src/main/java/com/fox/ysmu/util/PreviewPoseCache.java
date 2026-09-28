@@ -7,8 +7,8 @@ import net.minecraft.util.ResourceLocation;
 
 /**
  * 预览缩略图的**姿态签名缓存**：记住每个模型上一次"真正画出去"时的姿态签名，
- * 签名相同就说明这一帧画出来会和上一帧逐像素相同（预览动画播完后只有定期的眨眼会变），
- * 于是可以跳过几何提交、复用 FBO 里已有的画面。
+ * 连续姿态采用 1/64 量化以减少微小变化带来的重画；这是近似缓存，非逐像素相等。
+ * 显隐（包括精确零缩放）必须单独编码，不能被量化吞掉。
  *
  * <p>调用方见 {@link RenderUtil#renderEntityInInventory}；签名的计算（骨骼的
  * 旋转/位移/缩放/隐藏 + 几何对象与贴图身份）也在那里。
@@ -22,6 +22,24 @@ public final class PreviewPoseCache {
     private static final Map<ResourceLocation, Long> POSES = new HashMap<>();
 
     private PreviewPoseCache() {}
+
+    /** Pure signature component, kept independent of RenderUtil/GL for regression tests. */
+    public static long appendBone(long h, software.bernie.geckolib3.core.processor.IBone bone) {
+        h = h * 31 + Math.round(bone.getRotationX() * 64f);
+        h = h * 31 + Math.round(bone.getRotationY() * 64f);
+        h = h * 31 + Math.round(bone.getRotationZ() * 64f);
+        h = h * 31 + Math.round(bone.getPositionX() * 64f);
+        h = h * 31 + Math.round(bone.getPositionY() * 64f);
+        h = h * 31 + Math.round(bone.getPositionZ() * 64f);
+        h = h * 31 + Math.round(bone.getScaleX() * 64f);
+        h = h * 31 + Math.round(bone.getScaleY() * 64f);
+        h = h * 31 + Math.round(bone.getScaleZ() * 64f);
+        int visibility = bone.isHidden() ? 1 : 0;
+        if (bone.getScaleX() == 0f || bone.getScaleY() == 0f || bone.getScaleZ() == 0f) visibility |= 2;
+        if (bone instanceof software.bernie.geckolib3.geo.render.built.GeoBone
+            && ((software.bernie.geckolib3.geo.render.built.GeoBone) bone).childBonesAreHiddenToo()) visibility |= 4;
+        return h * 31 + visibility;
+    }
 
     /**
      * @return {@code true} = 与上次真正画出去时相同 → 这一帧不必提交几何；

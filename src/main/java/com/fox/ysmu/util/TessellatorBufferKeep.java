@@ -41,7 +41,7 @@ import com.fox.ysmu.ysmu;
  *
  * <p><b>做法</b>：反过来 —— <b>让容量永远不超过 0x20000</b>，缩回分支就永远不进：</p>
  * <ol>
- *   <li>我们自己的批次在塞满之前先 flush：每渲染一个 cube 前 {@link #nearlyFull(Tessellator)}
+ *   <li>我们自己的批次在塞满之前先 flush：每渲染一个面前 {@link #nearlyFull(Tessellator)}
  *       查一次，快满就 draw + {@code startDrawing}（见
  *       {@code IGeoRenderer.flushBatchIfNearlyFull}），批次用量控制在
  *       {@code 0x20000 - 0x2000} 以内；容量只会在第一次从 0x10000 长到 0x20000 一次；</li>
