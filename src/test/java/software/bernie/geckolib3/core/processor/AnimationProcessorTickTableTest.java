@@ -28,6 +28,50 @@ import software.bernie.geckolib3.geo.render.built.GeoModel;
  */
 class AnimationProcessorTickTableTest {
 
+    @Test
+    void appendingVirtualBonesRebuildsAllReusedDepths() throws Exception {
+        AnimationProcessor<IAnimatable> processor = registered("bone_a", "bone_b");
+        processor.createNewDirtyTracker();
+        processor.createNewDirtyTracker();
+        processor.releaseDirtyTracker();
+        processor.releaseDirtyTracker();
+        processor.registerModelRenderer(new com.fox.ysmu.client.animation.VirtualBone("late"));
+        assertNotNull(processor.createNewDirtyTracker().get("late"));
+        assertNotNull(processor.createNewDirtyTracker().get("late"));
+        processor.releaseDirtyTracker();
+        processor.releaseDirtyTracker();
+    }
+
+    @Test
+    void failedEvaluationReturnsScratchAndRemainsRetryableAtTheSameTime() throws Exception {
+        AnimationProcessor<IAnimatable> processor = registered("bone_a", "bone_b");
+        HashMap<String, DirtyTracker> scratch = processor.createNewDirtyTracker();
+        processor.releaseDirtyTracker();
+        FailingActor actor = new FailingActor();
+        software.bernie.geckolib3.core.event.predicate.AnimationEvent<FailingActor> event =
+            new software.bernie.geckolib3.core.event.predicate.AnimationEvent<>(
+                actor, 0, 0, 0, false, java.util.Collections.emptyList());
+        for (int i = 0; i < 70; i++) {
+            org.junit.jupiter.api.Assertions.assertThrows(IllegalStateException.class,
+                () -> processor.tickAnimation(actor, 1, 0, event,
+                    new software.bernie.geckolib3.core.molang.MolangParser(), false));
+            assertSame(scratch, processor.createNewDirtyTracker(), "Failure must release its active depth");
+            processor.releaseDirtyTracker();
+        }
+    }
+
+    private static final class FailingActor implements IAnimatable {
+        private final software.bernie.geckolib3.core.manager.AnimationFactory factory =
+            new software.bernie.geckolib3.core.manager.AnimationFactory(this);
+
+        public software.bernie.geckolib3.core.manager.AnimationFactory getFactory() { return factory; }
+
+        public void registerControllers(software.bernie.geckolib3.core.manager.AnimationData data) {
+            data.addAnimationController(new software.bernie.geckolib3.core.controller.AnimationController<FailingActor>(
+                this, "failure", 0, event -> { throw new IllegalStateException("test failure"); }));
+        }
+    }
+
     private static GeoModel model(String boneA, String boneB) throws Exception {
         return AnimationProcessorRegistrationCacheTest.modelWithBones(boneA, boneB);
     }

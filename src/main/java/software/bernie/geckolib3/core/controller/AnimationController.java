@@ -1173,6 +1173,34 @@ public class AnimationController<T extends IAnimatable> {
         discardPendingPoints();
     }
 
+    /** Detach geometry without restarting animation clocks or retiring timeline events. */
+    public void releaseBoneReferences(Map<String, IBone> index) {
+        if (index != null && boneNameToBone != index) return;
+        discardPendingPoints();
+        boneAnimationQueues.clear();
+        boneNameToBone = java.util.Collections.emptyMap();
+        boneSnapshots.clear();
+    }
+
+    /** Called only when the animation resource/session itself is retired. */
+    public void releaseAnimationResources() {
+        releaseBoneReferences(null);
+        animationQueue.clear();
+        currentAnimation = null;
+        lastAnimTimeAnimation = null;
+        lastAnimTimeTick = -1;
+        lastActualTick = -1;
+        currentAnimationBuilder = new AnimationBuilder();
+        if (kfCache != null) kfCache.clear();
+        currentKeyFrame = null;
+        executedKeyFrames.clear();
+        timelinePlaybackListener = ITimelinePlaybackListener.NONE;
+        lastSyncActualTick = -1.0d;
+        animationState = AnimationState.Stopped;
+        needsAnimationReload = true;
+        shouldResetTick = true;
+    }
+
     /** 倒掉上一帧没被消费的动画点，把 AnimationPoint 还回对象池；queue 对象本身保留复用。 */
     private void discardPendingPoints() {
         for (int i = 0, size = activeBoneAnimationQueues.size(); i < size; i++) {

@@ -262,24 +262,15 @@ public class ClientModelManager {
     public static volatile byte[] PASSWORD;
     public static volatile UUID PASSWORD_UUID;
 
-    // ── Tick‑based applyPreParsed queue ────────────────────────────────
-    // Drains a small batch (thread-count / 2) of models per render frame so the
-    // main thread stays responsive (handles window messages, rendering, etc.)
-    // while the apply phase still finishes faster than one model per frame.
-
-    private static final java.util.Queue<PreParsedModelBundle> PENDING_APPLY =
-        new java.util.concurrent.ConcurrentLinkedQueue<>();
-
-    /**
-     * High-priority queue for the default model. It must be applied before the
-     * rest of the sync because nearly every model falls back to the default
-     * model's animation file / bones (see AnimationManager fallback) — if the
-     * default model is still queued, those fallbacks hit a missing geo/anims.
-     * Kept separate from {@link #PENDING_APPLY} and drained first by
-     * {@link #processNextApply}.
-     */
-    private static final java.util.Queue<PreParsedModelBundle> PENDING_APPLY_DEFAULT =
-        new java.util.concurrent.ConcurrentLinkedQueue<>();
+    // Pending bundles are consumed ONLY by ClientEventHandler.onRenderTick.
+    private static final int MAX_PENDING_APPLY = Math.max(2, Config.THREAD_COUNT);
+    private static final int APPLY_BATCH_PER_FRAME = Math.max(1, Config.THREAD_COUNT / 2);
+    private static final long APPLY_BUDGET_NANOS = 2_000_000L;
+    private static final com.fox.ysmu.util.FrameApplyQueue<PreParsedModelBundle> APPLY_QUEUE =
+        new com.fox.ysmu.util.FrameApplyQueue<>(MAX_PENDING_APPLY);
+    private static long applyLogAt;
+    private static int appliedSinceLog;
+    private static long maxApplyFrameNanos;
 
     /** True when a bundle's base model id is the configured default model
      *  (e.g. "default" → ysmu:default/main). Uses {@link
@@ -310,7 +301,7 @@ public class ClientModelManager {
 
     /**
      * Apply 优先模型集合（base id）：同步期间这些模型的 bundle 排到
-     * {@link #PENDING_APPLY_DEFAULT}（优先队列）最前面，使进存档后本地玩家
+     * the priority queue（优先队列）最前面，使进存档后本地玩家
      * 自己的模型尽快完整注册（几何/纹理/extra wheel/MODELS），不必等整批模型
      * 全部 apply 完才显示（默认模型恒优先，见 {@link #isModelPriority}）。
      * 进服时由同步入口 / SyncModelInfo 标记；reload / 清缓存时清空。
@@ -346,118 +337,40 @@ public class ClientModelManager {
         return isDefaultModelBundle(baseId) || PRIORITY_MODEL_IDS.contains(baseId);
     }
 
-    /**
-     * Backpressure cap: how many fully-parsed bundles may wait in
-     * {@link #PENDING_APPLY} for the main thread to apply them.
-     *
-     * <p>Background parsing (4 threads by default) runs far ahead of the main
-     * thread's one-apply-per-tick consumer, so without a cap ALL 247 bundles
-     * pile up at once — each bundle holds the model's GeoModel + AnimationFile
-     * + every texture byte[] — which is the load-time 10G+ heap peak.
-     * A permit is taken before enqueuing and released after {@link
-     * #applyPreParsed} finishes, so background threads block until the main
-     * thread catches up instead of queueing unboundedly.
-     */
-    private static final int MAX_PENDING_APPLY = Math.max(2, Config.THREAD_COUNT);
-    /** Models applied per render frame when many are queued — half the sync
-     *  thread count, so the main-thread consumer keeps pace with the background
-     *  producers. The in-flight cap (MAX_PENDING_APPLY = THREAD_COUNT) is 2x this,
-     *  so the queue always holds a full batch for the consumer without raising
-     *  peak memory. THREAD_COUNT=1 degrades to 1/frame (no batching). */
-    private static final int APPLY_BATCH_PER_FRAME = Math.max(1, Config.THREAD_COUNT / 2);
-    private static final java.util.concurrent.Semaphore APPLY_SLOTS =
-        new java.util.concurrent.Semaphore(MAX_PENDING_APPLY);
-
-    /**
-     * Schedules {@link #applyPreParsed(PreParsedModelBundle)} to run on the
-     * Minecraft main thread, at most one bundle per render tick. Blocks the
-     * calling background thread when too many bundles are already queued.
-     */
+    /** Background producers block when the bounded apply queue is full. */
     public static void scheduleApply(PreParsedModelBundle bundle) {
-        // Classify BEFORE acquiring a permit: if the classification or enqueue
-        // ever threw after acquire(), the permit would leak and the sync would
-        // stall forever on APPLY_SLOTS.acquire() (progress bar stuck). With the
-        // classification hoisted, the acquire→enqueue window only touches the
-        // two queues and the main-thread wake-up, and finally releases the
-        // permit if anything still goes wrong.
-        boolean isPriority = bundle != null && isModelPriority(bundle.modelId);
-        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-            ysmu.LOG.info("[YSMU-MODEL] scheduleApply: id={}, priority={}, baseId={}",
-                bundle != null ? bundle.modelId : "null", isPriority,
-                bundle != null ? ModelIdUtil.getModelIdFromSubId(bundle.modelId) : "null");
-        }
-        try {
-            APPLY_SLOTS.acquire();
-        } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
-            // Rare; don't drop the model — enqueue anyway (backpressure is a
-            // best-effort cap, not a correctness requirement).
-        }
-        try {
-            if (isPriority) {
-                PENDING_APPLY_DEFAULT.add(bundle);
-            } else {
-                PENDING_APPLY.add(bundle);
-            }
-            // Ensure at least one processor is queued on the main thread.
-            Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
-        } catch (RuntimeException e) {
-            // Never leak the permit: an exception here (e.g. a malformed model id
-            // breaking the default classification) would otherwise block every
-            // later scheduleApply and freeze the sync.
-            ysmu.LOG.warn("Failed to enqueue model {} for apply, dropping: {}", bundle.modelId, e.getMessage());
-            APPLY_SLOTS.release();
-        }
+        APPLY_QUEUE.enqueue(bundle, isModelPriority(bundle.modelId));
     }
 
-    private static void processNextApply() {
-        // Best-effort batch: drain up to APPLY_BATCH_PER_FRAME bundles in this one
-        // frame instead of one, so the apply phase (and thus the sync) finishes
-        // faster. Each polled bundle releases a backpressure slot. If the queue
-        // empties early we stop — the semaphore cap stays the memory bound, so
-        // this never increases peak heap.
-        //
-        // The default model is drained first: it must be applied before the rest
-        // of the sync so fallbacks to default animations/bones never hit a still
-        // queued default model. Mixing it into the batch keeps the frame budget.
-        int applied = 0;
-        while (applied < APPLY_BATCH_PER_FRAME) {
-            PreParsedModelBundle bundle = PENDING_APPLY_DEFAULT.poll();
-            if (bundle == null) {
-                bundle = PENDING_APPLY.poll();
-            }
-            if (bundle == null) {
-                // Redundant wake-up (another processNextApply consumed the head);
-                // don't release a slot we never took a bundle for.
-                break;
-            }
-            applied++;
-            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-                ysmu.LOG.info("[YSMU-MODEL] processNextApply: applying id={} (normalLeft={}, priorityLeft={})",
-                    bundle.modelId, PENDING_APPLY.size(), PENDING_APPLY_DEFAULT.size());
-            }
+    /** Called once from RenderTickEvent.START, never through Minecraft's inline main-thread executor. */
+    public static void processPendingAppliesForFrame() {
+        long started = System.nanoTime();
+        int applied = APPLY_QUEUE.drain(APPLY_BATCH_PER_FRAME, APPLY_BUDGET_NANOS, bundle -> {
             try {
-                applyPreParsed(bundle);
+                applyPreParsed(bundle, false);
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", bundle.modelId, e.getMessage());
                 SYNC_FAILED++;
             }
-            APPLY_SLOTS.release();
-        }
-        // Schedule the next one if more are pending.
-        if (!PENDING_APPLY_DEFAULT.isEmpty() || !PENDING_APPLY.isEmpty()) {
-            Minecraft.getMinecraft().func_152344_a(ClientModelManager::processNextApply);
+        });
+        if (applied == 0) return;
+        // Preserve incremental GUI visibility without rebuilding the entire pack index per model.
+        detectModelPacks();
+        if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+            appliedSinceLog += applied;
+            maxApplyFrameNanos = Math.max(maxApplyFrameNanos, System.nanoTime() - started);
+            if (started - applyLogAt >= 5_000_000_000L) {
+                ysmu.LOG.info("[YSMU-APPLY] models={}, maxFrameMs={}, drained={}",
+                    appliedSinceLog, maxApplyFrameNanos / 1_000_000.0, APPLY_QUEUE.isDrained());
+                appliedSinceLog = 0;
+                maxApplyFrameNanos = 0;
+                applyLogAt = started;
+            }
         }
     }
 
-    /**
-     * 应用管线是否已排空：两个 apply 队列为空且所有背压信号量已释放。
-     * 统一模型同步的完成信号据此判定「全部模型已注册」（下载/缓存命中的解析
-     * 完成后，主线程逐帧消费队列）。
-     */
     public static boolean isApplyPipelineDrained() {
-        return PENDING_APPLY.isEmpty() && PENDING_APPLY_DEFAULT.isEmpty()
-            && APPLY_SLOTS.availablePermits() == MAX_PENDING_APPLY;
+        return APPLY_QUEUE.isDrained();
     }
 
     /**
@@ -586,6 +499,10 @@ public class ClientModelManager {
      * Only does: GeckoLib cache writes, OpenGL texture upload, map registrations.
      */
     public static void applyPreParsed(PreParsedModelBundle bundle) {
+        applyPreParsed(bundle, true);
+    }
+
+    private static void applyPreParsed(PreParsedModelBundle bundle, boolean rebuildPacks) {
         ResourceLocation modelId = bundle.modelId;
         SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
         MolangInstructionExecutor.clearCache();
@@ -753,7 +670,7 @@ public class ClientModelManager {
             ysmu.LOG.info("[YSMU-MODEL] applyPreParsed done: modelId={}, textures={}, bones={}, faces={}, anims={}",
                 modelId, texCount, bundle.totalBones, bundle.totalCubes * 6, bundle.totalAnims);
         }
-        detectModelPacks();
+        if (rebuildPacks) detectModelPacks();
     }
 
     /**
@@ -1096,6 +1013,9 @@ public class ClientModelManager {
                 com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
                 if (anims != null) {
                     for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae : anims.entrySet()) {
+                        bundle.animationNames.add(ae.getKey());
+                    }
+                    for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae : anims.entrySet()) {
                         if (!ae.getValue().isJsonObject()) continue;
                         String animationJson = ae.getValue().toString();
                         for (com.fox.ysmu.client.animation.controller.ModDependency dep :
@@ -1117,20 +1037,6 @@ public class ClientModelManager {
                 for (java.util.Map.Entry<String, java.util.Set<String>> e : fileAnimToMods.entrySet()) {
                     bundle.animToModIds.merge(e.getKey(), e.getValue(), (a, b) -> { a.addAll(b); return a; });
                 }
-            }
-            // Light name extraction: needed for ConditionManager classification,
-            // MODEL_STATS and the GUI animation list. Performed in BOTH modes.
-            try {
-                com.google.gson.JsonObject animRoot = new com.google.gson.JsonParser().parse(animJsonStr)
-                    .getAsJsonObject();
-                com.google.gson.JsonObject anims = animRoot.getAsJsonObject("animations");
-                if (anims != null) {
-                    for (java.util.Map.Entry<String, com.google.gson.JsonElement> ae : anims.entrySet()) {
-                        bundle.animationNames.add(ae.getKey());
-                    }
-                }
-            } catch (Exception ignored) {
-                // Best-effort; malformed files are handled by the parse below.
             }
             if (!lazyAnimation) {
                 // Heavy: full AnimationFile (KeyFrame graph) — deferred to first use
@@ -1424,20 +1330,10 @@ public class ClientModelManager {
      * removed from the client before the new sync index is processed.
      *
      * <p>This method is safe to call from any thread: apply-queue drain is
-     * lock-free, and the heavy cache clear is scheduled on the main thread.
+     * synchronized with producers, and the heavy cache clear is scheduled on the main thread.
      */
     public static void prepareForNewSync() {
-        // Drop any bundles still queued from a previous sync (both the normal and
-        // the default-priority queue) so a fresh sync starts from an empty apply
-        // pipeline. Permits for dropped bundles are released so the semaphore
-        // cap doesn't leak across worlds.
-        PreParsedModelBundle dropped;
-        while ((dropped = PENDING_APPLY.poll()) != null) {
-            APPLY_SLOTS.release();
-        }
-        while ((dropped = PENDING_APPLY_DEFAULT.poll()) != null) {
-            APPLY_SLOTS.release();
-        }
+        APPLY_QUEUE.clear();
         // Schedule the heavy cache clear (GPU textures, GeckoLibCache, all model
         // maps) on the main thread. This must complete before any new models are
         // applied — network round-trips before the first applyPreParsed guarantee
@@ -1707,12 +1603,7 @@ public class ClientModelManager {
                 // cleared together) — skip defensively.
                 continue;
             }
-            if (!tex.hasData()) {
-                // Config TEXTURE_RELEASE_BYTES_ON_IDLE frees raw bytes on idle unload;
-                // restore from the encrypted client cache (same decrypt path as
-                // geo/anim lazy reload) before uploading.
-                restoreTextureData(tex, modelId, texId);
-            }
+            // upload owns restore/retry policy; do not bypass its failure cooldown here.
             tex.upload();
         }
         // upload() refreshes TEXTURE_LAST_USED per texId on every access, so the
@@ -1722,10 +1613,10 @@ public class ClientModelManager {
     /**
      * Restores a texture's raw bytes from the encrypted client cache file when the
      * in-memory copy was freed by {@link Config#TEXTURE_RELEASE_BYTES_ON_IDLE}.
-     * Re-decrypts the (small) model file on demand, same as
+     * Decrypts the model file once and restores missing sibling texture bytes too. Like
      * {@link #ensureGeoModelLoaded} / {@link #ensureAnimationsLoaded}. Runs on the
-     * render thread via {@link #ensureTexturesLoaded} — brief hitch on first re-entry
-     * of an idle model, never a white texture.
+     * render thread: it can still stall on large files. Background restore needs an explicit
+     * pending/fallback contract before changing this synchronous no-white-texture path.
      */
     /** 供 {@link OuterFileTexture#upload} 在字节被懒释放时自我恢复（任何绑定路径都不白模）。 */
     public static void restoreTextureData(OuterFileTexture tex, ResourceLocation mainModelId, ResourceLocation texId) {
@@ -1739,6 +1630,17 @@ public class ClientModelManager {
             }
             Map<String, byte[]> texMap = data.getTexture();
             if (texMap == null || texMap.isEmpty()) return;
+            ResourceLocation baseId = ModelIdUtil.getModelIdFromMainId(mainModelId);
+            List<ResourceLocation> siblings = MODELS.get(baseId);
+            if (siblings != null) {
+                for (ResourceLocation siblingId : siblings) {
+                    net.minecraft.client.renderer.texture.ITextureObject candidate = YSM_TEXTURE_OBJECTS.get(siblingId);
+                    if (candidate instanceof OuterFileTexture sibling && !sibling.hasData()) {
+                        byte[] bytes = texMap.get(ModelIdUtil.getSubNameFromId(siblingId));
+                        if (bytes != null) sibling.setData(bytes);
+                    }
+                }
+            }
             String texName = com.fox.ysmu.util.ModelIdUtil.getSubNameFromId(texId);
             byte[] texBytes = texName != null ? texMap.get(texName) : null;
             if (texBytes != null) {
@@ -2048,6 +1950,8 @@ public class ClientModelManager {
         MODEL_STATS.clear();
         // Release geo/anim through the lifecycle framework (frees GeckoLibCache too).
         AssetManager.clearAll();
+        com.fox.ysmu.util.AnimatableCacheUtil.clear();
+        software.bernie.geckolib3.core.manager.AnimationData.disposeAll();
         // 释放防滑步的每玩家平滑倍速状态（换世界/清模型时不留残留）。
         com.fox.ysmu.client.animation.MovementSpeedMatcher.clearAll();
         com.fox.ysmu.client.animation.AnimationManager.MOLANG_STATE_MAP.clear();

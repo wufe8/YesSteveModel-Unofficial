@@ -37,6 +37,8 @@ public final class AnimationProvider implements AssetProvider<ResourceLocation, 
     public void release(ResourceLocation mainId, AnimationFile anim, ReleaseMode mode) {
         if (mode != ReleaseMode.GPU_ONLY) {
             GeckoLibCache.getInstance().getAnimations().remove(mainId);
+            software.bernie.geckolib3.core.manager.AnimationData.releaseAnimationFile(mainId);
+            com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.releaseModelAnimations(mainId);
         }
     }
 

@@ -32,4 +32,9 @@ public class AnimationFactory {
         }
         return animationDataMap.get(uniqueID);
     }
+    public void dispose() {
+        for (AnimationData data : animationDataMap.values()) data.dispose();
+        animationDataMap.clear();
+    }
+
 }

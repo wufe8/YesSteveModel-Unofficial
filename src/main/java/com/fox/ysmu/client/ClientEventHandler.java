@@ -104,6 +104,7 @@ public class ClientEventHandler {
         if (event.phase != TickEvent.Phase.START) {
             return;
         }
+        ClientModelManager.processPendingAppliesForFrame();
         com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.advanceRenderFrame();
         // 弹射物时间轴的派发预算同样是"每渲染帧"一次：弹射物没有玩家那种 model pass 入口。
         com.fox.ysmu.client.animation.controller.ProjectileTimelineRuntime.beginRenderFrame();

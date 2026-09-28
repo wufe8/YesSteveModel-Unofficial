@@ -24,7 +24,7 @@ import software.bernie.geckolib3.model.provider.data.EntityModelData;
 public class AnimationProcessor<T extends IAnimatable> {
 
     public boolean reloadAnimations = false;
-    private List<IBone> modelRendererList = new ArrayList();
+    private List<IBone> modelRendererList;
     private Map<Integer, AnimationRenderState> animatedEntities = new HashMap<>();
     private final IAnimatableModel animatedModel;
 
@@ -59,6 +59,25 @@ public class AnimationProcessor<T extends IAnimatable> {
          * 即 first-wins。同名骨骼极罕见，但两者行为不同，所以分开维护、各按各的语义。</p>
          */
         private final Map<String, IBone> byNameFirst = new HashMap<>();
+        // Scratch follows this registration's lifetime, rather than a second global identity map.
+        private TrackerSlot[] trackerSlots = new TrackerSlot[2];
+        private long revision;
+        private final java.util.Set<AnimationData> consumers = java.util.Collections.newSetFromMap(
+            new java.util.WeakHashMap<AnimationData, Boolean>());
+
+        private void clear() {
+            java.util.Set<IBone> released = java.util.Collections.newSetFromMap(new java.util.IdentityHashMap<>());
+            released.addAll(bones);
+            for (AnimationData data : consumers) {
+                data.releaseGeometry(released, byName);
+            }
+            consumers.clear();
+            bones.clear();
+            byName.clear();
+            byNameFirst.clear();
+            trackerSlots = new TrackerSlot[2];
+            revision++;
+        }
     }
 
     /** YSMU: 切换当前模型。命中缓存（这个 GeoModel 登记过）就整体换上，
@@ -96,10 +115,10 @@ public class AnimationProcessor<T extends IAnimatable> {
         if (model == null) {
             return;
         }
+        clearAnimatedEntities();
         ModelRegistration removed = registrations.remove(model);
         if (removed != null) {
-            // 这个模型的 tick 槽位跟着一起丢，别让它的 tracker/PointData 留在池里。
-            dropTrackerSlots(removed.bones);
+            removed.clear();
         }
         if (removed != null && removed == currentRegistration) {
             // 控制器还各自持有这份 byName 的引用（它们会在下一次 process() 换成新模型的），
@@ -119,6 +138,7 @@ public class AnimationProcessor<T extends IAnimatable> {
 
     public AnimationProcessor(IAnimatableModel animatedModel) {
         this.animatedModel = animatedModel;
+        this.modelRendererList = currentRegistration.bones;
     }
 
     // YSMU: Added crashWhenCantFindBone parameter — when true, missing bones
@@ -140,57 +160,124 @@ public class AnimationProcessor<T extends IAnimatable> {
             .getOrCreateAnimationData(uniqueID);
         // Keeps track of which bones have had animations applied to them, and
         // eventually sets the ones that don't have an animation to their default values
+        currentRegistration.consumers.add(manager);
         HashMap<String, DirtyTracker> modelTracker = createNewDirtyTracker();
 
-        // Store the current value of each bone rotation/position/scale
-        updateBoneSnapshots(manager.getBoneSnapshotCollection());
-        HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshots = manager.getBoneSnapshotCollection();
-        // YSMU: 与本 tick 的 DirtyTracker 表同一个复用槽位（见 pointDataGroupForThisTick）。
-        HashMap<String, PointData> pointDataGroup = pointDataGroupForThisTick();
-        for (AnimationController<T> controller : manager.getAnimationControllers()
-            .values()) {
-            if (reloadAnimations) {
-                controller.markNeedsReload();
-                controller.getBoneAnimationQueues()
-                    .clear();
-            }
+        boolean completed = false;
+        try {
+            // Store the current value of each bone rotation/position/scale
+            updateBoneSnapshots(manager.getBoneSnapshotCollection());
+            HashMap<String, Pair<IBone, BoneSnapshot>> boneSnapshots = manager.getBoneSnapshotCollection();
+            // YSMU: 与本 tick 的 DirtyTracker 表同一个复用槽位（见 pointDataGroupForThisTick）。
+            HashMap<String, PointData> pointDataGroup = pointDataGroupForThisTick();
+            for (AnimationController<T> controller : manager.getAnimationControllers()
+                .values()) {
+                if (reloadAnimations) {
+                    controller.markNeedsReload();
+                    controller.getBoneAnimationQueues()
+                        .clear();
+                }
 
-            controller.isJustStarting = manager.isFirstTick;
+                controller.isJustStarting = manager.isFirstTick;
 
-            // Set current controller to animation test event
-            event.setController(controller);
+                // Set current controller to animation test event
+                event.setController(controller);
 
-            // Process animations and add new values to the point queues
-            controller.process(seekTime, event, currentRegistration.byName, boneSnapshots, parser,
-                crashWhenCantFindBone);
+                // Process animations and add new values to the point queues
+                controller.process(seekTime, event, currentRegistration.byName, boneSnapshots, parser,
+                    crashWhenCantFindBone);
 
-            // Loop through every single bone and lerp each property
-            for (BoneAnimationQueue boneAnimation : controller.getActiveBoneAnimationQueues()) {
-                IBone bone = boneAnimation.bone;
-                // 骨名一次取出：下面 boneSnapshots / pointDataGroup / modelTracker 三张表都用它。
-                // 旧的写法每个 (骨骼 × 控制器 × tick) 要 getName() 四次、哈希四次。
-                String boneName = bone.getName();
-                BoneSnapshot snapshot = boneSnapshots.get(boneName)
-                    .getRight();
-                BoneSnapshot initialSnapshot = bone.getInitialSnapshot();
-                // computeIfAbsent 一次查找拿到 PointData；旧写法 putIfAbsent + get 是两次。
-                PointData pointData = pointDataGroup.computeIfAbsent(boneName, k -> new PointData());
+                // Loop through every single bone and lerp each property
+                for (BoneAnimationQueue boneAnimation : controller.getActiveBoneAnimationQueues()) {
+                    IBone bone = boneAnimation.bone;
+                    // 骨名一次取出：下面 boneSnapshots / pointDataGroup / modelTracker 三张表都用它。
+                    // 旧的写法每个 (骨骼 × 控制器 × tick) 要 getName() 四次、哈希四次。
+                    String boneName = bone.getName();
+                    BoneSnapshot snapshot = boneSnapshots.get(boneName)
+                        .getRight();
+                    BoneSnapshot initialSnapshot = bone.getInitialSnapshot();
+                    // computeIfAbsent 一次查找拿到 PointData；旧写法 putIfAbsent + get 是两次。
+                    PointData pointData = pointDataGroup.computeIfAbsent(boneName, k -> new PointData());
 
-                AnimationPoint rXPoint = boneAnimation.rotationXQueue.poll();
-                AnimationPoint rYPoint = boneAnimation.rotationYQueue.poll();
-                AnimationPoint rZPoint = boneAnimation.rotationZQueue.poll();
+                    AnimationPoint rXPoint = boneAnimation.rotationXQueue.poll();
+                    AnimationPoint rYPoint = boneAnimation.rotationYQueue.poll();
+                    AnimationPoint rZPoint = boneAnimation.rotationZQueue.poll();
 
-                AnimationPoint pXPoint = boneAnimation.positionXQueue.poll();
-                AnimationPoint pYPoint = boneAnimation.positionYQueue.poll();
-                AnimationPoint pZPoint = boneAnimation.positionZQueue.poll();
+                    AnimationPoint pXPoint = boneAnimation.positionXQueue.poll();
+                    AnimationPoint pYPoint = boneAnimation.positionYQueue.poll();
+                    AnimationPoint pZPoint = boneAnimation.positionZQueue.poll();
 
-                AnimationPoint sXPoint = boneAnimation.scaleXQueue.poll();
-                AnimationPoint sYPoint = boneAnimation.scaleYQueue.poll();
-                AnimationPoint sZPoint = boneAnimation.scaleZQueue.poll();
+                    AnimationPoint sXPoint = boneAnimation.scaleXQueue.poll();
+                    AnimationPoint sYPoint = boneAnimation.scaleYQueue.poll();
+                    AnimationPoint sZPoint = boneAnimation.scaleZQueue.poll();
 
-                // If there's any rotation points for this bone
-                DirtyTracker dirtyTracker = modelTracker.get(boneName);
-                if (dirtyTracker == null) {
+                    // If there's any rotation points for this bone
+                    DirtyTracker dirtyTracker = modelTracker.get(boneName);
+                    if (dirtyTracker == null) {
+                        if (rXPoint != null) rXPoint.recycle();
+                        if (rYPoint != null) rYPoint.recycle();
+                        if (rZPoint != null) rZPoint.recycle();
+                        if (pXPoint != null) pXPoint.recycle();
+                        if (pYPoint != null) pYPoint.recycle();
+                        if (pZPoint != null) pZPoint.recycle();
+                        if (sXPoint != null) sXPoint.recycle();
+                        if (sYPoint != null) sYPoint.recycle();
+                        if (sZPoint != null) sZPoint.recycle();
+                        continue;
+                    }
+                    if (rXPoint != null && rYPoint != null && rZPoint != null) {
+                        float valueX = MathUtil.lerpValues(rXPoint, controller.easingType, controller.customEasingMethod);
+                        float valueY = MathUtil.lerpValues(rYPoint, controller.easingType, controller.customEasingMethod);
+                        float valueZ = MathUtil.lerpValues(rZPoint, controller.easingType, controller.customEasingMethod);
+                        // YSMU: wiki「并行动画」——`parallel` 族的旋转是"特殊的混合"：与低优先级层相加，
+                        // 而不是覆盖（"这个混合仅会混合旋转，不会混合位移和缩放"；OpenYSM 对 parallel
+                        // 注册 deprecatedMode=true，走 vector3f.add(value)）。position/scale 仍然覆盖。
+                        // 不这样做的话，一个"pre_parallel 转轮胎 + parallel 转向"的模型里，后处理的
+                        // parallel 会把整条 rotation 向量覆盖掉，轮胎就不转了。
+                        boolean additive = controller.isAdditiveRotation();
+                        pointData.rotationValueX = combineRotation(pointData.rotationValueX, valueX, additive);
+                        pointData.rotationValueY = combineRotation(pointData.rotationValueY, valueY, additive);
+                        pointData.rotationValueZ = combineRotation(pointData.rotationValueZ, valueZ, additive);
+                        bone.setRotationX(pointData.rotationValueX + initialSnapshot.rotationValueX);
+                        bone.setRotationY(pointData.rotationValueY + initialSnapshot.rotationValueY);
+                        bone.setRotationZ(pointData.rotationValueZ + initialSnapshot.rotationValueZ);
+                        snapshot.rotationValueX = bone.getRotationX();
+                        snapshot.rotationValueY = bone.getRotationY();
+                        snapshot.rotationValueZ = bone.getRotationZ();
+                        snapshot.isCurrentlyRunningRotationAnimation = true;
+                        dirtyTracker.hasRotationChanged = true;
+                    }
+
+                    // If there's any position points for this bone
+                    if (pXPoint != null && pYPoint != null && pZPoint != null) {
+                        bone.setPositionX(
+                            MathUtil.lerpValues(pXPoint, controller.easingType, controller.customEasingMethod));
+                        bone.setPositionY(
+                            MathUtil.lerpValues(pYPoint, controller.easingType, controller.customEasingMethod));
+                        bone.setPositionZ(
+                            MathUtil.lerpValues(pZPoint, controller.easingType, controller.customEasingMethod));
+                        snapshot.positionOffsetX = bone.getPositionX();
+                        snapshot.positionOffsetY = bone.getPositionY();
+                        snapshot.positionOffsetZ = bone.getPositionZ();
+                        snapshot.isCurrentlyRunningPositionAnimation = true;
+
+                        dirtyTracker.hasPositionChanged = true;
+                    }
+
+                    // If there's any scale points for this bone
+                    if (sXPoint != null && sYPoint != null && sZPoint != null) {
+                        bone.setScaleX(MathUtil.lerpValues(sXPoint, controller.easingType, controller.customEasingMethod));
+                        bone.setScaleY(MathUtil.lerpValues(sYPoint, controller.easingType, controller.customEasingMethod));
+                        bone.setScaleZ(MathUtil.lerpValues(sZPoint, controller.easingType, controller.customEasingMethod));
+                        snapshot.scaleValueX = bone.getScaleX();
+                        snapshot.scaleValueY = bone.getScaleY();
+                        snapshot.scaleValueZ = bone.getScaleZ();
+                        snapshot.isCurrentlyRunningScaleAnimation = true;
+
+                        dirtyTracker.hasScaleChanged = true;
+                    }
+
+                    // Recycle all polled AnimationPoints back to the pool
                     if (rXPoint != null) rXPoint.recycle();
                     if (rYPoint != null) rYPoint.recycle();
                     if (rZPoint != null) rZPoint.recycle();
@@ -200,180 +287,122 @@ public class AnimationProcessor<T extends IAnimatable> {
                     if (sXPoint != null) sXPoint.recycle();
                     if (sYPoint != null) sYPoint.recycle();
                     if (sZPoint != null) sZPoint.recycle();
-                    continue;
                 }
-                if (rXPoint != null && rYPoint != null && rZPoint != null) {
-                    float valueX = MathUtil.lerpValues(rXPoint, controller.easingType, controller.customEasingMethod);
-                    float valueY = MathUtil.lerpValues(rYPoint, controller.easingType, controller.customEasingMethod);
-                    float valueZ = MathUtil.lerpValues(rZPoint, controller.easingType, controller.customEasingMethod);
-                    // YSMU: wiki「并行动画」——`parallel` 族的旋转是"特殊的混合"：与低优先级层相加，
-                    // 而不是覆盖（"这个混合仅会混合旋转，不会混合位移和缩放"；OpenYSM 对 parallel
-                    // 注册 deprecatedMode=true，走 vector3f.add(value)）。position/scale 仍然覆盖。
-                    // 不这样做的话，一个"pre_parallel 转轮胎 + parallel 转向"的模型里，后处理的
-                    // parallel 会把整条 rotation 向量覆盖掉，轮胎就不转了。
-                    boolean additive = controller.isAdditiveRotation();
-                    pointData.rotationValueX = combineRotation(pointData.rotationValueX, valueX, additive);
-                    pointData.rotationValueY = combineRotation(pointData.rotationValueY, valueY, additive);
-                    pointData.rotationValueZ = combineRotation(pointData.rotationValueZ, valueZ, additive);
-                    bone.setRotationX(pointData.rotationValueX + initialSnapshot.rotationValueX);
-                    bone.setRotationY(pointData.rotationValueY + initialSnapshot.rotationValueY);
-                    bone.setRotationZ(pointData.rotationValueZ + initialSnapshot.rotationValueZ);
-                    snapshot.rotationValueX = bone.getRotationX();
-                    snapshot.rotationValueY = bone.getRotationY();
-                    snapshot.rotationValueZ = bone.getRotationZ();
-                    snapshot.isCurrentlyRunningRotationAnimation = true;
-                    dirtyTracker.hasRotationChanged = true;
+            }
+
+            this.reloadAnimations = false;
+
+            double resetTickLength = manager.getResetSpeed();
+            for (Map.Entry<String, DirtyTracker> tracker : modelTracker.entrySet()) {
+                IBone model = tracker.getValue().model;
+                BoneSnapshot initialSnapshot = model.getInitialSnapshot();
+                BoneSnapshot saveSnapshot = boneSnapshots.get(tracker.getKey())
+                    .getRight();
+                if (saveSnapshot == null) {
+                    if (crashWhenCantFindBone) {
+                        throw new RuntimeException(
+                            "Could not find save snapshot for bone: " + tracker.getValue().model.getName()
+                                + ". Please don't add bones that are used in an animation at runtime.");
+                    } else {
+                        continue;
+                    }
                 }
 
-                // If there's any position points for this bone
-                if (pXPoint != null && pYPoint != null && pZPoint != null) {
-                    bone.setPositionX(
-                        MathUtil.lerpValues(pXPoint, controller.easingType, controller.customEasingMethod));
-                    bone.setPositionY(
-                        MathUtil.lerpValues(pYPoint, controller.easingType, controller.customEasingMethod));
-                    bone.setPositionZ(
-                        MathUtil.lerpValues(pZPoint, controller.easingType, controller.customEasingMethod));
-                    snapshot.positionOffsetX = bone.getPositionX();
-                    snapshot.positionOffsetY = bone.getPositionY();
-                    snapshot.positionOffsetZ = bone.getPositionZ();
-                    snapshot.isCurrentlyRunningPositionAnimation = true;
+                if (!tracker.getValue().hasRotationChanged) {
+                    if (saveSnapshot.isCurrentlyRunningRotationAnimation) {
+                        saveSnapshot.mostRecentResetRotationTick = 0; // TODO 原为(float) seekTime，旋转问题相关
+                        saveSnapshot.isCurrentlyRunningRotationAnimation = false;
+                    }
 
-                    dirtyTracker.hasPositionChanged = true;
+                    double percentageReset = Math
+                        .min((seekTime - saveSnapshot.mostRecentResetRotationTick) / resetTickLength, 1);
+
+                    model.setRotationX(
+                        MathUtil.lerpValues(percentageReset, saveSnapshot.rotationValueX, initialSnapshot.rotationValueX));
+                    model.setRotationY(
+                        MathUtil.lerpValues(percentageReset, saveSnapshot.rotationValueY, initialSnapshot.rotationValueY));
+                    model.setRotationZ(
+                        MathUtil.lerpValues(percentageReset, saveSnapshot.rotationValueZ, initialSnapshot.rotationValueZ));
+
+                    if (percentageReset >= 1) {
+                        saveSnapshot.rotationValueX = model.getRotationX();
+                        saveSnapshot.rotationValueY = model.getRotationY();
+                        saveSnapshot.rotationValueZ = model.getRotationZ();
+                    }
                 }
+                if (!tracker.getValue().hasPositionChanged) {
+                    if (saveSnapshot.isCurrentlyRunningPositionAnimation) {
+                        // YSMU fix: start the reset timer at 0 (matching the rotation
+                        // reset above) so a bone whose position animation stops
+                        // lerps back to its bind-pose offset. Previously this was
+                        // set to (float) seekTime, making percentageReset always 0 —
+                        // the bone kept its last animated position forever. That
+                        // caused pose bleed: e.g. after sneaking_Control (Root
+                        // lowered to [0,-7.625,0]) the moving-sneak 行走 pose never
+                        // returned the body to standing height.
+                        //
+                        // YSM 语义依据: YSM 中未被当前动画覆盖的骨骼应回到绑定姿势
+                        // (bind pose), 而非停留在上一个动画的最后一帧 position。
+                        // 该修复与此语义一致, 且与 rotation reset 逻辑对称。
+                        // 注意: 本修复不是"移动潜行显示站立潜行"问题的根因——
+                        // 那个根因是 main_controller legacy 潜行动画覆盖了 pre_main
+                        // (见 AnimationManager.predicateMain 的 OpenYSM 潜行跳过),
+                        // 但 position reset 仍是防御性的正确修复, 防止类似姿势残留。
+                        saveSnapshot.mostRecentResetPositionTick = 0;
+                        saveSnapshot.isCurrentlyRunningPositionAnimation = false;
+                    }
 
-                // If there's any scale points for this bone
-                if (sXPoint != null && sYPoint != null && sZPoint != null) {
-                    bone.setScaleX(MathUtil.lerpValues(sXPoint, controller.easingType, controller.customEasingMethod));
-                    bone.setScaleY(MathUtil.lerpValues(sYPoint, controller.easingType, controller.customEasingMethod));
-                    bone.setScaleZ(MathUtil.lerpValues(sZPoint, controller.easingType, controller.customEasingMethod));
-                    snapshot.scaleValueX = bone.getScaleX();
-                    snapshot.scaleValueY = bone.getScaleY();
-                    snapshot.scaleValueZ = bone.getScaleZ();
-                    snapshot.isCurrentlyRunningScaleAnimation = true;
+                    double percentageReset = Math
+                        .min((seekTime - saveSnapshot.mostRecentResetPositionTick) / resetTickLength, 1);
 
-                    dirtyTracker.hasScaleChanged = true;
+                    model.setPositionX(
+                        MathUtil
+                            .lerpValues(percentageReset, saveSnapshot.positionOffsetX, initialSnapshot.positionOffsetX));
+                    model.setPositionY(
+                        MathUtil
+                            .lerpValues(percentageReset, saveSnapshot.positionOffsetY, initialSnapshot.positionOffsetY));
+                    model.setPositionZ(
+                        MathUtil
+                            .lerpValues(percentageReset, saveSnapshot.positionOffsetZ, initialSnapshot.positionOffsetZ));
+
+                    if (percentageReset >= 1) {
+                        saveSnapshot.positionOffsetX = model.getPositionX();
+                        saveSnapshot.positionOffsetY = model.getPositionY();
+                        saveSnapshot.positionOffsetZ = model.getPositionZ();
+                    }
                 }
+                if (!tracker.getValue().hasScaleChanged) {
+                    if (saveSnapshot.isCurrentlyRunningScaleAnimation) {
+                        saveSnapshot.mostRecentResetScaleTick = (float) seekTime;
+                        saveSnapshot.isCurrentlyRunningScaleAnimation = false;
+                    }
 
-                // Recycle all polled AnimationPoints back to the pool
-                if (rXPoint != null) rXPoint.recycle();
-                if (rYPoint != null) rYPoint.recycle();
-                if (rZPoint != null) rZPoint.recycle();
-                if (pXPoint != null) pXPoint.recycle();
-                if (pYPoint != null) pYPoint.recycle();
-                if (pZPoint != null) pZPoint.recycle();
-                if (sXPoint != null) sXPoint.recycle();
-                if (sYPoint != null) sYPoint.recycle();
-                if (sZPoint != null) sZPoint.recycle();
+                    double percentageReset = Math
+                        .min((seekTime - saveSnapshot.mostRecentResetScaleTick) / resetTickLength, 1);
+
+                    model.setScaleX(
+                        MathUtil.lerpValues(percentageReset, saveSnapshot.scaleValueX, initialSnapshot.scaleValueX));
+                    model.setScaleY(
+                        MathUtil.lerpValues(percentageReset, saveSnapshot.scaleValueY, initialSnapshot.scaleValueY));
+                    model.setScaleZ(
+                        MathUtil.lerpValues(percentageReset, saveSnapshot.scaleValueZ, initialSnapshot.scaleValueZ));
+
+                    if (percentageReset >= 1) {
+                        saveSnapshot.scaleValueX = model.getScaleX();
+                        saveSnapshot.scaleValueY = model.getScaleY();
+                        saveSnapshot.scaleValueZ = model.getScaleZ();
+                    }
+                }
+            }
+            manager.isFirstTick = false;
+            completed = true;
+        } finally {
+            releaseDirtyTracker();
+            // A failed evaluation must remain retryable even at the same entity/time.
+            if (!completed) {
+                animatedEntities.remove(uniqueID);
             }
         }
-
-        this.reloadAnimations = false;
-
-        double resetTickLength = manager.getResetSpeed();
-        for (Map.Entry<String, DirtyTracker> tracker : modelTracker.entrySet()) {
-            IBone model = tracker.getValue().model;
-            BoneSnapshot initialSnapshot = model.getInitialSnapshot();
-            BoneSnapshot saveSnapshot = boneSnapshots.get(tracker.getKey())
-                .getRight();
-            if (saveSnapshot == null) {
-                if (crashWhenCantFindBone) {
-                    throw new RuntimeException(
-                        "Could not find save snapshot for bone: " + tracker.getValue().model.getName()
-                            + ". Please don't add bones that are used in an animation at runtime.");
-                } else {
-                    continue;
-                }
-            }
-
-            if (!tracker.getValue().hasRotationChanged) {
-                if (saveSnapshot.isCurrentlyRunningRotationAnimation) {
-                    saveSnapshot.mostRecentResetRotationTick = 0; // TODO 原为(float) seekTime，旋转问题相关
-                    saveSnapshot.isCurrentlyRunningRotationAnimation = false;
-                }
-
-                double percentageReset = Math
-                    .min((seekTime - saveSnapshot.mostRecentResetRotationTick) / resetTickLength, 1);
-
-                model.setRotationX(
-                    MathUtil.lerpValues(percentageReset, saveSnapshot.rotationValueX, initialSnapshot.rotationValueX));
-                model.setRotationY(
-                    MathUtil.lerpValues(percentageReset, saveSnapshot.rotationValueY, initialSnapshot.rotationValueY));
-                model.setRotationZ(
-                    MathUtil.lerpValues(percentageReset, saveSnapshot.rotationValueZ, initialSnapshot.rotationValueZ));
-
-                if (percentageReset >= 1) {
-                    saveSnapshot.rotationValueX = model.getRotationX();
-                    saveSnapshot.rotationValueY = model.getRotationY();
-                    saveSnapshot.rotationValueZ = model.getRotationZ();
-                }
-            }
-            if (!tracker.getValue().hasPositionChanged) {
-                if (saveSnapshot.isCurrentlyRunningPositionAnimation) {
-                    // YSMU fix: start the reset timer at 0 (matching the rotation
-                    // reset above) so a bone whose position animation stops
-                    // lerps back to its bind-pose offset. Previously this was
-                    // set to (float) seekTime, making percentageReset always 0 —
-                    // the bone kept its last animated position forever. That
-                    // caused pose bleed: e.g. after sneaking_Control (Root
-                    // lowered to [0,-7.625,0]) the moving-sneak 行走 pose never
-                    // returned the body to standing height.
-                    //
-                    // YSM 语义依据: YSM 中未被当前动画覆盖的骨骼应回到绑定姿势
-                    // (bind pose), 而非停留在上一个动画的最后一帧 position。
-                    // 该修复与此语义一致, 且与 rotation reset 逻辑对称。
-                    // 注意: 本修复不是"移动潜行显示站立潜行"问题的根因——
-                    // 那个根因是 main_controller legacy 潜行动画覆盖了 pre_main
-                    // (见 AnimationManager.predicateMain 的 OpenYSM 潜行跳过),
-                    // 但 position reset 仍是防御性的正确修复, 防止类似姿势残留。
-                    saveSnapshot.mostRecentResetPositionTick = 0;
-                    saveSnapshot.isCurrentlyRunningPositionAnimation = false;
-                }
-
-                double percentageReset = Math
-                    .min((seekTime - saveSnapshot.mostRecentResetPositionTick) / resetTickLength, 1);
-
-                model.setPositionX(
-                    MathUtil
-                        .lerpValues(percentageReset, saveSnapshot.positionOffsetX, initialSnapshot.positionOffsetX));
-                model.setPositionY(
-                    MathUtil
-                        .lerpValues(percentageReset, saveSnapshot.positionOffsetY, initialSnapshot.positionOffsetY));
-                model.setPositionZ(
-                    MathUtil
-                        .lerpValues(percentageReset, saveSnapshot.positionOffsetZ, initialSnapshot.positionOffsetZ));
-
-                if (percentageReset >= 1) {
-                    saveSnapshot.positionOffsetX = model.getPositionX();
-                    saveSnapshot.positionOffsetY = model.getPositionY();
-                    saveSnapshot.positionOffsetZ = model.getPositionZ();
-                }
-            }
-            if (!tracker.getValue().hasScaleChanged) {
-                if (saveSnapshot.isCurrentlyRunningScaleAnimation) {
-                    saveSnapshot.mostRecentResetScaleTick = (float) seekTime;
-                    saveSnapshot.isCurrentlyRunningScaleAnimation = false;
-                }
-
-                double percentageReset = Math
-                    .min((seekTime - saveSnapshot.mostRecentResetScaleTick) / resetTickLength, 1);
-
-                model.setScaleX(
-                    MathUtil.lerpValues(percentageReset, saveSnapshot.scaleValueX, initialSnapshot.scaleValueX));
-                model.setScaleY(
-                    MathUtil.lerpValues(percentageReset, saveSnapshot.scaleValueY, initialSnapshot.scaleValueY));
-                model.setScaleZ(
-                    MathUtil.lerpValues(percentageReset, saveSnapshot.scaleValueZ, initialSnapshot.scaleValueZ));
-
-                if (percentageReset >= 1) {
-                    saveSnapshot.scaleValueX = model.getScaleX();
-                    saveSnapshot.scaleValueY = model.getScaleY();
-                    saveSnapshot.scaleValueZ = model.getScaleZ();
-                }
-            }
-        }
-        manager.isFirstTick = false;
-        // 归还 createNewDirtyTracker() 从池里取走的那一层（见该方法：表按嵌套深度复用）。
-        releaseDirtyTracker();
     }
 
     /**
@@ -392,105 +421,47 @@ public class AnimationProcessor<T extends IAnimatable> {
         return additive ? previous + value : value;
     }
 
-    /**
-     * 每个 tick 一张「骨骼名 → DirtyTracker」表。表里的 DirtyTracker 携带的是**本 tick**
-     * 的"有没有动过"标记，所以每次调用都必须从"三个标记全 false"开始。
-     *
-     * <p>旧实现是每个 tick 新建一张表 + 每根骨骼 {@code new DirtyTracker(...)}；实测
-     * {@code createNewDirtyTracker} 独占客户端线程 18.5ms/s，是动画 tick 子树里最大的
-     * 单项 self（分配 + 逐骨骼 map 写入）。</p>
-     *
-     * <p>复用而不是新建：同一份骨骼表（{@link ModelRegistration#bones}）的槽位跨 tick 留着，
-     * 只把三个标记复位 —— 而槽位是**按模型**（骨骼表身份）索引的，不是按调用深度：
-     * 预览页每个烘焙都在换模型，只按深度复用等于每次换模型都把整表重建一遍
-     * （实测预览页 {@code createNewDirtyTracker} 12.2 样本/s、DirtyTracker 5.5 样本/s、
-     * 瞬时垃圾里还有 9 万个 PointData）。</p>
-     *
-     * <p>键是（骨骼表身份, 嵌套深度）：<b>模型</b>这一维让预览页反复换模型时不再重建，
-     * <b>深度</b>这一维保持"嵌套的 tickAnimation 各自拿到独立的表、不互踩标记"
-     * （同一个模型在一次渲染里被推进两次时，内层不能复位外层的标记）。</p>
-     */
-    private final Map<List<IBone>, TrackerSlot[]> trackerSlots = new java.util.IdentityHashMap<>();
-    /** 每个嵌套层当前用的槽位（下标 = 深度），给 pointDataGroupForThisTick 用。 */
+    /** Active calls only; inactive scratch is owned by ModelRegistration. Render-thread confined. */
     private TrackerSlot[] activeSlots = new TrackerSlot[4];
     private int trackerDepth;
-    /** 所有（模型 × 层）槽位总数，用于封顶。 */
-    private int trackerSlotCount;
-    /**
-     * 槽位总数上限。每个槽位约为"骨骼数 × 约 110 B"（DirtyTracker + PointData
-     * 各一个 map 条目），64 个槽位 ≈ 3 MB，够覆盖一页预览的模型 + 世界里的若干玩家模型；
-     * 超了整体丢弃（下一次 tick 重建，代价只是一次骨骼循环），保证占用有界。
-     */
-    private static final int MAX_TRACKER_SLOTS = 64;
 
     private static final class TrackerSlot {
-
         private final HashMap<String, DirtyTracker> trackers = new HashMap<>();
-        /**
-         * 建表时那一份骨骼表（键就是它，留一份引用便于诊断/断言）。
-         */
-        private List<IBone> builtFor;
-        /**
-         * 同一 tick 的「骨骼名 → PointData」表（每个动画点的累加结果）。
-         * 和 trackers 一样是"每 tick 一张、内容只与本 tick 有关"的临时表：
-         * 同一模型的键与 PointData 对象都留着，只把三个分量复位。
-         * 首次分配按骨骼数预置容量，避免逐骨骼 resize。
-         */
+        private long builtRevision = -1;
         private HashMap<String, PointData> pointData;
     }
 
-    /** 取（当前模型, 当前嵌套深度）的槽位（没有就建），并压进这一层。 */
     private TrackerSlot acquireTrackerSlot() {
-        TrackerSlot[] byDepth = trackerSlots.get(modelRendererList);
-        if (byDepth == null) {
-            if (trackerSlotCount >= MAX_TRACKER_SLOTS) {
-                // 兜底：模型太多（且都不是当前这个）时整体丢弃，避免无界增长。
-                trackerSlots.clear();
-                trackerSlotCount = 0;
-            }
-            byDepth = new TrackerSlot[4];
-            trackerSlots.put(modelRendererList, byDepth);
+        TrackerSlot[] slots = currentRegistration.trackerSlots;
+        if (trackerDepth >= slots.length) {
+            slots = java.util.Arrays.copyOf(slots, trackerDepth * 2 + 1);
+            currentRegistration.trackerSlots = slots;
         }
-        if (trackerDepth >= byDepth.length) {
-            byDepth = java.util.Arrays.copyOf(byDepth, trackerDepth * 2);
-            trackerSlots.put(modelRendererList, byDepth);
-        }
-        TrackerSlot slot = byDepth[trackerDepth];
+        TrackerSlot slot = slots[trackerDepth];
         if (slot == null) {
             slot = new TrackerSlot();
-            byDepth[trackerDepth] = slot;
-            trackerSlotCount++;
+            slots[trackerDepth] = slot;
         }
         if (trackerDepth == activeSlots.length) {
             activeSlots = java.util.Arrays.copyOf(activeSlots, trackerDepth * 2);
         }
-        activeSlots[trackerDepth] = slot;
-        trackerDepth++;
+        activeSlots[trackerDepth++] = slot;
         return slot;
-    }
-
-    /** 丢掉某个骨骼表的所有槽位（原地清空骨骼表 / 模型被释放时用）。 */
-    private void dropTrackerSlots(List<IBone> bones) {
-        TrackerSlot[] removed = trackerSlots.remove(bones);
-        if (removed != null) {
-            for (TrackerSlot slot : removed) {
-                if (slot != null) {
-                    trackerSlotCount--;
-                }
-            }
-        }
     }
 
     HashMap<String, DirtyTracker> createNewDirtyTracker() {
         TrackerSlot slot = acquireTrackerSlot();
         HashMap<String, DirtyTracker> tracker = slot.trackers;
-        if (slot.builtFor != modelRendererList) {
-            // 这个槽位是新建的（或骨骼表被原地改过）：整表重建
+        if (slot.builtRevision != currentRegistration.revision) {
+            // Registration identity alone is insufficient: virtual bones may arrive after the first tick.
             tracker.clear();
             for (IBone bone : modelRendererList) {
                 tracker.put(bone.getName(), new DirtyTracker(false, false, false, bone));
             }
-            slot.builtFor = modelRendererList;
+            if (slot.pointData != null) {
+                slot.pointData.clear();
+            }
+            slot.builtRevision = currentRegistration.revision;
             return tracker;
         }
         // 同一个模型的第二次及以后：键和 DirtyTracker 对象都留着，只复位三个标记。
@@ -500,11 +471,6 @@ public class AnimationProcessor<T extends IAnimatable> {
             tracked.hasScaleChanged = false;
         }
         return tracker;
-    }
-
-    /** 骨骼表被原地改动（{@code clearModelRendererList}）时丢掉它的槽位，强制重建。 */
-    private void invalidateTrackerSlot() {
-        dropTrackerSlots(modelRendererList);
     }
 
     /**
@@ -580,15 +546,13 @@ public class AnimationProcessor<T extends IAnimatable> {
         modelRendererList.add(modelRenderer);
         currentRegistration.byName.put(modelRenderer.getName(), modelRenderer);
         currentRegistration.byNameFirst.putIfAbsent(modelRenderer.getName(), modelRenderer);
+        currentRegistration.revision++;
+        clearAnimatedEntities();
     }
 
     public void clearModelRendererList() {
-        invalidateTrackerSlot();
-        this.modelRendererList.clear();
-        this.currentRegistration.byName.clear();
-        // Must clear alongside byName: after a clear the old getBone() scanned an empty
-        // list and returned null, so a surviving index entry would be a behaviour change.
-        this.currentRegistration.byNameFirst.clear();
+        currentRegistration.clear();
+        clearAnimatedEntities();
     }
 
     public List<IBone> getModelRendererList() {

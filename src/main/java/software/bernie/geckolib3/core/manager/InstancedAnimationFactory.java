@@ -19,4 +19,11 @@ public class InstancedAnimationFactory extends AnimationFactory {
         }
         return this.animationData;
     }
+    @Override
+    public void dispose() {
+        if (animationData != null) animationData.dispose();
+        animationData = null;
+        super.dispose();
+    }
+
 }

@@ -20,6 +20,23 @@ import org.junit.jupiter.api.Test;
  */
 class RoamingIsolationTest {
 
+    @Test
+    void reloadDropsOldDefaultsAndCachedNames() {
+        ResourceLocation model = new ResourceLocation("ysmu_test", "reload");
+        try {
+            RoamingVariables.setModelRoamingDefault(model, "roaming.old", 1);
+            Object name = RoamingVariables.roamingName("roaming.old");
+            assertTrue(RoamingVariables.getRoamingVarsForModel(model).containsKey("roaming.old"));
+            RoamingVariables.clearModelRoamingVars();
+            RoamingVariables.setModelRoamingDefault(model, "roaming.new", 2);
+            assertFalse(RoamingVariables.getRoamingVarsForModel(model).containsKey("roaming.old"));
+            assertTrue(RoamingVariables.getRoamingVarsForModel(model).containsKey("roaming.new"));
+            org.junit.jupiter.api.Assertions.assertNotSame(name, RoamingVariables.roamingName("roaming.old"));
+        } finally {
+            RoamingVariables.clearModelRoamingVars();
+        }
+    }
+
     private static final ResourceLocation MODEL_A = new ResourceLocation("ysmu_test", "isolation_a");
     private static final ResourceLocation MODEL_B = new ResourceLocation("ysmu_test", "isolation_b");
 
