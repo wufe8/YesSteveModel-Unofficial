@@ -393,6 +393,12 @@ public class AnimationRegister {
         // 1.7.10 无车万女仆（TLM），恒 false。
         parser.register(new LazyVariable("ysm.is_maid", MolangUtils.FALSE));
 
+        // ysm.fps：注册前它在关键帧路径上会落进 newVariable() 的默认 0，而控制器路径返回 60，
+        // 同一条表达式在两条路径读到不同的值（见 FpsQuery）。显式注册（与其他 ysm.* 常量变量
+        // 同一约定）后立刻用 supplier 绑定，使其到处都是"客户端当前帧率"的实时值。
+        parser.register(new LazyVariable("ysm.fps", com.fox.ysmu.client.animation.molang.FpsQuery.FALLBACK_FPS));
+        parser.setValue("ysm.fps", com.fox.ysmu.client.animation.molang.FpsQuery::clientFps);
+
         // parser.register(new LazyVariable("ysm.first_person_mod_hide", MolangUtils.FALSE));
     }
 

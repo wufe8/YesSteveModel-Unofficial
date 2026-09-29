@@ -2399,6 +2399,14 @@ public class ClientModelManager {
         final long sessionGeneration = APPLY_GENERATION.incrementAndGet();
         APPLY_QUEUE.clear();
         SYNC_IN_PROGRESS = false;
+        // 轮盘选择（锁 + 已选动画名）也属于一次会话：它在两个静态表里跨世界存活，不清的话
+        // 带着锁退出世界再进另一个服务器/存档，本机玩家会立刻开始播上一个世界里选的那条动画
+        // （玩家在新会话里从没做过这个选择）。见 WheelPlaybackScope.clearLocalSelection。
+        com.fox.ysmu.client.animation.WheelPlaybackScope.clearLocalSelection();
+        // 连同按演员的 cap 播放簿记一起丢弃（含轮盘版本记忆），让下一场会话的第一次求值
+        // 回到"只记录、不重置"的初始语义。
+        com.fox.ysmu.client.animation.AnimationManager.getInstance()
+            .clearAllCapPlayback();
         // 同步计时器立刻注销；此处不加类锁 —— 断开事件可能在 Netty 线程上，而类锁
         // 正被包处理/内联解析持有。
         OpenYsmModelSyncClient.cancelSyncTimerWithoutLock();

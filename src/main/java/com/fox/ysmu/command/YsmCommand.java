@@ -212,13 +212,17 @@ public class YsmCommand extends CommandBase {
             player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cannot play animation: player data not found."));
             return;
         }
-        // Check if the animation exists in the current model's animation file
+        // 动画存在性校验**只在能回答的一侧做**。GeckoLibCache 的动画表由客户端解析模型时填充，
+        // 专用服务器上永远是空表 —— 原先无条件查它，于是所有合法动画名都被判成
+        // "not found in current model"，/ysm play 在专用服上完全不可用。这里改成：
+        // 表里有这个模型的条目才校验（集成服务器/单人时给出"名字打错"的友好提示），
+        // 查不到就交给客户端判（客户端缺这条动画时 GeckoLib 会安全跳过并 warn，不会崩）。
         net.minecraft.util.ResourceLocation modelId = eep.getModelId();
         if (modelId != null) {
             net.minecraft.util.ResourceLocation mainId = com.fox.ysmu.util.ModelIdUtil.getMainId(modelId);
             software.bernie.geckolib3.file.AnimationFile animFile = software.bernie.geckolib3.resource.GeckoLibCache
                 .getInstance().getAnimations().get(mainId);
-            if (animFile == null || !animFile.animations.containsKey(animName)) {
+            if (animFile != null && !animFile.animations.containsKey(animName)) {
                 player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Animation §e" + animName + "§r not found in current model."));
                 return;
             }
@@ -227,6 +231,15 @@ public class YsmCommand extends CommandBase {
         player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
     }
 
+    /**
+     * {@code /ysm playsound [name]}：把请求转给发起者的客户端执行。
+     *
+     * <p>音效库（内存里已解密的模型音效）与播放能力（SoundHandler / paulscode SoundSystem）
+     * 都只在客户端。原先这里直接调用 {@code YSMSoundManager}：连专用服务器时命令在服务端执行，
+     * 那边 {@code Minecraft.getMinecraft()} 没有实例，"列出缓存音效"永远是空、播放也拿不到
+     * SoundHandler。服务端保留权限判定与参数解析，动作交给目标客户端（与 setgamepath /
+     * buffer / welcome / debug 子命令同一模式）。</p>
+     */
     private void processPlaySound(ICommandSender sender, String[] args) {
         if (!(sender instanceof EntityPlayerMP)) {
             throw new CommandException("commands.generic.player.notFound");
@@ -242,23 +255,11 @@ public class YsmCommand extends CommandBase {
             }
             soundName = sb.toString().replaceAll("[\"']", "");
         }
+        NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.S2CPlaySound(soundName), player);
         if (StringUtils.isBlank(soundName)) {
-            // List all cached sounds
-            Map<String, byte[]> sounds = com.fox.ysmu.client.audio.YSMSoundManager.getSoundFiles();
-            if (sounds.isEmpty()) {
-                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r No cached sounds."));
-            } else {
-                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cached sounds (in-memory):"));
-                for (Map.Entry<String, byte[]> e : sounds.entrySet()) {
-                    player.addChatMessage(new ChatComponentText("  §e" + e.getKey() + "§r → §7" + e.getValue().length + " bytes"));
-                }
-                player.addChatMessage(new ChatComponentText("§6Use §e/ysm playsound <name>§6 to play one."));
-            }
-            return;
+            player.addChatMessage(new ChatComponentText(
+                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Querying cached sounds..."));
         }
-        // Try exact match first, then case-insensitive partial match
-        com.fox.ysmu.client.audio.YSMSoundManager.playSound(player, soundName, 1.0f, 1.0f);
-        player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Playing sound: " + soundName));
     }
 
     private void processSetGamePath(ICommandSender sender, String[] args) {
@@ -412,21 +413,16 @@ public class YsmCommand extends CommandBase {
             NetworkHandler.CHANNEL.sendTo(
                 new com.fox.ysmu.network.message.PacketEvalMolang(expression), player);
         } else if ("overlay".equals(sub)) {
-            boolean wasActive = com.fox.ysmu.client.gui.debug.DebugOverlay.isActive();
+            // Overlay 是纯客户端状态（DebugOverlay 直接引用 net.minecraft.client.* 与 LWJGL）：
+            // 在专用服务器上这里原先会因缺少客户端类而失败。改为把切换请求转给发起者的客户端，
+            // 状态反馈也在那边输出（服务端不知道结果状态）。
+            byte mode = com.fox.ysmu.network.message.S2CSetDebugOverlay.MODE_TOGGLE;
             if (args.length >= 3 && "off".equalsIgnoreCase(args[2])) {
-                if (wasActive) com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
+                mode = com.fox.ysmu.network.message.S2CSetDebugOverlay.MODE_OFF;
             } else if (args.length >= 3 && "on".equalsIgnoreCase(args[2])) {
-                if (!wasActive) com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
-            } else {
-                com.fox.ysmu.client.gui.debug.DebugOverlay.toggle();
+                mode = com.fox.ysmu.network.message.S2CSetDebugOverlay.MODE_ON;
             }
-            String status = com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()
-                ? "\u00a7aON" : "\u00a77OFF";
-            player.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Debug overlay: " + status));
-            if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
-                com.fox.ysmu.client.gui.debug.DebugOverlay.tryShowToggleHint();
-            }
+            NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.S2CSetDebugOverlay(mode), player);
         } else {
             player.addChatMessage(new ChatComponentText(
                 "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub

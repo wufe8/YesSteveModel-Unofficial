@@ -896,11 +896,27 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return TRUE;
             }
             if ("ysm.stop_sound".equals(name) && arguments.size() >= 1) {
-                com.fox.ysmu.client.audio.YSMSoundManager.stopSound(arguments.get(0).asString());
+                // 与关键帧路径（YsmSoundFunction）共用同一套归属规则：缺省只停**当前实体**
+                // 上下文的音效，显式 global 参数（第二个实参非 0）才全局停止。
+                // 控制器条件路径与关键帧路径是同一批 Molang 函数的两个实现，两边语义必须一致。
+                String stopId = arguments.get(0).asString();
+                boolean global = arguments.size() > 1 && arguments.get(1).asNumber() != 0;
+                if (global) {
+                    com.fox.ysmu.client.audio.YSMSoundManager.stopSound(stopId);
+                } else {
+                    com.fox.ysmu.client.audio.YSMSoundManager
+                        .stopSound(com.fox.ysmu.client.audio.YSMSoundManager.ownerKey(player), stopId);
+                }
                 return TRUE;
             }
             if ("ysm.stop_all_sounds".equals(name)) {
-                com.fox.ysmu.client.audio.YSMSoundManager.stopAll();
+                boolean global = !arguments.isEmpty() && arguments.get(0).asNumber() != 0;
+                if (global) {
+                    com.fox.ysmu.client.audio.YSMSoundManager.stopAll();
+                } else {
+                    com.fox.ysmu.client.audio.YSMSoundManager
+                        .stopAll(com.fox.ysmu.client.audio.YSMSoundManager.ownerKey(player));
+                }
                 return TRUE;
             }
             // --- ysm.perlin_noise(seed, x, y, z)：0-1 3D 柏林噪声 ---
@@ -1243,13 +1259,11 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return horizontalSpeed();
             }
             if ("fps".equals(name)) {
-                try {
-                    java.lang.reflect.Field f = Minecraft.class.getDeclaredField("debugFPS");
-                    f.setAccessible(true);
-                    return f.getInt(Minecraft.getMinecraft());
-                } catch (Exception e) {
-                    return 60;
-                }
+                // 与关键帧路径共用同一个取数点。原先这里按字面量 "debugFPS" 逐次反射：
+                // 正式包里该字段只有 SRG 名 field_71470_ab，于是每次求值都抛
+                // NoSuchFieldException、返回 60，并每帧分配一个异常（开发环境是 MCP 名，
+                // 所以问题只在正式包出现）。见 FpsQuery。
+                return com.fox.ysmu.client.animation.molang.FpsQuery.clientFps();
             }
             if ("input_vertical".equals(name)) {
                 return player.moveForward;
@@ -1333,12 +1347,11 @@ public final class OpenYsmControllerExpressionEvaluator {
             if (eep != null && eep.isPlayAnimation()) {
                 return true;
             }
-            // Check wheel lock animation
-            if (OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) > 0
-                && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
-                return true;
-            }
-            return false;
+            // Check wheel lock animation — 归属判断同 AnimationManager.predicateCap：
+            // 轮盘选择只属于本机玩家，否则本机一锁轮盘，其他玩家的模型里所有以
+            // ctrl.playing_extra_animation 为条件的控制器状态都会被点亮（同模型的两人尤甚）。
+            return com.fox.ysmu.client.animation.WheelPlaybackScope
+                .countsAsExtraAnimationFor(player.getUniqueID());
         }
 
         /** Returns the entity's position component (0=x, 1=y, 2=z), using

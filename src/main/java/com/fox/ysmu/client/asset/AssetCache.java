@@ -159,8 +159,12 @@ public final class AssetCache<K, V> {
      * @param maxWeight 总重量（{@link AssetProvider#weight} 累计）上限；{@code <= 0} 表示不启用容量上限。
      */
     public void evict(long now, long idleMs, long maxWeight) {
+        // 容量统计只在**启用了**容量上限时才需要：{@code maxWeight <= 0}（当前 AssetManager
+        // 的配置）时 total/ready 都不参与任何判断，而 provider.weight() 对几何/动画是沿对象图
+        // 累加（不是常量时间），每轮为每个常驻条目白算一遍。关闭预算时干脆不算。
+        final boolean budgeted = maxWeight > 0;
         long total = 0;
-        List<Map.Entry<K, Entry<V>>> ready = new ArrayList<>();
+        List<Map.Entry<K, Entry<V>>> ready = budgeted ? new ArrayList<>() : null;
         for (Map.Entry<K, Entry<V>> me : entries.entrySet()) {
             Entry<V> e = me.getValue();
             if (e.getState() != State.READY) {
@@ -168,12 +172,12 @@ public final class AssetCache<K, V> {
             }
             if (idleMs > 0 && now - e.lastUsed > idleMs) {
                 release(me.getKey(), e);
-            } else {
+            } else if (budgeted) {
                 total += provider.weight(me.getKey(), e.value);
                 ready.add(me);
             }
         }
-        if (maxWeight > 0 && total > maxWeight) {
+        if (budgeted && total > maxWeight) {
             ready.sort(Comparator.comparingLong(me -> me.getValue().lastUsed));
             for (Map.Entry<K, Entry<V>> me : ready) {
                 if (total <= maxWeight) {

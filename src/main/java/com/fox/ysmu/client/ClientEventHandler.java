@@ -545,8 +545,9 @@ public class ClientEventHandler {
     /** 登出事件里的玩家是不是本地玩家（按 UUID 比；服务端对象与客户端对象不是同一个实例）。 */
     private static boolean isLocalPlayer(EntityPlayer loggedOut) {
         EntityPlayer local = Minecraft.getMinecraft().thePlayer;
-        return local != null && local.getUniqueID()
-            .equals(loggedOut.getUniqueID());
+        return com.fox.ysmu.util.SessionScope.isLocalPlayer(
+            loggedOut.getUniqueID(),
+            local == null ? null : local.getUniqueID());
     }
 
     /**

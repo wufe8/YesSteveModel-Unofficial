@@ -47,6 +47,10 @@ public final class NetworkHandler {
     private static final int CLIENTBOUND_EVAL_MOLANG = 26;
     private static final int CLIENTBOUND_RESET_MOLANG = 27;
     private static final int CLIENTBOUND_MOLANG_SYNC = 29;
+    /** /ysm playsound 的客户端执行体（音效库只在客户端，见 S2CPlaySound）。新号，不改已有 id。 */
+    private static final int CLIENTBOUND_PLAY_SOUND = 30;
+    /** /ysm debug overlay 的客户端执行体（Overlay 是纯客户端状态，见 S2CSetDebugOverlay）。 */
+    private static final int CLIENTBOUND_SET_DEBUG_OVERLAY = 31;
 
     public static final int OPEN_NPC_MODEL_GUI = 93;
     public static final int SET_NPC_MODEL_ID = 94;
@@ -168,6 +172,16 @@ public final class NetworkHandler {
             SendModelFileChunk.Handler.class,
             SendModelFileChunk.class,
             CLIENTBOUND_SEND_MODEL_FILE_CHUNK,
+            Side.CLIENT);
+        CHANNEL.registerMessage(
+            S2CSetDebugOverlay.Handler.class,
+            S2CSetDebugOverlay.class,
+            CLIENTBOUND_SET_DEBUG_OVERLAY,
+            Side.CLIENT);
+        CHANNEL.registerMessage(
+            S2CPlaySound.Handler.class,
+            S2CPlaySound.class,
+            CLIENTBOUND_PLAY_SOUND,
             Side.CLIENT);
         CHANNEL.registerMessage(
             SyncGamePath.Handler.class,

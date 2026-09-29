@@ -107,6 +107,31 @@ class SoundOwnershipTest {
             .isEmpty());
     }
 
+    /**
+     * 审查给出的**原始形状**：两个演员用**同一个模型**、同一个控制器名、同一个音效名。
+     * 旧实现的防抖键是 {@code modelId::controller::sound}，不含归属，于是 B 的关键帧会被
+     * A 刚触发的那条在 100 ms 冷却里吃掉 —— B 自己的播放根本不开始；
+     * 而 {@code CONTROLLER_SOUNDS} 按裸控制器名索引，A 的映射也是被 B 覆盖的那一个。
+     */
+    @Test
+    void twoActorsWithTheSameModelControllerAndSoundDoNotCollide() {
+        net.minecraft.util.ResourceLocation sharedModel =
+            new net.minecraft.util.ResourceLocation("ysmu", "a_model_shared_by_both/main");
+        YSMSoundManager.onSoundKeyframe(OWNER_A, "cap_controller", "swing", sharedModel);
+        YSMSoundManager.onSoundKeyframe(OWNER_B, "cap_controller", "swing", sharedModel);
+
+        assertEquals(
+            "swing",
+            YSMSoundManager.controllerSoundsOf(OWNER_A)
+                .get("cap_controller"),
+            "A must keep its own mapping");
+        assertEquals(
+            "swing",
+            YSMSoundManager.controllerSoundsOf(OWNER_B)
+                .get("cap_controller"),
+            "B must be recorded too - the debounce key must include the owner, not just the model");
+    }
+
     @Test
     void keyframeDebounceIsPerOwner() {
         // 同一模型的两个玩家同一帧各自触发同一条关键帧音效：不能互相防抖掉。

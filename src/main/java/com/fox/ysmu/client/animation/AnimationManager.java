@@ -49,9 +49,9 @@ public final class AnimationManager {
         Used for client-side playback without waiting for EEP server sync. */
     public static volatile String currentWheelAnim = null;
     /** Incremented each time the wheel animation is (re)set, so predicateCap can
-        detect user interaction and force keyframe reset on the cap controller. */
+        detect user interaction and force keyframe reset on the cap controller.
+        「哪个演员已经见过这个版本」记在 {@link #capPlayback} 里，按演员分。 */
     private static volatile int wheelAnimVersion = 0;
-    private static int lastWheelAnimVersion = 0;
     /**
      * 从模型的 .molang 函数文件（如 @player_ctrl_pre_main.molang）中提取的
      * ctrl.<state> → 动画名 映射。key=模型 ResourceLocation, value=state→animName。
@@ -112,8 +112,8 @@ public final class AnimationManager {
     // private static final String[] ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"};
 
     public void resetPlayerState(UUID playerId) {
-        // cap 播放标志也在模型切换时作废：新模型上的播放状态与旧模型无关。
-        capPlayingPlayers.remove(playerId);
+        // cap 播放标志与轮盘版本也在模型切换时作废：新模型上的播放状态与旧模型无关。
+        capPlayback.clear(playerId);
         swingProgressByPlayer.remove(playerId);
         useDurationByPlayer.remove(playerId);
         lastMainhandItemHash.remove(playerId);
@@ -128,6 +128,18 @@ public final class AnimationManager {
             MANAGER = new AnimationManager();
         }
         return MANAGER;
+    }
+
+    /**
+     * 会话结束：丢弃所有演员的 cap 播放簿记（是否在播外部动画 + 已应用的轮盘版本）。
+     *
+     * <p>与 {@link #resetPlayerState}（单演员，模型切换/登出用）区分：这里是整场会话。
+     * 不清的话，上一场会话记下的轮盘版本会让下一次进服/换世界的**第一帧**误判成"来了个新版本"
+     * 而重置一次控制器（在刚进服、cap 控制器还是空的时候看不出效果，但那是没意义的动作，
+     * 也让"首次求值只记录"这条规则不再成立）。</p>
+     */
+    public void clearAllCapPlayback() {
+        capPlayback.clearAll();
     }
 
     public static void setCurrentWheelAnimName(String name) {
@@ -868,19 +880,11 @@ public final class AnimationManager {
     }
 
     /**
-     * 「cap 控制器上一帧在播外部动画」的玩家集合。从 CONTINUE 转到 STOP 时靠它清理 cap 音效。
-     *
-     * <p>**必须是按玩家分的**：cap 谓词对每个被渲染的玩家都会跑一遍，原来一个静态 boolean
-     * 被所有玩家共用，于是 A 在播 EEP 动画时把标志置真，B（没有任何外部动画）走到末尾的
-     * "停止"分支就把这个标志清掉并停掉 cap_controller 的音效 —— 停的是 A 正在播的那条；
-     * 反向也成立：B 的 EEP 动画请求刚下达（控制器还处于 Stopped）会被 A 留下的标志
-     * 判成"已播完"，于是在开播之前就被 stopAnimation() 掉。</p>
-     *
-     * <p>键是玩家 UUID：模型播放器（{@code CustomPlayerRenderer}）全服共用一个
-     * {@code CustomPlayerEntity} 实例并把它的 player 字段逐玩家切换，所以不能用
-     * 动画实体实例当键（GeckoLib 侧真正的每玩家状态是靠 {@code getUniqueID(entity)} 分桶的）。</p>
+     * 每个演员自己的 CAP 播放簿记（cap 是否在播外部动画 + 已应用的轮盘版本）。
+     * 原先是一个 static boolean 加一个 static 版本号被所有玩家共用 —— 见
+     * {@link CapPlaybackState} 里两个具体症状的说明。
      */
-    private final java.util.Set<UUID> capPlayingPlayers = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private final CapPlaybackState capPlayback = new CapPlaybackState();
 
     /**
      * 报一次"cap 控制器开始播某条外部动画"（来源 + 动画名 + 模型）。
@@ -889,7 +893,7 @@ public final class AnimationManager {
      * 自己做了一次变身"，实际是别处触发的动画被重放。这条线把"谁触发的、在哪个模型上"
      * 补上，和 {@code [YSMU-CTRL-PLAY]} 的 {@code model=} 同一目的。</p>
      *
-     * <p>用「该玩家上一帧没有在播外部动画」的上升沿去重（{@link #capPlayingPlayers}）：
+     * <p>用「该玩家上一帧没有在播外部动画」的上升沿去重（{@link #capPlayback}）：
      * 一次连续播放只报一次，中途被打断再播会再报一次 —— 那正是要看见的。</p>
      */
     private static void noteCapAnimationStart(String source, ResourceLocation animId, String animationName) {
@@ -925,7 +929,7 @@ public final class AnimationManager {
         }
         final UUID capPlayerId = player.getUniqueID();
         if (dismountAnim.containsKey(capPlayerId)) {
-            if (capPlayingPlayers.remove(capPlayerId)) {
+            if (capPlayback.end(capPlayerId)) {
                 com.fox.ysmu.client.audio.YSMSoundManager
                     .stopController(player, event.getController().getName());
             }
@@ -935,27 +939,25 @@ public final class AnimationManager {
         // the wheel (version increments in setCurrentWheelAnimName).  This must
         // run before both the wheel-lock and EEP paths so that sound keyframes
         // fire again on replay regardless of which code path handles playback.
-        if (lastWheelAnimVersion != wheelAnimVersion) {
+        if (capPlayback.consumeWheelVersion(capPlayerId, wheelAnimVersion)) {
             event.getController().currentAnimationBuilder = new AnimationBuilder();
-            lastWheelAnimVersion = wheelAnimVersion;
         }
 
-        // extra轮盘动画重载 — 客户端本地 wheel 动画名（仅在 lock 开启时生效）
-        if (OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) > 0
-            && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
-            String wheelAnimName = getCurrentWheelAnimName();
-            if (wheelAnimName != null) {
-                if (!capPlayingPlayers.contains(capPlayerId)) {
-                    noteCapAnimationStart("wheel", animatable.getAnimation(), wheelAnimName);
-                }
-                capPlayingPlayers.add(capPlayerId);
-                return playAnimation(event, wheelAnimName);
+        // extra轮盘动画重载 — 客户端本地 wheel 动画名（仅在 lock 开启时生效）。
+        // 归属：轮盘选择是本机玩家的（见 WheelPlaybackScope），只有本机玩家这个演员能消费它；
+        // 远端演员走他们自己的 EEP 分支。原来这里不判归属，本机一锁轮盘就会让同屏其他玩家
+        // （同模型时那个动画名确实存在）替你播你选的轮盘动画。
+        String wheelAnimName = WheelPlaybackScope.wheelAnimationForLocalActor(capPlayerId);
+        if (wheelAnimName != null) {
+            if (capPlayback.begin(capPlayerId)) {
+                noteCapAnimationStart("wheel", animatable.getAnimation(), wheelAnimName);
             }
+            return playAnimation(event, wheelAnimName);
         }
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
             String anim = eep.getAnimation();
-            if (!capPlayingPlayers.contains(capPlayerId)) {
+            if (!capPlayback.isPlaying(capPlayerId)) {
                 noteCapAnimationStart("eep", animatable.getAnimation(), anim);
             }
             // When a PLAY_ONCE animation finishes naturally (controller
@@ -963,10 +965,10 @@ public final class AnimationManager {
             // EEP animations are expected to play once and only once — the
             // timeline events (e.g. toggling model states) should fire only
             // on that single playthrough.
-            if (capPlayingPlayers.contains(capPlayerId) && event.getController().getAnimationState()
+            if (capPlayback.isPlaying(capPlayerId) && event.getController().getAnimationState()
                 == software.bernie.geckolib3.core.AnimationState.Stopped) {
                 eep.stopAnimation();
-                capPlayingPlayers.remove(capPlayerId);
+                capPlayback.end(capPlayerId);
                 com.fox.ysmu.client.audio.YSMSoundManager
                     .stopController(player, event.getController().getName());
                 return PlayState.STOP;
@@ -974,11 +976,11 @@ public final class AnimationManager {
             // Without the wheel lock, walking/running overrides the wheel
             // animation on the main controller.  Stop the cap controller's
             // EEP animation when the player moves.
-            if (capPlayingPlayers.contains(capPlayerId)
+            if (capPlayback.isPlaying(capPlayerId)
                 && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) == 0
                 && (event.isMoving() || !player.onGround)) {
                 eep.stopAnimation();
-                capPlayingPlayers.remove(capPlayerId);
+                capPlayback.end(capPlayerId);
                 com.fox.ysmu.client.audio.YSMSoundManager
                     .stopController(player, event.getController().getName());
                 return PlayState.STOP;
@@ -987,7 +989,7 @@ public final class AnimationManager {
             // 空操作，所以删掉。不要恢复：内置 wine_fox 的 08_sta 这类模型**同时**声明
             // extra1..3 与 hd_a_1..3，两边是不同的动画，别名会把轮盘里的 extra1 悄悄改指到
             // hd_a_1；而轮盘按钮的键与动画名本来就是同名直查。
-            capPlayingPlayers.add(capPlayerId);
+            capPlayback.begin(capPlayerId);
             return playAnimation(event, anim);
         }
         // --- 硬编码的攻击组合动画已被注释掉 (2025-06-26) ---
@@ -996,7 +998,7 @@ public final class AnimationManager {
         // Integer combo = swingCombo.get(player.getUniqueID());
         // if (combo != null) { ... }
         // No animation matches → cap controller stops → clean up THIS player's sounds only.
-        if (capPlayingPlayers.remove(capPlayerId)) {
+        if (capPlayback.end(capPlayerId)) {
             com.fox.ysmu.client.audio.YSMSoundManager
                 .stopController(player, event.getController().getName());
         }
@@ -1061,8 +1063,8 @@ public final class AnimationManager {
         // When wheel lock is active and a wheel animation is playing, force idle
         // to keep legs in a natural pose instead of T-pose. The cap_controller's
         // wheel animation overrides upper body bones.
-        if (OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) > 0
-            && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
+        // 同样按归属：轮盘锁是本机玩家的状态，不该把其他玩家的腿压成 idle。
+        if (WheelPlaybackScope.locksMainControllerOf(player.getUniqueID())) {
             return playLoopAnimation(event, "idle");
         }
         // 追踪骑乘状态变化用于下马检测

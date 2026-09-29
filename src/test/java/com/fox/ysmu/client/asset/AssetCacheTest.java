@@ -4,6 +4,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -21,6 +22,9 @@ class AssetCacheTest {
     private static final class RecordingProvider implements AssetProvider<String, String> {
 
         final List<String> released = new ArrayList<>();
+        /** weight() 的调用次数：容量统计是否被跳过就看它。 */
+        int weightCalls;
+        long weightPerEntry = 1L;
 
         @Override
         public String load(String key) {
@@ -44,7 +48,8 @@ class AssetCacheTest {
 
         @Override
         public long weight(String key, String value) {
-            return 1L;
+            weightCalls++;
+            return weightPerEntry;
         }
     }
 
@@ -76,6 +81,53 @@ class AssetCacheTest {
 
         assertEquals(1, cache.size());
         assertEquals(Collections.emptyList(), provider.released);
+    }
+
+    /**
+     * 容量上限关闭时（当前 {@code AssetManager.MAX_WEIGHT = 0}）不得再做容量簿记：
+     * {@code weight()} 对几何/动画是沿对象图累加，每轮为每个常驻条目白算一遍是纯浪费。
+     * 同时钉住"关闭时行为不变"：只按空闲超时回收，不因容量释放任何东西。
+     */
+    @Test
+    void disabledBudgetSkipsWeightBookkeepingEntirely() {
+        RecordingProvider provider = new RecordingProvider();
+        AssetCache<String, String> cache = new AssetCache<>(provider, 0L);
+        cache.register("ysmu:a/main", "geo", 0L);
+        cache.register("ysmu:b/main", "geo", 0L);
+
+        // maxWeight = 0 → 不启用容量上限：一个条目都不许被容量逻辑释放，weight() 一次都不该调。
+        cache.evict(10L, 30L, 0L);
+        assertEquals(Collections.emptyList(), provider.released);
+        assertEquals(2, cache.size());
+        assertEquals(0, provider.weightCalls, "weight() must not be called when the budget is disabled");
+
+        // 空闲超时仍然生效（关闭预算只影响容量那一条路径）。
+        cache.evict(100L, 30L, 0L);
+        assertEquals(2, provider.released.size(), "idle eviction must still work without a budget");
+        assertEquals(0, provider.weightCalls);
+    }
+
+    /**
+     * 容量上限启用时，容量簿记与 LRU 回收必须照旧工作 —— 上面那个跳过不能把功能改坏。
+     */
+    @Test
+    void enabledBudgetStillEvictsLeastRecentlyUsedUntilUnderTheLimit() {
+        RecordingProvider provider = new RecordingProvider();
+        provider.weightPerEntry = 10L;
+        AssetCache<String, String> cache = new AssetCache<>(provider, 0L);
+        cache.register("ysmu:a/main", "geo", 0L);
+        cache.register("ysmu:b/main", "geo", 100L);
+        cache.register("ysmu:c/main", "geo", 200L);
+        cache.touchIf(key -> "ysmu:a/main".equals(key), 300L); // a 变成最近使用
+
+        // 30 单位总量、上限 10 → 必须回收到只剩最近使用的那个：b（100）比 c（200）更久未用，
+        // 所以先释放 b；释放到只剩 a 时总量 10 <= 上限，停止。只有三个 key，因此
+        // "释放了 b 与 c" 就等价于"a 是幸存者"。
+        cache.evict(300L, 0L, 10L);
+
+        assertEquals(1, cache.size());
+        assertEquals(Arrays.asList("ysmu:b/main", "ysmu:c/main"), provider.released);
+        assertTrue(provider.weightCalls > 0, "the budget path must still measure");
     }
 
     /**
