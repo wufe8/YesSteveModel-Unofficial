@@ -153,7 +153,11 @@ public class CustomPlayerEntity implements IAnimatable {
                 controller.registerSoundListener(
                     event -> {
                         String ctrlName = event.getController().getName();
-                        com.fox.ysmu.client.audio.YSMSoundManager.onSoundKeyframe(ctrlName, event.sound, getMainModel());
+                        // 归属 = 当前被渲染模型的持有者。多个玩家各自持有同名控制器（cap_controller
+                        // 等），不带归属时 A 的关键帧音效会被 B 的同名播放/停止操作消掉。
+                        // 预览实体没有 player，走本地槽位（既有行为）。
+                        com.fox.ysmu.client.audio.YSMSoundManager.onSoundKeyframe(
+                            this.player, ctrlName, event.sound, getMainModel());
                     });
             });
     }

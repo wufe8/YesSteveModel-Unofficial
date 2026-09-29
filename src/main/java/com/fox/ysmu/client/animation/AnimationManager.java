@@ -112,6 +112,8 @@ public final class AnimationManager {
     // private static final String[] ATTACK_COMBO_IDLE = {"attack_idle_1", "attack_idle_2", "attack_idle_3"};
 
     public void resetPlayerState(UUID playerId) {
+        // cap 播放标志也在模型切换时作废：新模型上的播放状态与旧模型无关。
+        capPlayingPlayers.remove(playerId);
         swingProgressByPlayer.remove(playerId);
         useDurationByPlayer.remove(playerId);
         lastMainhandItemHash.remove(playerId);
@@ -865,9 +867,20 @@ public final class AnimationManager {
         return controllerState == null ? PlayState.STOP : controllerState;
     }
 
-    /** Tracks whether predicateCap was playing an animation last frame.
-     *  When it transitions from CONTINUE to STOP, we clean up cap sounds. */
-    private static boolean capWasPlaying = false;
+    /**
+     * 「cap 控制器上一帧在播外部动画」的玩家集合。从 CONTINUE 转到 STOP 时靠它清理 cap 音效。
+     *
+     * <p>**必须是按玩家分的**：cap 谓词对每个被渲染的玩家都会跑一遍，原来一个静态 boolean
+     * 被所有玩家共用，于是 A 在播 EEP 动画时把标志置真，B（没有任何外部动画）走到末尾的
+     * "停止"分支就把这个标志清掉并停掉 cap_controller 的音效 —— 停的是 A 正在播的那条；
+     * 反向也成立：B 的 EEP 动画请求刚下达（控制器还处于 Stopped）会被 A 留下的标志
+     * 判成"已播完"，于是在开播之前就被 stopAnimation() 掉。</p>
+     *
+     * <p>键是玩家 UUID：模型播放器（{@code CustomPlayerRenderer}）全服共用一个
+     * {@code CustomPlayerEntity} 实例并把它的 player 字段逐玩家切换，所以不能用
+     * 动画实体实例当键（GeckoLib 侧真正的每玩家状态是靠 {@code getUniqueID(entity)} 分桶的）。</p>
+     */
+    private final java.util.Set<UUID> capPlayingPlayers = java.util.concurrent.ConcurrentHashMap.newKeySet();
 
     /**
      * 报一次"cap 控制器开始播某条外部动画"（来源 + 动画名 + 模型）。
@@ -876,8 +889,8 @@ public final class AnimationManager {
      * 自己做了一次变身"，实际是别处触发的动画被重放。这条线把"谁触发的、在哪个模型上"
      * 补上，和 {@code [YSMU-CTRL-PLAY]} 的 {@code model=} 同一目的。</p>
      *
-     * <p>用 {@code capWasPlaying} 的上升沿去重（不需要额外的集合）：一次连续播放只报一次，
-     * 中途被打断再播会再报一次 —— 那正是要看见的。</p>
+     * <p>用「该玩家上一帧没有在播外部动画」的上升沿去重（{@link #capPlayingPlayers}）：
+     * 一次连续播放只报一次，中途被打断再播会再报一次 —— 那正是要看见的。</p>
      */
     private static void noteCapAnimationStart(String source, ResourceLocation animId, String animationName) {
         if (!Config.DEBUG_CONTROLLER) {
@@ -910,10 +923,11 @@ public final class AnimationManager {
             }
             return PlayState.STOP;
         }
-        if (dismountAnim.containsKey(player.getUniqueID())) {
-            if (capWasPlaying) {
-                capWasPlaying = false;
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+        final UUID capPlayerId = player.getUniqueID();
+        if (dismountAnim.containsKey(capPlayerId)) {
+            if (capPlayingPlayers.remove(capPlayerId)) {
+                com.fox.ysmu.client.audio.YSMSoundManager
+                    .stopController(player, event.getController().getName());
             }
             return PlayState.STOP;
         }
@@ -931,17 +945,17 @@ public final class AnimationManager {
             && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("wheel_anim", 0.0) > 0) {
             String wheelAnimName = getCurrentWheelAnimName();
             if (wheelAnimName != null) {
-                if (!capWasPlaying) {
+                if (!capPlayingPlayers.contains(capPlayerId)) {
                     noteCapAnimationStart("wheel", animatable.getAnimation(), wheelAnimName);
                 }
-                capWasPlaying = true;
+                capPlayingPlayers.add(capPlayerId);
                 return playAnimation(event, wheelAnimName);
             }
         }
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep != null && eep.isPlayAnimation()) {
             String anim = eep.getAnimation();
-            if (!capWasPlaying) {
+            if (!capPlayingPlayers.contains(capPlayerId)) {
                 noteCapAnimationStart("eep", animatable.getAnimation(), anim);
             }
             // When a PLAY_ONCE animation finishes naturally (controller
@@ -949,28 +963,31 @@ public final class AnimationManager {
             // EEP animations are expected to play once and only once — the
             // timeline events (e.g. toggling model states) should fire only
             // on that single playthrough.
-            if (capWasPlaying && event.getController().getAnimationState()
+            if (capPlayingPlayers.contains(capPlayerId) && event.getController().getAnimationState()
                 == software.bernie.geckolib3.core.AnimationState.Stopped) {
                 eep.stopAnimation();
-                capWasPlaying = false;
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                capPlayingPlayers.remove(capPlayerId);
+                com.fox.ysmu.client.audio.YSMSoundManager
+                    .stopController(player, event.getController().getName());
                 return PlayState.STOP;
             }
             // Without the wheel lock, walking/running overrides the wheel
             // animation on the main controller.  Stop the cap controller's
             // EEP animation when the player moves.
-            if (capWasPlaying && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) == 0
+            if (capPlayingPlayers.contains(capPlayerId)
+                && OpenYsmPlayerControllerRuntime.PENDING_ROAMING.getOrDefault("lock_wheel", 0.0) == 0
                 && (event.isMoving() || !player.onGround)) {
                 eep.stopAnimation();
-                capWasPlaying = false;
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                capPlayingPlayers.remove(capPlayerId);
+                com.fox.ysmu.client.audio.YSMSoundManager
+                    .stopController(player, event.getController().getName());
                 return PlayState.STOP;
             }
             // 这里曾有一张 extra1/2/3 → hd_a_1/2/3 的别名表，79ad6416 把目标改成了源、从此是
             // 空操作，所以删掉。不要恢复：内置 wine_fox 的 08_sta 这类模型**同时**声明
             // extra1..3 与 hd_a_1..3，两边是不同的动画，别名会把轮盘里的 extra1 悄悄改指到
             // hd_a_1；而轮盘按钮的键与动画名本来就是同名直查。
-            capWasPlaying = true;
+            capPlayingPlayers.add(capPlayerId);
             return playAnimation(event, anim);
         }
         // --- 硬编码的攻击组合动画已被注释掉 (2025-06-26) ---
@@ -978,10 +995,10 @@ public final class AnimationManager {
         // 问题：这些硬编码动画名大多数模型不存在，导致 cap 控制器卡死、动画异常。
         // Integer combo = swingCombo.get(player.getUniqueID());
         // if (combo != null) { ... }
-        // No animation matches → cap controller stops → clean up sounds.
-        if (capWasPlaying) {
-            capWasPlaying = false;
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+        // No animation matches → cap controller stops → clean up THIS player's sounds only.
+        if (capPlayingPlayers.remove(capPlayerId)) {
+            com.fox.ysmu.client.audio.YSMSoundManager
+                .stopController(player, event.getController().getName());
         }
         return PlayState.STOP;
     }
@@ -1318,7 +1335,7 @@ public final class AnimationManager {
             }
             lastMainhandItemHash.put(player.getUniqueID(), -1);
         }
-        com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+        com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, event.getController().getName());
         return PlayState.STOP;
     }
 
@@ -1359,7 +1376,7 @@ public final class AnimationManager {
             swingProgressByPlayer.remove(pid);
             if (event.getController().getAnimationState()
                 == software.bernie.geckolib3.core.AnimationState.Stopped) {
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, event.getController().getName());
                 return PlayState.STOP;
             }
             // Still playing — keep going without interfering.
@@ -1503,7 +1520,7 @@ public final class AnimationManager {
         }
         blockingTailTicks.remove(playerId);
         useDurationByPlayer.remove(playerId);
-        com.fox.ysmu.client.audio.YSMSoundManager.stopController(event.getController().getName());
+        com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, event.getController().getName());
         return PlayState.STOP;
     }
 

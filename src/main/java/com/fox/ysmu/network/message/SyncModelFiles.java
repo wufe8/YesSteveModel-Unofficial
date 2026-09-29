@@ -150,9 +150,13 @@ public class SyncModelFiles implements IMessage {
                 UUID playerId = sender.getUniqueID();
                 byte[] uuid = UuidUtils.asBytes(playerId);
                 byte[] output = EncryptTools.encryptPassword(uuid, password);
-                // The client must receive the password blob before RequestLoadModel can decrypt cached files.
-                ThreadTools.THREAD_POOL
-                    .submit(() -> NetworkHandler.sendToClientPlayer(new SendModelPassword(playerId, output), sender));
+                // 客户端必须先收到密码才能解密随后的 RequestLoadModel 缓存文件。
+                // 原先这里把它 submit 到 THREAD_POOL（与其他模型文件发送同池），而
+                // RequestLoadModel 是在 sendModelFiles 里**同步**发出的：池里排在前面的
+                // 大文件先把线程占满时，密码包就会晚于加载请求到达，客户端只能空等。
+                // 密码文件很小，直接在本线程（Netty handler）发出的代价可以忽略，
+                // 换来的是「密码先于加载请求」这条顺序不再依赖线程池调度。
+                NetworkHandler.sendToClientPlayer(new SendModelPassword(playerId, output), sender);
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to send YSM model sync password to " + sender.getCommandSenderName(), e);
             }

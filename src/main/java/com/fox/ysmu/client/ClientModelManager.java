@@ -45,7 +45,6 @@ import com.fox.ysmu.network.NetworkHandler;
 import com.fox.ysmu.network.message.SyncModelFiles;
 import com.fox.ysmu.util.GsonHelper;
 import com.fox.ysmu.util.ModelIdUtil;
-import com.fox.ysmu.util.ThreadTools;
 import com.fox.ysmu.ysmu;
 import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
@@ -268,6 +267,56 @@ public class ClientModelManager {
     private static final long APPLY_BUDGET_NANOS = 2_000_000L;
     private static final com.fox.ysmu.util.FrameApplyQueue<PreParsedModelBundle> APPLY_QUEUE =
         new com.fox.ysmu.util.FrameApplyQueue<>(MAX_PENDING_APPLY);
+
+    /**
+     * 应用代际：每次「新一轮同步」({@link #prepareForNewSync()}) 自增。
+     *
+     * <p>解决的是「解析在工作线程上进行期间，同步被重载替换」的竞态：bundle 在**解析开始时**
+     * 盖上当时的代际，主线程 {@link #applyPreParsed} 前先比对当前代际，不等就直接丢弃。
+     * 仅在入队前检查是不够的（检查与入队之间仍会被替换，而且 {@link com.fox.ysmu.util.FrameApplyQueue#clear()}
+     * 只能丢掉「已在队列里」的项）——必须在使用点再检查一次。</p>
+     *
+     * <p>为什么丢弃是正确行为而不是「晚一点应用」：{@code prepareForNewSync} 紧跟着会在主线程
+     * 执行 {@link #clearRuntimeModelCaches()}，被删掉的模型必须留在删除状态；旧解析结果此刻
+     * 已经不再对应服务端索引，应用它只会把已删除的模型复活、或把 CACHED_MODEL_MD5 指到
+     * 已经不存在的缓存文件上。</p>
+     */
+    private static final java.util.concurrent.atomic.AtomicLong APPLY_GENERATION =
+        new java.util.concurrent.atomic.AtomicLong();
+
+    /** 当前应用代际。生产者在解析开始时采样并写进 {@link PreParsedModelBundle#applyGeneration}。 */
+    public static long currentApplyGeneration() {
+        return APPLY_GENERATION.get();
+    }
+
+    /**
+     * 「当前有一个活着的服务器会话」闩锁：由同步入口上锁，由
+     * {@link #onClientDisconnected(String)} 解锁。
+     *
+     * <p>用途是让会话结束清理**幂等且只发生一次**：同一时刻可能有三个来源同时报告同一件事
+     * （远端断开事件、本地玩家登出、tick 兜底），没有闩锁就会重复推进代际并重复调度整批缓存释放。
+     * 玩家重新进服/重载时会由同步入口重新上锁。</p>
+     */
+    private static final java.util.concurrent.atomic.AtomicBoolean SESSION_LIVE =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /**
+     * 由服务端/内置路径（OpenYSM 同步、legacy 同步、内置默认模型）注册过的模型 base id。
+     *
+     * <p>用来让「本地模型不覆盖同名服务端模型」这条规则真正成立。原先只在
+     * {@code LocalModelLoader} 里做一次 {@code MODELS.containsKey} 预检查：那是**检查后应用**
+     * 的竞态 —— 检查在工作线程上通过之后、主线程 apply 之前，服务端同步完全可能把同名模型
+     * 注册好，随后本地那份照样覆盖上去（同名不同版本，玩家看到的就成了本地版）。所以判定必须
+     * 放在**使用点**（主线程 apply）而不是检查点。把 {@code MODELS} 换成并发 Map 并不能修这个
+     * 竞态：问题不是桶安全，而是"检查"与"使用"之间没有共同的时间基准。</p>
+     */
+    private static final java.util.Set<ResourceLocation> SERVER_PROVIDED_MODEL_IDS =
+        java.util.concurrent.ConcurrentHashMap.newKeySet();
+
+    /** 该 base id 是否已由服务端/内置路径提供（本地注册不得覆盖）。 */
+    public static boolean isServerProvidedModel(ResourceLocation modelOrBaseId) {
+        return modelOrBaseId != null && SERVER_PROVIDED_MODEL_IDS.contains(ModelIdUtil.getModelIdFromSubId(modelOrBaseId));
+    }
     private static long applyLogAt;
     private static int appliedSinceLog;
     private static long maxApplyFrameNanos;
@@ -346,6 +395,17 @@ public class ClientModelManager {
     public static void processPendingAppliesForFrame() {
         long started = System.nanoTime();
         int applied = APPLY_QUEUE.drain(APPLY_BATCH_PER_FRAME, APPLY_BUDGET_NANOS, bundle -> {
+            // 使用点再查一次代际：解析在旧代际上完成、入队却落在新一轮同步之后时，
+            // 这份 bundle 描述的是已被替换的索引，必须丢弃（clear() 只能丢掉已在
+            // 队列里的项）。丢弃只释放 permit，不写任何注册表。
+            long generation = APPLY_GENERATION.get();
+            if (bundle.applyGeneration != generation) {
+                if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                    ysmu.LOG.info("[YSMU-APPLY] dropped stale bundle {} (generation {} != {})",
+                        bundle.modelId, bundle.applyGeneration, generation);
+                }
+                return;
+            }
             try {
                 applyPreParsed(bundle, false);
             } catch (Exception e) {
@@ -405,6 +465,9 @@ public class ClientModelManager {
     public static PreParsedModelBundle preParseModel(ModelData data, boolean lazy) {
         ResourceLocation modelId = getModelId(data);
         PreParsedModelBundle bundle = new PreParsedModelBundle(modelId);
+        // 代际在**解析开始时**采样：本 bundle 描述的是此刻的同步索引，若解析期间发生
+        // 新一轮同步（/ysm reload、重连），applyPreParsed 会依据它把本 bundle 丢弃。
+        bundle.applyGeneration = currentApplyGeneration();
         bundle.lazyAnimation = lazy;
         bundle.lazyGeometry = lazy;
 
@@ -504,6 +567,18 @@ public class ClientModelManager {
 
     private static void applyPreParsed(PreParsedModelBundle bundle, boolean rebuildPacks) {
         ResourceLocation modelId = bundle.modelId;
+        // 来源优先级在使用点判定：服务端（或内置）已经提供的同名模型，本地注册不得覆盖。
+        // 放在这里而不是入队前的检查处，才能盖住"检查通过之后、apply 之前服务端刚好注册好"
+        // 的窗口（详见 SERVER_PROVIDED_MODEL_IDS）。
+        if (bundle.localRegistration) {
+            if (isServerProvidedModel(modelId)) {
+                ysmu.LOG.info("[YSMU-LOCAL] skipping local model {}: a server-provided model with the same id is registered",
+                    modelId);
+                return;
+            }
+        } else {
+            SERVER_PROVIDED_MODEL_IDS.add(ModelIdUtil.getModelIdFromSubId(modelId));
+        }
         SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
         MolangInstructionExecutor.clearCache();
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
@@ -1334,6 +1409,13 @@ public class ClientModelManager {
      */
     public static void prepareForNewSync() {
         APPLY_QUEUE.clear();
+        // 与 clear() 同一处推进代际：任何在此之前开始解析的 bundle（含已从队列取出、
+        // 正在主线程 apply 的那一个）都会在使用点被识别为陈旧。主线程紧随其后的
+        // clearRuntimeModelCaches 会把「已经应用完的那一份」一并清掉，所以不存在
+        // 「旧模型残留到新同步里」的窗口。
+        APPLY_GENERATION.incrementAndGet();
+        // 新一轮同步 = 会话活着：断开清理的上锁点（见 SESSION_LIVE）。
+        SESSION_LIVE.set(true);
         // Schedule the heavy cache clear (GPU textures, GeckoLibCache, all model
         // maps) on the main thread. This must complete before any new models are
         // applied — network round-trips before the first applyPreParsed guarantee
@@ -1358,16 +1440,18 @@ public class ClientModelManager {
         String[] md5Info = getMd5Info();
         ysmu.LOG.info("YSM client sending model sync md5 list: count={}, values={}", md5Info.length, Lists.newArrayList(md5Info));
         SyncModelFiles syncModelFiles = new SyncModelFiles(md5Info);
-        ThreadTools.THREAD_POOL.submit(() -> {
-            while (Minecraft.getMinecraft().theWorld == null) {
-                try {
-                    Thread.sleep(500);
-                } catch (InterruptedException e) {
-                    e.printStackTrace();
+        // 等世界加载完成再发（原先在 THREAD_POOL 上 sleep 500ms 轮询：ThreadCount=1 时会占住
+        // 唯一工作线程，把同步解析/下载包处理全堵在后面）。改为客户端 tick 驱动的检查，
+        // 同时 theWorld 只在主线程读写，不再有跨线程读非 volatile 字段的问题。
+        com.fox.ysmu.util.TickScheduler.Handle[] waitForWorld = new com.fox.ysmu.util.TickScheduler.Handle[1];
+        waitForWorld[0] = com.fox.ysmu.util.TickScheduler.client()
+            .scheduleEvery(250L, () -> {
+                if (Minecraft.getMinecraft().theWorld == null) {
+                    return;
                 }
-            }
-            NetworkHandler.CHANNEL.sendToServer(syncModelFiles);
-        });
+                waitForWorld[0].cancel();
+                NetworkHandler.CHANNEL.sendToServer(syncModelFiles);
+            });
     }
 
     private static String[] getMd5Info() {
@@ -1964,6 +2048,8 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.controller.OpenYsmScriptRuntime.clear();
         CACHED_MODEL_MD5.clear();
         OPENYSM_CACHE_FORMAT.clear();
+        // 来源标记随注册状态一起清：新一轮同步会重新建立"哪些来自服务端"。
+        SERVER_PROVIDED_MODEL_IDS.clear();
         TEXTURE_LAST_USED.clear();
         // 全量清缓存时一并清空「使用中」追踪，避免旧 id 残留（5s 扫描对已清空模型做无谓 release）。
         IN_USE_MODELS.clear();
@@ -2251,6 +2337,22 @@ public class ClientModelManager {
         }
     }
 
+    /**
+     * 代际受检的 {@link #rememberOpenYsmModelCache}：只有仍然属于当前代际的解析结果才允许
+     * 改写「模型 → 缓存文件」映射。
+     *
+     * <p>这份映射不在 apply 队列里，因此不受 {@link #processPendingAppliesForFrame()} 的代际
+     * 检查保护，而 {@link #clearRuntimeModelCaches()} 又是稍后在主线程异步执行的：一次跨越
+     * 重载的旧解析如果在这里无条件写入，就会留下一条指向上一轮同步缓存目录/密钥的路径，
+     * 之后懒加载会拿它去解密一个不存在或无法解密的文件（白模）。</p>
+     */
+    public static void rememberOpenYsmModelCache(ResourceLocation modelId, String cachePath, long generation) {
+        if (generation != APPLY_GENERATION.get()) {
+            return;
+        }
+        rememberOpenYsmModelCache(modelId, cachePath);
+    }
+
     public static List<String> getCachedModelSnapshot() {
         synchronized (CACHE_MD5) {
             return new ArrayList<>(CACHE_MD5);
@@ -2262,6 +2364,62 @@ public class ClientModelManager {
         PASSWORD_UUID = null;
         clearCachedModelMd5();
         OpenYsmModelSyncClient.clearConnectionState();
+    }
+
+    /**
+     * 客户端与当前服务器的会话已结束（远端断开 / 退出世界）。
+     *
+     * <p>为什么需要它：原先只有 {@code PlayerLoggedOutEvent} 会清连接状态，而这个事件由
+     * **服务端**玩家列表路径发出 —— 连专用服务器时客户端根本收不到，于是连接密钥、同步状态
+     * 与排队中的工作全部留在原地继续跑（{@code RenderTick} 在菜单里照样 drain）；
+     * 反过来，集成服务器上**任何**客人登出都会在服主的客户端触发同一条清理，把服主自己的
+     * 会话密钥一起清掉。</p>
+     *
+     * <p>分两段，这是刻意的：</p>
+     * <ul>
+     *   <li><b>立即</b>（任何线程，不动锁、不碰 GL）：推进应用代际 + 清空 apply 队列 +
+     *       停掉同步计时器。这一步让「已经在解析、稍后才发布」的旧结果全部作废
+     *       （{@code parseAndRegisterModel} 与主线程 apply 都会比对代际），
+     *       旧会话不会再往注册表里写任何东西。</li>
+     *   <li><b>主线程</b>（{@code func_152344_a}）：清连接密钥/密码与运行时缓存。
+     *       释放纹理要碰 OpenGL，而断开事件是在 Netty 线程上派发的，绝不能在那种线程上做。
+     *       同时比对代际：如果在排队期间已经开始了新一轮同步（玩家立刻重连），
+     *       就不要再把新缓存清掉。</li>
+     * </ul>
+     *
+     * <p>幂等：一次会话结束只做一次（第二段的代际比对同时兜住了重复调用）。</p>
+     *
+     * @param source 触发来源，只用于日志（便于验收时确认是哪条路径生效）
+     */
+    public static void onClientDisconnected(String source) {
+        if (!SESSION_LIVE.compareAndSet(true, false)) {
+            // 没有活着的会话（启动早期、或本次会话已经清理过）—— 幂等返回。
+            return;
+        }
+        final long sessionGeneration = APPLY_GENERATION.incrementAndGet();
+        APPLY_QUEUE.clear();
+        SYNC_IN_PROGRESS = false;
+        // 同步计时器立刻注销；此处不加类锁 —— 断开事件可能在 Netty 线程上，而类锁
+        // 正被包处理/内联解析持有。
+        OpenYsmModelSyncClient.cancelSyncTimerWithoutLock();
+        // 计时器里剩下的全是会话级等待（同步看门狗/完成等待、等世界加载、等密码、等实体出现），
+        // 会话结束就都该消失：否则一次断线会在新会话里继续跑旧会话的等待逻辑。
+        // 将来若要加非会话级计时器，请另开一个 TickScheduler 实例，不要共用这个。
+        com.fox.ysmu.util.TickScheduler.client()
+            .clear();
+        ysmu.LOG.info("[YSMU-SYNC] client session ended ({}): invalidating session, queued work dropped", source);
+        Minecraft mc = Minecraft.getMinecraft();
+        if (mc == null) {
+            return;
+        }
+        mc.func_152344_a(() -> {
+                if (APPLY_GENERATION.get() != sessionGeneration) {
+                    // 期间已经开始新一轮同步（重连/重载），新缓存归它管，不要清。
+                    return;
+                }
+                clearConnectionState();
+                clearRuntimeModelCaches();
+            });
     }
 
     private static void clearCachedModelMd5() {

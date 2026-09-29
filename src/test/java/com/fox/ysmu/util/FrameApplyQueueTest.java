@@ -61,6 +61,42 @@ class FrameApplyQueueTest {
         assertTrue(queue.isDrained());
     }
 
+    /**
+     * 「新一轮同步」的丢弃契约：{@code clear()} 推进代际后，**已经在锁外等待或正在入队**的生产者
+     * 必须被拒绝，而不是把旧会话的解析结果塞进新会话的队列。
+     *
+     * <p>这是同步重载（{@code /ysm reload}、重连）期间"旧解析结果复活已删除模型"的第一道闸门；
+     * 第二道在 {@code ClientModelManager.applyPreParsed}（bundle 自带的代际比对），
+     * 因为 {@code clear()} 只能丢掉"已经在队列里"的项，丢不掉"检查通过后、入队前"的那一个。</p>
+     */
+    @Test
+    void producersFromThePreviousEpochAreRejectedAfterClear() throws Exception {
+        FrameApplyQueue<Integer> queue = new FrameApplyQueue<>(2);
+        // 占满容量，让下一个生产者在 slots.acquire 上等待 —— 模拟"解析完成、正在入队"的瞬间。
+        queue.enqueue(1, false);
+        queue.enqueue(2, false);
+
+        java.util.concurrent.atomic.AtomicBoolean accepted =
+            new java.util.concurrent.atomic.AtomicBoolean(true);
+        Thread producer = new Thread(() -> accepted.set(queue.enqueue(99, false)));
+        producer.start();
+        // 等它真正进入等待（拿不到 permit）。
+        Thread.sleep(100);
+        // 旧会话结束：清空队列并推进代际。
+        queue.clear();
+        producer.join(2000);
+
+        assertFalse(producer.isAlive(), "the waiting producer must not hang forever");
+        assertFalse(accepted.get(), "a producer from the previous epoch must be rejected, not queued");
+        assertTrue(queue.isDrained());
+
+        // 新代际的生产者正常入队。
+        assertTrue(queue.enqueue(5, false));
+        List<Integer> applied = new ArrayList<>();
+        queue.drain(1, Long.MAX_VALUE, applied::add);
+        assertEquals(Arrays.asList(5), applied);
+    }
+
     @Test
     void interruptedProducerDoesNotInflateCapacity() {
         FrameApplyQueue<Integer> queue = new FrameApplyQueue<>(1);

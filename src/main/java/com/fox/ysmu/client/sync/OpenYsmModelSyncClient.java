@@ -50,23 +50,71 @@ public final class OpenYsmModelSyncClient {
     private static final int MAX_SYNC_INDEX_BYTES = 64 * 1024 * 1024;
 
     // ── 会话级字段（跨同步存活）─────────────────────────────
-    // clientKey/currentCacheFolderName/serverKey 刻意留在外层：懒加载重解密（闲置卸载
-    // 后恢复）与 /ysmclient load 会在后台线程读取它们，且跨同步存活；单次同步的状态字段
-    // （syncStep/密钥/索引缓冲/计数器/看门狗时间戳）在 SyncState 内。
-    private static byte[] serverKey;
-    private static byte[] clientKey;
-    private static String currentCacheFolderName;
+    // serverKey/currentCacheFolderName 仍留在外层：它们是「最近一次同步发布的会话上下文」，
+    // 供懒加载重解密（闲置卸载后恢复）与 /ysmclient load 读取，且跨同步存活。但**解析与
+    // 发布路径不再读它们**（并发解析会读到被 registerLocalModel 临时替换的值），改为读取
+    // 与工作项一起传递的不可变 CacheContext；单次同步的状态字段（syncStep/密钥/索引缓冲/
+    // 计数器/看门狗时间戳）在 SyncState 内。
+    private static volatile byte[] serverKey;
+    private static volatile byte[] clientKey;
+    private static volatile String currentCacheFolderName;
 
     /** 当前同步状态。每次握手开始时新建（handlePayload 见 step==1 即换新实例），
      *  reset/完成时整体替换，杜绝旧同步残留字段污染新一轮握手。 */
     private static volatile SyncState STATE = new SyncState();
 
+    /**
+     * 一次同步 / 一次本地注册的**不可变**缓存上下文。
+     *
+     * <p>为什么必须随工作项传递而不是在发布点读静态字段：解析在工作线程上进行，期间
+     * {@link #registerLocalModel} 会在类锁内把 {@code currentCacheFolderName}/{@code clientKey}
+     * 临时换成自己的值，而同锁并不覆盖非优先模型的解析任务。发布点直接读静态字段就会把
+     * 别人的目录/密钥写进映射；跨同步更糟——reset 之后读到的是 {@code null}。</p>
+     *
+     * <p>{@code generation} 是发布闸门：详见 {@link #publishable()}。</p>
+     */
+    private static final class CacheContext {
+
+        final long generation;
+        final String cacheFolderName;
+        final byte[] contextClientKey;
+        final byte[] contextServerKey;
+        /** true = 客户端本地注册（/ysmclient load），false = 服务端同步。决定来源优先级。 */
+        final boolean local;
+
+        CacheContext(long generation, String cacheFolderName, byte[] contextClientKey, byte[] contextServerKey,
+            boolean local) {
+            this.generation = generation;
+            this.cacheFolderName = cacheFolderName;
+            this.contextClientKey = contextClientKey;
+            this.contextServerKey = contextServerKey;
+            this.local = local;
+        }
+
+        /** 该上下文是否仍然允许发布（同步未被替换 / 未开始新一轮同步）。 */
+        boolean publishable() {
+            return generation == ClientModelManager.currentApplyGeneration();
+        }
+
+        File cacheDir() {
+            return ServerModelManager.CACHE_CLIENT.resolve(cacheFolderName == null ? "0" : cacheFolderName)
+                .toFile();
+        }
+
+        String cacheFileName(long hash1, long hash2) {
+            return YSMClientCache.generateCacheFileName(hash1, hash2, contextClientKey);
+        }
+    }
+
     /** 单次 OpenYSM 同步的私有状态（会话级字段见外层注释）。 */
     private static final class SyncState {
 
-        private int syncStep = 1;
+        /** 包处理线程写、客户端 tick 读（看门狗/完成判定要看到最新阶段），故 volatile。 */
+        private volatile int syncStep = 1;
         private byte[] key1;
         private byte[] lastKey;
+        /** 本轮的不可变缓存上下文（packet03 读出密钥后建立）。 */
+        private volatile CacheContext cacheContext;
         /** Reassembly buffer for the (encrypted, possibly chunked) sync index. */
         private byte[] syncIndexChunks;
         private int syncIndexTotal;
@@ -74,12 +122,13 @@ public final class OpenYsmModelSyncClient {
         /** 剩余待解析模型数（缓存命中 + 下载）。全部为 0 时才允许发送完成信号。 */
         private final java.util.concurrent.atomic.AtomicInteger remainingTasks =
             new java.util.concurrent.atomic.AtomicInteger(0);
-        /** 完成等待是否已启动（防止多线程重复触发）。 */
-        private final java.util.concurrent.atomic.AtomicBoolean completionScheduled =
-            new java.util.concurrent.atomic.AtomicBoolean(false);
         /** 完成信号是否已发送（防止看门狗/错误路径/正常路径重复发送）。 */
         private final java.util.concurrent.atomic.AtomicBoolean completionSent =
             new java.util.concurrent.atomic.AtomicBoolean(false);
+        /** 本次同步的看门狗/完成等待计时器（客户端 tick 驱动，见 {@link #onSyncTick()}）。 */
+        private com.fox.ysmu.util.TickScheduler.Handle timer;
+        /** 全部解析完成后开始等待 apply 管线排空的时间点（0 = 尚未开始）。 */
+        private long completionPollStartMs;
         /** 统计计数器：缓存命中与下载路径的解析都在后台线程并发执行，++ 不再安全。 */
         private final java.util.concurrent.atomic.AtomicInteger loadedModelsCount =
             new java.util.concurrent.atomic.AtomicInteger(0);
@@ -162,8 +211,18 @@ public final class OpenYsmModelSyncClient {
             clientKey = new byte[56];
             buf.getRawBuf().readBytes(clientKey);
 
+            // 本轮同步的不可变上下文：目录名 + 两个密钥 + 代际。之后所有解析/发布都
+            // 只读它，不再读会被 registerLocalModel 临时替换（也不再会被 reset 置 null）
+            // 的静态字段。
+            cacheContext = new CacheContext(
+                ClientModelManager.currentApplyGeneration(),
+                currentCacheFolderName,
+                clientKey,
+                serverKey,
+                false);
+
             serverModels.clear();
-            File cacheDir = getCacheDir();
+            File cacheDir = cacheContext.cacheDir();
             if (!cacheDir.isDirectory() && !cacheDir.mkdirs()) {
                 ysmu.LOG.warn("Failed to create OpenYSM client cache directory {}", cacheDir);
             }
@@ -184,7 +243,7 @@ public final class OpenYsmModelSyncClient {
             // 完成信号等待全部模型（缓存命中 + 下载）解析并应用完成。
             remainingTasks.set(serverModelCount);
             syncStartTimeMs = System.currentTimeMillis();
-            startSyncWatchdog();
+            startSyncTimer();
             if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                 ysmu.LOG.info("[YSMU-MODEL] OpenYSM client received sync index: models={}", serverModelCount);
                 ysmu.LOG.info("[YSMU-MODEL] Client sync handlePacket03: serverModelCount={}, cachedModels={}",
@@ -225,9 +284,12 @@ public final class OpenYsmModelSyncClient {
                         // 内联只保留廉价的 read+decrypt：损坏缓存能先回落到下载再发 packet04，
                         // 大批缓存命中也不会拖慢索引循环。
                         if (isPriorityModel(modelId)) {
-                            parseInline(clearBytes, context);
+                            parseInline(clearBytes, context, cacheContext);
                         } else {
-                            ThreadTools.THREAD_POOL.submit(() -> parseInline(clearBytes, context));
+                            // 上下文按值捕获：本任务可能在下一轮同步/本地注册开始后才执行完，
+                            // 发布前会用它做代际检查（见 parseAndRegisterModel）。
+                            final CacheContext ctx = cacheContext;
+                            ThreadTools.THREAD_POOL.submit(() -> parseInline(clearBytes, context, ctx));
                         }
                     } catch (Exception e) {
                         // 缓存文件解密失败（如 session key 变更导致 clientKey 不匹配），降级为 cache miss，
@@ -248,11 +310,8 @@ public final class OpenYsmModelSyncClient {
 
             parsePackData(buf);
             sendPacket04(modelsToRequest);
-            // 全缓存命中/零模型时完成信号由后台解析驱动；此处兜底极端情况
-            // （serverModelCount==0 或全部解析已在发送 packet04 前完成）。
-            if (remainingTasks.get() <= 0) {
-                maybeSendComplete();
-            }
+            // 完成信号统一由客户端 tick 的计时器（onSyncTick）驱动：剩下要等的只有
+            // 「全部解析完成 + apply 管线排空」，这里不再补发。
         }
 
         private void handlePacket05(YSMByteBuf buf) throws Exception {
@@ -287,13 +346,16 @@ public final class OpenYsmModelSyncClient {
             if (context.bytesReceived >= context.totalSize) {
                 byte[] fileBuffer = context.fileBuffer;
                 context.fileBuffer = null;
+                // 本轮上下文：转码/落盘/映射都必须用「这批字节所属那一轮」的目录与密钥，
+                // 而不是发布时刻的静态字段（可能已被 registerLocalModel 替换或已 reset）。
+                CacheContext ctx = cacheContext;
                 try {
                     byte[] clientCacheBytes = YsmCrypt
-                        .transcodeServerDataToClientCache(fileBuffer, serverKey, clientKey, hash1, hash2);
-                    File outFile = new File(getCacheDir(), YSMClientCache.generateCacheFileName(hash1, hash2, clientKey));
+                        .transcodeServerDataToClientCache(fileBuffer, ctx.contextServerKey, ctx.contextClientKey, hash1, hash2);
+                    File outFile = new File(ctx.cacheDir(), ctx.cacheFileName(hash1, hash2));
                     FileUtils.writeByteArrayToFile(outFile, clientCacheBytes);
 
-                    byte[] clearBytes = YsmCrypt.read(clientCacheBytes, clientKey);
+                    byte[] clearBytes = YsmCrypt.read(clientCacheBytes, ctx.contextClientKey);
                     // Defer the heavy parse to the background pool (mirrors the cache-hit
                     // path): processServerData is synchronized, so parsing inline here
                     // would hold the class lock for every model and serialize the whole
@@ -307,7 +369,7 @@ public final class OpenYsmModelSyncClient {
                     final byte[] modelClearBytes = clearBytes;
                     Runnable parseTask = () -> {
                         try {
-                            if (parseAndRegisterModel(modelClearBytes, context)) {
+                            if (parseAndRegisterModel(modelClearBytes, context, ctx)) {
                                 loadedModelsCount.incrementAndGet();
                                 downloadedModelsCount.incrementAndGet();
                             }
@@ -364,9 +426,9 @@ public final class OpenYsmModelSyncClient {
          * 解析并注册一个模型，并在 finally 中计入任务完成信号。
          * cacheHit 路径的「优先内联 / 后台并行」两分支共用。
          */
-        private void parseInline(byte[] clearBytes, ServerModelContext context) {
+        private void parseInline(byte[] clearBytes, ServerModelContext context, CacheContext ctx) {
             try {
-                if (parseAndRegisterModel(clearBytes, context)) {
+                if (parseAndRegisterModel(clearBytes, context, ctx)) {
                     loadedModelsCount.incrementAndGet();
                 }
             } finally {
@@ -382,7 +444,9 @@ public final class OpenYsmModelSyncClient {
             // 每个模型解析完成都视为一次进展：重置看门狗停滞倒计时。
             touchProgress();
             if (remainingTasks.decrementAndGet() <= 0) {
-                maybeSendComplete();
+                // 完成判定交给客户端 tick（onSyncTick）——绝不在解析线程上补发，
+                // 否则包处理/解析线程要等 apply 管线排空（最多 2 分钟）。
+                // 这里只负责把「全部解析已提交」这一事实记下来。
             }
         }
 
@@ -392,58 +456,63 @@ public final class OpenYsmModelSyncClient {
         }
 
         /**
-         * 启动完成等待：所有模型解析已提交，但主线程的 applyPreParsed 可能仍在逐帧
-         * 消费队列——全缓存命中（下载数 0）时若立即发完成，成功数会远小于总数
-         * （如 343/681）。轮询 {@link ClientModelManager#isApplyPipelineDrained()}，
-         * 排空后发送完成；超时或同步被重置则兜底退出，不挂死。
+         * 启动本次同步的计时器：每 {@value #SYNC_TICK_INTERVAL_MS} ms 由客户端 tick 推进一次，
+         * 负责看门狗（停滞兜底）与完成等待（apply 管线排空后发完成信号）。
+         *
+         * <p>为什么不用后台线程：见 {@link com.fox.ysmu.util.TickScheduler}。原实现在
+         * {@code ThreadTools.THREAD_POOL} 上 sleep 轮询，ThreadCount=1 时看门狗占住唯一工作
+         * 线程，把它等待的解析任务全部堵在队列里，直到 60 秒停滞超时才放行。</p>
          */
-        private void maybeSendComplete() {
-            if (syncStep < 3 || !completionScheduled.compareAndSet(false, true)) {
-                return;
-            }
-            ThreadTools.THREAD_POOL.submit(() -> {
-                long deadline = System.currentTimeMillis() + COMPLETION_APPLY_DRAIN_TIMEOUT_MS;
-                while (System.currentTimeMillis() < deadline) {
-                    if (!ClientModelManager.SYNC_IN_PROGRESS) {
-                        return; // 同步已被重置/断开，不再补发完成。
-                    }
-                    if (ClientModelManager.isApplyPipelineDrained()) {
-                        sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-                        return;
-                    }
-                    try {
-                        Thread.sleep(50L);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-                        return;
-                    }
-                }
-                // 超时兜底：应用仍未排空（如主线程长时间阻塞），按当前状态发送完成。
-                sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-            });
+        private void startSyncTimer() {
+            lastProgressTimeMs = System.currentTimeMillis();
+            cancelTimer();
+            timer = com.fox.ysmu.util.TickScheduler.client()
+                .scheduleEvery(SYNC_TICK_INTERVAL_MS, this::onSyncTick);
         }
 
-        /** 同步开始时启动；所有任务正常完成或同步被重置即退出。若 1 分钟内没有任何进展
-         *  （如某些模型被请求但服务端从未下发、缓存文件缺失/损坏），强制发送完成兜底。 */
-        private void startSyncWatchdog() {
-            lastProgressTimeMs = System.currentTimeMillis();
-            ThreadTools.THREAD_POOL.submit(() -> {
-                while (ClientModelManager.SYNC_IN_PROGRESS && remainingTasks.get() > 0) {
-                    if (System.currentTimeMillis() - lastProgressTimeMs >= SYNC_STALL_TIMEOUT_MS) {
-                        ysmu.LOG.warn("OpenYSM client sync stalled (no progress for {}s, {} task(s) left), forcing completion",
-                            SYNC_STALL_TIMEOUT_MS / 1000, remainingTasks.get());
-                        sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
-                        return;
-                    }
-                    try {
-                        Thread.sleep(1000L);
-                    } catch (InterruptedException e) {
-                        Thread.currentThread().interrupt();
-                        return;
-                    }
+        private void cancelTimer() {
+            com.fox.ysmu.util.TickScheduler.Handle handle = timer;
+            timer = null;
+            if (handle != null) {
+                handle.cancel();
+            }
+        }
+
+        /**
+         * 一次计时器推进（客户端主线程）。三件事按优先级判定：
+         * <ol>
+         *   <li>会话已被替换（重连 / reload / 断开）→ 注销自己，不再发任何包；</li>
+         *   <li>仍有解析任务未完成（或 packet04 尚未发出）→ 只做停滞兜底；</li>
+         *   <li>全部解析完成 → 等 apply 管线排空（{@link ClientModelManager#isApplyPipelineDrained()}）
+         *       后发完成信号，超时同样兜底。</li>
+         * </ol>
+         */
+        private void onSyncTick() {
+            if (STATE != this) {
+                cancelTimer();
+                return;
+            }
+            long now = System.currentTimeMillis();
+            if (remainingTasks.get() > 0 || syncStep < 3) {
+                if (now - lastProgressTimeMs >= SYNC_STALL_TIMEOUT_MS) {
+                    ysmu.LOG.warn("OpenYSM client sync stalled (no progress for {}s, {} task(s) left), forcing completion",
+                        SYNC_STALL_TIMEOUT_MS / 1000, remainingTasks.get());
+                    sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
                 }
-            });
+                return;
+            }
+            if (!ClientModelManager.SYNC_IN_PROGRESS) {
+                cancelTimer();
+                return;
+            }
+            if (completionPollStartMs == 0L) {
+                completionPollStartMs = now;
+            }
+            if (ClientModelManager.isApplyPipelineDrained()
+                || now - completionPollStartMs >= COMPLETION_APPLY_DRAIN_TIMEOUT_MS) {
+                // 应用管线已排空（或等待超时）：进度/统计已准确，可以发完成信号。
+                sendComplete(C2SCompleteFeedback17.STATUS_SUCCESS, "");
+            }
         }
 
         private void sendComplete(int status, String message) {
@@ -490,6 +559,7 @@ public final class OpenYsmModelSyncClient {
                 }
             }
             ClientModelManager.SYNC_IN_PROGRESS = false;
+            cancelTimer();
             resetConnectionState();
         }
     }
@@ -587,8 +657,13 @@ public final class OpenYsmModelSyncClient {
 
     public static synchronized void resetConnectionState() {
         // 整体替换 SyncState：清空所有单次同步字段（等价于旧实现逐字段重置，
-        // 且原子、无中途被观察到的半重置状态）。
+        // 且原子、无中途被观察到的半重置状态）。旧会话的计时器一并注销，
+        // 否则它要等下一次 tick 才发现自己已被替换。
+        SyncState previous = STATE;
         STATE = new SyncState();
+        if (previous != null) {
+            previous.cancelTimer();
+        }
         serverKey = null;
         currentCacheFolderName = null;
         // NOTE: clientKey is intentionally KEPT — lazy geo/anim/texture reload
@@ -603,6 +678,19 @@ public final class OpenYsmModelSyncClient {
         ClientModelManager.SYNC_IN_PROGRESS = false;
     }
 
+    /**
+     * 注销当前同步的计时器，**不加类锁**。
+     *
+     * <p>供客户端断开清理调用：断开事件可能在 Netty 线程上派发，而类锁正被包处理（含内联
+     * 解析优先模型）持有，去抢锁会把网络线程堵住。这里只做一次 volatile 读 + 一次计时器
+     * 注销，不需要与其他字段保持原子性——计时器体自己会比对 {@code STATE} 身份。</p>
+     */
+    public static void cancelSyncTimerWithoutLock() {
+        SyncState state = STATE;
+        if (state != null) {
+            state.cancelTimer();
+        }
+    }
 
 
 
@@ -611,7 +699,19 @@ public final class OpenYsmModelSyncClient {
 
 
 
-    private static boolean parseAndRegisterModel(byte[] clearBytes, ServerModelContext context) {
+
+    private static boolean parseAndRegisterModel(byte[] clearBytes, ServerModelContext context, CacheContext ctx) {
+        // 发布闸门：解析在工作线程上进行，可能跨越一次 /ysm reload、重连或本地注册。
+        // 此处是「解析完成 → 写注册表」的唯一入口，代际不等就直接放弃（此时还没有写
+        // 过任何注册表 / 缓存映射）。bundle 自身也带代际，主线程 apply 前还会再查一次，
+        // 覆盖「通过本检查之后才发生替换」的窗口。
+        if (!ctx.publishable()) {
+            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
+                ysmu.LOG.info("[YSMU-MODEL] discarded stale parse result for {} (generation {})",
+                    context.modelId, ctx.generation);
+            }
+            return false;
+        }
         try (YSMBinaryDeserializer deserializer = new YSMBinaryDeserializer(clearBytes, OpenYsmFormat.OPEN_YSM_SYNC_FORMAT)) {
             RawYsmModel raw = deserializer.deserializeKeepOpen();
             deserializer.parseYSMFooter(raw);
@@ -685,12 +785,22 @@ public final class OpenYsmModelSyncClient {
                         if (RawYsmModelAdapter.isBridgeable(folderRaw)) {
                             ModelData fallbackData = RawYsmModelAdapter.toLegacyModelData(folderRaw, context.modelId);
                             // Register extra wheel data (if any)
-                            registerExtraWheelAndProjectiles(folderRaw, modelId, context.modelId);
+                            registerExtraWheelAndProjectiles(folderRaw, modelId, context.modelId, ctx);
                             ysmu.LOG.info("[YSMU-MODEL] Non-bridgeable model {} loaded from local folder fallback",
                                 context.modelId);
                             // Register on main thread via registerAll (same path as loadDefaultModel)
                             final ModelData fd = fallbackData;
                             Minecraft.getMinecraft().func_152344_a(() -> {
+                                // 主线程任务也要过代际：从提交到执行之间可能已经开始了新一轮同步，
+                                // 那时 clearRuntimeModelCaches 要么已跑过、要么正要跑，写入等于复活旧模型。
+                                if (!ctx.publishable()) {
+                                    return;
+                                }
+                                // 来源优先级：本地注册不覆盖同名服务端模型（此任务不经过
+                                // apply 队列，所以自己查一次）。
+                                if (ctx.local && ClientModelManager.isServerProvidedModel(modelId)) {
+                                    return;
+                                }
                                 try {
                                     ClientModelManager.registerAll(fd);
                                 } catch (Exception e) {
@@ -705,7 +815,7 @@ public final class OpenYsmModelSyncClient {
                     }
                 }
                 // Local fallback also failed — register only extra wheel and projectiles
-                registerExtraWheelAndProjectiles(raw, modelId, context.modelId);
+                registerExtraWheelAndProjectiles(raw, modelId, context.modelId, ctx);
                 ysmu.LOG.info("[YSMU-MODEL] OpenYSM synced model {} is not bridgeable, no local fallback available",
                     context.modelId);
                 return false;
@@ -728,6 +838,7 @@ public final class OpenYsmModelSyncClient {
             com.fox.ysmu.client.model.PreParsedModelBundle bundle;
             try {
                 bundle = ClientModelManager.preParseModel(data, !priority);
+                bundle.localRegistration = ctx.local;
                 bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage(), e);
@@ -744,7 +855,8 @@ public final class OpenYsmModelSyncClient {
             // cannot be restored.
             ClientModelManager.rememberOpenYsmModelCache(
                 new ResourceLocation(ysmu.MODID, context.modelId),
-                currentCacheFolderName + "/" + YSMClientCache.generateCacheFileName(context.hash1, context.hash2, clientKey));
+                ctx.cacheFolderName + "/" + ctx.cacheFileName(context.hash1, context.hash2),
+                ctx.generation);
             ClientModelManager.scheduleApply(bundle);
             if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                 ysmu.LOG.info("[YSMU-MODEL] parseAndRegisterModel OK: {} (bridgeable=true, bundle scheduled)",
@@ -1023,37 +1135,32 @@ public final class OpenYsmModelSyncClient {
         if (localKey == null) {
             return false;
         }
-        // 保存现场，本地注册结束后恢复，绝不污染真实同步状态。
-        String prevFolder = currentCacheFolderName;
-        byte[] prevClientKey = clientKey;
-        byte[] prevServerKey = serverKey;
+        // 本地注册从类锁内取一族自己的状态**值**（服务端密钥、本地客户端密钥、目录 "0"），
+        // 不再临时改写 clientKey/currentCacheFolderName ——
+        // 那个 try/finally 的注释曾声称「绝不污染真实同步状态」，但类锁只覆盖包处理，
+        // 覆盖不到已在 THREAD_POOL 上并发运行的非优先模型解析任务：它们在锁外读同一批
+        // 静态字段，恰好落在替换窗口里就会把 "0"/本地密钥写进自己的缓存映射。
+        // 现在解析/发布只读随工作项传递的不可变 CacheContext，替换窗口从结构上不存在。
+        final CacheContext ctx = new CacheContext(
+            ClientModelManager.currentApplyGeneration(),
+            "0",
+            localKey,
+            ServerModelManager.OPEN_YSM_SERVER_KEY,
+            true);
         try {
-            currentCacheFolderName = "0";
-            clientKey = localKey;
-            serverKey = ServerModelManager.OPEN_YSM_SERVER_KEY;
             byte[] clientCacheBytes = YsmCrypt.transcodeServerDataToClientCache(
-                serverCacheBytes, serverKey, clientKey, info.getHash1(), info.getHash2());
-            File outFile = new File(getCacheDir(),
-                YSMClientCache.generateCacheFileName(info.getHash1(), info.getHash2(), clientKey));
+                serverCacheBytes, ctx.contextServerKey, ctx.contextClientKey, info.getHash1(), info.getHash2());
+            File outFile = new File(ctx.cacheDir(), ctx.cacheFileName(info.getHash1(), info.getHash2()));
             FileUtils.writeByteArrayToFile(outFile, clientCacheBytes);
-            byte[] clearBytes = YsmCrypt.read(clientCacheBytes, clientKey);
+            byte[] clearBytes = YsmCrypt.read(clientCacheBytes, ctx.contextClientKey);
             ServerModelContext context = new ServerModelContext(
                 info.getHash1(), info.getHash2(), info.getModelId(),
                 info.isCustomSkinModel() ? 1 : 0, info.getFormat());
-            return parseAndRegisterModel(clearBytes, context);
+            return parseAndRegisterModel(clearBytes, context, ctx);
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to register local model {}: {}", info.getModelId(), e.getMessage());
             return false;
-        } finally {
-            currentCacheFolderName = prevFolder;
-            clientKey = prevClientKey;
-            serverKey = prevServerKey;
         }
-    }
-
-    private static File getCacheDir() {
-        String folder = currentCacheFolderName == null ? "0" : currentCacheFolderName;
-        return ServerModelManager.CACHE_CLIENT.resolve(folder).toFile();
     }
 
     /**
@@ -1072,8 +1179,15 @@ public final class OpenYsmModelSyncClient {
      * Registers extra wheel data and projectile sub-entity models for a model
      * (used by both the normal bridgeable path and the non-bridgeable fallback).
      */
-    private static void registerExtraWheelAndProjectiles(RawYsmModel rawModel, ResourceLocation modelId, String contextModelId) {
+    private static void registerExtraWheelAndProjectiles(RawYsmModel rawModel, ResourceLocation modelId,
+        String contextModelId, CacheContext ctx) {
         Minecraft.getMinecraft().func_152344_a(() -> {
+            // 这两个主线程任务都不经过 apply 队列，因此都要自己过代际检查：
+            // 从提交到执行之间可能已经开始了新一轮同步（/ysm reload、重连），
+            // 那时 clearRuntimeModelCaches 已清过或正要清，写入会留下上一轮的轮盘/弹射物数据。
+            if (!ctx.publishable()) {
+                return;
+            }
             try {
                 ClientModelManager.registerExtraWheel(modelId, rawModel);
             } catch (Exception e) {
@@ -1085,6 +1199,9 @@ public final class OpenYsmModelSyncClient {
             java.util.List<ProjectileMatch> projectileMatches = parseProjectileResources(rawModel, baseModelId);
             if (!projectileMatches.isEmpty()) {
                 Minecraft.getMinecraft().func_152344_a(() -> {
+                    if (!ctx.publishable()) {
+                        return;
+                    }
                     try {
                         applyProjectileResources(projectileMatches);
                     } catch (Exception e) {
@@ -1102,6 +1219,10 @@ public final class OpenYsmModelSyncClient {
 
 
 
+
+    /** 同步计时器推进间隔：260 ms 左右足以让完成信号及时补发（原先完成轮询是 50 ms，但
+     *  它占着一个工作线程），又不至于让主线程每帧做无谓检查。 */
+    private static final long SYNC_TICK_INTERVAL_MS = 250L;
 
     /** 完成等待的上限：应用管线在正常游戏内排空很快，此值仅作极端情况的兜底。 */
     private static final long COMPLETION_APPLY_DRAIN_TIMEOUT_MS = 2 * 60_000L;

@@ -34,10 +34,22 @@ public final class YSMSoundManager {
     private static final Map<String, ResourceLocation> SOUND_SOURCES = new ConcurrentHashMap<>();
     /** 已按需解密的模型音效字节：modelKey::name → OGG bytes（内存驻留，不落盘明文）。 */
     private static final Map<String, byte[]> SOUND_FILES = new ConcurrentHashMap<>();
-    /** soundName → SoundSystem source name */
-    private static final Map<String, String> ACTIVE_SOURCES = new ConcurrentHashMap<>();
-    /** GeckoLib controller name → last sound name triggered by its keyframe */
-    private static final Map<String, String> CONTROLLER_SOUNDS = new ConcurrentHashMap<>();
+    /**
+     * 播放归属 → (soundName → SoundSystem source name)。
+     *
+     * <p>**为什么必须按归属分层**：控制器名和音效名都会在不同玩家之间重名 —— 每个玩家都有
+     * {@code cap_controller}、{@code main_controller}，两个玩家用同一个模型时音效名也相同。
+     * 原先 {@code ACTIVE_SOURCES} 只按 soundName 索引、{@code CONTROLLER_SOUNDS} 只按
+     * controllerName 索引，于是：A 的关键帧音效被 B 的同名播放"替换"掉（playSound 先停同名再播，
+     * 停的其实是 A 的源），B 的控制器停止又会把 A 正在播的音效一起停掉。归属键由
+     * {@link #ownerKey} 给出（模型持有者的 UUID；预览/无主调用用本地槽位），
+     * 使"每个演员各自持有自己的控制器-音效映射"成立。</p>
+     */
+    private static final Map<String, Map<String, String>> ACTIVE_SOURCES = new ConcurrentHashMap<>();
+    /** 播放归属 → (GeckoLib controller name → 该控制器最近触发的音效名)。 */
+    private static final Map<String, Map<String, String>> CONTROLLER_SOUNDS = new ConcurrentHashMap<>();
+    /** 无主/预览槽位：GUI 预览实体没有 player，刻意保持"本地一个槽位"的既有行为。 */
+    static final String LOCAL_OWNER = "local";
     private static final java.util.concurrent.atomic.AtomicInteger sourceCounter = new java.util.concurrent.atomic.AtomicInteger(0);
     /** Lazily cached SoundSystem reflection handle */
     private static Object sndSystem = null;
@@ -154,10 +166,28 @@ public final class YSMSoundManager {
      * 5. 全部失败 → 输出一条最终 WARN
      */
     public static void playSound(EntityPlayer player, String soundName, ResourceLocation modelId, float volume, float pitch) {
+        // 直接播放（命令 / ysm.play_sound / 调试）里"触发者"就是传入的玩家。
+        playSound(ownerKey(player), player, soundName, modelId, volume, pitch);
+    }
+
+    /** 播放归属键：模型持有者（触发者）的 UUID；null → 本地槽位（GUI 预览等无主场景）。 */
+    public static String ownerKey(EntityPlayer owner) {
+        return owner == null ? LOCAL_OWNER : owner.getUniqueID()
+            .toString();
+    }
+
+    /**
+     * 带归属的播放：{@code owner} 是"谁触发了这条音效"（决定归属槽位、供
+     * {@link #stopController}/{@link #stopSound} 定位），{@code hearer} 只是听者
+     * （1.7.10 下模型音效一律在本地玩家身上播放，见 {@link #updateSourcePositions} 的说明）。
+     */
+    static void playSound(String owner, EntityPlayer hearer, String soundName, ResourceLocation modelId, float volume,
+        float pitch) {
         if (soundName == null || soundName.isEmpty()) return;
 
         if (Config.DEBUG_SOUND) {
-            ysmu.LOG.info("[YSMU-SOUND] playSound: '{}' vol={} pitch={} model={}", soundName, volume, pitch, modelId);
+            ysmu.LOG.info("[YSMU-SOUND] playSound: '{}' vol={} pitch={} model={} owner={}",
+                soundName, volume, pitch, modelId, owner);
         }
 
         // Step 1 — 模型自定义音效（按 modelId::name 隔离，避免跨模型同名冲突；
@@ -193,8 +223,8 @@ public final class YSMSoundManager {
             }
         }
         if (sound != null) {
-            stopSound(soundName);
-            playOggDirect(sound, soundName, volume, pitch);
+            stopSound(owner, soundName);
+            playOggDirect(owner, sound, soundName, volume, pitch);
             return;
         }
 
@@ -227,7 +257,7 @@ public final class YSMSoundManager {
             if (Config.DEBUG_SOUND) {
                 ysmu.LOG.info("[YSMU-SOUND] local asset: '{}' → {}", soundName, localOgg);
             }
-            playOggDirect(localOgg, soundName, volume, pitch);
+            playOggDirect(owner, localOgg, soundName, volume, pitch);
             return;
         }
 
@@ -255,18 +285,34 @@ public final class YSMSoundManager {
      * 以便当该控制器/动画停止时能清理对应音效。
      */
     public static void onSoundKeyframe(String controllerName, String soundName) {
-        onSoundKeyframe(controllerName, soundName, null);
+        // 无归属调用 → 本地槽位（与 GUI 预览一致）。显式写类型，避免与
+        // (String ownerSlot, String controllerName, String soundName, ?) 形式产生歧义。
+        onSoundKeyframe((EntityPlayer) null, controllerName, soundName, null);
     }
 
     /**
-     * 由关键帧音效监听器调用。记录该音效来自哪个 GeckoLib 控制器和模型，
-     * 以便当该控制器/动画停止时能清理对应音效，并使用正确的模型上下文查找音效文件。
+     * 由关键帧音效监听器调用。记录该音效来自**哪个持有者的哪个控制器**，以及模型上下文。
      *
+     * @param owner 触发这条音效的模型持有者（即被渲染的玩家）。同一时刻可能有多个玩家各自
+     *        的 {@code cap_controller} 在播不同的音效，只有带上持有者才能把它们分开；
+     *        预览实体没有 player，此时用本地槽位（刻意保持"预览音效只占本机一格"的既有行为）。
      * @param controllerName GeckoLib 控制器名称
      * @param soundName 音效名称（动画 keyframe 中定义的名称）
      * @param modelId 当前模型的 ResourceLocation，用于隔离同名音效
      */
-    public static void onSoundKeyframe(String controllerName, String soundName, ResourceLocation modelId) {
+    public static void onSoundKeyframe(EntityPlayer owner, String controllerName, String soundName,
+        ResourceLocation modelId) {
+        onSoundKeyframe(ownerKey(owner), controllerName, soundName, modelId);
+    }
+
+    /**
+     * 按归属槽位记录一次关键帧音效（内部/测试用的规范形式；{@link #ownerKey} 给出槽位键）。
+     *
+     * <p>归属槽位与控制器名共同构成播放身份：不同玩家可以有同名控制器（{@code cap_controller}）、
+     * 同一模型的两个玩家可以有同名音效，只有槽位参与键才能把两者分开。</p>
+     */
+    public static void onSoundKeyframe(String ownerSlot, String controllerName, String soundName,
+        ResourceLocation modelId) {
         if (controllerName == null || soundName == null) return;
         if (previewRendering) {
             // During GUI preview rendering, suppress sounds from parallel controllers
@@ -279,72 +325,200 @@ public final class YSMSoundManager {
             }
         }
         if (Config.DEBUG_SOUND) {
-            ysmu.LOG.info("[YSMU-SOUND] onSoundKeyframe: ctrl='{}' sound='{}' model={}", controllerName, soundName, modelId);
+            ysmu.LOG.info("[YSMU-SOUND] onSoundKeyframe: owner={} ctrl='{}' sound='{}' model={}",
+                ownerSlot, controllerName, soundName, modelId);
         }
-        // 防抖：同一 controller+sound 在短时间内重复触发则忽略。
+        // 防抖：同一「持有者 + controller + sound」在短时间内重复触发则忽略。
         // 这解决了动画子条件变化（如站立攻击→奔跑攻击）时
         // GeckoLib 重置关键帧导致声音重复播放的问题。
-        String debounceKey = controllerName + "::" + soundName;
+        // 归属必须进 key：否则同一模型的两个玩家会互相把对方的关键帧音效防抖掉。
+        String debounceKey = ownerSlot + "::" + controllerName + "::" + soundName;
         if (modelId != null) debounceKey = modelId + "::" + debounceKey;
         long now = System.currentTimeMillis();
         Long last = SOUND_KEYFRAME_LAST_TIME.get(debounceKey);
         if (last != null && now - last < SOUND_KEYFRAME_COOLDOWN_MS) {
             if (Config.DEBUG_SOUND) {
-                ysmu.LOG.info("[YSMU-SOUND] debounced: ctrl='{}' sound='{}' ({}ms since last)",
-                    controllerName, soundName, now - last);
+                ysmu.LOG.info("[YSMU-SOUND] debounced: owner={} ctrl='{}' sound='{}' ({}ms since last)",
+                    ownerSlot, controllerName, soundName, now - last);
             }
             return;
         }
         SOUND_KEYFRAME_LAST_TIME.put(debounceKey, now);
-        // If this controller was playing a different sound, stop the old one
-        String oldSound = CONTROLLER_SOUNDS.get(controllerName);
+        // If this (owner, controller) was playing a different sound, stop the old one
+        Map<String, String> controllers = mutableControllerSoundsOf(ownerSlot);
+        String oldSound = controllers.get(controllerName);
         if (oldSound != null && !oldSound.equals(soundName)) {
-            stopSound(oldSound);
+            stopSound(ownerSlot, oldSound);
         }
-        CONTROLLER_SOUNDS.put(controllerName, soundName);
-        playSoundAtPlayer(soundName, modelId);
+        controllers.put(controllerName, soundName);
+        // 听者仍是本地玩家（1.7.10 下模型音效一律在本地玩家身上播放），但归属记在触发者头上。
+        playOwnerSound(ownerSlot, soundName, modelId);
     }
 
-    /** 停止指定控制器触发的音效（动画停止时调用） */
+    /**
+     * 关键帧音效的实际播放（听者 = 本地玩家）。
+     *
+     * <p>这一步是**副作用**，它跑在 GeckoLib 动画 tick 的监听器里：任何失败（客户端还没起来、
+     * 类解析不了）都只允许退化成"这次没声音"，绝不允许把动画 tick 或渲染帧带崩。
+     * 记账（控制器 → 音效、音效 → 音源）在调用它之前就已经完成，所以播放失败也不会留下
+     * 悬空引用。</p>
+     */
+    private static void playOwnerSound(String ownerSlot, String soundName, ResourceLocation modelId) {
+        try {
+            Minecraft mc = Minecraft.getMinecraft();
+            if (mc != null && mc.thePlayer != null) {
+                playSound(ownerSlot, mc.thePlayer, soundName, modelId, 1.0f, 1.0f);
+            }
+        } catch (Throwable t) {
+            if (playbackFailureLogged.compareAndSet(false, true)) {
+                ysmu.LOG.warn("[YSMU-SOUND] keyframe playback unavailable ({}); sounds are skipped: {}",
+                    t.getClass()
+                        .getSimpleName(),
+                    String.valueOf(t.getMessage()));
+            }
+        }
+    }
+
+    private static final java.util.concurrent.atomic.AtomicBoolean playbackFailureLogged =
+        new java.util.concurrent.atomic.AtomicBoolean(false);
+
+    /** 停止指定控制器触发的音效（动画停止时调用）。{@code owner} 见 {@link #ownerKey}。 */
     public static void stopController(String controllerName) {
-        String soundName = CONTROLLER_SOUNDS.remove(controllerName);
+        stopController(null, controllerName);
+    }
+
+    /** 停止「该持有者的该控制器」触发的音效（动画停止时调用）。 */
+    public static void stopController(EntityPlayer owner, String controllerName) {
+        stopControllerByOwnerSlot(ownerKey(owner), controllerName);
+    }
+
+    /** 按归属槽位停止控制器音效（调用方已持有槽位键，避免重复计算 UUID）。 */
+    public static void stopControllerByOwnerSlot(String ownerSlot, String controllerName) {
+        if (controllerName == null) return;
+        Map<String, String> controllers = CONTROLLER_SOUNDS.get(ownerSlot);
+        String soundName = controllers == null ? null : controllers.remove(controllerName);
         if (soundName != null) {
             if (Config.DEBUG_SOUND) {
-                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopController '{}' -> '{}'", probeStamp(), controllerName,
-                    soundName);
+                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopController owner={} '{}' -> '{}'", probeStamp(), ownerSlot,
+                    controllerName, soundName);
             }
-            stopSound(soundName);
+            stopSound(ownerSlot, soundName);
         }
         // 清除该控制器的防抖记录，确保下次重新触发时能正常播放。
-        // 防抖 key 在带 modelId 时为 modelId::controller::sound（onSoundKeyframe
-        // 拼装），仅按 startsWith(controllerName::) 匹配不到，需同时匹配
-        // "::controller::" 中间段。
-        SOUND_KEYFRAME_LAST_TIME.keySet().removeIf(
-            k -> k.startsWith(controllerName + "::") || k.contains("::" + controllerName + "::"));
+        // 防抖 key 形如 [modelId::]owner::controller::sound，按 "::owner::controller::" 或
+        // "owner::controller::" 前缀匹配（用户可能用 owner 槽位而非 EntityPlayer 调用，
+        // 两种写法都要覆盖）。
+        String prefix = ownerSlot + "::" + controllerName + "::";
+        final String midfix = "::" + prefix;
+        SOUND_KEYFRAME_LAST_TIME.keySet()
+            .removeIf(k -> k.startsWith(prefix) || k.contains(midfix));
     }
 
-    /** 停止指定名称的音效 */
+    /** 停止指定名称的音效（不区分归属）。 */
     public static void stopSound(String soundName) {
-        String src = ACTIVE_SOURCES.remove(soundName);
+        for (Map<String, String> bySound : ACTIVE_SOURCES.values()) {
+            String src = bySound.remove(soundName);
+            if (src != null) {
+                if (Config.DEBUG_SOUND) {
+                    ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopSound '{}' (src={})", probeStamp(), soundName, src);
+                }
+                stopSource(src);
+            }
+        }
+    }
+
+    /** 停止「该持有者」播出的指定名称音效；其他持有者的同名音效不受影响。 */
+    public static void stopSound(String ownerSlot, String soundName) {
+        Map<String, String> bySound = ACTIVE_SOURCES.get(ownerSlot);
+        if (bySound == null) return;
+        String src = bySound.remove(soundName);
         if (src != null) {
             if (Config.DEBUG_SOUND) {
-                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopSound '{}' (src={})", probeStamp(), soundName, src);
+                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopSound owner={} '{}' (src={})", probeStamp(), ownerSlot,
+                    soundName, src);
             }
             stopSource(src);
         }
     }
 
-    /** 停止所有 YSM 发出的音效 */
-    public static void stopAll() {
-        if (Config.DEBUG_SOUND && !ACTIVE_SOURCES.isEmpty()) {
-            ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopAll ({} active: {})", probeStamp(), ACTIVE_SOURCES.size(),
-                new java.util.ArrayList<>(ACTIVE_SOURCES.keySet()));
+    /**
+     * 停止「该归属」播出的全部音效（{@code ysm.stop_all_sounds()} 不带 global 参数时的语义：
+     * 参考实现里 global=0 表示"停止当前实体上下文的播放实例"）。
+     */
+    public static void stopAll(String ownerSlot) {
+        Map<String, String> bySound = ACTIVE_SOURCES.remove(ownerSlot);
+        if (bySound != null) {
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopAll owner={} ({} active)", probeStamp(), ownerSlot,
+                    bySound.size());
+            }
+            for (String src : bySound.values()) {
+                stopSource(src);
+            }
         }
-        for (String src : new HashSet<>(ACTIVE_SOURCES.values())) {
-            stopSource(src);
+        CONTROLLER_SOUNDS.remove(ownerSlot);
+    }
+
+    /** 停止所有 YSM 发出的音效（{@code ysm.stop_all_sounds(1)} 的 global 语义 / 模型切换清理） */
+    public static void stopAll() {
+        if (Config.DEBUG_SOUND && activeSourceCount() > 0) {
+            ysmu.LOG.info("[YSMU-SOUND-PROBE] {} stopAll ({} owner(s), {} active)", probeStamp(), ACTIVE_SOURCES.size(),
+                activeSourceCount());
+        }
+        for (Map<String, String> bySound : ACTIVE_SOURCES.values()) {
+            for (String src : bySound.values()) {
+                stopSource(src);
+            }
         }
         ACTIVE_SOURCES.clear();
         CONTROLLER_SOUNDS.clear();
+    }
+
+    /** 清掉某个持有者的全部音效状态（玩家登出/模型切换时用），不影响其他持有者。 */
+    public static void clearOwner(EntityPlayer owner) {
+        clearOwnerSlot(ownerKey(owner));
+    }
+
+    /** 按归属槽位清理（见 {@link #ownerKey}）。 */
+    public static void clearOwnerSlot(String ownerSlot) {
+        Map<String, String> bySound = ACTIVE_SOURCES.remove(ownerSlot);
+        if (bySound != null && !bySound.isEmpty()) {
+            if (Config.DEBUG_SOUND) {
+                ysmu.LOG.info("[YSMU-SOUND-PROBE] {} clearOwner {} ({} active)", probeStamp(), ownerSlot,
+                    bySound.size());
+            }
+            for (String src : bySound.values()) {
+                stopSource(src);
+            }
+        }
+        CONTROLLER_SOUNDS.remove(ownerSlot);
+        SOUND_KEYFRAME_LAST_TIME.keySet()
+            .removeIf(k -> k.startsWith(ownerSlot + "::") || k.contains("::" + ownerSlot + "::"));
+    }
+
+    /**
+     * 诊断：某归属当前登记的「控制器 → 音效名」。测试与 DebugSound 用来确认归属隔离
+     * （一个玩家/预览槽位的登记不会出现在另一个槽位里）。
+     */
+    public static Map<String, String> controllerSoundsOf(String ownerSlot) {
+        Map<String, String> m = CONTROLLER_SOUNDS.get(ownerSlot);
+        return m == null ? java.util.Collections.emptyMap() : java.util.Collections.unmodifiableMap(m);
+    }
+
+    /** 诊断：某归属当前活跃的音效名（音源仍在追踪中的）。 */
+    public static java.util.Set<String> activeSoundNamesOf(String ownerSlot) {
+        Map<String, String> m = ACTIVE_SOURCES.get(ownerSlot);
+        return m == null ? java.util.Collections.emptySet() : new java.util.HashSet<>(m.keySet());
+    }
+
+    /** 该归属下的「控制器 → 音效」映射（不存在时创建）。 */
+    private static Map<String, String> mutableControllerSoundsOf(String ownerSlot) {
+        return CONTROLLER_SOUNDS.computeIfAbsent(ownerSlot, k -> new ConcurrentHashMap<>());
+    }
+
+    /** 该归属下的「音效名 → 音源名」映射（不存在时创建）。 */
+    private static Map<String, String> activeSourcesOf(String ownerSlot) {
+        return ACTIVE_SOURCES.computeIfAbsent(ownerSlot, k -> new ConcurrentHashMap<>());
     }
 
     /**
@@ -355,7 +529,7 @@ public final class YSMSoundManager {
      * 成本：活跃源数 × 1 次反射 setPosition，活跃源通常只有几个，可忽略。
      */
     public static void updateSourcePositions() {
-        if (ACTIVE_SOURCES.isEmpty()) return;
+        if (activeSourceCount() == 0) return;
         Minecraft mc = Minecraft.getMinecraft();
         if (mc == null || mc.thePlayer == null) return;
         Object ss = resolveSndSystem();
@@ -373,11 +547,22 @@ public final class YSMSoundManager {
         float px = (float) mc.thePlayer.posX;
         float py = (float) mc.thePlayer.posY;
         float pz = (float) mc.thePlayer.posZ;
-        for (String src : ACTIVE_SOURCES.values()) {
-            try {
-                sndSetPosition.invoke(ss, src, px, py, pz);
-            } catch (Exception ignored) {}
+        for (Map<String, String> bySound : ACTIVE_SOURCES.values()) {
+            for (String src : bySound.values()) {
+                try {
+                    sndSetPosition.invoke(ss, src, px, py, pz);
+                } catch (Exception ignored) {}
+            }
         }
+    }
+
+    /** 所有归属下仍在播放的音源总数（诊断与开销判断用）。 */
+    private static int activeSourceCount() {
+        int n = 0;
+        for (Map<String, String> bySound : ACTIVE_SOURCES.values()) {
+            n += bySound.size();
+        }
+        return n;
     }
 
     /** Returns an unmodifiable view of all registered sounds (name → in-memory OGG bytes). */
@@ -571,16 +756,26 @@ public final class YSMSoundManager {
         if (!Config.DEBUG_SOUND) return;
         if (++probeTickCounter % 20 != 0) return;
         StringBuilder sb = new StringBuilder();
-        for (Map.Entry<String, String> e : ACTIVE_SOURCES.entrySet()) {
-            String state = "?";
-            try {
-                state = String.valueOf(
-                    ss.getClass().getMethod("playing", String.class).invoke(ss, e.getValue()));
-            } catch (Exception ignored) {}
-            sb.append(e.getKey()).append("->").append(e.getValue()).append('(').append(state).append(") ");
+        for (Map.Entry<String, Map<String, String>> owner : ACTIVE_SOURCES.entrySet()) {
+            for (Map.Entry<String, String> e : owner.getValue()
+                .entrySet()) {
+                String state = "?";
+                try {
+                    state = String.valueOf(
+                        ss.getClass().getMethod("playing", String.class).invoke(ss, e.getValue()));
+                } catch (Exception ignored) {}
+                sb.append(owner.getKey())
+                    .append('/')
+                    .append(e.getKey())
+                    .append("->")
+                    .append(e.getValue())
+                    .append('(')
+                    .append(state)
+                    .append(") ");
+            }
         }
-        ysmu.LOG.info("[YSMU-SOUND-PROBE] {} active={} {}", probeStamp(),
-            ACTIVE_SOURCES.size(), sb.toString().trim());
+        ysmu.LOG.info("[YSMU-SOUND-PROBE] {} owners={} active={} {}", probeStamp(),
+            ACTIVE_SOURCES.size(), activeSourceCount(), sb.toString().trim());
     }
     // ---- end DebugSound diagnostics -----------------------------------------
 
@@ -634,7 +829,7 @@ public final class YSMSoundManager {
      *  与内存字节版（playOggDirect(byte[],...)）一致：播放前停止旧同名源，
      *  播放后把 soundName→srcName 记入 ACTIVE_SOURCES，使 stopSound/
      *  stopController/stopAll 能追踪并停止这些音效，避免每次播放泄漏音源。 */
-    private static void playOggDirect(Path oggPath, String soundName, float volume, float pitch) {
+    private static void playOggDirect(String ownerSlot, Path oggPath, String soundName, float volume, float pitch) {
         Object ss = resolveSndSystem();
         if (ss == null) return;
         // Skip invalid OGG files – passing them to CodecJOrbis can freeze the
@@ -646,7 +841,7 @@ public final class YSMSoundManager {
         Minecraft mc = Minecraft.getMinecraft();
         if (mc.thePlayer == null) return; // world not fully loaded yet
         // 停止旧同名源（对齐内存字节路径：同名音效重播前先停旧的）。
-        if (soundName != null) stopSound(soundName);
+        if (soundName != null) stopSound(ownerSlot, soundName);
         try {
             String srcName = "ysm_" + sourceCounter.incrementAndGet();
             float px = (float) mc.thePlayer.posX;
@@ -705,7 +900,7 @@ public final class YSMSoundManager {
             try { ss.getClass().getMethod("setVolume", String.class, float.class).invoke(ss, srcName, volume); } catch (NoSuchMethodException ignored) {}
             ss.getClass().getMethod("play", String.class).invoke(ss, srcName);
             // 追踪音源（对齐内存字节版），使停止路径能覆盖本地资产音效。
-            if (soundName != null) ACTIVE_SOURCES.put(soundName, srcName);
+            if (soundName != null) activeSourcesOf(ownerSlot).put(soundName, srcName);
             if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] playing '{}' as {}", oggPath.getFileName(), srcName);
         } catch (Exception e) {
             ysmu.LOG.warn("[YSMU-SOUND] Failed to play: {}", e.getMessage());
@@ -718,7 +913,7 @@ public final class YSMSoundManager {
      * openStream() 返回内存字节流——下游（CodecJOrbis 按扩展名选择、OGG 头校验）
      * 与文件播放路径完全一致。
      */
-    private static void playOggDirect(byte[] data, String soundName, float volume, float pitch) {
+    private static void playOggDirect(String ownerSlot, byte[] data, String soundName, float volume, float pitch) {
         if (data == null || data.length == 0) return;
         Object ss = resolveSndSystem();
         if (ss == null) return;
@@ -764,7 +959,7 @@ public final class YSMSoundManager {
             try { ss.getClass().getMethod("setPitch", String.class, float.class).invoke(ss, srcName, pitch); } catch (NoSuchMethodException ignored) {}
             try { ss.getClass().getMethod("setVolume", String.class, float.class).invoke(ss, srcName, volume); } catch (NoSuchMethodException ignored) {}
             ss.getClass().getMethod("play", String.class).invoke(ss, srcName);
-            ACTIVE_SOURCES.put(soundName, srcName);
+            activeSourcesOf(ownerSlot).put(soundName, srcName);
             if (Config.DEBUG_SOUND) ysmu.LOG.info("[YSMU-SOUND] playing in-memory '{}' as {}", soundName, srcName);
         } catch (Exception e) {
             ysmu.LOG.warn("[YSMU-SOUND] Failed to play: {}", e.getMessage());

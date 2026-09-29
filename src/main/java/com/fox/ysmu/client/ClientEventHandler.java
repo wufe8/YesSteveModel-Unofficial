@@ -104,6 +104,11 @@ public class ClientEventHandler {
         if (event.phase != TickEvent.Phase.START) {
             return;
         }
+        // 计时器同时挂在渲染帧上：世界加载（skipRenderWorld）期间客户端 tick 仍在跑，
+        // 而渲染帧可能被跳过 —— 两边都驱动才能保证看门狗/完成等待/密码等待不会因为
+        // 某一边停摆而卡住。间隔判定在 TickScheduler 内，重复驱动无副作用。
+        com.fox.ysmu.util.TickScheduler.client()
+            .runDueTasks();
         ClientModelManager.processPendingAppliesForFrame();
         com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.advanceRenderFrame();
         // 弹射物时间轴的派发预算同样是"每渲染帧"一次：弹射物没有玩家那种 model pass 入口。
@@ -118,10 +123,32 @@ public class ClientEventHandler {
         com.fox.ysmu.util.GeoStats.publishIfDue();
     }
 
+    /** 「上一 tick 还在世界里」标志：用于兜底发现会话结束（见 onClientTick）。 */
+    private static boolean inWorldLastTick = false;
+
     @SubscribeEvent
     public static void onClientTick(TickEvent.ClientTickEvent event) {
         if (event.phase != TickEvent.Phase.END) {
             return;
+        }
+        // 同步计时器（看门狗 / 完成等待 / 等世界加载 / 等密码）由客户端 tick 推进：这些轮询原先
+        // 在 THREAD_POOL 上 sleep，ThreadCount=1 时会占住唯一工作线程（见 TickScheduler）。
+        com.fox.ysmu.util.TickScheduler.client()
+            .runDueTasks();
+        // 会话结束兜底：不依赖任何断开事件。专用服务器的断线通知只有
+        // FMLNetworkEvent.ClientDisconnectionFromServerEvent 一条，一旦它没被派发到本模组，
+        // 连接密钥与排队的解析工作就会留在原地继续跑（菜单里 RenderTick 照样 drain）。
+        // 「上一 tick 还在世界、这一 tick 世界与玩家都为 null」是只有真正离开会话才会出现的
+        // 组合（进世界加载途中玩家可能为 null 但世界已非 null；换维度两者都不为 null）。
+        Minecraft mcTick = Minecraft.getMinecraft();
+        if (mcTick == null) {
+            return;
+        }
+        if (mcTick.theWorld != null || mcTick.thePlayer != null) {
+            inWorldLastTick = true;
+        } else if (inWorldLastTick) {
+            inWorldLastTick = false;
+            ClientModelManager.onClientDisconnected("tick-left-world");
         }
         // 第一人称音效音源跟随玩家（成本：活跃源数 × 1 次反射 setPosition，通常几个源）
         YSMSoundManager.updateSourcePositions();
@@ -485,7 +512,15 @@ public class ClientEventHandler {
 
     @SubscribeEvent
     public static void onPlayerLeave(PlayerEvent.PlayerLoggedOutEvent event) {
-        ClientModelManager.clearConnectionState();
+        // 这里是「玩家登出」边界，不是「本地会话结束」边界 —— 两者原先被混在一起：
+        // 集成服务器上**任何**客人登出都会在服主客户端触发本方法（服务端
+        // ServerConfigurationManager.playerLoggedOut → firePlayerLoggedOut，同一个 FML 总线），
+        // 于是服主自己的会话密钥被一并清掉。本地连接只应在本地玩家自己离开时作废。
+        // 注意事件里的 player 是服务端的 EntityPlayerMP，与 mc.thePlayer 不是同一个对象，
+        // 必须按 UUID 比。
+        if (event.player != null && isLocalPlayer(event.player)) {
+            ClientModelManager.onClientDisconnected("local-player-logout");
+        }
         RemotePlayerAnimationQueries.clear();
         RemotePlayerMotionStates.clear();
         NPCData.clear();
@@ -498,7 +533,34 @@ public class ClientEventHandler {
             // 玩家登出：清掉"已跑过 @player_init"的标记，下次加载会重新初始化模型状态。
             com.fox.ysmu.client.animation.controller.OpenYsmScriptRuntime.clearPlayer(pid);
             com.fox.ysmu.client.animation.MovementSpeedMatcher.clearSmoothing(event.player);
+            // 音效归属状态同样按玩家清理：不留该玩家的"控制器→音效"映射与音源。
+            YSMSoundManager.clearOwner(event.player);
+            // cap 控制器的"上一帧在播"标志与其余 per-player 动画簿记一起清掉：留着会让下次
+            // 登入的同一 UUID 一上来就被判成"动画已经播过了"（与模型切换同一清理入口）。
+            com.fox.ysmu.client.animation.AnimationManager.getInstance()
+                .resetPlayerState(pid);
         }
+    }
+
+    /** 登出事件里的玩家是不是本地玩家（按 UUID 比；服务端对象与客户端对象不是同一个实例）。 */
+    private static boolean isLocalPlayer(EntityPlayer loggedOut) {
+        EntityPlayer local = Minecraft.getMinecraft().thePlayer;
+        return local != null && local.getUniqueID()
+            .equals(loggedOut.getUniqueID());
+    }
+
+    /**
+     * 客户端与服务器的网络连接断开（专用服务器断线 / 被踢 / 服务端关闭）。
+     *
+     * <p>这是**远端断线**唯一可靠的通知：{@code PlayerLoggedOutEvent} 由服务端玩家列表路径
+     * 发出，连专用服务器时客户端收不到，于是连接密钥、同步状态与排队工作会一直留着。
+     * 本事件在 Netty 线程上派发，因此清理全交给
+     * {@link ClientModelManager#onClientDisconnected(String)} 的第二段回主线程做
+     * （纹理释放要碰 OpenGL）。</p>
+     */
+    @SubscribeEvent
+    public static void onClientDisconnected(cpw.mods.fml.common.network.FMLNetworkEvent.ClientDisconnectionFromServerEvent event) {
+        ClientModelManager.onClientDisconnected("network-disconnect");
     }
 
     private static boolean isVanillaPlayer(ResourceLocation modelId) {

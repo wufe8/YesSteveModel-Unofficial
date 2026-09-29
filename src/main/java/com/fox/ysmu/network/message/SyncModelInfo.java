@@ -7,7 +7,6 @@ import net.minecraft.util.ResourceLocation;
 
 import com.fox.ysmu.eep.ExtendedModelInfo;
 import com.fox.ysmu.util.ModelIdUtil;
-import com.fox.ysmu.util.ThreadTools;
 
 import cpw.mods.fml.common.network.ByteBufUtils;
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
@@ -17,6 +16,9 @@ import cpw.mods.fml.relauncher.Side;
 import io.netty.buffer.ByteBuf;
 
 public class SyncModelInfo implements IMessage {
+
+    /** 等待被同步玩家实体出现的上限（原先 5 次 × 500 ms 的后台轮询）。 */
+    private static final long EEP_ENTITY_WAIT_MS = 2500L;
 
     private int entityId;
     private NBTTagCompound modelInfoNBT;
@@ -56,15 +58,21 @@ public class SyncModelInfo implements IMessage {
         private void handleEEP(SyncModelInfo message) {
             Minecraft mc = Minecraft.getMinecraft();
             if (mc.theWorld != null) {
-                // Remote players can arrive after this packet, so wait briefly before applying synced EEP data.
-                ThreadTools.THREAD_POOL.submit(() -> {
-                    try {
-                        int time = 0;
-                        while (mc.theWorld.getEntityByID(message.entityId) == null && time < 5) {
-                            Thread.sleep(500);
-                            time++;
+                // 远程玩家可能在这个包之后才到达：短暂等待实体出现再应用。
+                // 不能占着 THREAD_POOL 睡觉（ThreadCount=1 会堵住同步解析），也不该在
+                // 后台线程改 EEP（渲染线程同时在读）——改为客户端 tick 驱动的重试，
+                // 每次重试都在主线程上。
+                final long deadline = System.currentTimeMillis() + EEP_ENTITY_WAIT_MS;
+                com.fox.ysmu.util.TickScheduler.Handle[] retry = new com.fox.ysmu.util.TickScheduler.Handle[1];
+                retry[0] = com.fox.ysmu.util.TickScheduler.client()
+                    .scheduleEvery(250L, () -> {
+                        Minecraft client = Minecraft.getMinecraft();
+                        net.minecraft.entity.Entity entity = client.theWorld == null ? null
+                            : client.theWorld.getEntityByID(message.entityId);
+                        if (entity == null && System.currentTimeMillis() < deadline) {
+                            return; // 再等一轮
                         }
-                        net.minecraft.entity.Entity entity = mc.theWorld.getEntityByID(message.entityId);
+                        retry[0].cancel();
                         if (entity instanceof EntityPlayer player) {
                             ExtendedModelInfo eep = ExtendedModelInfo.get(player);
                             if (eep != null) {
@@ -81,10 +89,7 @@ public class SyncModelInfo implements IMessage {
                                 }
                             }
                         }
-                    } catch (InterruptedException e) {
-                        throw new RuntimeException(e);
-                    }
-                });
+                    });
             }
         }
     }

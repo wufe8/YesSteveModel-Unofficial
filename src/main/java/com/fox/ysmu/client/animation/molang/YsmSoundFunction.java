@@ -105,15 +105,30 @@ public abstract class YsmSoundFunction extends Function {
             if (entity == null) {
                 return 0.0d;
             }
+            // 归属 = 当前求值的实体（模型持有者）。音效的播放/停止都按归属分层，
+            // 否则一个模型脚本的 stop_all_sounds 会把别人的音效一起掐掉
+            // （参考实现里 global=0/缺省 的语义就是"只停当前实体上下文"）。
+            String ownerSlot = YSMSoundManager.ownerKey(entity instanceof EntityPlayer ? (EntityPlayer) entity : null);
             if (stopAll) {
-                YSMSoundManager.stopAll();
+                // stop_all_sounds(global?)：global 非 0 时停全局，否则只停当前实体的上下文。
+                boolean global = args.length > 0 && getArg(0) != 0;
+                if (global) {
+                    YSMSoundManager.stopAll();
+                } else {
+                    YSMSoundManager.stopAll(ownerSlot);
+                }
                 return 1.0d;
             }
             String id = MolangStringPool.get((int) getArg(0));
             if (stop) {
-                // 停止按该 id（作为 soundName）播放的活跃音源。
+                // 停止按该 id（作为 soundName）播放的活跃音源。global（第二个参数）为真时
+                // 不限定归属，与参考实现的 stop_sound(id, global?) 一致。
                 if (id != null && !id.isEmpty()) {
-                    YSMSoundManager.stopSound(id);
+                    if (args.length > 1 && getArg(1) != 0) {
+                        YSMSoundManager.stopSound(id);
+                    } else {
+                        YSMSoundManager.stopSound(ownerSlot, id);
+                    }
                 }
                 return 1.0d;
             }

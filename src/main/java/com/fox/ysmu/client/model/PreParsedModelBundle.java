@@ -20,6 +20,20 @@ import software.bernie.geckolib3.geo.render.built.GeoModel;
 public class PreParsedModelBundle {
     public final ResourceLocation modelId;
 
+    /**
+     * 解析开始时的应用代际（{@code ClientModelManager.currentApplyGeneration()}）。
+     * 主线程应用前会比对当前代际：不等说明这份数据描述的同步索引已被替换
+     * （/ysm reload、重连），必须整体丢弃 —— 否则会把已删除的模型复活，
+     * 或把「模型 → 缓存文件」映射写到旧缓存目录/密钥上。
+     */
+    public long applyGeneration;
+
+    /**
+     * 该 bundle 是否来自客户端本地注册（{@code /ysmclient load}）。
+     * 主线程 apply 时据此执行来源优先级：服务端已提供的同名模型不被本地覆盖。
+     */
+    public boolean localRegistration;
+
     // Geometry data (parsed from JSON on background thread)
     public final Map<ResourceLocation, GeoModel> geoModels = new LinkedHashMap<>();
     public final Map<ResourceLocation, it.unimi.dsi.fastutil.Pair<Double, Double>> scaleInfo = new LinkedHashMap<>();

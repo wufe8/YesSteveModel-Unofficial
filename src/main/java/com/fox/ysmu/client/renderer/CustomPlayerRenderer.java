@@ -106,7 +106,10 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
                 // Detect model switch and reset stale per-player animation state
                 if (oldModel != null && !oldModel.equals(newModel)) {
                     com.fox.ysmu.client.animation.AnimationManager.getInstance().resetPlayerState(pid);
-                    com.fox.ysmu.client.audio.YSMSoundManager.stopAll();
+                    // 只停这名玩家自己的音效：stopAll() 会把其他玩家（以及本地预览）正在播的
+                    // 模型音效一起掐掉，切自己的模型不该影响别人。
+                    com.fox.ysmu.client.audio.YSMSoundManager.stopAll(
+                        com.fox.ysmu.client.audio.YSMSoundManager.ownerKey(player));
                     // 停止 EEP 播放的动画：EEP 的 playAnimation 是 per-player 的，
                     // 切换模型后若不清掉，旧模型选的轮盘动画（如 14_momo 的
                     // "变身"，timeline 写 v.roaming.a/b/c）会在新模型自动播放，

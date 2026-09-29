@@ -385,7 +385,7 @@ public final class OpenYsmPlayerControllerRuntime {
                 runtimeState.currentState = "";
                 runtimeState.lastSelectedAnimationState = "";
                 runtimeState.lastSelectedAnimation = "";
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, geckoControllerName);
                 event.getController().currentAnimationBuilder = new AnimationBuilder();
                 return null;
             }
@@ -419,7 +419,7 @@ public final class OpenYsmPlayerControllerRuntime {
         prepareFrameVariables(geckoControllerName, player, runtimeState, context);
         State state = ensureState(event, match.controller, runtimeState, context);
         if (state == null) {
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
@@ -538,7 +538,7 @@ public final class OpenYsmPlayerControllerRuntime {
             // preventing the transition loop from ever evaluating 空闲's transitions.
             if ("ysm-builtin".equals(runtimeState.currentState)) {
             } else {
-                com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+                com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, geckoControllerName);
                 event.getController().currentAnimationBuilder = new AnimationBuilder();
             }
             return null;
@@ -555,12 +555,12 @@ public final class OpenYsmPlayerControllerRuntime {
                 ysmu.LOG.info("[YSMU-CTRL] {}: animations exist but none found in file, state='{}'",
                     geckoControllerName, runtimeState.currentState);
             }
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
         if (SWING_CONTROLLER.equals(geckoControllerName) && existing.contains("attack_empty") && existing.size() == 1) {
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, geckoControllerName);
             event.getController().currentAnimationBuilder = new AnimationBuilder();
             return null;
         }
@@ -587,7 +587,7 @@ public final class OpenYsmPlayerControllerRuntime {
         applyPlaybackSpeed(event, player, geckoControllerName, existing);
         applyAnimations(event, runtimeState, state, existing, animationId);
         if (!sameControllerState && (prevAnim == null || !prevAnim.equals(existing.get(0)))) {
-            com.fox.ysmu.client.audio.YSMSoundManager.stopController(geckoControllerName);
+            com.fox.ysmu.client.audio.YSMSoundManager.stopController(player, geckoControllerName);
         }
         return PlayState.CONTINUE;
     }
