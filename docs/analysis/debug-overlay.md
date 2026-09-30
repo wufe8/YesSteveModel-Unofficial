@@ -1,6 +1,6 @@
 # Molang 调试覆盖层（Debug Overlay）
 
-设计稿在 `local/analysis/debug-overlay-design.md`。本文按**当前源码**给每项标注
+设计稿在作者本地（未随仓库提供）。本文按**当前源码**给每项标注
 已实现 / 未实现 / 与设计不同，代码在 `client/gui/debug/DebugOverlay.java`、
 `client/input/DebugOverlayKey.java`、`client/debug/MolangDebugSnapshot.java`。
 

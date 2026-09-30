@@ -82,14 +82,14 @@ wiki「自定义函数」页除事件订阅外的语法：
 调试输出、`ctrl.hold`/`ctrl.use`/`ctrl.swing`/`ctrl.armor`（关键帧与脚本路径，与控制器条件路径
 共用 `CtrlItemMatcher`）、`ctrl.reset`。
 
-`docs/README.md` 的收录原则适用：这些都是跨模型的机制说明，具体模型名只在 `local/` 里出现。
+`docs/README.md` 的收录原则适用：这些都是跨模型的机制说明，具体第三方模型名不入库。
 
 ## 下一步（如果要继续补）
 
 1. ~~**把解释器接上**~~ **已完成**：`PreParsedModelBundle` 保留函数体 + 事件表，
    `OpenYsmScriptRuntime` 在 `MolangPhysicsRuntime.begin()` 触发 `@player_init`/`@player_update`，
-   `OpenYsmScriptScope` 提供游戏侧读写。**必须实机确认**（见
-   `local/plans/in-game-test-checklist.md` 的脚本项）。
+   `OpenYsmScriptScope` 提供游戏侧读写。**必须实机确认**（`@player_init`/`@player_update`
+   与 `@player_ctrl_*` 各走一遍真机模型）。
 2. ~~二期剩下的语言特性~~ **已完成**（`fn.*` + 每层 `t.*` + 循环）。注意参考库里
    `fn.` 只出现在 `motorSynth.molang` 的一句注释里、`loop`/`for_each` 一次都没用，
    所以这几条特性目前只有 wiki 示例当规格（见 `MolangScriptCallAndLoopTest`）。

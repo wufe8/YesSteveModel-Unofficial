@@ -36,12 +36,9 @@
 | [`analysis/blocking-animation-names.md`](analysis/blocking-animation-names.md) | 格挡条件动画名：剑格挡 `use_...:sword` / 等价别名 `:sword_block`、盾牌 `:block`/`:shield` 的命中顺序与回退路径、与上游 `UseAnim.BLOCK` 的差异及已知限制 |
 | [`analysis/ysm-sync.md`](analysis/ysm-sync.md) | `ysm.sync(...)` 到底影响什么：完整链路（模型脚本 → 上行包 → 服务端广播 → 接收端跑发起者模型的 `@sync`）、变量作用域与前提条件、它不影响什么、以及限流从"每秒 1 次丢包"改成"按参数区分"的语义 |
 
-## 已提炼的原始笔记（仍在 `local/analysis/`，含更完整的证据）
+## 原始笔记去哪里了
 
-- `ysmu-negative-index-spam-diagnosis.md` —— 已提炼为 `analysis/crash-report-log-spam.md`；
-  原始文档保留完整证据、逐会话统计与 bisect 顺序，再次出现该刷屏时先读它。
-- `sneak-implementations.md`、`debug-overlay-design.md`、`performance-analysis.md` —— 分别提炼为
-  上表的 `sneak-animation-paths.md`、`debug-overlay.md`、`performance-profiling.md`。
-- `渲染管线分析_at-9de7944.txt`、`UI实现分析_at-f8e4265.txt` —— 原始 dump；其中的可复用结论已并入
-  `animation-controller-priority.md` 与 `performance-profiling.md`。
-- 其余 `.txt`（逐模型 dump）没有可复用的结论，按 `docs/README.md` 的收录原则不入库。
+本目录的文档是从作者本地的排查笔记与过程记录里**提炼**出来的（`local/` 是 gitignored 的
+工作目录，不随仓库分发）。原始笔记含逐会话统计、原始 dump 以及具体模型与路径，按收录原则
+留在本地；所以这里只保留**不依赖那些前提**的结论。若某条结论需要重新取证，按文中给出的
+类/方法名与复现方法重建即可。
