@@ -6,17 +6,17 @@ YSMU Model Dump — 通用 YSM / OpenYSM 模型与动画检查工具。
 
 用法:
     # 列出某模型目录下所有动画（文件名 + 动画名），可 --key 过滤动画名
-    python tools/ysm_dump.py list res/smx
-    python tools/ysm_dump.py list res/smx --key tail
+    python tools/ysm_dump.py list res/<model-dir>
+    python tools/ysm_dump.py list res/<model-dir> --key tail
 
     # 转储指定动画（loop、长度、骨骼、各通道关键帧摘要）
-    python tools/ysm_dump.py dump res/smx "尾巴物理实现"
+    python tools/ysm_dump.py dump res/<model-dir> "尾巴物理实现"
 
     # 在几何（models/main.json / arm.json）中按骨骼名关键字搜索
-    python tools/ysm_dump.py bones res/smx tail
+    python tools/ysm_dump.py bones res/<model-dir> tail
 
     # 查找所有“骨骼名含关键字”的动画（排查 tail/arm 等骨骼被哪些动画驱动）
-    python tools/ysm_dump.py find res/smx Tail
+    python tools/ysm_dump.py find res/<model-dir> Tail
 
 模型目录约定（与 res/ 下模型一致）：
     <model>/animations/*.animation.json    OpenYSM 风格动画文件
@@ -231,27 +231,27 @@ def main(argv: Optional[List[str]] = None) -> int:
         prog="ysm_dump",
         description="通用 YSM / OpenYSM 模型与动画检查工具",
         formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="示例:\n  python tools/ysm_dump.py list res/smx --key tail\n"
-               "  python tools/ysm_dump.py dump res/smx \"尾巴物理实现\"\n"
-               "  python tools/ysm_dump.py bones res/smx tail\n"
-               "  python tools/ysm_dump.py find res/smx Tail",
+        epilog="示例:\n  python tools/ysm_dump.py list res/<model-dir> --key tail\n"
+               "  python tools/ysm_dump.py dump res/<model-dir> \"尾巴物理实现\"\n"
+               "  python tools/ysm_dump.py bones res/<model-dir> tail\n"
+               "  python tools/ysm_dump.py find res/<model-dir> Tail",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
     p_list = sub.add_parser("list", help="列出模型目录下的所有动画")
-    p_list.add_argument("model_dir", help="模型目录，如 res/smx")
+    p_list.add_argument("model_dir", help="模型目录，如 res/<model-dir>")
     p_list.add_argument("--key", help="按动画名关键字过滤（不区分大小写）")
 
     p_dump = sub.add_parser("dump", help="转储指定动画详情")
-    p_dump.add_argument("model_dir", help="模型目录，如 res/smx")
+    p_dump.add_argument("model_dir", help="模型目录，如 res/<model-dir>")
     p_dump.add_argument("anim_name", help="动画名（须与文件内完全一致）")
 
     p_bones = sub.add_parser("bones", help="在几何中按骨骼名关键字搜索")
-    p_bones.add_argument("model_dir", help="模型目录，如 res/smx")
+    p_bones.add_argument("model_dir", help="模型目录，如 res/<model-dir>")
     p_bones.add_argument("key", help="骨骼名关键字，如 tail")
 
     p_find = sub.add_parser("find", help="找出驱动指定骨骼的所有动画")
-    p_find.add_argument("model_dir", help="模型目录，如 res/smx")
+    p_find.add_argument("model_dir", help="模型目录，如 res/<model-dir>")
     p_find.add_argument("bone_key", help="骨骼名关键字，如 Tail")
 
     args = parser.parse_args(argv)

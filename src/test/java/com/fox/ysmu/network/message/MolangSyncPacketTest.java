@@ -39,21 +39,21 @@ class MolangSyncPacketTest {
     @Test
     void serverboundArgumentsSurviveRoundTrip() {
         int[] arguments = { 1234, -7, 0, 65536 };
-        C2SMolangSync message = new C2SMolangSync(model("snake"), arguments);
+        C2SMolangSync message = new C2SMolangSync(model("demo_model"), arguments);
 
         ByteBuf buf = Unpooled.buffer();
         message.toBytes(buf);
         C2SMolangSync decoded = new C2SMolangSync();
         decoded.fromBytes(buf);
 
-        assertEquals("ysmu:snake", decoded.getModelId());
+        assertEquals("ysmu:demo_model", decoded.getModelId());
         assertArrayEquals(arguments, decoded.getArguments());
     }
 
     @Test
     void clientboundArgumentsSurviveRoundTrip() {
         UUID sender = UUID.fromString("11111111-2222-3333-4444-555555555555");
-        S2CMolangSync message = new S2CMolangSync(sender, model("snake"), new int[] { 1, 2, 3 });
+        S2CMolangSync message = new S2CMolangSync(sender, model("demo_model"), new int[] { 1, 2, 3 });
 
         ByteBuf buf = Unpooled.buffer();
         message.toBytes(buf);
@@ -61,7 +61,7 @@ class MolangSyncPacketTest {
         decoded.fromBytes(buf);
 
         assertEquals(sender, decoded.getSenderId());
-        assertEquals("ysmu:snake", decoded.getModelId());
+        assertEquals("ysmu:demo_model", decoded.getModelId());
         assertArrayEquals(new int[] { 1, 2, 3 }, decoded.getArguments());
     }
 
@@ -73,7 +73,7 @@ class MolangSyncPacketTest {
             tooMany[i] = i;
         }
 
-        C2SMolangSync message = new C2SMolangSync(model("snake"), tooMany);
+        C2SMolangSync message = new C2SMolangSync(model("demo_model"), tooMany);
 
         assertEquals(C2SMolangSync.MAX_ARGUMENTS, message.getArguments().length);
         assertArrayEquals(Arrays.copyOf(tooMany, C2SMolangSync.MAX_ARGUMENTS), message.getArguments());
@@ -82,7 +82,7 @@ class MolangSyncPacketTest {
     /** 空参数列表不能把 fromBytes 读崩。 */
     @Test
     void emptyArgumentsRoundTrip() {
-        C2SMolangSync message = new C2SMolangSync(model("snake"), new int[0]);
+        C2SMolangSync message = new C2SMolangSync(model("demo_model"), new int[0]);
 
         ByteBuf buf = Unpooled.buffer();
         message.toBytes(buf);
@@ -109,7 +109,7 @@ class MolangSyncPacketTest {
     @Test
     void unsignedLengthByteCannotShrinkOrOverrunArguments() {
         ByteBuf buf = Unpooled.buffer();
-        ByteBufUtils.writeUTF8String(buf, "ysmu:snake");
+        ByteBufUtils.writeUTF8String(buf, "ysmu:demo_model");
         buf.writeByte(0xFF);
         for (int i = 0; i < C2SMolangSync.MAX_ARGUMENTS; i++) {
             buf.writeInt(i);
@@ -128,7 +128,7 @@ class MolangSyncPacketTest {
         ByteBuf buf = Unpooled.buffer();
         buf.writeLong(sender.getMostSignificantBits());
         buf.writeLong(sender.getLeastSignificantBits());
-        ByteBufUtils.writeUTF8String(buf, "ysmu:snake");
+        ByteBufUtils.writeUTF8String(buf, "ysmu:demo_model");
         buf.writeByte(0xFF);
         for (int i = 0; i < C2SMolangSync.MAX_ARGUMENTS; i++) {
             buf.writeInt(i);
