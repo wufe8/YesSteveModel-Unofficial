@@ -18,7 +18,8 @@ import software.bernie.geckolib3.core.molang.MolangStringPool;
  * {@code ysm.play_sound / ysm.stop_sound / ysm.stop_all_sounds} 的 mclib 实现
  * （动画关键帧 / {@code .molang} 指令路径）。
  *
- * <p>参数布局对齐 OpenYSM 2.5.3：</p>
+ * <p>参数布局对齐参考树 {@code OpenYSM/} 的 {@code SoundFunction}（2.6.5 树，
+ * {@code play} 2~5 参 / {@code stop} 1~2 参 / {@code stop_all} 0~1 参）：</p>
  * <pre>
  *   ysm.play_sound('id', 'sound_name', flags?, volume?, pitch?)   // 2~5 参数
  *   ysm.stop_sound('id', global?)                                 // 1~2 参数

@@ -887,7 +887,7 @@ public final class OpenYsmControllerExpressionEvaluator {
                 }
                 return requireAll && checked > 0 && matchedAny ? TRUE : FALSE;
             }
-            // --- ysm.* 音效函数（对齐 OpenYSM 2.5.3 参数布局；flags 位标志在 1.7.10 部分不适用） ---
+            // --- ysm.* 音效函数（参数布局对齐参考树 OpenYSM/ 的 SoundFunction；flags 位标志在 1.7.10 部分不适用） ---
             if ("ysm.play_sound".equals(name) && arguments.size() >= 2) {
                 String soundName = arguments.get(1).asString();
                 float volume = arguments.size() > 3 ? (float) arguments.get(3).asNumber() : 1.0f;
