@@ -43,6 +43,47 @@ public final class OpenYsmModelSyncServer {
     /** Encrypted sync-index chunk size, safely under the ~32 KB custom-payload limit. */
     private static final int SYNC_INDEX_CHUNK_SIZE = 20000;
     private static final Map<UUID, PlayerSyncState> SYNC_STATES = Maps.newConcurrentMap();
+    private static final SyncReplyGate<EntityPlayerMP> EXPECTED_VERSION = new SyncReplyGate<>();
+    private static final Map<UUID, LegacyTransfer> LEGACY_TRANSFERS = Maps.newConcurrentMap();
+
+    /** Only server-issued requests may start a handshake; replies belong to this connection. */
+    public static void expectVersionReply(EntityPlayerMP player) {
+        UUID id = player.getUniqueID();
+        SYNC_STATES.remove(id);
+        LEGACY_TRANSFERS.remove(id);
+        EXPECTED_VERSION.expect(id, player);
+    }
+
+    public static boolean consumeVersionReply(EntityPlayerMP player) {
+        return EXPECTED_VERSION.consume(player.getUniqueID(), player);
+    }
+
+    public static LegacyTransfer expectLegacyReply(EntityPlayerMP player) {
+        LegacyTransfer transfer = new LegacyTransfer(player);
+        SYNC_STATES.remove(player.getUniqueID());
+        EXPECTED_VERSION.clear(player.getUniqueID());
+        LEGACY_TRANSFERS.put(player.getUniqueID(), transfer);
+        return transfer;
+    }
+
+    public static LegacyTransfer claimLegacyReply(EntityPlayerMP player) {
+        LegacyTransfer transfer = LEGACY_TRANSFERS.get(player.getUniqueID());
+        return transfer != null && transfer.player == player && transfer.claimed.compareAndSet(false, true)
+            ? transfer : null;
+    }
+
+    public static boolean isLegacyActive(LegacyTransfer transfer) {
+        return transfer != null && LEGACY_TRANSFERS.get(transfer.player.getUniqueID()) == transfer;
+    }
+
+    public static final class LegacyTransfer {
+        private final EntityPlayerMP player;
+        private final java.util.concurrent.atomic.AtomicBoolean claimed = new java.util.concurrent.atomic.AtomicBoolean();
+
+        private LegacyTransfer(EntityPlayerMP player) {
+            this.player = player;
+        }
+    }
     /**
      * 模型文件流式发送专用线程池（守护线程）。与通用 THREAD_POOL 隔离：低带宽模式下
      * 一次同步会长时间 sleep 节流，若占用通用池的核心线程（默认仅 4 个），并发同步的
@@ -92,7 +133,9 @@ public final class OpenYsmModelSyncServer {
             }
         }
         LAST_RESYNC.put(playerId, now);
-        return startSync(player) ? RESYNC_OK : RESYNC_FAILED;
+        // The client resets at the version request, not at packet01.
+        ServerModelManager.sendRequestSyncModelMessage(player);
+        return RESYNC_OK;
     }
 
     /** 冷却剩余秒数（供命令层提示；未在冷却中返回 0）。 */
@@ -150,7 +193,7 @@ public final class OpenYsmModelSyncServer {
             state.allowedByHash.computeIfAbsent(info.getHash1(), k -> new HashMap<>())
                 .put(info.getHash2(), info);
         }
-        SYNC_STATES.put(playerId, state);
+        if (SYNC_STATES.putIfAbsent(playerId, state) != null) return false;
         ysmu.LOG.info(
             "Starting OpenYSM model sync for {}: models={}",
             player.getCommandSenderName(),
@@ -159,20 +202,53 @@ public final class OpenYsmModelSyncServer {
         return true;
     }
 
-    public static void handlePayload(UUID playerId, byte[] data) {
-        if (playerId == null) {
-            return;
+    public static void handlePayload(EntityPlayerMP player, byte[] data) {
+        UUID playerId = player == null ? null : player.getUniqueID();
+        PlayerSyncState state = playerId == null ? null : SYNC_STATES.get(playerId);
+        if (state == null || state.player != player || data == null || data.length == 0) return;
+        synchronized (state) {
+            // One processing packet and one queued successor; a fast legitimate packet04
+            // may arrive before the packet02 worker has returned after sending packet03.
+            if (state.payloads.size() >= 1) return;
+            state.payloads.add(data);
+            if (!state.payloadPending.compareAndSet(false, true)) return;
         }
-        if (data == null || data.length == 0) {
-            clear(playerId);
-            return;
+        try {
+            ThreadTools.THREAD_POOL.submit(() -> {
+                while (true) {
+                    byte[] next;
+                    synchronized (state) {
+                        next = state.payloads.poll();
+                        if (next == null) {
+                            state.payloadPending.set(false);
+                            return;
+                        }
+                    }
+                    try {
+                        handlePayloadAsync(playerId, state, next);
+                    } catch (Throwable t) {
+                        synchronized (state) {
+                            state.payloads.clear();
+                            state.payloadPending.set(false);
+                        }
+                        clear(playerId, state);
+                        throw t;
+                    }
+                }
+            });
+        } catch (RuntimeException e) {
+            synchronized (state) {
+                state.payloads.clear();
+                state.payloadPending.set(false);
+            }
+            throw e;
         }
-        ThreadTools.THREAD_POOL.submit(() -> handlePayloadAsync(playerId, data));
     }
 
-    public static void complete(UUID playerId, int status, int loaded, int downloaded, int cacheHits, String message) {
-        PlayerSyncState state = playerId == null ? null : SYNC_STATES.remove(playerId);
-        if (state == null) {
+    public static void complete(EntityPlayerMP player, int status, int loaded, int downloaded, int cacheHits, String message) {
+        UUID playerId = player == null ? null : player.getUniqueID();
+        PlayerSyncState state = playerId == null ? null : SYNC_STATES.get(playerId);
+        if (state == null || state.player != player || !SYNC_STATES.remove(playerId, state)) {
             return;
         }
         if (status == C2SCompleteFeedback17.STATUS_SUCCESS) {
@@ -196,7 +272,13 @@ public final class OpenYsmModelSyncServer {
     public static void clear(UUID playerId) {
         if (playerId != null) {
             SYNC_STATES.remove(playerId);
+            EXPECTED_VERSION.clear(playerId);
+            LEGACY_TRANSFERS.remove(playerId);
         }
+    }
+
+    private static void clear(UUID playerId, PlayerSyncState state) {
+        SYNC_STATES.remove(playerId, state);
     }
 
     /** Derives the per-client cache key from the server key. Public so the client's
@@ -219,10 +301,9 @@ public final class OpenYsmModelSyncServer {
         return ServerModelManager.OPEN_YSM_SYNC_INFO.size();
     }
 
-    private static void handlePayloadAsync(UUID playerId, byte[] packetBytes) {
-        PlayerSyncState state = SYNC_STATES.get(playerId);
-        if (state == null || isTimedOut(state)) {
-            clear(playerId);
+    private static void handlePayloadAsync(UUID playerId, PlayerSyncState state, byte[] packetBytes) {
+        if (!isActive(playerId, state) || isTimedOut(state)) {
+            clear(playerId, state);
             return;
         }
 
@@ -234,7 +315,7 @@ public final class OpenYsmModelSyncServer {
                 handlePacket04(playerId, state, packetBytes);
             }
         } catch (Exception e) {
-            clear(playerId);
+            clear(playerId, state);
             ysmu.LOG.warn("OpenYSM server sync error for " + state.playerName, e);
         }
     }
@@ -264,23 +345,34 @@ public final class OpenYsmModelSyncServer {
             return;
         }
 
-        List<OpenYsmSyncInfo> requested = new ArrayList<>();
+        List<OpenYsmSyncInfo> requested;
         try (YSMByteBuf buf = new YSMByteBuf(Unpooled.wrappedBuffer(decrypted))) {
             buf.skipGarbageHeader();
-            if (buf.getRawBuf().readByte() != 0x04) {
-                return;
-            }
-            int requestCount = buf.readVarInt();
-            for (int i = 0; i < requestCount; i++) {
-                OpenYsmSyncInfo info = findAllowedModel(state, buf.readVarLong(), buf.readVarLong());
-                if (info != null) {
-                    requested.add(info);
-                }
-            }
+            if (buf.getRawBuf().readByte() != 0x04) return;
+            requested = readRequestedModels(buf, state.allowedByHash, state.allowedModels.size());
         }
 
         state.step = 3;
         sendPacket05(playerId, state, requested);
+    }
+
+    static List<OpenYsmSyncInfo> readRequestedModels(YSMByteBuf buf,
+        Map<Long, Map<Long, OpenYsmSyncInfo>> allowed, int maxModels) {
+        int requestCount = buf.readVarInt();
+        if (requestCount < 0 || requestCount > maxModels
+            || requestCount > buf.getRawBuf().readableBytes() / 2) {
+            throw new IllegalArgumentException("Invalid requested model count: " + requestCount);
+        }
+        List<OpenYsmSyncInfo> requested = new ArrayList<>();
+        java.util.Set<OpenYsmSyncInfo> unique = new java.util.HashSet<>();
+        for (int i = 0; i < requestCount; i++) {
+            long h1 = buf.readVarLong();
+            long h2 = buf.readVarLong();
+            Map<Long, OpenYsmSyncInfo> bySecond = allowed.get(h1);
+            OpenYsmSyncInfo info = bySecond == null ? null : bySecond.get(h2);
+            if (info != null && unique.add(info)) requested.add(info);
+        }
+        return requested;
     }
 
     private static void sendPacket01(UUID playerId, PlayerSyncState state) {
@@ -297,7 +389,7 @@ public final class OpenYsmModelSyncServer {
                 sendPayload(playerId, state, encrypted.data());
             }
         } catch (Exception e) {
-            clear(playerId);
+            clear(playerId, state);
             ysmu.LOG.warn("Failed to send OpenYSM packet 01 to " + state.playerName, e);
         }
     }
@@ -377,7 +469,7 @@ public final class OpenYsmModelSyncServer {
                 }
             }
         } catch (Exception e) {
-            clear(playerId);
+            clear(playerId, state);
             ysmu.LOG.warn("Failed to send OpenYSM packet 03 to " + state.playerName, e);
         }
     }
@@ -392,6 +484,7 @@ public final class OpenYsmModelSyncServer {
         int offset = 0;
         int count = 0;
         while (offset < total) {
+            if (!isActive(playerId, state)) return;
             int length = Math.min(SYNC_INDEX_CHUNK_SIZE, total - offset);
             byte[] chunk = Arrays.copyOfRange(payload, offset, offset + length);
             NetworkHandler.sendToClientPlayer(
@@ -420,8 +513,7 @@ public final class OpenYsmModelSyncServer {
                     }
                     File cacheFile = ServerModelManager.CACHE_SERVER.resolve(model.getCacheFileName()).toFile();
                     if (!cacheFile.isFile()) {
-                        ysmu.LOG.warn("Missing OpenYSM server cache file {}", cacheFile);
-                        continue;
+                        throw new java.io.IOException("Missing model cache: " + model.getModelId());
                     }
                     byte[] fileData = FileUtils.readFileToByteArray(cacheFile);
                     int offset = 0;
@@ -442,10 +534,25 @@ public final class OpenYsmModelSyncServer {
                     sentModels,
                     state.playerName);
             } catch (Exception e) {
-                clear(playerId);
+                sendSyncFailure(playerId, state, "Model cache transfer failed: " + e.getClass().getSimpleName());
+                clear(playerId, state);
                 ysmu.LOG.warn("Failed to send OpenYSM model chunks to " + state.playerName, e);
             }
         });
+    }
+
+    /** Packet type 6 shares the existing encrypted payload channel and session key. */
+    private static void sendSyncFailure(UUID playerId, PlayerSyncState state, String reason) {
+        if (!isActive(playerId, state)) return;
+        try (YSMByteBuf out = new YSMByteBuf(Unpooled.buffer())) {
+            byte[] garbage = randomGarbage();
+            out.writeGarbageHeader(garbage.length, garbage);
+            out.writeVarInt(6);
+            out.writeString(reason);
+            sendPayload(playerId, state, YsmCrypt.encrypt(out.toArray(), state.key1, false).data());
+        } catch (Exception e) {
+            ysmu.LOG.warn("Failed to report sync transfer failure to {}: {}", state.playerName, e.toString());
+        }
     }
 
     private static byte[] createPacket05(PlayerSyncState state, OpenYsmSyncInfo model, byte[] fileData, int offset,
@@ -468,11 +575,6 @@ public final class OpenYsmModelSyncServer {
         if (isActive(playerId, state)) {
             NetworkHandler.sendToClientPlayer(new S2CModelSyncPayload17(payload), state.player);
         }
-    }
-
-    private static OpenYsmSyncInfo findAllowedModel(PlayerSyncState state, long hash1, long hash2) {
-        Map<Long, OpenYsmSyncInfo> byHash2 = state.allowedByHash.get(hash1);
-        return byHash2 == null ? null : byHash2.get(hash2);
     }
 
     private static byte[] randomGarbage() {
@@ -514,6 +616,8 @@ public final class OpenYsmModelSyncServer {
         private final List<OpenYsmSyncInfo> allowedModels = new ArrayList<>();
         /** (hash1, hash2) → info 查找索引，startSync 构建 allowedModels 后填充。 */
         private final Map<Long, Map<Long, OpenYsmSyncInfo>> allowedByHash = new HashMap<>();
+        private final java.util.concurrent.atomic.AtomicBoolean payloadPending = new java.util.concurrent.atomic.AtomicBoolean();
+        private final java.util.Queue<byte[]> payloads = new java.util.ArrayDeque<>();
         private byte[] key1;
         private byte[] clientNextKey;
         private int step = 1;

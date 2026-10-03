@@ -33,6 +33,23 @@ public final class NetworkHandler {
      */
     private static final boolean PHYSICAL_CLIENT = FMLCommonHandler.instance()
         .getSide() == Side.CLIENT;
+    private static final java.util.Set<Integer> SERVERBOUND_IDS = new java.util.HashSet<>();
+    private static final java.util.Set<Integer> CLIENTBOUND_IDS = new java.util.HashSet<>();
+
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static void registerServerbound(Class handlerClass, Class messageClass, int discriminator) {
+        SERVERBOUND_IDS.add(discriminator);
+        CHANNEL.registerMessage(handlerClass, messageClass, discriminator, Side.SERVER);
+    }
+
+    private static void installIncomingGuards() {
+        for (Side side : Side.values()) {
+            FMLEmbeddedChannel channel = NetworkRegistry.INSTANCE.getChannel(CHANNEL_NAME, side);
+            String codecName = channel.pipeline().context(SimpleIndexedCodec.class).name();
+            channel.pipeline().addBefore(codecName, "ysmu_incoming_guard",
+                new IncomingMessageGuard(side, side == Side.SERVER ? SERVERBOUND_IDS : CLIENTBOUND_IDS));
+        }
+    }
 
     /**
      * 注册 clientbound 包。
@@ -53,6 +70,7 @@ public final class NetworkHandler {
     @SuppressWarnings({ "unchecked", "rawtypes" })
     private static void registerClientbound(Class handlerClass, Class messageClass, int discriminator) {
         clientboundRegistered++;
+        CLIENTBOUND_IDS.add(discriminator);
         if (PHYSICAL_CLIENT) {
             CHANNEL.registerMessage(handlerClass, messageClass, discriminator, Side.CLIENT);
             return;
@@ -129,6 +147,7 @@ public final class NetworkHandler {
         registerServerboundMessages();
         registerClientboundMessages();
         initBukkit();
+        installIncomingGuards();
         // 一行 INFO：专用服上确认下行包只登记了判别号、没有实例化任何客户端处理器。
         ysmu.LOG.info(
             "YSM network: {} clientbound packets registered {}",
@@ -137,47 +156,18 @@ public final class NetworkHandler {
     }
 
     private static void registerServerboundMessages() {
-        CHANNEL.registerMessage(
+        registerServerbound(
             SyncModelFiles.Handler.class,
             SyncModelFiles.class,
-            SERVERBOUND_SYNC_MODEL_FILES,
-            Side.SERVER);
-        CHANNEL.registerMessage(
-            SetModelAndTexture.Handler.class,
-            SetModelAndTexture.class,
-            SERVERBOUND_SET_MODEL_AND_TEXTURE,
-            Side.SERVER);
-        CHANNEL.registerMessage(
-            SetPlayAnimation.Handler.class,
-            SetPlayAnimation.class,
-            SERVERBOUND_SET_PLAY_ANIMATION,
-            Side.SERVER);
-        CHANNEL.registerMessage(
-            SetStarModel.Handler.class,
-            SetStarModel.class,
-            SERVERBOUND_SET_STAR_MODEL,
-            Side.SERVER);
-        CHANNEL.registerMessage(
-            C2SModelSyncPayload17.Handler.class,
-            C2SModelSyncPayload17.class,
-            SERVERBOUND_OPENYSM_MODEL_SYNC_PAYLOAD_17,
-            Side.SERVER);
-        CHANNEL.registerMessage(
-            C2SVersionCheck17.Handler.class,
-            C2SVersionCheck17.class,
-            SERVERBOUND_OPENYSM_VERSION_CHECK_17,
-            Side.SERVER);
-        CHANNEL.registerMessage(
-            C2SCompleteFeedback17.Handler.class,
-            C2SCompleteFeedback17.class,
-            SERVERBOUND_OPENYSM_COMPLETE_FEEDBACK_17,
-            Side.SERVER);
+            SERVERBOUND_SYNC_MODEL_FILES);
+        registerServerbound(SetModelAndTexture.Handler.class, SetModelAndTexture.class, SERVERBOUND_SET_MODEL_AND_TEXTURE);
+        registerServerbound(SetPlayAnimation.Handler.class, SetPlayAnimation.class, SERVERBOUND_SET_PLAY_ANIMATION);
+        registerServerbound(SetStarModel.Handler.class, SetStarModel.class, SERVERBOUND_SET_STAR_MODEL);
+        registerServerbound(C2SModelSyncPayload17.Handler.class, C2SModelSyncPayload17.class, SERVERBOUND_OPENYSM_MODEL_SYNC_PAYLOAD_17);
+        registerServerbound(C2SVersionCheck17.Handler.class, C2SVersionCheck17.class, SERVERBOUND_OPENYSM_VERSION_CHECK_17);
+        registerServerbound(C2SCompleteFeedback17.Handler.class, C2SCompleteFeedback17.class, SERVERBOUND_OPENYSM_COMPLETE_FEEDBACK_17);
         // ysm.sync(...)（wiki: molang/script「主动同步」）：客户端发起，服务端广播给所有人。
-        CHANNEL.registerMessage(
-            C2SMolangSync.Handler.class,
-            C2SMolangSync.class,
-            SERVERBOUND_MOLANG_SYNC,
-            Side.SERVER);
+        registerServerbound(C2SMolangSync.Handler.class, C2SMolangSync.class, SERVERBOUND_MOLANG_SYNC);
     }
 
     private static void registerClientboundMessages() {
@@ -221,11 +211,7 @@ public final class NetworkHandler {
      */
     private static void initBukkit() {
         registerClientbound(OpenModelGuiMessage.Handler.class, OpenModelGuiMessage.class, OPEN_NPC_MODEL_GUI);
-        CHANNEL.registerMessage(
-            SetNpcModelAndTexture.Handler.class,
-            SetNpcModelAndTexture.class,
-            SET_NPC_MODEL_ID,
-            Side.SERVER);
+        registerServerbound(SetNpcModelAndTexture.Handler.class, SetNpcModelAndTexture.class, SET_NPC_MODEL_ID);
         registerClientbound(SyncNpcDataMessage.Handler.class, SyncNpcDataMessage.class, SYNC_NPC_DATA);
         registerClientbound(UpdateNpcDataMessage.Handler.class, UpdateNpcDataMessage.class, UPDATE_NPC_DATA);
     }

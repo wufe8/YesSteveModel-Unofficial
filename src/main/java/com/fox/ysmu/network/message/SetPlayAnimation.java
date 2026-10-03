@@ -9,6 +9,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
+import com.fox.ysmu.network.PacketReadUtil;
 
 public class SetPlayAnimation implements IMessage {
 
@@ -26,7 +27,7 @@ public class SetPlayAnimation implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        this.animationName = ByteBufUtils.readUTF8String(buf);
+        this.animationName = PacketReadUtil.readString(buf, PacketReadUtil.MAX_ANIMATION_BYTES);
     }
 
     @Override

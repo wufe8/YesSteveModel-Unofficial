@@ -11,6 +11,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
+import com.fox.ysmu.network.PacketReadUtil;
 import net.minecraft.entity.player.EntityPlayerMP;
 import net.minecraft.network.Packet;
 import net.minecraft.util.ResourceLocation;
@@ -55,7 +56,7 @@ public class C2SMolangSync implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        this.modelId = ByteBufUtils.readUTF8String(buf);
+        this.modelId = PacketReadUtil.readString(buf, PacketReadUtil.MAX_ID_BYTES);
         // 长度按无符号字节读：恶意客户端写 0x80 时 readByte() 会得到负数，
         // 无符号读取 + 下面的 MAX_ARGUMENTS 截断保证参数数组永远不超过 16。
         int count = Math.min(buf.readUnsignedByte(), MAX_ARGUMENTS);
@@ -175,6 +176,11 @@ public class C2SMolangSync implements IMessage {
         WINDOWS.clear();
     }
 
+    static boolean isCurrentModel(ResourceLocation claimedMainId, ResourceLocation selectedBaseId) {
+        return claimedMainId != null && selectedBaseId != null
+            && claimedMainId.equals(com.fox.ysmu.util.ModelIdUtil.getMainId(selectedBaseId));
+    }
+
     public static class Handler implements IMessageHandler<C2SMolangSync, IMessage> {
 
         @Override
@@ -194,6 +200,10 @@ public class C2SMolangSync implements IMessage {
                 ? null
                 : new ResourceLocation(message.modelId);
             if (modelId == null) {
+                return null;
+            }
+            com.fox.ysmu.eep.ExtendedModelInfo eep = com.fox.ysmu.eep.ExtendedModelInfo.get(sender);
+            if (eep == null || !isCurrentModel(modelId, eep.getModelId())) {
                 return null;
             }
             S2CMolangSync broadcast = new S2CMolangSync(sender.getUniqueID(), modelId, message.arguments);

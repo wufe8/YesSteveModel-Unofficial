@@ -14,6 +14,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
+import com.fox.ysmu.network.PacketReadUtil;
 
 public class C2SVersionCheck17 implements IMessage {
 
@@ -27,7 +28,7 @@ public class C2SVersionCheck17 implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        this.version = ByteBufUtils.readUTF8String(buf);
+        this.version = PacketReadUtil.readString(buf, 256);
     }
 
     @Override
@@ -44,7 +45,7 @@ public class C2SVersionCheck17 implements IMessage {
         @Override
         public IMessage onMessage(C2SVersionCheck17 message, MessageContext ctx) {
             EntityPlayerMP sender = ctx.getServerHandler().playerEntity;
-            if (sender == null || !Config.ENABLE_SYNC_PROTOCOL) {
+            if (sender == null || !Config.ENABLE_SYNC_PROTOCOL || !OpenYsmModelSyncServer.consumeVersionReply(sender)) {
                 return null;
             }
             if (!NetworkHandler.PROTOCOL_VERSION.equals(message.version)) {
@@ -55,14 +56,22 @@ public class C2SVersionCheck17 implements IMessage {
                     NetworkHandler.PROTOCOL_VERSION);
                 // 版本不匹配：回退到 legacy MD5/AES 同步，保证模型仍能加载。
                 // legacy 缓存按需懒构建，就绪后再发请求（whenComplete 成功/失败都会执行）。
-                OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) ->
-                    NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender));
+                OpenYsmModelSyncServer.LegacyTransfer transfer = OpenYsmModelSyncServer.expectLegacyReply(sender);
+                OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) -> {
+                    if (OpenYsmModelSyncServer.isLegacyActive(transfer)) {
+                        NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender);
+                    }
+                });
                 return null;
             }
             if (!OpenYsmModelSyncServer.startSync(sender)) {
                 // OpenYSM 索引/服务器密钥不可用：回退 legacy 同步，保证模型仍能加载。
-                OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) ->
-                    NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender));
+                OpenYsmModelSyncServer.LegacyTransfer transfer = OpenYsmModelSyncServer.expectLegacyReply(sender);
+                OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) -> {
+                    if (OpenYsmModelSyncServer.isLegacyActive(transfer)) {
+                        NetworkHandler.sendToClientPlayer(new RequestSyncModel(), sender);
+                    }
+                });
             }
             return null;
         }

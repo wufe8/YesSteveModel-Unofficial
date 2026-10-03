@@ -7,6 +7,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
+import com.fox.ysmu.network.PacketReadUtil;
 
 /**
  * 客户端 → 服务端：给某个 NPC / 非本地实体设置模型与贴图。
@@ -35,8 +36,8 @@ public class SetNpcModelAndTexture implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        this.modelId = ByteBufUtils.readUTF8String(buf);
-        this.selectTexture = ByteBufUtils.readUTF8String(buf);
+        this.modelId = PacketReadUtil.readString(buf, PacketReadUtil.MAX_ID_BYTES);
+        this.selectTexture = PacketReadUtil.readString(buf, PacketReadUtil.MAX_ID_BYTES);
         this.npcId = buf.readInt();
     }
 
@@ -51,18 +52,27 @@ public class SetNpcModelAndTexture implements IMessage {
 
         /** 已经报过"未实现"的 npcId（每个实体一条，GUI 反复操作时不刷屏）。 */
         private static final java.util.Set<Integer> WARNED = java.util.concurrent.ConcurrentHashMap.newKeySet();
+        private static final int MAX_WARNED_IDS = 256;
+        private static boolean warnedLimit;
 
         @Override
         public IMessage onMessage(SetNpcModelAndTexture message, MessageContext ctx) {
-            // 未实现 —— 但要**明确**说出来，不能静默成功：调用方（模型 GUI 的"非本地玩家"
-            // 分支）发了请求、永远不会生效，沉默的 no-op 只会让下一次排查从这里重新开始。
-            // NPC 模型是上游 Bukkit 侧集成的特性，1.7.10 端只搬了包与注册，触发器、NPC 模型
-            // 存储与同步都没搬；整条链在本树不可达（见 NetworkHandler.initBukkit 的注释）。
-            if (WARNED.add(message.npcId)) {
-                ysmu.LOG.warn(
-                    "[YSMU-COMPAT] NPC model switching is not implemented in the 1.7.10 port (npcId={}); request dropped",
-                    message.npcId);
+            // The request is unsupported; warn per id, but ids supplied over the network
+            // must not grow a permanent deduplication set or the log without a bound.
+            synchronized (WARNED) {
+                if (WARNED.contains(message.npcId)) return null;
+                if (WARNED.size() >= MAX_WARNED_IDS) {
+                    if (!warnedLimit) {
+                        warnedLimit = true;
+                        ysmu.LOG.warn("[YSMU-COMPAT] NPC model switching is not implemented; further unsupported requests are omitted after {} distinct npcIds", MAX_WARNED_IDS);
+                    }
+                    return null;
+                }
+                WARNED.add(message.npcId);
             }
+            ysmu.LOG.warn(
+                "[YSMU-COMPAT] NPC model switching is not implemented in the 1.7.10 port (npcId={}); request dropped",
+                message.npcId);
             return null;
         }
     }

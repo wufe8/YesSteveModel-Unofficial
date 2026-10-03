@@ -120,13 +120,23 @@ public final class ServerModelManager {
             // 版本 .ysm，统一转成 OpenYSM 二进制格式），只走这一条路径，不再触发
             // legacy MD5/AES 同步（避免同一批模型双传+双解析）。版本不匹配时由
             // C2SVersionCheck17 处理回退到 legacy 同步。
-            NetworkHandler.sendToClientPlayer(new S2CVersionCheck17(NetworkHandler.PROTOCOL_VERSION), player);
+            if (player instanceof net.minecraft.entity.player.EntityPlayerMP serverPlayer) {
+                com.fox.ysmu.network.sync.OpenYsmModelSyncServer.expectVersionReply(serverPlayer);
+                NetworkHandler.sendToClientPlayer(new S2CVersionCheck17(NetworkHandler.PROTOCOL_VERSION), player);
+            }
             return;
         }
         // 协议关闭（纯 legacy 模式）：确保 legacy 缓存已从 OpenYSM 缓存懒构建完成
         // （重建阶段已同步构建，此处兜底并发到达的 legacy 客户端），再发同步请求。
-        OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) ->
-            NetworkHandler.sendToClientPlayer(new RequestSyncModel(), player));
+        if (player instanceof net.minecraft.entity.player.EntityPlayerMP serverPlayer) {
+            com.fox.ysmu.network.sync.OpenYsmModelSyncServer.LegacyTransfer transfer =
+                com.fox.ysmu.network.sync.OpenYsmModelSyncServer.expectLegacyReply(serverPlayer);
+            OpenYsmFormat.ensureLegacyCacheBuilt().whenComplete((v, t) -> {
+                if (com.fox.ysmu.network.sync.OpenYsmModelSyncServer.isLegacyActive(transfer)) {
+                    NetworkHandler.sendToClientPlayer(new RequestSyncModel(), player);
+                }
+            });
+        }
     }
 
     public static void reloadPacks() {

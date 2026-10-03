@@ -5,7 +5,6 @@ import static org.junit.jupiter.api.Assertions.assertFalse;
 
 import java.io.DataInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.net.URL;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -56,16 +55,16 @@ class NetworkMessageSideSafetyTest {
         assertEquals(
             Collections.emptyList(),
             offenders,
-            "a dedicated server loads and instantiates every message handler during init, so a client "
+            "message and serverbound handler declarations must not name a client "
                 + "type in a field/method descriptor there aborts startup with NoClassDefFoundError. "
                 + "Move the client work into a method body (or a client-only helper) instead.");
     }
 
     /** Compiled {@code .class} files of the message package, wherever the build put them. */
     private static List<Path> compiledMessageClasses() throws Exception {
-        URL url = NetworkMessageSideSafetyTest.class.getClassLoader().getResource(RESOURCE_DIR);
+        URL url = NetworkMessageSideSafetyTest.class.getClassLoader().getResource(RESOURCE_DIR + "/C2SVersionCheck17.class");
         assertFalse(url == null, "missing classpath entry for " + RESOURCE_DIR);
-        Path dir = Paths.get(url.toURI());
+        Path dir = Paths.get(url.toURI()).getParent();
         try (Stream<Path> walk = Files.walk(dir)) {
             List<Path> out = new ArrayList<>();
             walk.filter(p -> p.getFileName()
@@ -78,9 +77,9 @@ class NetworkMessageSideSafetyTest {
     }
 
     /**
-     * Constant-pool {@code Utf8} entries that are type descriptors: method descriptors start with
-     * {@code (}, class/array descriptors start with {@code L} or {@code [}. Plain internal names
-     * (body references such as {@code net/minecraft/client/Minecraft}) deliberately do not match.
+     * Read only field_info / method_info declaration descriptors. Constant-pool descriptors
+     * also describe legal body references such as Minecraft.getMinecraft(), so scanning all
+     * Utf8 constants incorrectly rejects the client handlers.
      */
     private static List<String> descriptorsIn(Path classFile) throws IOException {
         List<String> descriptors = new ArrayList<>();
@@ -91,14 +90,12 @@ class NetworkMessageSideSafetyTest {
             in.readUnsignedShort(); // minor
             in.readUnsignedShort(); // major
             int count = in.readUnsignedShort();
+            String[] utf8 = new String[count];
             for (int i = 1; i < count; i++) {
                 int tag = in.readUnsignedByte();
                 switch (tag) {
                     case 1: { // Utf8
-                        String text = in.readUTF();
-                        if (isDescriptor(text)) {
-                            descriptors.add(text);
-                        }
+                        utf8[i] = in.readUTF();
                         break;
                     }
                     case 7: // Class
@@ -130,18 +127,37 @@ class NetworkMessageSideSafetyTest {
                         throw new IOException("unexpected constant pool tag " + tag + " in " + classFile);
                 }
             }
+            in.readUnsignedShort(); // access_flags
+            in.readUnsignedShort(); // this_class
+            in.readUnsignedShort(); // super_class
+            int interfaces = in.readUnsignedShort();
+            in.skipBytes(interfaces * 2);
+            readMembers(in, utf8, descriptors); // fields
+            readMembers(in, utf8, descriptors); // methods
         }
         return descriptors;
     }
 
-    private static boolean isDescriptor(String text) {
-        if (text.isEmpty()) {
-            return false;
+    private static void readMembers(DataInputStream in, String[] utf8, List<String> descriptors) throws IOException {
+        int members = in.readUnsignedShort();
+        for (int i = 0; i < members; i++) {
+            in.readUnsignedShort(); // access_flags
+            in.readUnsignedShort(); // name_index
+            descriptors.add(utf8[in.readUnsignedShort()]);
+            int attributes = in.readUnsignedShort();
+            for (int j = 0; j < attributes; j++) {
+                in.readUnsignedShort(); // attribute_name_index
+                long remaining = Integer.toUnsignedLong(in.readInt());
+                while (remaining > 0) {
+                    long skipped = in.skip(remaining);
+                    if (skipped == 0) {
+                        if (in.read() == -1) throw new IOException("Truncated class attribute");
+                        skipped = 1;
+                    }
+                    remaining -= skipped;
+                }
+            }
         }
-        char first = text.charAt(0);
-        if (first == '(') {
-            return true;
-        }
-        return (first == 'L' || first == '[') && text.endsWith(";");
     }
+
 }

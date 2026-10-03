@@ -40,6 +40,7 @@ public class C2SModelSyncPayload17 implements IMessage {
         if (length < 0 || length > MAX_SYNC_PAYLOAD_BYTES) {
             throw new IllegalArgumentException("Invalid OpenYSM sync payload length: " + length);
         }
+        com.fox.ysmu.network.PacketReadUtil.requireLength(buf, length, MAX_SYNC_PAYLOAD_BYTES);
         byte[] bytes = new byte[length];
         buf.readBytes(bytes);
         return bytes;
@@ -60,7 +61,7 @@ public class C2SModelSyncPayload17 implements IMessage {
         public IMessage onMessage(C2SModelSyncPayload17 message, MessageContext ctx) {
             EntityPlayerMP sender = ctx.getServerHandler().playerEntity;
             if (sender != null) {
-                OpenYsmModelSyncServer.handlePayload(sender.getUniqueID(), message.data);
+                OpenYsmModelSyncServer.handlePayload(sender, message.data);
             }
             return null;
         }

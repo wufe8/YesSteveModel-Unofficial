@@ -6,7 +6,6 @@ import java.io.File;
 import java.io.IOException;
 import java.io.InputStream;
 import java.util.Arrays;
-import java.util.Collection;
 import java.util.List;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -19,6 +18,7 @@ import com.fox.ysmu.Config;
 import com.fox.ysmu.data.EncryptTools;
 import com.fox.ysmu.model.format.ServerModelInfo;
 import com.fox.ysmu.network.NetworkHandler;
+import com.fox.ysmu.network.sync.OpenYsmModelSyncServer;
 import com.fox.ysmu.util.ThreadTools;
 import com.fox.ysmu.util.UuidUtils;
 import com.fox.ysmu.ysmu;
@@ -29,6 +29,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
+import com.fox.ysmu.network.PacketReadUtil;
 
 public class SyncModelFiles implements IMessage {
 
@@ -50,13 +51,10 @@ public class SyncModelFiles implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        int count = buf.readInt();
-        if (count < 0 || count > MAX_MODEL_COUNT) {
-            throw new IllegalArgumentException("Invalid YSM sync model count: " + count);
-        }
+        int count = PacketReadUtil.readCount(buf, MAX_MODEL_COUNT, 1);
         this.md5Info = new String[count];
         for (int i = 0; i < count; i++) {
-            this.md5Info[i] = ByteBufUtils.readUTF8String(buf);
+            this.md5Info[i] = PacketReadUtil.readString(buf, 32);
         }
     }
 
@@ -74,20 +72,22 @@ public class SyncModelFiles implements IMessage {
         public IMessage onMessage(SyncModelFiles message, MessageContext ctx) {
             EntityPlayerMP sender = ctx.getServerHandler().playerEntity;
             if (sender != null) {
+                OpenYsmModelSyncServer.LegacyTransfer transfer = OpenYsmModelSyncServer.claimLegacyReply(sender);
+                if (transfer == null) return null;
                 // Model sync starts here after RequestSyncModel asks the client for its cached MD5 names.
                 sendPassword(sender);
-                sendModelFiles(message.md5Info, sender);
+                sendModelFiles(message.md5Info, sender, transfer);
             }
             return null;
         }
 
-        private void sendModelFiles(String[] md5Info, EntityPlayerMP sender) {
-            Collection<String> cache = CACHE_NAME_INFO.values()
+        private void sendModelFiles(String[] md5Info, EntityPlayerMP sender, OpenYsmModelSyncServer.LegacyTransfer transfer) {
+            java.util.Set<String> cache = CACHE_NAME_INFO.values()
                 .stream()
                 .map(ServerModelInfo::getMd5)
-                .collect(Collectors.toList());
+                .collect(Collectors.toSet());
             List<String> output = Lists.newArrayList(cache);
-            for (String md5 : md5Info) {
+            for (String md5 : new java.util.HashSet<>(Arrays.asList(md5Info))) {
                 if (cache.contains(md5)) {
                     output.remove(md5);
                     NetworkHandler.sendToClientPlayer(new RequestLoadModel(md5), sender);
@@ -96,12 +96,13 @@ public class SyncModelFiles implements IMessage {
             for (String md5 : output) {
                 File modelFile = CACHE_SERVER.resolve(md5)
                     .toFile();
-                ThreadTools.THREAD_POOL.submit(() -> sendModelFile(md5, modelFile, sender));
+                ThreadTools.THREAD_POOL.submit(() -> sendModelFile(md5, modelFile, sender, transfer));
             }
         }
 
-        private void sendModelFile(String md5, File modelFile, EntityPlayerMP sender) {
+        private void sendModelFile(String md5, File modelFile, EntityPlayerMP sender, OpenYsmModelSyncServer.LegacyTransfer transfer) {
             try {
+                if (!OpenYsmModelSyncServer.isLegacyActive(transfer)) return;
                 long fileLength = modelFile.length();
                 if (fileLength > Integer.MAX_VALUE) {
                     ysmu.LOG.warn(
@@ -111,9 +112,9 @@ public class SyncModelFiles implements IMessage {
                     return;
                 }
                 if (fileLength <= LEGACY_DIRECT_SEND_LIMIT) {
-                    NetworkHandler.sendToClientPlayer(
-                        new SendModelFile(FileUtils.readFileToByteArray(modelFile)),
-                        sender);
+                    byte[] fileData = FileUtils.readFileToByteArray(modelFile);
+                    if (!OpenYsmModelSyncServer.isLegacyActive(transfer)) return;
+                    NetworkHandler.sendToClientPlayer(new SendModelFile(fileData), sender);
                     return;
                 }
 
@@ -129,6 +130,7 @@ public class SyncModelFiles implements IMessage {
                 try (InputStream input = FileUtils.openInputStream(modelFile)) {
                     int read;
                     while ((read = input.read(buffer)) != -1) {
+                        if (!OpenYsmModelSyncServer.isLegacyActive(transfer)) return;
                         if (read == 0) {
                             continue;
                         }

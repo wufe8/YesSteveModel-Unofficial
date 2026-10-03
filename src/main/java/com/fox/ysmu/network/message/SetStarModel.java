@@ -10,6 +10,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
+import com.fox.ysmu.network.PacketReadUtil;
 
 public class SetStarModel implements IMessage {
 
@@ -25,7 +26,7 @@ public class SetStarModel implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        this.modelId = ByteBufUtils.readUTF8String(buf);
+        this.modelId = PacketReadUtil.readString(buf, PacketReadUtil.MAX_ID_BYTES);
         this.isAdd = buf.readBoolean();
     }
 
@@ -55,9 +56,10 @@ public class SetStarModel implements IMessage {
         }
 
         private void handleEEP(SetStarModel message, EntityPlayerMP sender) {
+            if (message.modelId == null || message.modelId.isEmpty()) return;
             ExtendedStarModels eep = ExtendedStarModels.get(sender);
             if (eep != null) {
-                ResourceLocation modelLoc = message.modelId.isEmpty() ? null : new ResourceLocation(message.modelId);
+                ResourceLocation modelLoc = new ResourceLocation(message.modelId);
                 if (message.isAdd) {
                     eep.addModel(modelLoc);
                 } else {

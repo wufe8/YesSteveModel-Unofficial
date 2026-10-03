@@ -11,6 +11,7 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
+import com.fox.ysmu.network.PacketReadUtil;
 
 public class SetModelAndTexture implements IMessage {
 
@@ -26,8 +27,8 @@ public class SetModelAndTexture implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        this.modelId = ByteBufUtils.readUTF8String(buf);
-        this.selectTexture = ByteBufUtils.readUTF8String(buf);
+        this.modelId = PacketReadUtil.readString(buf, PacketReadUtil.MAX_ID_BYTES);
+        this.selectTexture = PacketReadUtil.readString(buf, PacketReadUtil.MAX_ID_BYTES);
     }
 
     @Override
@@ -63,6 +64,9 @@ public class SetModelAndTexture implements IMessage {
             try {
                 modelLoc = new ResourceLocation(message.modelId);
                 textureLoc = new ResourceLocation(message.selectTexture);
+                // Normalize legacy domain-less aliases; keep the full base path for validation.
+                modelLoc = new ResourceLocation("ysmu", modelLoc.getResourcePath());
+                textureLoc = new ResourceLocation("ysmu", textureLoc.getResourcePath());
             } catch (RuntimeException e) {
                 // 1.7.10 的 ResourceLocation 对非法字符直接抛异常，而白名单校验在解析之后，
                 // 所以伪造的 id 会在校验之前就把整条栈打进日志（每个包一条，可刷屏）。丢弃。
@@ -84,24 +88,17 @@ public class SetModelAndTexture implements IMessage {
 
         /**
          * 校验模型 ID 是否存在于服务端模型白名单（OpenYSM 同步索引或 legacy 缓存）。
-         * 忽略 domain 段：客户端可能发 "ysmu:model" 或 "model"，服务端 key 为
-         * 内部 ID（不含 domain）。空 path（例如 {@code "ysmu:"}）按"默认模型"放行 ——
-         * 真正会造成 null 字段的空字符串 id 已经在 {@link #handleEEP} 里挡掉了。
+         * domain-less 旧客户端别名先归一到 ysmu；服务端 key 是完整内部基 ID。
+         * 不接受空路径或带任意子段的 ID，避免一个真实基 ID 被扩展成无限个不存在的资源键。
          */
         private static boolean isAllowedModel(ResourceLocation modelLoc) {
             String path = modelLoc.getResourcePath();
-            if (path == null || path.isEmpty()) {
-                return true; // 空路径 → 默认模型
+            if (path == null || path.isEmpty() || path.indexOf('/') >= 0) {
+                return false;
             }
-            // 可能带子段：模型基 ID 是 "/main"、"/arm" 之前的部分
-            String basePath = path;
-            int slash = path.indexOf('/');
-            if (slash > 0) {
-                basePath = path.substring(0, slash);
-            }
-            return ServerModelManager.OPEN_YSM_SYNC_INFO.containsKey(basePath)
-                || ServerModelManager.CACHE_NAME_INFO.containsKey(basePath)
-                || ServerModelManager.RAW_MODEL_INFO.containsKey(basePath);
+            return ServerModelManager.OPEN_YSM_SYNC_INFO.containsKey(path)
+                || ServerModelManager.CACHE_NAME_INFO.containsKey(path)
+                || ServerModelManager.RAW_MODEL_INFO.containsKey(path);
         }
 
         /** 校验纹理 ID 是否为该模型 ID 的子 ID（"base/xxx"）。 */

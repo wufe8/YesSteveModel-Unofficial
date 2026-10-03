@@ -22,34 +22,47 @@ public class ExtendedStarModels implements IExtendedEntityProperties {
 
     // 2. 将原 StarModelsCapability 的字段和方法直接移到这里
     private Set<ResourceLocation> starModels = Sets.newHashSet();
+    private static final int MAX_FAVORITES = 4096;
+    private static final int MAX_ENCODED_BYTES = 24 * 1024;
+    private int encodedBytes;
 
-    public void addModel(ResourceLocation modelId) {
+    private static int encodedSize(ResourceLocation id) {
+        return id.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8).length + 2;
+    }
+
+    public synchronized void addModel(ResourceLocation modelId) {
+        if (modelId == null || starModels.contains(modelId) || starModels.size() >= MAX_FAVORITES) return;
+        int size = encodedSize(modelId);
+        if (size > com.fox.ysmu.network.PacketReadUtil.MAX_ID_BYTES + 2 || size > MAX_ENCODED_BYTES - encodedBytes) return;
         starModels.add(modelId);
+        encodedBytes += size;
     }
 
     public void copyFrom(ExtendedStarModels source) {
         // 创建一个新的 Set 副本，而不是直接引用，这很重要！
-        this.starModels = Sets.newHashSet(source.starModels);
+        setStarModels(source.getStarModels());
     }
 
-    public void removeModel(ResourceLocation modelId) {
-        starModels.remove(modelId);
+    public synchronized void removeModel(ResourceLocation modelId) {
+        if (modelId != null && starModels.remove(modelId)) encodedBytes -= encodedSize(modelId);
     }
 
-    public boolean containModel(ResourceLocation modelId) {
+    public synchronized boolean containModel(ResourceLocation modelId) {
         return starModels.contains(modelId);
     }
 
-    public Set<ResourceLocation> getStarModels() {
-        return starModels;
+    public synchronized Set<ResourceLocation> getStarModels() {
+        return Sets.newHashSet(starModels);
     }
 
-    public void setStarModels(Set<ResourceLocation> starModels) {
-        this.starModels = starModels;
+    public synchronized void setStarModels(Set<ResourceLocation> models) {
+        clear();
+        if (models != null) for (ResourceLocation modelId : models) addModel(modelId);
     }
 
-    public void clear() {
+    public synchronized void clear() {
         starModels.clear();
+        encodedBytes = 0;
     }
 
     // 3. 静态辅助方法
@@ -73,10 +86,10 @@ public class ExtendedStarModels implements IExtendedEntityProperties {
      * 将数据保存到 NBT
      */
     @Override
-    public void saveNBTData(NBTTagCompound compound) {
+    public synchronized void saveNBTData(NBTTagCompound compound) {
         NBTTagList listTag = new NBTTagList();
         for (ResourceLocation modelId : starModels) {
-            listTag.appendTag(new NBTTagString(modelId.toString()));
+            if (modelId != null) listTag.appendTag(new NBTTagString(modelId.toString()));
         }
         compound.setTag(EXT_PROP_NAME, listTag);
     }
@@ -85,14 +98,14 @@ public class ExtendedStarModels implements IExtendedEntityProperties {
      * 从 NBT 读取数据
      */
     @Override
-    public void loadNBTData(NBTTagCompound compound) {
+    public synchronized void loadNBTData(NBTTagCompound compound) {
         if (compound.hasKey(EXT_PROP_NAME)) {
             NBTTagList listTag = (NBTTagList) compound.getTag(EXT_PROP_NAME);
-            this.starModels.clear();
+            clear();
             for (int i = 0; i < listTag.tagCount(); i++) {
                 String modelIdStr = listTag.getStringTagAt(i);
                 try {
-                    starModels.add(new ResourceLocation(modelIdStr));
+                    addModel(new ResourceLocation(modelIdStr));
                 } catch (Exception e) {
                     FMLLog.warning("[ysmu] Failed to load Starred Model ResourceLocation from NBT: " + modelIdStr);
                 }
