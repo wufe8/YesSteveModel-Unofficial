@@ -1,20 +1,85 @@
 package com.fox.ysmu.network;
 
+import io.netty.channel.ChannelHandler;
+
 import net.minecraft.entity.player.EntityPlayer;
 import net.minecraft.entity.player.EntityPlayerMP;
 
 import com.fox.ysmu.Tags;
 import com.fox.ysmu.network.message.*;
+import com.fox.ysmu.ysmu;
 
+import cpw.mods.fml.common.FMLCommonHandler;
+import cpw.mods.fml.common.network.FMLEmbeddedChannel;
+import cpw.mods.fml.common.network.FMLIndexedMessageToMessageCodec;
 import cpw.mods.fml.common.network.NetworkRegistry;
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
+import cpw.mods.fml.common.network.simpleimpl.SimpleIndexedCodec;
 import cpw.mods.fml.common.network.simpleimpl.SimpleNetworkWrapper;
 import cpw.mods.fml.relauncher.Side;
 
 public final class NetworkHandler {
 
     public static final String PROTOCOL_VERSION = Tags.VERSION;
-    public static final SimpleNetworkWrapper CHANNEL = NetworkRegistry.INSTANCE.newSimpleChannel("ysmu_network");
+    private static final String CHANNEL_NAME = "ysmu_network";
+    public static final SimpleNetworkWrapper CHANNEL = NetworkRegistry.INSTANCE.newSimpleChannel(CHANNEL_NAME);
+
+    /**
+     * 物理端。**专用服务器上不能实例化客户端的包处理器**：{@code registerMessage} 会对处理器类
+     * 调 {@code Class.newInstance()}，而加载/校验那个类会连带解析它引用到的客户端代码
+     * （例如 {@code S2CPlaySound.Handler} 的 lambda 调用 {@code YSMSoundManager}），专用服上
+     * {@code net.minecraft.client.*} 被 LaunchClassLoader 拒载，于是 {@code ysmu.init} 直接以
+     * {@code NoClassDefFoundError} 崩掉 —— 1.9a1-08 服务端起不来就是这个原因。
+     */
+    private static final boolean PHYSICAL_CLIENT = FMLCommonHandler.instance()
+        .getSide() == Side.CLIENT;
+
+    /**
+     * 注册 clientbound 包。
+     *
+     * <p>判别号两侧都必须注册：{@code FMLIndexedMessageToMessageCodec.encode} 用 class→id 表
+     * 编码，服务端发送下行包时要用它（少了它报文根本发不出去）。但**处理器类**只有客户端需要：
+     * {@code registerMessage} 会实例化处理器类，而加载/校验那个类会连带解析它引用到的客户端代码
+     * （例如 {@code S2CPlaySound.Handler} 的 lambda 调用 {@code YSMSoundManager}），专用服上
+     * {@code net.minecraft.client.*} 被 LaunchClassLoader 拒载，于是 {@code ysmu.init} 以
+     * {@code NoClassDefFoundError} 崩掉 —— 1.9a1-08 服务端起不来就是这个原因。</p>
+     *
+     * <p>所以专用服上**完全不装处理器**，只往共用的 codec 里登记判别号。早先试过"换成空壳处理器
+     * 再摘掉"，在 Java 8 上可行、在 Java 17+ 上不行：FML 用处理器实例的类名当 netty pipeline 名
+     * （{@code addAfter(type, handler.getClass().getName(), …)}），而 Java 17+ 的非捕获 lambda 是
+     * 隐藏类，名字形如 {@code …$$Lambda/0x…}，注册与摘除两次拿到的名字对不上 →
+     * {@code NoSuchElementException}。绕开 pipeline 就没有这类名字问题。</p>
+     */
+    @SuppressWarnings({ "unchecked", "rawtypes" })
+    private static void registerClientbound(Class handlerClass, Class messageClass, int discriminator) {
+        clientboundRegistered++;
+        if (PHYSICAL_CLIENT) {
+            CHANNEL.registerMessage(handlerClass, messageClass, discriminator, Side.CLIENT);
+            return;
+        }
+        discriminantCodec().addDiscriminator(discriminator, messageClass);
+    }
+
+    /**
+     * 本频道的 {@code SimpleIndexedCodec}：{@code NetworkRegistry.newChannel(name, handlers)} 把
+     * **同一组 handlers** 装进两个方向的 channel（见其源码：循环 Side.values() 时传的是同一个
+     * {@code handlers} 数组），所以服务端发送（{@code channels.get(Side.SERVER)}）与客户端接收用的
+     * 是同一个 codec 实例，往它上面登记判别号就够两侧用了。
+     */
+    private static FMLIndexedMessageToMessageCodec<IMessage> discriminantCodec() {
+        for (Side side : Side.values()) {
+            FMLEmbeddedChannel channel = NetworkRegistry.INSTANCE.getChannel(CHANNEL_NAME, side);
+            if (channel == null) {
+                continue;
+            }
+            ChannelHandler codec = channel.pipeline()
+                .get(SimpleIndexedCodec.class);
+            if (codec instanceof FMLIndexedMessageToMessageCodec) {
+                return (FMLIndexedMessageToMessageCodec<IMessage>) codec;
+            }
+        }
+        throw new IllegalStateException("ysmu: no SimpleIndexedCodec on channel " + CHANNEL_NAME);
+    }
 
     // Packet ids are part of the wire protocol. Add new ids; do not renumber existing ones.
     private static final int SERVERBOUND_SYNC_MODEL_FILES = 0;
@@ -57,10 +122,18 @@ public final class NetworkHandler {
     public static final int SYNC_NPC_DATA = 95;
     public static final int UPDATE_NPC_DATA = 96;
 
+    /** 已登记的 clientbound 包数，用于启动日志（专用服上靠它确认走的是传输层登记）。 */
+    private static int clientboundRegistered;
+
     public static void init() {
         registerServerboundMessages();
         registerClientboundMessages();
         initBukkit();
+        // 一行 INFO：专用服上确认下行包只登记了判别号、没有实例化任何客户端处理器。
+        ysmu.LOG.info(
+            "YSM network: {} clientbound packets registered {}",
+            clientboundRegistered,
+            PHYSICAL_CLIENT ? "(client handlers)" : "(discriminators only - dedicated server)");
     }
 
     private static void registerServerboundMessages() {
@@ -108,122 +181,30 @@ public final class NetworkHandler {
     }
 
     private static void registerClientboundMessages() {
-        CHANNEL.registerMessage(
-            SendModelFile.Handler.class,
-            SendModelFile.class,
-            CLIENTBOUND_SEND_MODEL_FILE,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            RequestSyncModel.Handler.class,
-            RequestSyncModel.class,
-            CLIENTBOUND_REQUEST_SYNC_MODEL,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            RequestLoadModel.Handler.class,
-            RequestLoadModel.class,
-            CLIENTBOUND_REQUEST_LOAD_MODEL,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SyncModelInfo.Handler.class,
-            SyncModelInfo.class,
-            CLIENTBOUND_SYNC_MODEL_INFO,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SyncStarModels.Handler.class,
-            SyncStarModels.class,
-            CLIENTBOUND_SYNC_STAR_MODELS,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            RequestServerModelInfo.Handler.class,
-            RequestServerModelInfo.class,
-            CLIENTBOUND_REQUEST_SERVER_MODEL_INFO,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SyncPlayerMotionState.Handler.class,
-            SyncPlayerMotionState.class,
-            CLIENTBOUND_SYNC_PLAYER_MOTION_STATE,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            CompleteFeedback.Handler.class,
-            CompleteFeedback.class,
-            CLIENTBOUND_COMPLETE_FEEDBACK,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SendModelPassword.Handler.class,
-            SendModelPassword.class,
-            CLIENTBOUND_SEND_MODEL_PASSWORD,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            S2CModelSyncPayload17.Handler.class,
-            S2CModelSyncPayload17.class,
-            CLIENTBOUND_OPENYSM_MODEL_SYNC_PAYLOAD_17,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            S2CSyncIndexChunk17.Handler.class,
-            S2CSyncIndexChunk17.class,
-            CLIENTBOUND_OPENYSM_SYNC_INDEX_CHUNK_17,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            S2CVersionCheck17.Handler.class,
-            S2CVersionCheck17.class,
-            CLIENTBOUND_OPENYSM_VERSION_CHECK_17,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SendModelFileChunk.Handler.class,
-            SendModelFileChunk.class,
-            CLIENTBOUND_SEND_MODEL_FILE_CHUNK,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            S2CSetDebugOverlay.Handler.class,
-            S2CSetDebugOverlay.class,
-            CLIENTBOUND_SET_DEBUG_OVERLAY,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            S2CPlaySound.Handler.class,
-            S2CPlaySound.class,
-            CLIENTBOUND_PLAY_SOUND,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SyncGamePath.Handler.class,
-            SyncGamePath.class,
-            CLIENTBOUND_SYNC_GAME_PATH,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SetWelcomeConfig.Handler.class,
-            SetWelcomeConfig.class,
-            CLIENTBOUND_SET_WELCOME_CONFIG,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            ShowBufferInfo.Handler.class,
-            ShowBufferInfo.class,
-            CLIENTBOUND_SHOW_BUFFER_INFO,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            PacketQueryMolangVar.Handler.class,
-            PacketQueryMolangVar.class,
-            CLIENTBOUND_QUERY_MOLANG_VAR,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            SpawnParticleCommand.Handler.class,
-            SpawnParticleCommand.class,
-            CLIENTBOUND_SPAWN_PARTICLE_COMMAND,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            PacketEvalMolang.Handler.class,
-            PacketEvalMolang.class,
-            CLIENTBOUND_EVAL_MOLANG,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            PacketResetMolang.Handler.class,
-            PacketResetMolang.class,
-            CLIENTBOUND_RESET_MOLANG,
-            Side.CLIENT);
+        registerClientbound(SendModelFile.Handler.class, SendModelFile.class, CLIENTBOUND_SEND_MODEL_FILE);
+        registerClientbound(RequestSyncModel.Handler.class, RequestSyncModel.class, CLIENTBOUND_REQUEST_SYNC_MODEL);
+        registerClientbound(RequestLoadModel.Handler.class, RequestLoadModel.class, CLIENTBOUND_REQUEST_LOAD_MODEL);
+        registerClientbound(SyncModelInfo.Handler.class, SyncModelInfo.class, CLIENTBOUND_SYNC_MODEL_INFO);
+        registerClientbound(SyncStarModels.Handler.class, SyncStarModels.class, CLIENTBOUND_SYNC_STAR_MODELS);
+        registerClientbound(RequestServerModelInfo.Handler.class, RequestServerModelInfo.class, CLIENTBOUND_REQUEST_SERVER_MODEL_INFO);
+        registerClientbound(SyncPlayerMotionState.Handler.class, SyncPlayerMotionState.class, CLIENTBOUND_SYNC_PLAYER_MOTION_STATE);
+        registerClientbound(CompleteFeedback.Handler.class, CompleteFeedback.class, CLIENTBOUND_COMPLETE_FEEDBACK);
+        registerClientbound(SendModelPassword.Handler.class, SendModelPassword.class, CLIENTBOUND_SEND_MODEL_PASSWORD);
+        registerClientbound(S2CModelSyncPayload17.Handler.class, S2CModelSyncPayload17.class, CLIENTBOUND_OPENYSM_MODEL_SYNC_PAYLOAD_17);
+        registerClientbound(S2CSyncIndexChunk17.Handler.class, S2CSyncIndexChunk17.class, CLIENTBOUND_OPENYSM_SYNC_INDEX_CHUNK_17);
+        registerClientbound(S2CVersionCheck17.Handler.class, S2CVersionCheck17.class, CLIENTBOUND_OPENYSM_VERSION_CHECK_17);
+        registerClientbound(SendModelFileChunk.Handler.class, SendModelFileChunk.class, CLIENTBOUND_SEND_MODEL_FILE_CHUNK);
+        registerClientbound(S2CSetDebugOverlay.Handler.class, S2CSetDebugOverlay.class, CLIENTBOUND_SET_DEBUG_OVERLAY);
+        registerClientbound(S2CPlaySound.Handler.class, S2CPlaySound.class, CLIENTBOUND_PLAY_SOUND);
+        registerClientbound(SyncGamePath.Handler.class, SyncGamePath.class, CLIENTBOUND_SYNC_GAME_PATH);
+        registerClientbound(SetWelcomeConfig.Handler.class, SetWelcomeConfig.class, CLIENTBOUND_SET_WELCOME_CONFIG);
+        registerClientbound(ShowBufferInfo.Handler.class, ShowBufferInfo.class, CLIENTBOUND_SHOW_BUFFER_INFO);
+        registerClientbound(PacketQueryMolangVar.Handler.class, PacketQueryMolangVar.class, CLIENTBOUND_QUERY_MOLANG_VAR);
+        registerClientbound(SpawnParticleCommand.Handler.class, SpawnParticleCommand.class, CLIENTBOUND_SPAWN_PARTICLE_COMMAND);
+        registerClientbound(PacketEvalMolang.Handler.class, PacketEvalMolang.class, CLIENTBOUND_EVAL_MOLANG);
+        registerClientbound(PacketResetMolang.Handler.class, PacketResetMolang.class, CLIENTBOUND_RESET_MOLANG);
         // ysm.sync(...) 的下行广播：各客户端用同样参数触发发起者模型的 sync 事件脚本。
-        CHANNEL.registerMessage(
-            S2CMolangSync.Handler.class,
-            S2CMolangSync.class,
-            CLIENTBOUND_MOLANG_SYNC,
-            Side.CLIENT);
+        registerClientbound(S2CMolangSync.Handler.class, S2CMolangSync.class, CLIENTBOUND_MOLANG_SYNC);
     }
 
     /**
@@ -239,26 +220,14 @@ public final class NetworkHandler {
      * 现成接口。1.7.10 端目前只支持玩家模型。</p>
      */
     private static void initBukkit() {
-        CHANNEL.registerMessage(
-            OpenModelGuiMessage.Handler.class,
-            OpenModelGuiMessage.class,
-            OPEN_NPC_MODEL_GUI,
-            Side.CLIENT);
+        registerClientbound(OpenModelGuiMessage.Handler.class, OpenModelGuiMessage.class, OPEN_NPC_MODEL_GUI);
         CHANNEL.registerMessage(
             SetNpcModelAndTexture.Handler.class,
             SetNpcModelAndTexture.class,
             SET_NPC_MODEL_ID,
             Side.SERVER);
-        CHANNEL.registerMessage(
-            SyncNpcDataMessage.Handler.class,
-            SyncNpcDataMessage.class,
-            SYNC_NPC_DATA,
-            Side.CLIENT);
-        CHANNEL.registerMessage(
-            UpdateNpcDataMessage.Handler.class,
-            UpdateNpcDataMessage.class,
-            UPDATE_NPC_DATA,
-            Side.CLIENT);
+        registerClientbound(SyncNpcDataMessage.Handler.class, SyncNpcDataMessage.class, SYNC_NPC_DATA);
+        registerClientbound(UpdateNpcDataMessage.Handler.class, UpdateNpcDataMessage.class, UPDATE_NPC_DATA);
     }
 
     public static void sendToClientPlayer(IMessage message, EntityPlayer player) {

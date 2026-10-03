@@ -63,7 +63,7 @@ public class S2CPlaySound implements IMessage {
                         return;
                     }
                     if (soundName == null || soundName.isEmpty()) {
-                        listSounds(mc);
+                        listSounds();
                         return;
                     }
                     // modelId 传 null：`playSound` 的无模型上下文分支会按名字在全部已注册模型音效里
@@ -76,8 +76,17 @@ public class S2CPlaySound implements IMessage {
             return null;
         }
 
-        /** 列出本客户端内存里已解密的模型音效（键形如 {@code model::name}）。 */
-        private static void listSounds(Minecraft mc) {
+        /**
+         * 列出本客户端内存里已解密的模型音效（键形如 {@code model::name}）。
+         *
+         * <p>不带参数、自己在方法体里取 {@code Minecraft} 是有意的：本 Handler 只在客户端注册，
+         * 但客户端类**出现在方法签名里**本身就容易踩坑（1.9a1-08 那版把它写成
+         * {@code listSounds(Minecraft)}，正赶上"服务端也会实例化处理器"的旧注册方式，直接把
+         * 专用服的启动打死了）。约定见 {@code NetworkHandler.registerClientbound}：把方法体里
+         * 要用到的客户端对象在体内取，签名保持和服务端无关。</p>
+         */
+        private static void listSounds() {
+            Minecraft mc = Minecraft.getMinecraft();
             Map<String, byte[]> sounds = YSMSoundManager.getSoundFiles();
             if (sounds.isEmpty()) {
                 mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r No cached sounds."));
