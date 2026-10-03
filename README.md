@@ -12,7 +12,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ## 当前状态
 
-**最新版本：`1.9a1-08`**（`perf/previewUI` 分支）
+**最新版本：`1.9a1-08.1`**（`perf/previewUI` 分支）
 
 > mod 版本号与 jar 名由 git tag 自动生成（`Tags.VERSION`），启动日志里会打印
 > `I am ysmu at version …`。需要人工维护的时效信息只有三处：本行、下面的变更历史表、
@@ -107,6 +107,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-07` | 粒子系统、HUD 跟随三模式、玩家模型优先加载、同步/内存优化、Molang 补全、跨模型变量隔离与预览缩放修复 |
 | `1.9a1-07.1` | 不可桥接的二进制模型的内置模型回退、预览 GUI 打开期间抑制闲置资源卸载 |
 | `1.9a1-08` | 控制器/并行动画与 Molang 脚本引擎的大批修复与新能力（`.molang` 控制脚本、具名并行槽位、`@sync`、有界 timeline）、弹射物/粒子链路修复、模型同步与断线会话加固、预览与 HUD 性能、跨玩家状态隔离 |
+| `1.9a1-08.1` | **热修复**：1.9a1-08 的专用服务器无法启动（注册下行包时加载了只存在于客户端的类） |
 
 > 每个版本的**详细更新说明**见 [GitHub Releases](https://github.com/wufe8/YesSteveModel-Unofficial/releases)。
 
