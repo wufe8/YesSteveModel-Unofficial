@@ -18,6 +18,8 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 > `I am ysmu at version …`。需要人工维护的时效信息只有三处：本行、下面的变更历史表、
 > 以及「已知问题」小节。
 
+> 本次更新调整了模型缓存身份：首次启动会重建服务端模型缓存，首次同步会重新下载模型。之后源文件和序列化配置不变时仍可命中缓存。
+
 > [NOTE]
 > 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
 
@@ -107,7 +109,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-07` | 粒子系统、HUD 跟随三模式、玩家模型优先加载、同步/内存优化、Molang 补全、跨模型变量隔离与预览缩放修复 |
 | `1.9a1-07.1` | 不可桥接的二进制模型的内置模型回退、预览 GUI 打开期间抑制闲置资源卸载 |
 | `1.9a1-08` | 控制器/并行动画与 Molang 脚本引擎的大批修复与新能力（`.molang` 控制脚本、具名并行槽位、`@sync`、有界 timeline）、弹射物/粒子链路修复、模型同步与断线会话加固、预览与 HUD 性能、跨玩家状态隔离 |
-| `1.9a1-08.1` | **热修复**：1.9a1-08 的专用服务器无法启动（注册下行包时加载了只存在于客户端的类） |
+| `1.9a1-08.1` | **热修复**：专用服务器启动与旧协议单线程回退；补齐弹射物清理、重同步握手与缓存失效、客户端输入校验和 roaming 变量的跨玩家隔离；修复跨维度重载通知与 `/ysm reset` 玩家名/选择器 |
 
 > 每个版本的**详细更新说明**见 [GitHub Releases](https://github.com/wufe8/YesSteveModel-Unofficial/releases)。
 
@@ -162,6 +164,7 @@ git checkout perf/previewUI
 - 弹射物 `ysm.bone_pivot_abs` 与粒子偏移是近似换算。
 - 只有客户端装 YSMU 时，收到的同步握手会清空已注册模型；`ysm.sync` 静默失效。
 - 部分 `.ysm` 在服务端缓存重建时抛 `NoSuchElementException`（跳过，不阻塞加载）。
+- `/ysmclient load` 只添加启动扫描时发现的本地模型，不支持运行中本地源的增删改刷新；手动清理缓存不等于重载模型源，操作语义见 [模型更新与清理缓存](docs/analysis/model-cache-refresh.md)。
 - 部分控制器变量与 Molang 函数仍可能有 bug。
 - `[SKIP]` `v.roaming` 长期变量不会永久保存。
 - `[SKIP]` battlegear2 盾牌位置不正确（以物品位置握持）。
