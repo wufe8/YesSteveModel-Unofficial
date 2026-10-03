@@ -403,10 +403,11 @@ public final class OpenYsmFormat {
         if (infos.isEmpty()) {
             return;
         }
-        CompletableFuture.allOf(infos.stream()
-            .map(info -> CompletableFuture.runAsync(() -> buildOneLegacyFromOpenYsm(info), ThreadTools.THREAD_POOL))
-            .toArray(CompletableFuture[]::new))
-            .join();
+        // The coordinator already runs on THREAD_POOL. Waiting for child tasks on
+        // that same pool deadlocks when ThreadCount=1; keep legacy work on this worker.
+        for (OpenYsmSyncInfo info : infos) {
+            buildOneLegacyFromOpenYsm(info);
+        }
         if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SCAN) {
             ysmu.LOG.info("[YSMU-MODEL] Legacy model cache built from OpenYSM cache: {} models",
                 CACHE_NAME_INFO.size());

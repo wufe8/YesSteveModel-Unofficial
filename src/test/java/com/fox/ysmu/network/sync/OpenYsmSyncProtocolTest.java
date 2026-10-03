@@ -3,14 +3,27 @@ package com.fox.ysmu.network.sync;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertSame;
+
+import java.nio.file.Path;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
 
+import com.fox.ysmu.model.ServerModelManager;
+import com.fox.ysmu.model.format.OpenYsmFormat;
+import com.fox.ysmu.model.format.OpenYsmSyncInfo;
 import com.fox.ysmu.network.message.C2SCompleteFeedback17;
 import com.fox.ysmu.network.message.C2SModelSyncPayload17;
 import com.fox.ysmu.network.message.C2SVersionCheck17;
 import com.fox.ysmu.network.message.S2CModelSyncPayload17;
 import com.fox.ysmu.network.message.S2CVersionCheck17;
+import com.fox.ysmu.util.ThreadTools;
 
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
@@ -69,6 +82,50 @@ class OpenYsmSyncProtocolTest {
         assertEquals(2, decodedFeedback.getDownloaded());
         assertEquals(1, decodedFeedback.getCacheHits());
         assertEquals("done", decodedFeedback.getMessage());
+    }
+
+    @Test
+    void legacyCacheBuildCompletesOnASingleWorkerAndSkipsUnreadableModels(@TempDir Path tempDir) throws Exception {
+        // The missing-file branch logs; initialize logging before the bounded pool wait.
+        com.fox.ysmu.ysmu.LOG.getName();
+        ThreadPoolExecutor pool = (ThreadPoolExecutor) ThreadTools.THREAD_POOL;
+        int oldCore = pool.getCorePoolSize();
+        int oldMax = pool.getMaximumPoolSize();
+        Map<String, OpenYsmSyncInfo> oldIndex = new HashMap<>(ServerModelManager.OPEN_YSM_SYNC_INFO);
+        CompletableFuture<Void> build = null;
+        try {
+            pool.setCorePoolSize(1);
+            pool.setMaximumPoolSize(1);
+            OpenYsmFormat.resetLegacyCacheState();
+            ServerModelManager.OPEN_YSM_SYNC_INFO.clear();
+            // A nonempty index enters the actual legacy build loop. The absent file
+            // exercises its existing skip-on-error behavior without writing game caches.
+            ServerModelManager.OPEN_YSM_SYNC_INFO.put("single-worker-test", new OpenYsmSyncInfo(
+                "single-worker-test", tempDir.resolve("missing-model-cache").toString(), 1L, 2L,
+                OpenYsmFormat.OPEN_YSM_SYNC_FORMAT, false));
+
+            build = OpenYsmFormat.ensureLegacyCacheBuilt();
+            assertSame(build, OpenYsmFormat.ensureLegacyCacheBuilt(), "legacy callers share one build future");
+            build.get(2, TimeUnit.SECONDS);
+            assertSame(build, OpenYsmFormat.ensureLegacyCacheBuilt(), "a completed build is reused until reload");
+        } finally {
+            // join() is uninterruptible. Even if the old implementation times out,
+            // start another worker to drain its queued child before restoring state.
+            pool.setMaximumPoolSize(Math.max(2, oldMax));
+            pool.setCorePoolSize(Math.max(2, oldCore));
+            pool.prestartAllCoreThreads();
+            try {
+                if (build != null) {
+                    build.get(2, TimeUnit.SECONDS);
+                }
+            } finally {
+                pool.setCorePoolSize(oldCore);
+                pool.setMaximumPoolSize(oldMax);
+                ServerModelManager.OPEN_YSM_SYNC_INFO.clear();
+                ServerModelManager.OPEN_YSM_SYNC_INFO.putAll(oldIndex);
+                OpenYsmFormat.resetLegacyCacheState();
+            }
+        }
     }
 
     @Test
