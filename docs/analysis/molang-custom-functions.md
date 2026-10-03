@@ -116,7 +116,7 @@ wiki「自定义函数」页除事件订阅外的语法：
   能正常求值；求值结束后还原实体与变量表。例：
   `/ysm debug eval query.is_item_name_any('mainhand','minecraft:diamond_sword')`（主手拿着钻石剑时应为 1）。
 - 实机（脚本级）：装了用 `.molang` 控制动画的模型后，看状态切换的过渡是否变成脚本里写的时长
-  （脚本常用 0.1s / 0；默认是 `Config.AnimationTransitionTicks` = 4 tick = 0.2s），
+  （脚本常用 0.1s / 0；默认是 `Config.AnimationTransitionTicks` = 1 tick = 0.05s），
   以及 `ctrl.indicate_reload` 的动画在重复触发时是否重新播放。
 - 条件分支是否命中：`DebugController` 打开时，每个 模型×状态 打一条一次性
   `[YSMU-MOLANG] <模型> state '<状态>' -> '<动画>' (conditional branch)`。只要出现这条，
