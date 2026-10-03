@@ -44,6 +44,7 @@ public final class ModelIndexCache {
     /** 本轮重建见过的 modelId，用于 {@link #commit} 时清理已删除的模型。 */
     private static final java.util.Set<String> SEEN = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static volatile String serverKeyFp;
+    private static volatile String serializationProfile;
 
     public static final class Entry {
 
@@ -64,14 +65,19 @@ public final class ModelIndexCache {
 
     /** 从磁盘加载侧车（每次重建前调用）。serverKey 变化或版本不符时整体失效。 */
     public static void init() {
+        init(CACHE_SERVER, ServerModelManager.OPEN_YSM_SERVER_KEY);
+    }
+
+    static void init(java.nio.file.Path cacheDirectory, byte[] serverKey) {
         INDEX.clear();
         SEEN.clear();
-        serverKeyFp = serverKeyFingerprint();
+        serverKeyFp = serverKeyFingerprint(serverKey);
+        serializationProfile = ModelCacheWriter.serializationProfile();
         if (serverKeyFp == null) {
             // server key 未初始化，无从校验 → 视为无缓存（全部重建）。
             return;
         }
-        File indexFile = CACHE_SERVER.resolve(INDEX_FILE).toFile();
+        File indexFile = cacheDirectory.resolve(INDEX_FILE).toFile();
         if (!indexFile.isFile()) {
             return;
         }
@@ -82,6 +88,10 @@ public final class ModelIndexCache {
                 return;
             }
             if (!serverKeyFp.equals(root.get("serverKeyFp").getAsString())) {
+                return;
+            }
+            if (!root.has("serializationProfile")
+                || !serializationProfile.equals(root.get("serializationProfile").getAsString())) {
                 return;
             }
             JsonObject models = root.getAsJsonObject("models");
@@ -122,6 +132,10 @@ public final class ModelIndexCache {
 
     /** 清理本轮未出现的模型并落盘。重建并行阶段结束后调用。 */
     public static void commit() {
+        commit(CACHE_SERVER);
+    }
+
+    static void commit(java.nio.file.Path cacheDirectory) {
         try {
             if (serverKeyFp == null) {
                 return;
@@ -130,6 +144,7 @@ public final class ModelIndexCache {
             JsonObject root = new JsonObject();
             root.addProperty("version", INDEX_VERSION);
             root.addProperty("serverKeyFp", serverKeyFp);
+            root.addProperty("serializationProfile", serializationProfile);
             JsonObject models = new JsonObject();
             // TreeMap 保证输出稳定可读。
             TreeMap<String, Entry> sorted = new TreeMap<>(INDEX);
@@ -147,7 +162,7 @@ public final class ModelIndexCache {
             }
             root.add("models", models);
             FileUtils.writeStringToFile(
-                CACHE_SERVER.resolve(INDEX_FILE).toFile(),
+                cacheDirectory.resolve(INDEX_FILE).toFile(),
                 root.toString(),
                 StandardCharsets.UTF_8);
         } catch (Exception e) {
@@ -183,8 +198,7 @@ public final class ModelIndexCache {
         }
     }
 
-    private static String serverKeyFingerprint() {
-        byte[] key = ServerModelManager.OPEN_YSM_SERVER_KEY;
+    private static String serverKeyFingerprint(byte[] key) {
         if (key == null || key.length == 0) {
             return null;
         }

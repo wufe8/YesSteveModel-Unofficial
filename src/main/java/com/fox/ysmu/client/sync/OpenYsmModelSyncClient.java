@@ -317,6 +317,15 @@ public final class OpenYsmModelSyncClient {
         private void handlePacket05(YSMByteBuf buf) throws Exception {
             buf.skipGarbageHeader();
             int type = buf.readVarInt();
+            if (type == 6) {
+                String reason = buf.readString();
+                if (cacheContext != null && cacheContext.publishable()) {
+                    ClientModelManager.SYNC_FAILED += Math.max(1, remainingTasks.get());
+                }
+                ysmu.LOG.warn("OpenYSM server aborted model sync: {}", reason);
+                sendComplete(C2SCompleteFeedback17.STATUS_FAILED, reason);
+                return;
+            }
             if (type != 5) {
                 return;
             }
@@ -382,7 +391,9 @@ public final class OpenYsmModelSyncClient {
                             // unloaded). Log it, skip the model, and keep going.
                             ysmu.LOG.warn("OpenYSM client failed to process downloaded model {} ({}): {}",
                                 context.modelId, uuid, e.getMessage());
-                            ClientModelManager.SYNC_FAILED++;
+                            if (ctx.publishable()) {
+                                ClientModelManager.SYNC_FAILED++;
+                            }
                         } finally {
                             // 该模型解析已完成（成功或失败），计入总任务数；全部完成后触发完成信号。
                             taskFinished();
@@ -398,7 +409,9 @@ public final class OpenYsmModelSyncClient {
                     // 不再进入后台解析，但同样计入总任务数，避免完成信号永不到达。
                     ysmu.LOG.warn("OpenYSM client failed to decrypt downloaded model {} ({}): {}",
                         context.modelId, uuid, e.getMessage());
-                    ClientModelManager.SYNC_FAILED++;
+                    if (ctx.publishable()) {
+                        ClientModelManager.SYNC_FAILED++;
+                    }
                     taskFinished();
                 }
             }
@@ -788,8 +801,10 @@ public final class OpenYsmModelSyncClient {
                             registerExtraWheelAndProjectiles(folderRaw, modelId, context.modelId, ctx);
                             ysmu.LOG.info("[YSMU-MODEL] Non-bridgeable model {} loaded from local folder fallback",
                                 context.modelId);
-                            // Register on main thread via registerAll (same path as loadDefaultModel)
-                            final ModelData fd = fallbackData;
+                            final com.fox.ysmu.client.model.PreParsedModelBundle fallbackBundle =
+                                ClientModelManager.preParseModel(fallbackData);
+                            fallbackBundle.applyGeneration = ctx.generation;
+                            fallbackBundle.localRegistration = ctx.local;
                             Minecraft.getMinecraft().func_152344_a(() -> {
                                 // 主线程任务也要过代际：从提交到执行之间可能已经开始了新一轮同步，
                                 // 那时 clearRuntimeModelCaches 要么已跑过、要么正要跑，写入等于复活旧模型。
@@ -802,7 +817,7 @@ public final class OpenYsmModelSyncClient {
                                     return;
                                 }
                                 try {
-                                    ClientModelManager.registerAll(fd);
+                                    ClientModelManager.applyPreParsed(fallbackBundle);
                                 } catch (Exception e) {
                                     ysmu.LOG.warn("Failed to register fallback model {}: {}", context.modelId, e.getMessage());
                                 }
@@ -842,7 +857,9 @@ public final class OpenYsmModelSyncClient {
                 bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage(), e);
-                ClientModelManager.SYNC_FAILED++;
+                if (ctx.publishable()) {
+                    ClientModelManager.SYNC_FAILED++;
+                }
                 return false;
             }
             // Fold extra-wheel registration into the single apply task (previously a
@@ -853,10 +870,12 @@ public final class OpenYsmModelSyncClient {
             // re-decrypt it on demand after an idle unload. Without this the
             // OpenYSM cache files are never re-discovered and unloaded models
             // cannot be restored.
-            ClientModelManager.rememberOpenYsmModelCache(
-                new ResourceLocation(ysmu.MODID, context.modelId),
-                ctx.cacheFolderName + "/" + ctx.cacheFileName(context.hash1, context.hash2),
-                ctx.generation);
+            if (!ctx.publishable()) {
+                return false;
+            }
+            bundle.applyGeneration = ctx.generation;
+            bundle.cachePath = ctx.cacheFolderName + "/" + ctx.cacheFileName(context.hash1, context.hash2);
+            bundle.openYsmCache = true;
             ClientModelManager.scheduleApply(bundle);
             if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
                 ysmu.LOG.info("[YSMU-MODEL] parseAndRegisterModel OK: {} (bridgeable=true, bundle scheduled)",

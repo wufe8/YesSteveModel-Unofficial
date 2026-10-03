@@ -28,6 +28,11 @@ public class PreParsedModelBundle {
      */
     public long applyGeneration;
 
+    /** Encrypted cache path belongs to this work item; publish it with the main-thread apply. */
+    public String cachePath;
+    /** true = OpenYSM cache, false = legacy MD5/AES cache. */
+    public boolean openYsmCache;
+
     /**
      * 该 bundle 是否来自客户端本地注册（{@code /ysmclient load}）。
      * 主线程 apply 时据此执行来源优先级：服务端已提供的同名模型不被本地覆盖。

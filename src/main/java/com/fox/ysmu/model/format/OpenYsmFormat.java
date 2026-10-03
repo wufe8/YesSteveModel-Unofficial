@@ -60,13 +60,13 @@ public final class OpenYsmFormat {
     private static void cacheFolderModel(Path dir, String modelId) {
         String fp = null;
         try {
-            // 先查侧车：仅当存在条目时才计算文件夹指纹（内容 md5 聚合，避免首启白算）。
-            ModelIndexCache.Entry cached = ModelIndexCache.get(modelId);
-            if (cached != null) {
-                fp = YSMFolderDeserializer.computeFolderHash(dir);
-                if (trySidecarHit(modelId, fp, "Folder model " + modelId)) {
-                    return;
-                }
+            // Bind the cached result to a stable source snapshot, including the first build.
+            fp = YSMFolderDeserializer.computeFolderHash(dir);
+            if (fp.isEmpty()) {
+                throw new IOException("Could not fingerprint model source " + dir);
+            }
+            if (trySidecarHit(modelId, fp, "Folder model " + modelId)) {
+                return;
             }
 
             try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(dir)) {
@@ -87,11 +87,13 @@ public final class OpenYsmFormat {
                 // 仍可注册 extra wheel / projectile 子实体。legacy 缓存（CACHE_NAME_INFO）
                 // 不再在此构建——按需懒构建（ensureLegacyCacheBuilt）从 OpenYSM 缓存
                 // 反解析生成，避免 cache 目录双份存储与首建双倍耗时。
+                if (!fp.equals(YSMFolderDeserializer.computeFolderHash(dir))) {
+                    ModelIndexCache.mark(modelId, null);
+                    ysmu.LOG.warn("Model source changed while loading {}; skipped this build, run /ysm reload after saving", dir);
+                    return;
+                }
                 OpenYsmSyncInfo syncInfo = ModelCacheWriter.writeOpenYsm(raw, modelId);
                 OPEN_YSM_SYNC_INFO.put(modelId, syncInfo);
-                if (fp == null) {
-                    fp = YSMFolderDeserializer.computeFolderHash(dir);
-                }
                 ModelIndexCache.mark(modelId, entryOf("folder", fp, syncInfo, true));
             }
         } catch (Exception e) {

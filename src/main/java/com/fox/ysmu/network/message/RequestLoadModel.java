@@ -67,10 +67,15 @@ public class RequestLoadModel implements IMessage {
         // 时这一个睡觉的任务就占住唯一工作线程，把它后面所有解析/下载任务堵死（同一类
         // 饥饿问题，见 TickScheduler）。超时计入 SYNC_FAILED —— 原实现直接 return，
         // 失败数永远不涨，进度条收不了尾。重活仍在 THREAD_POOL 上跑。
+        final long generation = ClientModelManager.currentApplyGeneration();
         final long deadline = System.currentTimeMillis() + PASSWORD_WAIT_TOTAL_MS;
         com.fox.ysmu.util.TickScheduler.Handle[] waiter = new com.fox.ysmu.util.TickScheduler.Handle[1];
         waiter[0] = com.fox.ysmu.util.TickScheduler.client()
             .scheduleEvery(PASSWORD_POLL_INTERVAL_MS, () -> {
+                if (generation != ClientModelManager.currentApplyGeneration()) {
+                    waiter[0].cancel();
+                    return;
+                }
                 byte[] password = ClientModelManager.PASSWORD;
                 UUID passwordUuid = ClientModelManager.PASSWORD_UUID;
                 if ((password == null || passwordUuid == null) && System.currentTimeMillis() < deadline) {
@@ -79,18 +84,21 @@ public class RequestLoadModel implements IMessage {
                 waiter[0].cancel();
                 if (password == null || passwordUuid == null) {
                     ysmu.LOG.warn("Timed out waiting for YSM model password before loading cache file {}", fileName);
-                    ClientModelManager.SYNC_FAILED++;
+                    if (generation == ClientModelManager.currentApplyGeneration()) {
+                        ClientModelManager.SYNC_FAILED++;
+                    }
                     return;
                 }
-                ThreadTools.THREAD_POOL.submit(() -> decryptAndSchedule(fileName, password, passwordUuid));
+                ThreadTools.THREAD_POOL.submit(() -> decryptAndSchedule(fileName, password, passwordUuid, generation));
             });
     }
 
     /** 后台线程：读取 + 解密缓存文件并提交 apply（原 loadModel 任务体，去掉等待段）。 */
     @SideOnly(Side.CLIENT)
-    private static void decryptAndSchedule(String fileName, byte[] password, UUID passwordUuid) {
+    private static void decryptAndSchedule(String fileName, byte[] password, UUID passwordUuid, long generation) {
         try {
-            if (Minecraft.getMinecraft().thePlayer == null) {
+            if (generation != ClientModelManager.currentApplyGeneration()
+                || Minecraft.getMinecraft().thePlayer == null) {
                 return;
             }
             File modelFile = ServerModelManager.CACHE_CLIENT.resolve(fileName)
@@ -102,10 +110,6 @@ public class RequestLoadModel implements IMessage {
                     ysmu.LOG.info("[YSMU-MODEL] Decrypted model {} (id={}), registering...",
                         fileName, data.getModelId());
                 }
-                // Record MD5 mapping for lazy animation re-loading
-                ClientModelManager.rememberModelMd5(
-                    new net.minecraft.util.ResourceLocation(com.fox.ysmu.ysmu.MODID, data.getModelId()),
-                    fileName);
                 // Parse geometry on background thread, only register on main thread.
                 // Lazy animation: the heavy AnimationFile is deferred to first use.
                 com.fox.ysmu.client.model.PreParsedModelBundle bundle;
@@ -113,17 +117,28 @@ public class RequestLoadModel implements IMessage {
                     bundle = ClientModelManager.preParseModel(data, true);
                 } catch (Exception e) {
                     ysmu.LOG.warn("Failed to pre-parse model {}: {}", fileName, e.getMessage());
-                    ClientModelManager.SYNC_FAILED++;
+                    if (generation == ClientModelManager.currentApplyGeneration()) {
+                        ClientModelManager.SYNC_FAILED++;
+                    }
                     return;
                 }
+                if (generation != ClientModelManager.currentApplyGeneration()) {
+                    return;
+                }
+                bundle.applyGeneration = generation;
+                bundle.cachePath = fileName;
                 ClientModelManager.scheduleApply(bundle);
             } else {
                 ysmu.LOG.warn("Failed to decrypt YSM model cache file {}", fileName);
-                ClientModelManager.SYNC_FAILED++;
+                if (generation == ClientModelManager.currentApplyGeneration()) {
+                    ClientModelManager.SYNC_FAILED++;
+                }
             }
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load YSM model cache file " + fileName, e);
-            ClientModelManager.SYNC_FAILED++;
+            if (generation == ClientModelManager.currentApplyGeneration()) {
+                ClientModelManager.SYNC_FAILED++;
+            }
         }
     }
 }

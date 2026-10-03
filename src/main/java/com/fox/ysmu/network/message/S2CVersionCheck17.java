@@ -52,8 +52,8 @@ public class S2CVersionCheck17 implements IMessage {
                 // /ysm reload 后已删除的模型不会残留在客户端。与 legacy 同步路径
                 // （sendSyncModelMessage）的清空逻辑对等。清空调度在主线程异步执行，
                 // 在收到 packet03 并解析完首个模型之前必定完成（网络往返 + 解析时间）。
-                ClientModelManager.prepareForNewSync();
-                NetworkHandler.CHANNEL.sendToServer(new C2SVersionCheck17(NetworkHandler.PROTOCOL_VERSION));
+                ClientModelManager.prepareForNewSync().thenRun(() ->
+                    NetworkHandler.CHANNEL.sendToServer(new C2SVersionCheck17(NetworkHandler.PROTOCOL_VERSION)));
             }
             return null;
         }

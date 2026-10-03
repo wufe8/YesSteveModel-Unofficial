@@ -23,7 +23,19 @@ import rip.ysm.security.YsmCrypt;
 
 final class ModelCacheWriter {
 
+    /** Bump when conversion/serialization changes can alter bytes for the same source model. */
+    private static final int SERIALIZATION_REVISION = 1;
+
     private ModelCacheWriter() {}
+
+    static String serializationProfile() {
+        return serializationProfile(Config.ACCEPT_SOUND_FX);
+    }
+
+    private static String serializationProfile(boolean acceptSoundFx) {
+        return "ysmu-cache:" + SERIALIZATION_REVISION + ":format=" + OpenYsmFormat.OPEN_YSM_SYNC_FORMAT
+            + ":sounds=" + acceptSoundFx;
+    }
 
     static ServerModelInfo write(ModelData data) throws Exception {
         byte[] dataBytes = EncryptTools.assembleEncryptModels(data);
@@ -33,18 +45,24 @@ final class ModelCacheWriter {
     }
 
     static OpenYsmSyncInfo writeOpenYsm(RawYsmModel raw, String modelId) throws Exception {
-        if (OPEN_YSM_SERVER_KEY == null || OPEN_YSM_SERVER_KEY.length != 56) {
+        return writeOpenYsm(raw, modelId, CACHE_SERVER, OPEN_YSM_SERVER_KEY);
+    }
+
+    static OpenYsmSyncInfo writeOpenYsm(RawYsmModel raw, String modelId, Path cacheDirectory, byte[] serverKey)
+        throws Exception {
+        if (serverKey == null || serverKey.length != 56) {
             throw new IllegalStateException("OpenYSM server key is not initialized");
         }
 
-        String hashSource = getHashSource(raw, modelId);
-        long[] hashes = YsmCrypt.calculateModelHashes(hashSource, OPEN_YSM_SERVER_KEY);
+        boolean acceptSoundFx = Config.ACCEPT_SOUND_FX;
+        String hashSource = getHashSource(raw, modelId) + "\n" + serializationProfile(acceptSoundFx);
+        long[] hashes = YsmCrypt.calculateModelHashes(hashSource, serverKey);
         String cacheFileName = String.format(Locale.US, "%016x%016x", hashes[0], hashes[1]);
 
-        byte[] clearBytes = serializeForOpenYsmSync(raw);
+        byte[] clearBytes = serializeForOpenYsmSync(raw, acceptSoundFx);
 
-        byte[] cacheBytes = YsmCrypt.encryptServerCache(clearBytes, OPEN_YSM_SERVER_KEY, hashes[0], hashes[1]);
-        atomicWrite(CACHE_SERVER.resolve(cacheFileName), cacheBytes);
+        byte[] cacheBytes = YsmCrypt.encryptServerCache(clearBytes, serverKey, hashes[0], hashes[1]);
+        atomicWrite(cacheDirectory.resolve(cacheFileName), cacheBytes);
         return new OpenYsmSyncInfo(modelId, cacheFileName, hashes[0], hashes[1], OpenYsmFormat.OPEN_YSM_SYNC_FORMAT, false);
     }
 
@@ -67,9 +85,9 @@ final class ModelCacheWriter {
         }
     }
 
-    private static byte[] serializeForOpenYsmSync(RawYsmModel raw) {
+    private static byte[] serializeForOpenYsmSync(RawYsmModel raw, boolean acceptSoundFx) {
         Map<String, RawYsmModel.RawDataFile> originalSoundFiles = raw.soundFiles;
-        if (!Config.ACCEPT_SOUND_FX && raw.soundFiles != null && !raw.soundFiles.isEmpty()) {
+        if (!acceptSoundFx && raw.soundFiles != null && !raw.soundFiles.isEmpty()) {
             raw.soundFiles = new java.util.LinkedHashMap<>();
         }
         try (YSMByteBuf serialized = YSMBinarySerializer.serialize(raw, OpenYsmFormat.OPEN_YSM_SYNC_FORMAT, true)) {

@@ -300,6 +300,12 @@ public class ClientModelManager {
      */
     private static final java.util.concurrent.atomic.AtomicLong APPLY_GENERATION =
         new java.util.concurrent.atomic.AtomicLong();
+    /** Main-thread clear must finish before any bundle from that generation is published. */
+    private static volatile long clearedApplyGeneration;
+
+    public static boolean isApplyGenerationReady(long generation) {
+        return generation == APPLY_GENERATION.get() && generation == clearedApplyGeneration;
+    }
 
     /** 当前应用代际。生产者在解析开始时采样并写进 {@link PreParsedModelBundle#applyGeneration}。 */
     public static long currentApplyGeneration() {
@@ -410,6 +416,9 @@ public class ClientModelManager {
 
     /** Called once from RenderTickEvent.START, never through Minecraft's inline main-thread executor. */
     public static void processPendingAppliesForFrame() {
+        if (!isApplyGenerationReady(currentApplyGeneration())) {
+            return;
+        }
         long started = System.nanoTime();
         int applied = APPLY_QUEUE.drain(APPLY_BATCH_PER_FRAME, APPLY_BUDGET_NANOS, bundle -> {
             // 使用点再查一次代际：解析在旧代际上完成、入队却落在新一轮同步之后时，
@@ -583,6 +592,9 @@ public class ClientModelManager {
     }
 
     private static void applyPreParsed(PreParsedModelBundle bundle, boolean rebuildPacks) {
+        if (!isApplyGenerationReady(bundle.applyGeneration)) {
+            return;
+        }
         ResourceLocation modelId = bundle.modelId;
         // 来源优先级在使用点判定：服务端（或内置）已经提供的同名模型，本地注册不得覆盖。
         // 放在这里而不是入队前的检查处，才能盖住"检查通过之后、apply 之前服务端刚好注册好"
@@ -595,6 +607,13 @@ public class ClientModelManager {
             }
         } else {
             SERVER_PROVIDED_MODEL_IDS.add(ModelIdUtil.getModelIdFromSubId(modelId));
+        }
+        if (bundle.cachePath != null) {
+            if (bundle.openYsmCache) {
+                rememberOpenYsmModelCache(modelId, bundle.cachePath);
+            } else {
+                rememberModelMd5(modelId, bundle.cachePath);
+            }
         }
         SYNC_CURRENT_MODEL = ModelIdUtil.getModelDisplayName(modelId);
         MolangInstructionExecutor.clearCache();
@@ -1430,21 +1449,30 @@ public class ClientModelManager {
      * <p>This method is safe to call from any thread: apply-queue drain is
      * synchronized with producers, and the heavy cache clear is scheduled on the main thread.
      */
-    public static void prepareForNewSync() {
+    public static java.util.concurrent.CompletableFuture<Void> prepareForNewSync() {
+        final long generation = APPLY_GENERATION.incrementAndGet();
         APPLY_QUEUE.clear();
-        // 与 clear() 同一处推进代际：任何在此之前开始解析的 bundle（含已从队列取出、
-        // 正在主线程 apply 的那一个）都会在使用点被识别为陈旧。主线程紧随其后的
-        // clearRuntimeModelCaches 会把「已经应用完的那一份」一并清掉，所以不存在
-        // 「旧模型残留到新同步里」的窗口。
-        APPLY_GENERATION.incrementAndGet();
-        // 新一轮同步 = 会话活着：断开清理的上锁点（见 SESSION_LIVE）。
         SESSION_LIVE.set(true);
-        // Schedule the heavy cache clear (GPU textures, GeckoLibCache, all model
-        // maps) on the main thread. This must complete before any new models are
-        // applied — network round-trips before the first applyPreParsed guarantee
-        // enough time.
-        Minecraft.getMinecraft()
-            .func_152344_a(ClientModelManager::clearRuntimeModelCaches);
+        java.util.concurrent.CompletableFuture<Void> ready = new java.util.concurrent.CompletableFuture<>();
+        Minecraft.getMinecraft().func_152344_a(() -> {
+            if (generation != APPLY_GENERATION.get()) {
+                ready.cancel(false);
+                return;
+            }
+            try {
+                clearRuntimeModelCaches();
+                if (generation != APPLY_GENERATION.get()) {
+                    ready.cancel(false);
+                    return;
+                }
+                clearedApplyGeneration = generation;
+                ready.complete(null);
+            } catch (Throwable t) {
+                ready.completeExceptionally(t);
+                ysmu.LOG.warn("Failed to clear YSM models before sync", t);
+            }
+        });
+        return ready;
     }
 
     public static void sendSyncModelMessage() {
@@ -1459,22 +1487,27 @@ public class ClientModelManager {
         SYNC_LOADED = 0;
         SYNC_FAILED = 0;
         SYNC_IN_PROGRESS = true;
-        prepareForNewSync();
-        String[] md5Info = getMd5Info();
-        ysmu.LOG.info("YSM client sending model sync md5 list: count={}, values={}", md5Info.length, Lists.newArrayList(md5Info));
-        SyncModelFiles syncModelFiles = new SyncModelFiles(md5Info);
-        // 等世界加载完成再发（原先在 THREAD_POOL 上 sleep 500ms 轮询：ThreadCount=1 时会占住
-        // 唯一工作线程，把同步解析/下载包处理全堵在后面）。改为客户端 tick 驱动的检查，
-        // 同时 theWorld 只在主线程读写，不再有跨线程读非 volatile 字段的问题。
-        com.fox.ysmu.util.TickScheduler.Handle[] waitForWorld = new com.fox.ysmu.util.TickScheduler.Handle[1];
-        waitForWorld[0] = com.fox.ysmu.util.TickScheduler.client()
-            .scheduleEvery(250L, () -> {
-                if (Minecraft.getMinecraft().theWorld == null) {
-                    return;
-                }
-                waitForWorld[0].cancel();
-                NetworkHandler.CHANNEL.sendToServer(syncModelFiles);
-            });
+        prepareForNewSync().thenRun(() -> {
+            SYNC_IN_PROGRESS = true;
+            final long generation = currentApplyGeneration();
+            String[] md5Info = getMd5Info();
+            ysmu.LOG.info("YSM client sending model sync md5 list: count={}, values={}", md5Info.length, Lists.newArrayList(md5Info));
+            SyncModelFiles syncModelFiles = new SyncModelFiles(md5Info);
+            // Poll on the client tick after the clear barrier, without occupying a worker.
+            com.fox.ysmu.util.TickScheduler.Handle[] waitForWorld = new com.fox.ysmu.util.TickScheduler.Handle[1];
+            waitForWorld[0] = com.fox.ysmu.util.TickScheduler.client()
+                .scheduleEvery(250L, () -> {
+                    if (generation != currentApplyGeneration()) {
+                        waitForWorld[0].cancel();
+                        return;
+                    }
+                    if (Minecraft.getMinecraft().theWorld == null) {
+                        return;
+                    }
+                    waitForWorld[0].cancel();
+                    NetworkHandler.CHANNEL.sendToServer(syncModelFiles);
+                });
+        });
     }
 
     private static String[] getMd5Info() {
@@ -1484,13 +1517,10 @@ public class ClientModelManager {
             return new String[0];
         }
         Collection<File> files = FileUtils.listFiles(cacheDir, FileFileFilter.FILE, null);
-        String[] output = new String[files.size()];
-        int i = 0;
-        for (File file : files) {
-            output[i] = file.getName();
-            i++;
-        }
-        return output;
+        return files.stream()
+            .map(File::getName)
+            .filter(name -> name.matches("[0-9a-fA-F]{32}"))
+            .toArray(String[]::new);
     }
 
     /**
@@ -2451,6 +2481,9 @@ public class ClientModelManager {
                 }
                 clearConnectionState();
                 clearRuntimeModelCaches();
+                if (APPLY_GENERATION.get() == sessionGeneration) {
+                    clearedApplyGeneration = sessionGeneration;
+                }
             });
     }
 
