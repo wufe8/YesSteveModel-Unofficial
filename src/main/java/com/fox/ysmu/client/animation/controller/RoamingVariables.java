@@ -72,15 +72,13 @@ public final class RoamingVariables {
      * 同时是模型自定义配置里的复选框变量（默认 0）。默认值每帧回写 → 时间轴写下的 1 在下一帧
      * 被冲成 0 → 第二次"变身"算出的目标状态与第一次相同 → 变身只能生效一次，之后无法切回。</p>
      *
-     * <p>写入的仍是 {@link #PENDING_ROAMING}（全局平坦表，与轮盘 GUI 同一个存储），因此轮盘
-     * 配置界面读到的就是动画刚写下的状态；跨模型隔离由 {@code EXPLICIT_ROAMING_BY_MODEL}
-     * 提供（该标记只对这个模型生效）。该存储没有玩家维度：多人下某玩家动画写下的常驻变量
-     * 会对同模型的其他人可见 —— 与轮盘 GUI 写入的现状一致，属既有设计的限制。</p>
+     * <p>Only the local actor writes through to the GUI's flat storage. Remote actors keep
+     * their persistent values and explicit-write marks in their player/model scope.</p>
      *
      * @param varName 变量名，可带 {@code v.} / {@code variable.} 前缀
      */
     public static void noteRoamingWrite(ResourceLocation modelId, String varName, double value) {
-        if (varName == null) {
+        if (varName == null || !MolangPhysicsRuntime.usesLocalRoamingValues()) {
             return;
         }
         RoamingName info = roamingName(varName);
@@ -227,11 +225,12 @@ public final class RoamingVariables {
     }
 
     /** (modelId -> 裸名 -> 自校准 tag)：tag 也只拼一次，热路径不再产生临时 String。 */
-    private static final Map<ResourceLocation, Map<String, String>> ROAMING_TAGS = new ConcurrentHashMap<>();
+    private static final Map<ActorModelKey, Map<String, String>> ROAMING_TAGS = new ConcurrentHashMap<>();
 
     private static String roamingTag(ResourceLocation modelId, String plain) {
-        return ROAMING_TAGS.computeIfAbsent(modelId, k -> new ConcurrentHashMap<>())
-            .computeIfAbsent(plain, p -> modelId + "|" + p);
+        ActorModelKey owner = actorModelKey(modelId);
+        return ROAMING_TAGS.computeIfAbsent(owner, k -> new ConcurrentHashMap<>())
+            .computeIfAbsent(plain, p -> owner.playerId + "|" + modelId + "|" + p);
     }
 
     /** Derive (once per varName+keyPrefix) every key {@link #injectRoamingVar} writes:
@@ -269,7 +268,7 @@ public final class RoamingVariables {
      *  但确实有模型在关键帧里只写裸名 —— 第一方 wine_fox 的 `14_momo` 就是
      *  `"scale": "1-v.smallfox_size"` 而它的滑块是 `v.roaming.smallfox_size`。所以别名
      *  要保，只是不能覆盖模型自己的变量。</p> */
-    private static final Map<ResourceLocation, java.util.Set<String>> MODEL_OWNED_VARS =
+    private static final Map<ActorModelKey, java.util.Set<String>> MODEL_OWNED_VARS =
         new ConcurrentHashMap<>();
 
     /** (模型 + "|" + 裸名) → 上一次注入的值。下一次注入前如果发现目标 map 里这个键**不是**
@@ -277,17 +276,52 @@ public final class RoamingVariables {
      *  自校准，不需要在模型加载时扫一遍脚本。 */
     private static final Map<String, Double> LAST_INJECTED_ALIAS = new ConcurrentHashMap<>();
 
+    private static ActorModelKey lastActorModel;
+
+    private static ActorModelKey actorModelKey(ResourceLocation modelId) {
+        java.util.UUID playerId = MolangPhysicsRuntime.getCurrentPlayerId();
+        if (lastActorModel == null || !java.util.Objects.equals(lastActorModel.playerId, playerId)
+            || !java.util.Objects.equals(lastActorModel.modelId, modelId)) {
+            lastActorModel = new ActorModelKey(playerId, modelId);
+        }
+        return lastActorModel;
+    }
+
+    /** Alias self-calibration belongs to the actor that owns the target scope. */
+    private static final class ActorModelKey {
+        private final java.util.UUID playerId;
+        private final ResourceLocation modelId;
+
+        private ActorModelKey(java.util.UUID playerId, ResourceLocation modelId) {
+            this.playerId = playerId;
+            this.modelId = modelId;
+        }
+
+        @Override
+        public boolean equals(Object other) {
+            if (!(other instanceof ActorModelKey)) return false;
+            ActorModelKey key = (ActorModelKey) other;
+            return java.util.Objects.equals(playerId, key.playerId)
+                && java.util.Objects.equals(modelId, key.modelId);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * java.util.Objects.hashCode(playerId) + java.util.Objects.hashCode(modelId);
+        }
+    }
+
     static boolean isModelOwnedVar(ResourceLocation modelId, String bareName) {
         if (modelId == null) {
             return false;
         }
-        java.util.Set<String> owned = MODEL_OWNED_VARS.get(modelId);
+        java.util.Set<String> owned = MODEL_OWNED_VARS.get(actorModelKey(modelId));
         return owned != null && owned.contains(bareName);
     }
 
     private static void markModelOwnedVar(ResourceLocation modelId, String bareName) {
         MODEL_OWNED_VARS
-            .computeIfAbsent(modelId, k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()))
+            .computeIfAbsent(actorModelKey(modelId), k -> java.util.Collections.newSetFromMap(new ConcurrentHashMap<>()))
             .add(bareName);
     }
 
@@ -433,6 +467,12 @@ public final class RoamingVariables {
         return result;
     }
 
+    /** Remote actors receive authored defaults, never the local GUI's values or marks. */
+    public static Map<String, Double> getModelRoamingDefaults(ResourceLocation modelId) {
+        return modelId == null ? java.util.Collections.emptyMap()
+            : MODEL_ROAMING_DEFAULTS.getOrDefault(modelId, java.util.Collections.emptyMap());
+    }
+
     /** Invalidates the frame-scoped roaming variable cache (called at frame end). */
     public static void invalidateFrameRoamingCache() {
         frameRoamingCache.clear();
@@ -497,12 +537,25 @@ public final class RoamingVariables {
         return false;
     }
 
+    /** Remove alias calibration belonging to a departed player, retaining other actors. */
+    public static void clearPlayer(java.util.UUID playerId) {
+        if (playerId == null) return;
+        MODEL_OWNED_VARS.keySet().removeIf(key -> playerId.equals(key.playerId));
+        ROAMING_TAGS.entrySet().removeIf(entry -> {
+            if (!playerId.equals(entry.getKey().playerId)) return false;
+            for (String tag : entry.getValue().values()) LAST_INJECTED_ALIAS.remove(tag);
+            return true;
+        });
+        if (lastActorModel != null && playerId.equals(lastActorModel.playerId)) lastActorModel = null;
+    }
+
     /** Clears the per-model roaming variable tracking (called during cache reset). */
     public static void clearModelRoamingVars() {
         MODEL_ROAMING_VARS.clear();
         MODEL_ROAMING_DEFAULTS.clear();
         EXPLICIT_ROAMING_BY_MODEL.clear();
         MODEL_OWNED_VARS.clear();
+        lastActorModel = null;
         LAST_INJECTED_ALIAS.clear();
         ROAMING_KEYS.clear();
         ROAMING_NAMES.clear();

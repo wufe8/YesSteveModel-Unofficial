@@ -56,12 +56,6 @@ public final class OpenYsmScriptScope implements MolangScriptInterpreter.MolangS
             return;
         }
         MolangPhysicsRuntime.setVariable(normalized, value);
-        String varName = normalized.substring(2);
-        if (varName.startsWith("roaming.")) {
-            OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(varName, value);
-            // 按当前模型标记显式设置，避免同名变量跨模型串值。
-            OpenYsmPlayerControllerRuntime.markRoamingExplicit(this.modelId, varName);
-        }
     }
 
     @Override

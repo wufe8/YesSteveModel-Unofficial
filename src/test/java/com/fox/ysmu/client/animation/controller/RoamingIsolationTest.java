@@ -21,6 +21,45 @@ import org.junit.jupiter.api.Test;
 class RoamingIsolationTest {
 
     @Test
+    void remoteControllerAssignmentsOnlyChangeTheirOwnScope() throws Exception {
+        java.lang.reflect.Method install = MolangPhysicsRuntime.class.getDeclaredMethod("runWithVariableScope",
+            java.util.UUID.class, ResourceLocation.class, boolean.class, Runnable.class);
+        install.setAccessible(true);
+        java.util.UUID remote = java.util.UUID.fromString("66666666-6666-6666-6666-666666666666");
+        java.util.UUID other = java.util.UUID.fromString("77777777-7777-7777-7777-777777777777");
+        OpenYsmPlayerControllerRuntime.RuntimeState state = new OpenYsmPlayerControllerRuntime.RuntimeState("main_controller");
+        OpenYsmControllerExpressionEvaluator.Context context =
+            new OpenYsmControllerExpressionEvaluator.Context(null, null, state);
+        RoamingVariables.setModelRoamingDefault(MODEL_A, "roaming.controller_probe", 1.0d);
+        RoamingVariables.PENDING_ROAMING.put("roaming.controller_probe", 9.0d);
+        RoamingVariables.markRoamingExplicit(MODEL_A, "roaming.controller_probe");
+        try {
+            install.invoke(null, remote, MODEL_A, false, (Runnable) () -> {
+                OpenYsmControllerExpressionEvaluator.executeStatements(
+                    java.util.Collections.singletonList("v.roaming.controller_probe=3;"), context);
+                org.junit.jupiter.api.Assertions.assertEquals(3.0d,
+                    context.variableValue("v.roaming.controller_probe"), 0.0d);
+                org.junit.jupiter.api.Assertions.assertEquals(3.0d,
+                    MolangPhysicsRuntime.getVariable("v.roaming.controller_probe", 0), 0.0d);
+            });
+            org.junit.jupiter.api.Assertions.assertEquals(9.0d,
+                RoamingVariables.PENDING_ROAMING.get("roaming.controller_probe"), 0.0d);
+            install.invoke(null, other, MODEL_A, false, (Runnable) () -> {
+                org.junit.jupiter.api.Assertions.assertEquals(1.0d,
+                    MolangPhysicsRuntime.getVariable("v.roaming.controller_probe", 0), 0.0d);
+                assertFalse(OpenYsmPlayerControllerRuntime.isRoamingExplicit(MODEL_A, "roaming.controller_probe"));
+            });
+            install.invoke(null, remote, MODEL_A, false, (Runnable) () ->
+                org.junit.jupiter.api.Assertions.assertEquals(3.0d,
+                    MolangPhysicsRuntime.getActorRoamingVariables(MODEL_A).get("roaming.controller_probe"), 0.0d));
+        } finally {
+            MolangPhysicsRuntime.clear();
+            RoamingVariables.clearModelRoamingVars();
+            RoamingVariables.resetAllUserRoamingVars();
+        }
+    }
+
+    @Test
     void reloadDropsOldDefaultsAndCachedNames() {
         ResourceLocation model = new ResourceLocation("ysmu_test", "reload");
         try {

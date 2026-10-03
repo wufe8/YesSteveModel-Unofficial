@@ -526,16 +526,6 @@ public final class OpenYsmControllerExpressionEvaluator {
                 // (通过 ScopedMolangVariable → MolangPhysicsRuntime.getVariable())
                 // 能够读取到控制器 onEntry/onExit 设置的 v.* 变量值
                 MolangPhysicsRuntime.setVariable(target, value);
-                // 同步 roaming 变量回 PENDING_ROAMING，防止下一帧
-                // tryApplyController() 的注入循环用陈旧值覆盖刚设的值
-                if (varName.startsWith("roaming.")) {
-                    OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put(varName, value);
-                    // 按当前模型标记显式设置，避免同名变量跨模型串值
-                    // （模型 A 的 onEntry 设置 v.roaming.X 不应让模型 B 的
-                    // v.X ?? 默认 误判为 userSet 或 overlay 到 B）。
-                    OpenYsmPlayerControllerRuntime.markRoamingExplicit(
-                        currentModelId(context), varName);
-                }
             }
         }
     }
@@ -962,6 +952,11 @@ public final class OpenYsmControllerExpressionEvaluator {
             String scoped = "v." + name;
             if (MolangPhysicsRuntime.containsKey(scoped)) {
                 return MolangPhysicsRuntime.getVariable(scoped, FALSE);
+            }
+            if (!MolangPhysicsRuntime.usesLocalRoamingValues()
+                || (player != null && !com.fox.ysmu.client.animation.WheelPlaybackScope
+                    .appliesToLocalPlayer(player.getUniqueID()))) {
+                return FALSE;
             }
             // 全局 PENDING_ROAMING 是跨模型共享的扁平表：回退前必须确认这个名字属于当前模型
             // （声明过 config_forms / 本模型显式设置过 / 全局轮盘变量），否则模型 A 在轮盘里

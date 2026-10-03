@@ -102,7 +102,12 @@ public final class OpenYsmPlayerControllerRuntime {
     }
 
     public static boolean isRoamingExplicit(ResourceLocation modelId, String name) {
-        return RoamingVariables.isRoamingExplicit(modelId, name);
+        if (name == null) return false;
+        String normalized = name.startsWith("variable.") ? name.substring("variable.".length())
+            : name.startsWith("v.") ? name.substring(2) : name;
+        return MolangPhysicsRuntime.usesLocalRoamingValues()
+            ? RoamingVariables.isRoamingExplicit(modelId, normalized)
+            : MolangPhysicsRuntime.isVariableExplicit("v." + normalized);
     }
 
     static boolean isModelOwnedVar(ResourceLocation modelId, String name) {
@@ -397,7 +402,7 @@ public final class OpenYsmPlayerControllerRuntime {
         // prefix-stripped bare name (so controller conditions like
         // "v.bq_eye<=0" can find the value via localVariableValue("bq_eye")
         // even though the stored key is "roaming.bq_eye").
-        Map<String, Double> modelRoaming = getRoamingVarsForModel(animationId);
+        Map<String, Double> modelRoaming = MolangPhysicsRuntime.getActorRoamingVariables(animationId);
         if (markRoamingInjectedIfNeeded(modelRoaming, runtimeState)) {
             for (Map.Entry<String, Double> entry : modelRoaming.entrySet()) {
                 injectRoamingVar(runtimeState.variables, "", entry.getKey(), entry.getValue(), animationId);

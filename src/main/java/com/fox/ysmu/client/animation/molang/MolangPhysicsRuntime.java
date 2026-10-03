@@ -12,9 +12,11 @@ import net.minecraft.util.ResourceLocation;
 import com.fox.ysmu.Config;
 import com.fox.ysmu.client.entity.CustomPlayerEntity;
 import com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime;
+import com.fox.ysmu.client.animation.controller.RoamingVariables;
+import com.fox.ysmu.client.animation.WheelPlaybackScope;
 
 import software.bernie.geckolib3.core.molang.MolangParser;
-import software.bernie.geckolib3.core.molang.LazyVariable;
+import software.bernie.geckolib3.core.molang.ScopedMolangVariable;
 import software.bernie.geckolib3.core.molang.MolangStringPool;
 import software.bernie.geckolib3.core.processor.AnimationProcessor;
 import software.bernie.geckolib3.core.processor.IBone;
@@ -59,6 +61,7 @@ public final class MolangPhysicsRuntime {
      *  注入/写入（残留来源 = 跨模型串变量的元凶）。读取隔离
      *  {@link #getGlobalScopedValue} 也用它在全局 fallback 时按模型过滤。 */
     private static final Map<String, String> GLOBAL_VAR_OWNER = new java.util.HashMap<>();
+    private static final Map<String, ScopeKey> GLOBAL_VAR_SCOPE = new java.util.HashMap<>();
 
     /** 渲染路径骨骼绝对位置追踪（bone_pivot_abs 与几何渲染走同一矩阵路径）。
      *  每帧在 MatrixStack.transformBone 里按 模型+骨名 记录骨链累计后的完整 4×4 矩阵
@@ -128,14 +131,15 @@ public final class MolangPhysicsRuntime {
         ScopeKey key = ScopeKey.from(player, animatable.getMainModel());
         ScopeState state = STATES.computeIfAbsent(key, ignored -> new ScopeState());
         state.beginPass();
+        String frameDisplayName = key.modelId == null ? null : getModelDisplayName(key.modelId);
+        currentFrameContext = new FrameContext(key, state, processor, isLocalActor(key.playerId), frameDisplayName);
         ResourceLocation modelId = animatable.getMainModel();
         // Only inject roaming variables that belong to the current model.
         // Using getRoamingVarsForModel() instead of directly iterating
         // PENDING_ROAMING prevents cross-model variable contamination.
-        Map<String, Double> modelRoaming = OpenYsmPlayerControllerRuntime.getRoamingVarsForModel(modelId);
+        Map<String, Double> modelRoaming = getActorRoamingVariables(modelId);
         // 显示名一帧只算一次：下面注 roaming 的循环要写进 GLOBAL_VAR_OWNER，FrameContext 也要用它
         // 做跨模型隔离比较（见 FrameContext#displayName）。
-        String frameDisplayName = modelId == null ? null : getModelDisplayName(modelId);
         if (!modelRoaming.isEmpty()) {
             // 注入 v. 前缀 + 原 case + 小写 + 去 "roaming." 前缀的裸名，使
             // ScopedMolangVariable（关键帧 Molang）能按多种写法命中同一变量；
@@ -152,7 +156,9 @@ public final class MolangPhysicsRuntime {
             if (roamingCar != null) {
                 double showCar = roamingCar > 0 ? 1.0 : 0.0;
                 state.putVariable("v.show_car", showCar);
-                OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("show_car", showCar);
+                if (usesLocalRoamingValues()) {
+                    OpenYsmPlayerControllerRuntime.PENDING_ROAMING.put("show_car", showCar);
+                }
             }
             // Also inject roaming values into MolangParser.VARIABLES so that
             // timeline instructions (executed via MolangInstructionExecutor)
@@ -168,18 +174,25 @@ public final class MolangPhysicsRuntime {
             // timeline instruction (like "v.bq_eye = v.roaming.bq_eye != 0
             // ? v.roaming.bq_eye : ...") which only fires when that specific
             // animation plays and is then cached in executedKeyFrames.
-            for (Map.Entry<String, Double> roamingEntry : modelRoaming.entrySet()) {
-                String varKey = "v." + roamingEntry.getKey();
-                MolangParser.VARIABLES.computeIfAbsent(varKey,
-                    k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
-                GLOBAL_VAR_OWNER.put(varKey, frameDisplayName);
-                // Strip "roaming." prefix so v.roaming.bq_eye also sets v.bq_eye
-                String roamingKey = roamingEntry.getKey();
-                if (roamingKey.startsWith("roaming.")) {
-                    String plainKey = "v." + roamingKey.substring("roaming.".length());
-                    MolangParser.VARIABLES.computeIfAbsent(plainKey,
-                        k -> new LazyVariable(k, 0)).set(roamingEntry.getValue());
-                    GLOBAL_VAR_OWNER.put(plainKey, frameDisplayName);
+            if (usesLocalRoamingValues()) {
+                currentFrameContext.mirroringRoaming = true;
+                try {
+                    for (Map.Entry<String, Double> roamingEntry : modelRoaming.entrySet()) {
+                        String varKey = "v." + roamingEntry.getKey();
+                        scopedGlobalVariable(varKey).set(roamingEntry.getValue());
+                        GLOBAL_VAR_OWNER.put(varKey, frameDisplayName);
+                        GLOBAL_VAR_SCOPE.put(varKey, key);
+                        // Strip "roaming." prefix so v.roaming.bq_eye also sets v.bq_eye
+                        String roamingKey = roamingEntry.getKey();
+                        if (roamingKey.startsWith("roaming.")) {
+                            String plainKey = "v." + roamingKey.substring("roaming.".length());
+                            scopedGlobalVariable(plainKey).set(roamingEntry.getValue());
+                            GLOBAL_VAR_OWNER.put(plainKey, frameDisplayName);
+                            GLOBAL_VAR_SCOPE.put(plainKey, key);
+                        }
+                    }
+                } finally {
+                    currentFrameContext.mirroringRoaming = false;
                 }
             }
         }
@@ -195,7 +208,6 @@ public final class MolangPhysicsRuntime {
             timeDelta = (float) ((renderTicks - prevRenderTicks) / 20.0);
         }
         prevRenderTicks = renderTicks;
-        currentFrameContext = new FrameContext(modelId, state, processor, frameDisplayName);
         // .molang 事件订阅（@player_init / @player_update）在这里触发：
         // 漫游变量已经注入完毕（wiki 要求 roaming 同步早于 player_init），
         // 而 setMolangQueries 正是"每次更新玩家动画之前"。
@@ -274,15 +286,78 @@ public final class MolangPhysicsRuntime {
         if (body == null) {
             return;
         }
+        ScopeKey key = ScopeKey.from(player, modelId);
+        runWithVariableScope(key.playerId, modelId, isLocalActor(key.playerId), body);
+    }
+
+    /** Shared scope installation for rendering-independent events; ownership is fixed at entry. */
+    static void runWithVariableScope(UUID playerId, ResourceLocation modelId, boolean localActor, Runnable body) {
+        if (body == null) return;
         FrameContext previous = currentFrameContext;
-        ScopeState state = modelId == null ? null
-            : STATES.computeIfAbsent(ScopeKey.from(player, modelId), ignored -> new ScopeState());
-        currentFrameContext = state == null ? null : new FrameContext(modelId, state, null);
+        ScopeKey key = new ScopeKey(playerId, modelId);
+        ScopeState state = modelId == null ? null : STATES.computeIfAbsent(key, ignored -> new ScopeState());
+        currentFrameContext = state == null ? null : new FrameContext(key, state, null, localActor);
         try {
+            if (state != null) {
+                for (Map.Entry<String, Double> entry : getActorRoamingVariables(modelId).entrySet()) {
+                    OpenYsmPlayerControllerRuntime.injectRoamingVar(state.variables, state.dirtyVariables,
+                        "v.", entry.getKey(), entry.getValue(), modelId);
+                }
+            }
             body.run();
         } finally {
             currentFrameContext = previous;
         }
+    }
+
+    private static boolean isLocalActor(UUID playerId) {
+        // Anonymous previews retain the local GUI behaviour; an identified actor must match the client.
+        return playerId == null || WheelPlaybackScope.appliesToLocalPlayer(playerId);
+    }
+
+    public static boolean usesLocalRoamingValues() {
+        FrameContext context = currentFrameContext;
+        return context == null || context.localActor;
+    }
+
+    public static UUID getCurrentPlayerId() {
+        FrameContext context = currentFrameContext;
+        return context == null ? null : context.key.playerId;
+    }
+
+    public static boolean isVariableExplicit(String name) {
+        FrameContext context = currentFrameContext;
+        return context != null && context.state.explicitVariables.contains(name);
+    }
+
+    /** Defaults plus the current actor's persistent writes, without local GUI values. */
+    public static Map<String, Double> getActorRoamingVariables(ResourceLocation modelId) {
+        if (usesLocalRoamingValues()) {
+            return OpenYsmPlayerControllerRuntime.getRoamingVarsForModel(modelId);
+        }
+        FrameContext context = currentFrameContext;
+        if (context != null && java.util.Objects.equals(modelId, context.modelId)
+            && context.roamingVariables != null) {
+            return context.roamingVariables;
+        }
+        Map<String, Double> values = new java.util.HashMap<>();
+        for (Map.Entry<String, Double> entry : RoamingVariables.getModelRoamingDefaults(modelId).entrySet()) {
+            values.put(entry.getKey().toLowerCase(java.util.Locale.ROOT), entry.getValue());
+        }
+        if (context != null && java.util.Objects.equals(modelId, context.modelId)) {
+            for (Map.Entry<String, Double> entry : context.state.variables.entrySet()) {
+                String name = entry.getKey().toLowerCase(java.util.Locale.ROOT);
+                if (name.startsWith("v.roaming.")) {
+                    values.put(name.substring(2), entry.getValue());
+                } else if (name.startsWith("v.") && values.containsKey(name.substring(2))) {
+                    values.put(name.substring(2), entry.getValue());
+                }
+            }
+        }
+        if (context != null && java.util.Objects.equals(modelId, context.modelId)) {
+            context.roamingVariables = values;
+        }
+        return values;
     }
 
     public static void clear() {
@@ -291,6 +366,7 @@ public final class MolangPhysicsRuntime {
         lastFrameVariables = java.util.Collections.emptyMap();
         currentFrameContext = null;
         GLOBAL_VAR_OWNER.clear();
+        GLOBAL_VAR_SCOPE.clear();
         OpenYsmPlayerControllerRuntime.invalidateFrameRoamingCache();
     }
 
@@ -315,6 +391,12 @@ public final class MolangPhysicsRuntime {
         if (playerId == null) {
             return;
         }
+        RoamingVariables.clearPlayer(playerId);
+        GLOBAL_VAR_SCOPE.entrySet().removeIf(entry -> {
+            if (!playerId.equals(entry.getValue().playerId)) return false;
+            GLOBAL_VAR_OWNER.put(entry.getKey(), UNSCOPED_OWNER);
+            return true;
+        });
         java.util.Iterator<Map.Entry<ScopeKey, ScopeState>> it = STATES.entrySet().iterator();
         while (it.hasNext()) {
             Map.Entry<ScopeKey, ScopeState> e = it.next();
@@ -376,15 +458,18 @@ public final class MolangPhysicsRuntime {
     public static boolean containsKey(String name) {
         FrameContext context = currentFrameContext;
         if (context == null) return false;
-        return context.state.variables.containsKey(name);
+        return context.state.variables.containsKey(name.startsWith("variable.")
+            ? "v." + name.substring("variable.".length()) : name);
     }
 
     public static boolean setVariable(String name, double value) {
         FrameContext context = currentFrameContext;
-        if (context == null) {
+        if (context == null || context.mirroringRoaming) {
             return false;
         }
         context.state.putVariable(name, value);
+        context.state.explicitVariables.add(name);
+        context.roamingVariables = null;
         // 常驻变量（v.roaming.*）赋值必须"粘住"：动画/时间轴写完的值若是只留在本帧作用域里，
         // 下一帧 begin() 注入 ysm.json 默认值时就会被冲掉（轮盘"变身"只能生效一次的根因）。
         // 这里是所有 v.* 赋值路径的唯一汇聚点——关键帧表达式、嵌套赋值、时间轴指令都走它。
@@ -762,6 +847,10 @@ public final class MolangPhysicsRuntime {
     }
 
     private static final class FrameContext {
+        private final ScopeKey key;
+        private boolean mirroringRoaming;
+        private Map<String, Double> roamingVariables;
+        private final boolean localActor;
         private final ResourceLocation modelId;
         private final ScopeState state;
         private final AnimationProcessor<?> processor;
@@ -777,14 +866,16 @@ public final class MolangPhysicsRuntime {
          */
         private final String displayName;
 
-        private FrameContext(ResourceLocation modelId, ScopeState state, AnimationProcessor<?> processor) {
-            this(modelId, state, processor, modelId == null ? null : getModelDisplayName(modelId));
+        private FrameContext(ScopeKey key, ScopeState state, AnimationProcessor<?> processor, boolean localActor) {
+            this(key, state, processor, localActor,
+                key.modelId == null ? null : getModelDisplayName(key.modelId));
         }
 
-        /** 已经算好显示名的重载：调用方同一帧内还要用同一个名字写 GLOBAL_VAR_OWNER。 */
-        private FrameContext(ResourceLocation modelId, ScopeState state, AnimationProcessor<?> processor,
-            String displayName) {
-            this.modelId = modelId;
+        private FrameContext(ScopeKey key, ScopeState state, AnimationProcessor<?> processor,
+            boolean localActor, String displayName) {
+            this.key = key;
+            this.localActor = localActor;
+            this.modelId = key.modelId;
             this.state = state;
             this.processor = processor;
             this.displayName = displayName;
@@ -805,12 +896,21 @@ public final class MolangPhysicsRuntime {
         return GLOBAL_VAR_OWNER.get(name);
     }
 
+    private static ScopedMolangVariable scopedGlobalVariable(String name) {
+        return (ScopedMolangVariable) MolangParser.VARIABLES.compute(name, (key, old) -> {
+            if (old instanceof ScopedMolangVariable) return old;
+            return old == null ? new ScopedMolangVariable(key, 0) : new ScopedMolangVariable(key, old::get);
+        });
+    }
+
     /** timeline 指令（MolangInstructionExecutor）写入全局 VARIABLES 时记录来源
      *  模型，供 debug overlay 显示跨模型残留来源。 */
     public static void noteGlobalVarOwner(String varName) {
         FrameContext context = currentFrameContext;
         if (context != null && context.modelId != null) {
+            if (varName.startsWith("v.")) scopedGlobalVariable(varName);
             GLOBAL_VAR_OWNER.put(varName, context.displayName);
+            GLOBAL_VAR_SCOPE.put(varName, context.key);
         }
     }
 
@@ -822,6 +922,13 @@ public final class MolangPhysicsRuntime {
      *  没有并发遍历风险。无来源记录的变量（系统注册等）不隔离。 */
     public static double getGlobalScopedValue(String name, double fallback) {
         FrameContext ctx = currentFrameContext;
+        ScopeKey owner = GLOBAL_VAR_SCOPE.get(name);
+        if (ctx != null && owner != null && !owner.equals(ctx.key)) {
+            return 0.0D;
+        }
+        if (ctx != null && !ctx.localActor && GLOBAL_VAR_OWNER.containsKey(name) && owner == null) {
+            return 0.0D;
+        }
         String current = ctx == null ? null : ctx.displayName;
         return isGlobalVarReadable(GLOBAL_VAR_OWNER.get(name), current) ? fallback : 0.0D;
     }
@@ -834,6 +941,7 @@ public final class MolangPhysicsRuntime {
     public static void noteUnscopedGlobalVarWrite(String varName) {
         if (varName != null) {
             GLOBAL_VAR_OWNER.put(varName, UNSCOPED_OWNER);
+            GLOBAL_VAR_SCOPE.remove(varName);
         }
     }
 
@@ -903,6 +1011,7 @@ public final class MolangPhysicsRuntime {
          * 仍能读到；再上一 pass 的才丢弃（那些值早就在所有现存 RuntimeState 里了，
          * 新建的 RuntimeState 由 {@code target.isEmpty()} 分支整表兜底）。
          */
+        private final java.util.Set<String> explicitVariables = new java.util.HashSet<>();
         private final java.util.Set<String> dirtyVariables = new java.util.HashSet<>();
         private final java.util.Set<String> dirtyPreviousPass = new java.util.HashSet<>();
 

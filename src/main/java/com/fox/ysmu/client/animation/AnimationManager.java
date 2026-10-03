@@ -231,48 +231,13 @@ public final class AnimationManager {
         return null;
     }
 
-    /**
-     * 求值 .molang 函数文件中的条件表达式。
-     * <p>
-     * 纯 {@code v.<名字>} / {@code !v.<名字>} 走下面的快速路径（只查 PENDING_ROAMING，
-     * 保持历史行为）；其余交给控制器求值器
-     * （{@link com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator}），
-     * 因此 {@code !v.show_car&&!(ysm.food_level<=6)} 这类复合条件、以及
-     * {@code (ctrl.walk && ysm.input_vertical < 0.1)} 这类复合守卫都能真正求值。
-     * <p>
-     * 求值失败/没有上下文仍然是 false —— 宁可不用替代动画，也不要凭空命中一条分支。
-     */
+    /** Evaluate every model condition against the actor's scope, including plain v.* reads. */
     private static boolean evaluateSimpleCondition(String condition, AnimationEvent<CustomPlayerEntity> event) {
         if (StringUtils.isBlank(condition)) return true;
-        String trimmed = condition.trim();
-        if (isPureVariableCondition(trimmed)) {
-            // 取反: !v.xxx
-            if (trimmed.startsWith("!")) {
-                return getMolangVariable(trimmed.substring(1).trim()) == 0;
-            }
-            // 正向: v.xxx
-            return getMolangVariable(trimmed) != 0;
-        }
         EntityPlayer player = event != null && event.getAnimatable() != null
             ? event.getAnimatable().getPlayer() : null;
         return com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator
-            .evaluateCondition(trimmed, player, event);
-    }
-
-    /** 只有 {@code v.<名字>} 或 {@code !v.<名字>}（没有运算符、没有括号、没有函数调用）。 */
-    private static boolean isPureVariableCondition(String trimmed) {
-        String body = trimmed.startsWith("!") ? trimmed.substring(1).trim() : trimmed;
-        if (!body.startsWith("v.")) {
-            return false;
-        }
-        for (int i = 0; i < body.length(); i++) {
-            char c = body.charAt(i);
-            boolean allowed = Character.isLetterOrDigit(c) || c == '_' || c == '.' || c == '!';
-            if (!allowed) {
-                return false;
-            }
-        }
-        return true;
+            .evaluateCondition(condition.trim(), player, event);
     }
 
     /** 控制脚本动态覆盖动画名的日志（每个 模型×槽位 只打一条，避免每帧刷屏）。 */
@@ -578,18 +543,6 @@ public final class AnimationManager {
             com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.clearControllerState(
                 player.getUniqueID(), animId, "player." + slot);
         }
-    }
-
-    /** 从 PENDING_ROAMING 读取 Molang 变量的当前值 */
-    private static double getMolangVariable(String varName) {
-        if (StringUtils.isBlank(varName)) return 0;
-        String roamingName = varName.startsWith("v.") ? varName.substring(2) : varName;
-        Double val = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get(roamingName);
-        // 也检查带 v. 前缀的
-        if (val == null) {
-            val = OpenYsmPlayerControllerRuntime.PENDING_ROAMING.get("v." + roamingName);
-        }
-        return val != null ? val : 0;
     }
 
     /** 播放倍速（stride × anim_speed）：legacy 控制器路径。
