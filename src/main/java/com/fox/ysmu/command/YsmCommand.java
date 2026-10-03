@@ -72,6 +72,12 @@ public class YsmCommand extends CommandBase {
     }
 
     @Override
+    public boolean isUsernameIndex(String[] args, int index) {
+        // Vanilla's dispatcher expands multi-player selectors before processCommand.
+        return index == 1 && args.length > 0 && "reset".equalsIgnoreCase(args[0]);
+    }
+
+    @Override
     public int getRequiredPermissionLevel() {
         return 2;
     }
@@ -140,10 +146,14 @@ public class YsmCommand extends CommandBase {
         com.fox.ysmu.ysmu.LOG.info("YSM reload command started by {}", sender.getCommandSenderName());
         int skipped = checkModelFiles(sender, CUSTOM);
         ServerModelManager.reloadPacks();
-        ServerModelManager.sendRequestSyncModelMessage(sender.getEntityWorld().playerEntities);
+        List<EntityPlayerMP> players = new ArrayList<>(net.minecraft.server.MinecraftServer.getServer()
+            .getConfigurationManager().playerEntityList);
+        for (EntityPlayerMP player : players) {
+            ServerModelManager.sendRequestSyncModelMessage(player);
+        }
         watch.stop();
         com.fox.ysmu.ysmu.LOG.info("YSM reload command finished in {}ms, players notified: {}",
-            watch.getTime(), sender.getEntityWorld().playerEntities.size());
+            watch.getTime(), players.size());
         sender.addChatMessage(new ChatComponentTranslation(
             "message.yes_steve_model.model.reload.info", watch.getTime(), skipped));
     }
@@ -443,21 +453,11 @@ public class YsmCommand extends CommandBase {
                     + "  — or use §e/ysmclient reset§r for yourself."));
             return;
         }
-        net.minecraft.entity.player.EntityPlayerMP[] targets;
-        try {
-            targets = net.minecraft.command.PlayerSelector.matchPlayers(sender, args[1]);
-        } catch (Exception e) {
-            throw new CommandException("commands.generic.player.notFound");
-        }
-        if (targets == null || targets.length == 0) {
-            throw new CommandException("commands.generic.player.notFound");
-        }
-        for (net.minecraft.entity.player.EntityPlayerMP target : targets) {
-            NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.PacketResetMolang(), target);
-        }
+        EntityPlayerMP target = getPlayer(sender, args[1]);
+        NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.PacketResetMolang(), target);
         sender.addChatMessage(new ChatComponentText(
             "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Reset Molang variables for §e"
-                + targets.length + "§r player(s)."));
+                + target.getCommandSenderName() + "§r."));
     }
 
     /** 检查自定义模型文件夹结构；对每个不完整（缺 main.json/arm.json/材质）的文件夹

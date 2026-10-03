@@ -146,6 +146,23 @@ public class ClientModelManager {
     public static final Map<ResourceLocation, List<ResourceLocation>> PROJECTILE_TEXTURE_IDS = Maps.newHashMap();
 
     private static final String PROJECTILE_KEY_PREFIX = "projectile_";
+    /** Main-thread ownership of projectile geo/animation keys, including partially applied bundles. */
+    private static final java.util.Set<ResourceLocation> PROJECTILE_RESOURCE_IDS = new java.util.HashSet<>();
+
+    public static void trackProjectileResource(ResourceLocation resourceId) {
+        PROJECTILE_RESOURCE_IDS.add(resourceId);
+    }
+
+    static void clearProjectileModelCaches() {
+        GeckoLibCache cache = GeckoLibCache.getInstance();
+        for (ResourceLocation resourceId : PROJECTILE_RESOURCE_IDS) {
+            cache.getGeoModels().remove(resourceId);
+            cache.getAnimations().remove(resourceId);
+        }
+        PROJECTILE_RESOURCE_IDS.clear();
+        PROJECTILE_MODEL_IDS.clear();
+        PROJECTILE_TEXTURE_IDS.clear();
+    }
 
     /**
      * 该动画条目是否要并进**玩家**的合并动画文件。
@@ -597,6 +614,8 @@ public class ClientModelManager {
             String subName = ModelIdUtil.getSubNameFromId(entry.getKey());
             if (!isProjectileKey(subName)) {
                 AssetManager.registerGeo(entry.getKey(), entry.getValue());
+            } else {
+                trackProjectileResource(entry.getKey());
             }
         }
         // Apply scale/extra info
@@ -655,6 +674,7 @@ public class ClientModelManager {
         for (Map.Entry<ResourceLocation, AnimationFile> e : bundle.projAnimationFiles.entrySet()) {
             if (!e.getValue().animations.isEmpty()) {
                 GeckoLibCache.getInstance().getAnimations().put(e.getKey(), e.getValue());
+                trackProjectileResource(e.getKey());
             }
         }
         // Register projectile controllers under their own animation IDs
@@ -830,6 +850,9 @@ public class ClientModelManager {
         GeoModel geo = bundle.geoModels.get(geoId);
         if (geo == null) return;
         GeckoLibCache.getInstance().getGeoModels().put(geoId, geo);
+        if (isProjectileKey(ModelIdUtil.getSubNameFromId(geoId))) {
+            trackProjectileResource(geoId);
+        }
         it.unimi.dsi.fastutil.Pair<Double, Double> scale = bundle.scaleInfo.get(geoId);
         if (scale != null) {
             SCALE_INFO.put(geoId, scale);
@@ -2034,6 +2057,7 @@ public class ClientModelManager {
         MODEL_STATS.clear();
         // Release geo/anim through the lifecycle framework (frees GeckoLibCache too).
         AssetManager.clearAll();
+        clearProjectileModelCaches();
         com.fox.ysmu.util.AnimatableCacheUtil.clear();
         software.bernie.geckolib3.core.manager.AnimationData.disposeAll();
         // 释放防滑步的每玩家平滑倍速状态（换世界/清模型时不留残留）。

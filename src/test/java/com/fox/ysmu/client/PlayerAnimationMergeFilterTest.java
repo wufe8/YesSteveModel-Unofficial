@@ -63,6 +63,45 @@ class PlayerAnimationMergeFilterTest {
         assertFalse(merged.contains("FOX"), "被弹射物覆盖后 FOX 的缩放写入丢失");
     }
 
+    @Test
+    void clearingProjectilesDropsUnmanagedResourcesAndPreservesOtherModels() {
+        net.minecraft.util.ResourceLocation projectile = com.fox.ysmu.util.ModelIdUtil.getSubModelId(
+            new net.minecraft.util.ResourceLocation("ysmu", "projectile_fixture"), "projectile_minecraft:arrow");
+        net.minecraft.util.ResourceLocation unrelated = new net.minecraft.util.ResourceLocation("othermod", "fixture");
+        net.minecraft.util.ResourceLocation base = com.fox.ysmu.util.ModelIdUtil.getModelIdFromSubId(projectile);
+        software.bernie.geckolib3.resource.GeckoLibCache cache =
+            software.bernie.geckolib3.resource.GeckoLibCache.getInstance();
+        software.bernie.geckolib3.geo.render.built.GeoModel geo =
+            new software.bernie.geckolib3.geo.render.built.GeoModel();
+        com.fox.ysmu.client.model.PreParsedModelBundle bundle =
+            new com.fox.ysmu.client.model.PreParsedModelBundle(base);
+        bundle.geoModels.put(projectile, geo);
+        try {
+            // The non-bridgeable path does not register projectile assets with AssetManager.
+            ClientModelManager.applySingleGeo(bundle, projectile);
+            cache.getAnimations().put(projectile, file(anim("parallel0", "Arrow")));
+            cache.getGeoModels().put(unrelated, geo);
+            cache.getAnimations().put(unrelated, file(anim("idle", "Root")));
+            ClientModelManager.PROJECTILE_MODEL_IDS.put(base,
+                new ArrayList<>(java.util.Collections.singletonList("minecraft:arrow")));
+            ClientModelManager.PROJECTILE_TEXTURE_IDS.put(base,
+                new ArrayList<>(java.util.Collections.singletonList(projectile)));
+
+            ClientModelManager.clearProjectileModelCaches();
+
+            assertFalse(cache.getGeoModels().containsKey(projectile));
+            assertFalse(cache.getAnimations().containsKey(projectile));
+            assertTrue(ClientModelManager.PROJECTILE_MODEL_IDS.isEmpty());
+            assertTrue(ClientModelManager.PROJECTILE_TEXTURE_IDS.isEmpty());
+            assertTrue(cache.getGeoModels().containsKey(unrelated));
+            assertTrue(cache.getAnimations().containsKey(unrelated));
+        } finally {
+            ClientModelManager.clearProjectileModelCaches();
+            cache.getGeoModels().remove(unrelated);
+            cache.getAnimations().remove(unrelated);
+        }
+    }
+
     private static AnimationFile file(Animation animation) {
         AnimationFile file = new AnimationFile();
         file.putAnimation(animation.animationName, animation);

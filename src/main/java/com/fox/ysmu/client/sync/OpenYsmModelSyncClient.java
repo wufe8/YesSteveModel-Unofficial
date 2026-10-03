@@ -1003,6 +1003,7 @@ public final class OpenYsmModelSyncClient {
                 }
                 for (int i = 0; i < m.animIds.size(); i++) {
                     ResourceLocation animId = m.animIds.get(i);
+                    ClientModelManager.trackProjectileResource(animId);
                     software.bernie.geckolib3.file.AnimationFile existing =
                         software.bernie.geckolib3.resource.GeckoLibCache.getInstance().getAnimations().get(animId);
                     if (existing == null) {
