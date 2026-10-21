@@ -21,10 +21,20 @@ public class DieRollInteger extends Function {
     @Override
 
     public double get() {
-        double i = 0;
-        double total = 0;
-        while (i < this.getArg(0)) {
-            total += (double) Math.round(this.getArg(1) + Math.random() * (this.getArg(2) - this.getArg(1)));
+        // YSM-wiki: molang/ref (math.die_roll_integer) — the sum of `num` integer rolls
+        // in [low, high]. Same broken loop as DieRoll before the fix; the roll count is
+        // bounded like the controller evaluator's.
+        int low = (int) this.getArg(1);
+        int high = (int) this.getArg(2);
+        if (low > high) {
+            int swap = low;
+            low = high;
+            high = swap;
+        }
+        int rolls = (int) Math.min(Math.max(0.0d, this.getArg(0)), 100.0d);
+        int total = 0;
+        for (int i = 0; i < rolls; i++) {
+            total += low + (int) (Math.random() * (high - low + 1));
         }
         return total;
     }

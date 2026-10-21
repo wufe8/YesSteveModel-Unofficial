@@ -21,10 +21,17 @@ public class DieRoll extends Function {
     @Override
 
     public double get() {
-        double i = 0;
+        // YSM-wiki: molang/ref (math.die_roll) — the sum of `num` rolls in [low, high].
+        // The vendored copy never advanced its loop counter (`while (i < num)` with `i`
+        // never changed) and rolled `high - high`, so any `num` above 0 froze the client
+        // on the render thread instead of returning a number. The roll count is bounded
+        // the same way the controller evaluator's is.
+        double low = this.getArg(1);
+        double high = this.getArg(2);
+        int rolls = (int) Math.min(Math.max(0.0d, this.getArg(0)), 100.0d);
         double total = 0;
-        while (i < this.getArg(0)) {
-            total += Math.random() * (this.getArg(2) - this.getArg(2));
+        for (int i = 0; i < rolls; i++) {
+            total += low + Math.random() * (high - low);
         }
         return total;
     }
