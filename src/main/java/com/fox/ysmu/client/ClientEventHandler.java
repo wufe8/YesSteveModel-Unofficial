@@ -518,16 +518,19 @@ public class ClientEventHandler {
         // 于是服主自己的会话密钥被一并清掉。本地连接只应在本地玩家自己离开时作废。
         // 注意事件里的 player 是服务端的 EntityPlayerMP，与 mc.thePlayer 不是同一个对象，
         // 必须按 UUID 比。
-        if (event.player != null && isLocalPlayer(event.player)) {
+        if (event.player == null) return;
+        if (isLocalPlayer(event.player)) {
+            // Invalidate immediately; the central disconnect path schedules generation-gated cleanup.
             ClientModelManager.onClientDisconnected("local-player-logout");
+            return;
         }
-        RemotePlayerAnimationQueries.clear();
-        RemotePlayerMotionStates.clear();
-        NPCData.clear();
-        // 清理按玩家残留的动画状态机 / Molang 作用域 / 防滑步平滑倍速，
-        // 避免玩家登出后这些 (playerId, ...) 状态驻留到下次 reload。
-        if (event.player != null) {
-            java.util.UUID pid = event.player.getUniqueID();
+        final java.util.UUID pid = event.player.getUniqueID();
+        final long generation = ClientModelManager.currentApplyGeneration();
+        Minecraft.getMinecraft().func_152344_a(() -> {
+            if (generation != ClientModelManager.currentApplyGeneration()) return;
+            // A LAN guest leaving must not reset the motion state of players still online.
+            RemotePlayerAnimationQueries.remove(pid);
+            RemotePlayerMotionStates.remove(pid);
             com.fox.ysmu.client.animation.controller.OpenYsmPlayerControllerRuntime.clearPlayer(pid);
             com.fox.ysmu.client.animation.molang.MolangPhysicsRuntime.clearPlayer(pid);
             // 玩家登出：清掉"已跑过 @player_init"的标记，下次加载会重新初始化模型状态。
@@ -539,7 +542,7 @@ public class ClientEventHandler {
             // 登入的同一 UUID 一上来就被判成"动画已经播过了"（与模型切换同一清理入口）。
             com.fox.ysmu.client.animation.AnimationManager.getInstance()
                 .resetPlayerState(pid);
-        }
+        });
     }
 
     /** 登出事件里的玩家是不是本地玩家（按 UUID 比；服务端对象与客户端对象不是同一个实例）。 */

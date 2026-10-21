@@ -8,6 +8,7 @@ import org.apache.commons.io.FileUtils;
 
 import com.fox.ysmu.client.ClientModelManager;
 import com.fox.ysmu.model.ServerModelManager;
+import com.fox.ysmu.network.PacketReadUtil;
 import com.fox.ysmu.util.Md5Utils;
 import com.fox.ysmu.ysmu;
 
@@ -28,7 +29,9 @@ public class SendModelFile implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        this.data = new byte[buf.readInt()];
+        int length = buf.readInt();
+        PacketReadUtil.requireLength(buf, length, 2 * 1024 * 1024);
+        this.data = new byte[length];
         buf.readBytes(this.data);
     }
 

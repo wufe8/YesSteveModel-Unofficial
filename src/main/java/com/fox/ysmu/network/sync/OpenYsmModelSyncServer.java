@@ -49,6 +49,7 @@ public final class OpenYsmModelSyncServer {
     /** Only server-issued requests may start a handshake; replies belong to this connection. */
     public static void expectVersionReply(EntityPlayerMP player) {
         UUID id = player.getUniqueID();
+        RESYNC_REQUESTS.track(id, player);
         SYNC_STATES.remove(id);
         LEGACY_TRANSFERS.remove(id);
         EXPECTED_VERSION.expect(id, player);
@@ -60,6 +61,7 @@ public final class OpenYsmModelSyncServer {
 
     public static LegacyTransfer expectLegacyReply(EntityPlayerMP player) {
         LegacyTransfer transfer = new LegacyTransfer(player);
+        RESYNC_REQUESTS.track(player.getUniqueID(), player);
         SYNC_STATES.remove(player.getUniqueID());
         EXPECTED_VERSION.clear(player.getUniqueID());
         LEGACY_TRANSFERS.put(player.getUniqueID(), transfer);
@@ -99,11 +101,11 @@ public final class OpenYsmModelSyncServer {
             });
 
     /**
-     * 玩家手动 /ysm sync 重同步的冷却时间戳（UUID → 上次 resync 时间）。冷却只作用于玩家
+     * 当前连接及玩家主动重同步的冷却（/ysm sync 与空模型列表恢复共用）。冷却只作用于玩家
      * 主动触发的重同步；进服握手路径（sendRequestSyncModelMessage → S2CVersionCheck17 →
      * startSync）不受影响。登出时在 CommonEventHandler.onPlayerLoggedOut 清理。
      */
-    private static final Map<UUID, Long> LAST_RESYNC = Maps.newConcurrentMap();
+    private static final ResyncRequestGate<EntityPlayerMP> RESYNC_REQUESTS = new ResyncRequestGate<>();
 
     /** {@link #requestResync} 返回码。 */
     public static final int RESYNC_OK = 0;
@@ -120,46 +122,40 @@ public final class OpenYsmModelSyncServer {
         if (player == null) {
             return RESYNC_FAILED;
         }
-        int cooldownSeconds = Config.RESYNC_COOLDOWN_SECONDS;
-        if (cooldownSeconds < 0) {
-            return RESYNC_DISABLED;
-        }
-        UUID playerId = player.getUniqueID();
-        long now = System.currentTimeMillis();
-        if (cooldownSeconds > 0) {
-            Long last = LAST_RESYNC.get(playerId);
-            if (last != null && now - last < cooldownSeconds * 1000L) {
-                return RESYNC_COOLDOWN;
-            }
-        }
-        LAST_RESYNC.put(playerId, now);
-        // The client resets at the version request, not at packet01.
-        ServerModelManager.sendRequestSyncModelMessage(player);
-        return RESYNC_OK;
+        // Keep authorization and handshake issuance atomic with logout/connection replacement.
+        return RESYNC_REQUESTS.request(
+            player.getUniqueID(), player, Config.RESYNC_COOLDOWN_SECONDS, System.currentTimeMillis(),
+            () -> ServerModelManager.sendRequestSyncModelMessage(player));
     }
 
     /** 冷却剩余秒数（供命令层提示；未在冷却中返回 0）。 */
     public static long resyncRemainingSeconds(UUID playerId) {
-        int cooldownSeconds = Config.RESYNC_COOLDOWN_SECONDS;
-        if (cooldownSeconds <= 0 || playerId == null) {
-            return 0L;
-        }
-        Long last = LAST_RESYNC.get(playerId);
-        if (last == null) {
-            return 0L;
-        }
-        long remaining = cooldownSeconds - (System.currentTimeMillis() - last) / 1000L;
-        return Math.max(0L, remaining);
+        return playerId == null ? 0L : RESYNC_REQUESTS.remainingSeconds(
+            playerId, Config.RESYNC_COOLDOWN_SECONDS, System.currentTimeMillis());
     }
 
     /** 登出时清理冷却记录。 */
     public static void clearResyncCooldown(UUID playerId) {
         if (playerId != null) {
-            LAST_RESYNC.remove(playerId);
+            RESYNC_REQUESTS.clear(playerId);
         }
     }
 
     private OpenYsmModelSyncServer() {}
+
+    /**
+     * Is this sync entry the configured default model?
+     *
+     * <p>Compares against the <b>encoded</b> internal id: the configured name is encoded as
+     * soon as it is not a plain lower-case name, so comparing the raw config value against
+     * the registered id silently stopped matching for any name containing a space (or an
+     * upper-case letter / non-ASCII character). The default model then lost its "send it
+     * first" slot — and, on the client, its anti-eviction pinning. This path was
+     * investigated alongside issue #4, whose root cause is not yet confirmed.
+     */
+    public static boolean isDefaultModelEntry(OpenYsmSyncInfo info) {
+        return info != null && Config.getDefaultModelInternalId().equals(info.getModelId());
+    }
 
     /**
      * 启动统一模型同步。返回 {@code false} 表示无法启动（参数/开关/服务器索引密钥
@@ -184,8 +180,11 @@ public final class OpenYsmModelSyncServer {
         // falls back to the default model's animation file / bones, so it must
         // be ready before the rest of the sync.
         state.allowedModels.addAll(ServerModelManager.OPEN_YSM_SYNC_INFO.values());
+        // 比较**编码后**的内部 id：info.getModelId() 是注册表里的内部 id（名字不是安全名时
+        // 形如 "_name_<hex>"），拿配置里的原始字符串去比会永远不相等 —— default 就再也
+        // 不会被排到索引最前。渲染兜底仍是独立的内置 default，不由此配置决定。
         state.allowedModels.sort(Comparator.comparingInt(
-            (OpenYsmSyncInfo info) -> Config.DEFAULT_MODEL_ID.equals(info.getModelId()) ? 0 : 1));
+            (OpenYsmSyncInfo info) -> isDefaultModelEntry(info) ? 0 : 1));
         // 索引已按缓存文件内容去重（cacheFileName 即 hash1+hash2 十六进制拼接），
         // (hash1, hash2) 在索引内唯一。预建哈希索引把 findAllowedModel 从 O(n) 降到
         // O(1)，大库全 miss 首同步不再做 ~n² 次线性扫描。
@@ -271,6 +270,7 @@ public final class OpenYsmModelSyncServer {
 
     public static void clear(UUID playerId) {
         if (playerId != null) {
+            RESYNC_REQUESTS.clear(playerId);
             SYNC_STATES.remove(playerId);
             EXPECTED_VERSION.clear(playerId);
             LEGACY_TRANSFERS.remove(playerId);

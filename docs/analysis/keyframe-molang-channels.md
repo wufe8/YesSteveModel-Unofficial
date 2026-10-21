@@ -25,7 +25,7 @@
 - 变量读写走 `OpenYsmScriptScope`：读复用控制器求值器的 `Context`（`q.*`/`ysm.*`/`ctrl.*`
   那几百行查询），写与控制器的 `onEntry/onExit` 同一条路径（`MolangPhysicsRuntime.setVariable`
   + `v.roaming.*` 回写 `PENDING_ROAMING`）。脚本写的 `v.*` 当帧就对骨骼可见。
-- 尚未接入的是 `@sync` + `ysm.sync(...)`：需要新网络包（三期）。
+- `@sync` + `ysm.sync(...)` 已接入网络链路，见下文“`@sync`（主动同步）”与[同步机制](<ysm-sync.md>)。
 - 提醒：`ysm.keyboard(...)` 读的是**本地**键盘。脚本对每个渲染中的玩家模型都会跑，
   所以远端玩家的键盘类脚本会跟着本地按键走 —— 已知偏差，等真的遇到再说。
 - 性能：`@player_update` 的脚本每次调用都会重新解析（解释器没有 AST 缓存）。事件脚本通常只有
@@ -128,7 +128,7 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
 控制器/脚本用求值器的 `functionValue`）：客户端 → `C2SMolangSync`(id 28) → 服务端广播
 `S2CMolangSync`(id 29) → 各客户端按"发起者 + 包里带的模型"跑该模型的 `sync` 事件脚本
 （`OpenYsmScriptRuntime.runSyncScripts`）。发起后立刻返回；因为 wiki 说"开销相当大"，
-客户端侧做了每秒一次的限流（`MolangSyncSender`）。
+客户端按参数去重/限流（`MolangSyncSender`），服务端另设总量上限；具体窗口和预算见[同步机制](<ysm-sync.md>)。
 
 ## 输入类函数：键码是 GLFW 的
 

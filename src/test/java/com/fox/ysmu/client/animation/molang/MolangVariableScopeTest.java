@@ -179,7 +179,7 @@ class MolangVariableScopeTest {
 
     @Test
     void renderMirroringDoesNotMarkDefaultsExplicitOrOverwriteOwnedAliases() {
-        ResourceLocation model = com.fox.ysmu.client.model.CustomPlayerModel.DEFAULT_MAIN_MODEL;
+        ResourceLocation model = com.fox.ysmu.client.model.CustomPlayerModel.getDefaultMainModel();
         RoamingVariables.setModelRoamingDefault(model, "roaming.mirror_probe", 2.0d);
         com.fox.ysmu.client.entity.CustomPlayerEntity entity = new com.fox.ysmu.client.entity.CustomPlayerEntity();
         software.bernie.geckolib3.core.processor.AnimationProcessor<com.fox.ysmu.client.entity.CustomPlayerEntity>

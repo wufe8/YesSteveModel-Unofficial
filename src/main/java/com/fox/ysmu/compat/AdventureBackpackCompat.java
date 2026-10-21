@@ -104,36 +104,41 @@ public final class AdventureBackpackCompat {
 
             // Render the wearable model at the player's position
             GL11.glPushMatrix();
+            GL11.glPushAttrib(GL11.GL_ENABLE_BIT);
+            try {
 
-            // Translate to player position (same as vanilla RenderLivingEntity)
-            GL11.glTranslated(x, y, z);
-            GL11.glRotatef(180.0F - player.renderYawOffset, 0.0F, 1.0F, 0.0F);
+                // Translate to player position (same as vanilla RenderLivingEntity)
+                GL11.glTranslated(x, y, z);
+                GL11.glRotatef(180.0F - player.renderYawOffset, 0.0F, 1.0F, 0.0F);
 
-            // Minecraft model coordinate system flip (vanilla RenderLivingEntity does this)
-            GL11.glScalef(-1.0F, -1.0F, 1.0F);
+                // Minecraft model coordinate system flip (vanilla RenderLivingEntity does this)
+                GL11.glScalef(-1.0F, -1.0F, 1.0F);
 
-            // Shift wearable up by about half a player model height (~1 GL unit)
-            // so the backpack sits on the back (torso area) instead of at the feet.
-            // 玩家朝向为基准 分别offset: 左右, 上下, 前后, 且均正负符号翻转
-            GL11.glTranslatef(0.0F, -1.5F, -0.1F);
+                // Shift wearable up by about half a player model height (~1 GL unit)
+                // so the backpack sits on the back (torso area) instead of at the feet.
+                // 玩家朝向为基准 分别offset: 左右, 上下, 前后, 且均正负符号翻转
+                GL11.glTranslatef(0.0F, -1.5F, -0.1F);
 
-            // Apply sneak offset (player height adjustment when sneaking)
-            float sneakOffset = player.isSneaking() ? 0.125F : 0.0F;
-            GL11.glTranslatef(0.0F, sneakOffset, 0.0F);
+                // Apply sneak offset (player height adjustment when sneaking)
+                float sneakOffset = player.isSneaking() ? 0.125F : 0.0F;
+                GL11.glTranslatef(0.0F, sneakOffset, 0.0F);
 
-            // Bind wearable texture
-            Minecraft.getMinecraft().renderEngine.bindTexture(texture);
+                // Bind wearable texture
+                Minecraft.getMinecraft().renderEngine.bindTexture(texture);
 
-            GL11.glEnable(GL12.GL_RESCALE_NORMAL);
+                GL11.glEnable(GL12.GL_RESCALE_NORMAL);
 
-            // Apply configurable scale
-            float scale = (float) com.fox.ysmu.Config.WEARABLE_RENDER_SCALE;
-            GL11.glScalef(scale, scale, scale);
+                // Apply configurable scale
+                float scale = (float) com.fox.ysmu.Config.WEARABLE_RENDER_SCALE;
+                GL11.glScalef(scale, scale, scale);
 
-            // Render the model
-            model.render(player, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0625F);
+                // Render the model
+                model.render(player, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0625F);
 
-            GL11.glPopMatrix();
+            } finally {
+                GL11.glPopAttrib();
+                GL11.glPopMatrix();
+            }
 
         } catch (Exception ignored) {
             // Reflection or rendering failed silently

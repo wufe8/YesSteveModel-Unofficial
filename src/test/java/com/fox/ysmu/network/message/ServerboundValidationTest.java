@@ -23,6 +23,35 @@ class ServerboundValidationTest {
     }
 
     @Test
+    void legacyClientboundFileRejectsForgedAndTruncatedLengthsBeforeAllocation() {
+        for (int length : new int[] { -1, Integer.MAX_VALUE, 2 * 1024 * 1024 + 1, 48 }) {
+            ByteBuf buf = Unpooled.buffer().writeInt(length);
+            assertThrows(IllegalArgumentException.class, () -> new SendModelFile().fromBytes(buf));
+        }
+        ByteBuf oversized = Unpooled.buffer().writeInt(2 * 1024 * 1024 + 1)
+            .writeZero(2 * 1024 * 1024 + 1);
+        assertThrows(IllegalArgumentException.class, () -> new SendModelFile().fromBytes(oversized));
+    }
+
+    @Test
+    void legacyClientboundFilePreservesNormalAndPasswordPayloads() {
+        for (int length : new int[] { 0, 48, 1900 * 1024 }) {
+            byte[] data = new byte[length];
+            if (length > 0) data[length - 1] = 42;
+            ByteBuf encoded = Unpooled.buffer();
+            new SendModelFile(data).toBytes(encoded);
+            SendModelFile decoded = new SendModelFile();
+            decoded.fromBytes(encoded);
+            ByteBuf roundTrip = Unpooled.buffer();
+            decoded.toBytes(roundTrip);
+            assertEquals(length, roundTrip.readInt());
+            byte[] actual = new byte[length];
+            roundTrip.readBytes(actual);
+            assertArrayEquals(data, actual);
+        }
+    }
+
+    @Test
     void forgedLegacyCountIsRejectedBeforeAllocatingTheArray() {
         ByteBuf buf = Unpooled.buffer().writeInt(100000);
         assertThrows(IllegalArgumentException.class, () -> new SyncModelFiles().fromBytes(buf));

@@ -302,6 +302,19 @@ public class ClientModelManager {
         new java.util.concurrent.atomic.AtomicLong();
     /** Main-thread clear must finish before any bundle from that generation is published. */
     private static volatile long clearedApplyGeneration;
+    /**
+     * The builtin fallback model, loaded straight from {@code builtin/default} on disk.
+     *
+     * <p>It is the only model without an encrypted client-cache entry, so once it is
+     * idle-evicted it can never be restored — it must stay pinned (see
+     * {@link #isDefaultModelBundle}).
+     */
+    public static final String BUILTIN_FALLBACK_MODEL_ID = "default";
+    /** Last generation for which a bundle was dropped by the apply gate (one warning per generation). */
+    private static volatile long lastWarnedBlockedGeneration = -1L;
+    /** Generation whose gate is currently observed closed, and how many frames it stayed closed. */
+    private static volatile long blockedGeneration = -1L;
+    private static volatile int blockedFrames;
 
     public static boolean isApplyGenerationReady(long generation) {
         return generation == APPLY_GENERATION.get() && generation == clearedApplyGeneration;
@@ -354,8 +367,23 @@ public class ClientModelManager {
             return false;
         }
         ResourceLocation base = ModelIdUtil.getModelIdFromSubId(modelId);
-        return ysmu.MODID.equals(base.getResourceDomain())
-            && Config.DEFAULT_MODEL_ID.equals(base.getResourcePath());
+        if (!ysmu.MODID.equals(base.getResourceDomain())) {
+            return false;
+        }
+        String path = base.getResourcePath();
+        // 1) 内置兜底模型（builtin/default）：它是从磁盘直接读进来的，**没有**加密的
+        //    客户端缓存，被空闲回收之后就再也恢复不了（GeckoLib 找不到 geo 直接抛
+        //    GeoModelException，玩家则永久隐形）。它必须**始终**被钉住 —— 以前这里
+        //    只比较配置里的 DefaultModelId，用户把默认模型改名（名字带空格时会被
+        //    编码成 "_name_<hex>"）之后，兜底模型就再也没人钉 → 30s 空闲后被驱逐
+        //    → 无法恢复。此路径与 issue #4 一并排查，但尚未确认是报告的根因。
+        if (BUILTIN_FALLBACK_MODEL_ID.equals(path)) {
+            return true;
+        }
+        // 2) 配置里的默认模型：比较**编码后**的内部 id —— 原始配置值一旦不是安全名
+        //    （含空格/大写/非 ASCII），注册表里的 id 就是 "_name_<hex>"，拿原始值去比
+        //    会永远不相等，那样这个模型就不会被优先 apply、不被钉住。
+        return Config.getDefaultModelInternalId().equals(path);
     }
 
     /**
@@ -417,8 +445,24 @@ public class ClientModelManager {
     /** Called once from RenderTickEvent.START, never through Minecraft's inline main-thread executor. */
     public static void processPendingAppliesForFrame() {
         if (!isApplyGenerationReady(currentApplyGeneration())) {
+            // 闸门关着 = apply 队列永远排不空 = 一个模型都注册不上（列表空 + 人不可见）。
+            // 清空屏障只占一两帧，所以先数帧再决定要不要报警（约 2 秒、60fps 下 120 帧才算异常）。
+            long generation = APPLY_GENERATION.get();
+            if (blockedGeneration != generation) {
+                blockedGeneration = generation;
+                blockedFrames = 0;
+            }
+            blockedFrames++;
+            if (blockedFrames == 120) {
+                ysmu.LOG.warn(
+                    "[YSMU-APPLY] apply pipeline still blocked after {} frames (generation {}, cleared {}) — "
+                        + "models cannot be applied; check for 'Failed to clear YSM models before sync'",
+                    blockedFrames, generation, clearedApplyGeneration);
+            }
             return;
         }
+        blockedGeneration = -1;
+        blockedFrames = 0;
         long started = System.nanoTime();
         int applied = APPLY_QUEUE.drain(APPLY_BATCH_PER_FRAME, APPLY_BUDGET_NANOS, bundle -> {
             // 使用点再查一次代际：解析在旧代际上完成、入队却落在新一轮同步之后时，
@@ -593,6 +637,16 @@ public class ClientModelManager {
 
     private static void applyPreParsed(PreParsedModelBundle bundle, boolean rebuildPacks) {
         if (!isApplyGenerationReady(bundle.applyGeneration)) {
+            // 排查 issue #3/#4 时补充诊断：静默丢弃时既没有日志，也没有
+            // "模型注册不上"的任何提示，用户只看到"模型不见了"。这里补一条 WARN
+            // （同一代际只打一次，避免刷屏）。
+            if (lastWarnedBlockedGeneration != bundle.applyGeneration) {
+                lastWarnedBlockedGeneration = bundle.applyGeneration;
+                ysmu.LOG.warn(
+                    "[YSMU-APPLY] dropped bundle {} (generation {} != current {}) — the apply pipeline is blocked; "
+                        + "no model is registered until the pending clear completes",
+                    bundle.modelId, bundle.applyGeneration, APPLY_GENERATION.get());
+            }
             return;
         }
         ResourceLocation modelId = bundle.modelId;
@@ -1359,29 +1413,35 @@ public class ClientModelManager {
     }
 
     public static void loadDefaultModel() {
+        // 加载**内置兜底模型**（builtin/default）：它直接从磁盘读，没有加密的客户端
+        // 缓存，被空闲回收后无法恢复 → 必须常驻（AssetManager.tick() 会把它钉住）。
+        // 注意：这里刻意**不**跟着 Config.DefaultModelId 走 —— 配置里的默认模型是
+        // 「玩家进游戏时用哪个模型」，而这里是「渲染兜底」，两者不是一回事。
+        final String defaultName = BUILTIN_FALLBACK_MODEL_ID;
+        final String defaultId = BUILTIN_FALLBACK_MODEL_ID;
         // Try old format (FolderFormat) first, then fallback to new OpenYSM format.
         ModelData data = null;
         try {
-            data = FolderFormat.getModelData(ServerModelManager.CUSTOM, "default");
+            data = FolderFormat.getModelData(ServerModelManager.CUSTOM, defaultName);
         } catch (IOException e) {
-            ysmu.LOG.info("Legacy default model not found at CUSTOM/default, trying OpenYSM format...");
+            ysmu.LOG.info("Legacy default model not found at CUSTOM/{}, trying OpenYSM format...", defaultName);
         }
         if (data == null) {
             // Fallback: new OpenYSM format at BUILT/default/
-            Path builtinDefault = ServerModelManager.BUILT.resolve("default");
+            Path builtinDefault = ServerModelManager.BUILT.resolve(defaultName);
             if (Files.isDirectory(builtinDefault)) {
                 try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(builtinDefault)) {
                     RawYsmModel raw = deserializer.deserialize();
-                    raw.modelId = "default";
+                    raw.modelId = defaultId;
                     // Record default_texture for the builtin default model (loaded
                     // outside the OpenYSM sync path that calls registerExtraWheel).
                     if (StringUtils.isNotBlank(raw.properties.defaultTexture)) {
                         DEFAULT_TEXTURE.put(
-                            new ResourceLocation(ysmu.MODID, "default/main"),
+                            ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, defaultId)),
                             raw.properties.defaultTexture);
                     }
                     if (RawYsmModelAdapter.isBridgeable(raw)) {
-                        data = RawYsmModelAdapter.toLegacyModelData(raw, "default");
+                        data = RawYsmModelAdapter.toLegacyModelData(raw, defaultId);
                     }
                 } catch (Exception e2) {
                     ysmu.LOG.warn("Failed to load default model from OpenYSM format", e2);
@@ -1455,24 +1515,47 @@ public class ClientModelManager {
         SESSION_LIVE.set(true);
         java.util.concurrent.CompletableFuture<Void> ready = new java.util.concurrent.CompletableFuture<>();
         Minecraft.getMinecraft().func_152344_a(() -> {
-            if (generation != APPLY_GENERATION.get()) {
-                ready.cancel(false);
-                return;
-            }
-            try {
-                clearRuntimeModelCaches();
-                if (generation != APPLY_GENERATION.get()) {
-                    ready.cancel(false);
-                    return;
-                }
-                clearedApplyGeneration = generation;
-                ready.complete(null);
-            } catch (Throwable t) {
-                ready.completeExceptionally(t);
-                ysmu.LOG.warn("Failed to clear YSM models before sync", t);
-            }
+            runPrepareClear(generation);
+            // 无论是被更新的一轮同步顶掉，还是清空本身抛了异常，都**完成** future：
+            // 调用方挂在 thenRun 上（OpenYSM 握手要回复版本号、legacy 路径要发出同步
+            // 请求），cancel 会跳过这条链。本次握手于是不会继续；新一轮握手能否
+            // 恢复还取决于其自身是否完成。此路径尚未确认为 issue #3 的根因。
+            // 旧代际的解析结果由 applyPreParsed 的代际检查丢弃，所以让握手继续是安全的。
+            ready.complete(null);
         });
         return ready;
+    }
+
+    /**
+     * The main-thread half of {@link #prepareForNewSync()}: clears the runtime caches for
+     * {@code generation} and opens the apply gate for it.
+     *
+     * <p>Package-private so the supersede/gate semantics can be unit tested without a
+     * running Minecraft (the real entry point needs the client scheduler).
+     *
+     * @return true when this generation performed the clear, false when it was superseded
+     *         by a newer sync/disconnect (the newer generation owns the caches then)
+     */
+    static boolean runPrepareClear(long generation) {
+        if (generation != APPLY_GENERATION.get()) {
+            // 被更新的一轮同步/断线顶掉了：缓存归新代际管，这里什么都不做。
+            ysmu.LOG.info("[YSMU-SYNC] prepareForNewSync superseded (generation {} -> {})",
+                generation, APPLY_GENERATION.get());
+            return false;
+        }
+        try {
+            clearRuntimeModelCaches();
+        } catch (Throwable t) {
+            ysmu.LOG.warn("Failed to clear YSM models before sync", t);
+        } finally {
+            // 清空即使抛异常也必须把闸门打开：clearedApplyGeneration 不跟上
+            // APPLY_GENERATION 的话，apply 管线会**永久**瘫痪（一个模型都注册不上，
+            // 而且没有任何日志）。见 isApplyGenerationReady。
+            if (generation == APPLY_GENERATION.get()) {
+                clearedApplyGeneration = generation;
+            }
+        }
+        return true;
     }
 
     public static void sendSyncModelMessage() {
@@ -2479,6 +2562,9 @@ public class ClientModelManager {
                     // 期间已经开始新一轮同步（重连/重载），新缓存归它管，不要清。
                     return;
                 }
+                com.fox.ysmu.client.animation.RemotePlayerAnimationQueries.clear();
+                com.fox.ysmu.client.animation.RemotePlayerMotionStates.clear();
+                com.fox.ysmu.data.NPCData.clear();
                 clearConnectionState();
                 clearRuntimeModelCaches();
                 if (APPLY_GENERATION.get() == sessionGeneration) {

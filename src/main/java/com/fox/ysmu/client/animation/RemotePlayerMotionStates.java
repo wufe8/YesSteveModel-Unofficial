@@ -20,6 +20,10 @@ public final class RemotePlayerMotionStates {
         }
     }
 
+    public static void remove(UUID playerId) {
+        if (playerId != null) STATES.remove(playerId);
+    }
+
     public static void clear() {
         STATES.clear();
     }

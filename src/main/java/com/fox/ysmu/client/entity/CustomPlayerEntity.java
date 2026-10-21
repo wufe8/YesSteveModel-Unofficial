@@ -29,8 +29,9 @@ import software.bernie.geckolib3.util.GeckoLibUtil;
 public class CustomPlayerEntity implements IAnimatable {
 
     private final AnimationFactory factory = GeckoLibUtil.createFactory(this, true);
-    private ResourceLocation mainModel = CustomPlayerModel.DEFAULT_MAIN_MODEL;
-    private ResourceLocation texture = CustomPlayerModel.DEFAULT_TEXTURE;
+    // 未设置模型/贴图时使用内置渲染兜底，与配置里的玩家初始模型分开。
+    private ResourceLocation mainModel;
+    private ResourceLocation texture;
     private String previewAnimation = "";
     /** Base animation name for GUI preview (set by ModelButton, consumed by predicateMain). */
     private String guiBaseAnimation = "";
@@ -162,20 +163,26 @@ public class CustomPlayerEntity implements IAnimatable {
             });
     }
 
+    /** 当前模型 id；未显式设置时回落到内置渲染兜底。 */
+    private ResourceLocation mainModelId() {
+        return this.mainModel != null ? this.mainModel : CustomPlayerModel.getDefaultMainModel();
+    }
+
     public ResourceLocation getMainModel() {
+        ResourceLocation current = mainModelId();
         if (GeckoLibCache.getInstance()
             .getGeoModels()
-            .containsKey(this.mainModel)) {
-            return mainModel;
+            .containsKey(current)) {
+            return current;
         }
         // Lazy-load geo model from encrypted cache before falling back to default
-        com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(this.mainModel);
+        com.fox.ysmu.client.ClientModelManager.ensureGeoModelLoaded(current);
         if (GeckoLibCache.getInstance()
             .getGeoModels()
-            .containsKey(this.mainModel)) {
-            return mainModel;
+            .containsKey(current)) {
+            return current;
         }
-        return CustomPlayerModel.DEFAULT_MAIN_MODEL;
+        return CustomPlayerModel.getDefaultMainModel();
     }
 
     public void setMainModel(ResourceLocation mainModel) {
@@ -183,10 +190,11 @@ public class CustomPlayerEntity implements IAnimatable {
     }
 
     public ResourceLocation getAnimation() {
+        ResourceLocation current = mainModelId();
         if (GeckoLibCache.getInstance()
             .getAnimations()
-            .containsKey(this.mainModel)) {
-            return mainModel;
+            .containsKey(current)) {
+            return current;
         }
         // 主模型动画缺失（已闲置卸载 / 后台加载中 / 该模型确实无动画）。
         // 绝不能 fallback 到内置默认模型动画：默认动画的骨架与当前模型不同，
@@ -195,13 +203,14 @@ public class CustomPlayerEntity implements IAnimatable {
         // 改为返回 mainModel：缺失动画会被 GeckoLib 安全跳过（仅 warn），并触发
         // 后台重载（ensureAnimationsLoaded → AssetManager.anim().get()），
         // 就绪后下一帧恢复正常播放。
-        com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(this.mainModel);
-        return this.mainModel;
+        com.fox.ysmu.client.ClientModelManager.ensureAnimationsLoaded(current);
+        return current;
     }
 
     public float getHeightScale() {
-        if (ClientModelManager.SCALE_INFO.containsKey(this.mainModel)) {
-            return ClientModelManager.SCALE_INFO.get(this.mainModel)
+        ResourceLocation current = mainModelId();
+        if (ClientModelManager.SCALE_INFO.containsKey(current)) {
+            return ClientModelManager.SCALE_INFO.get(current)
                 .left()
                 .floatValue();
         }
@@ -209,8 +218,9 @@ public class CustomPlayerEntity implements IAnimatable {
     }
 
     public float getWidthScale() {
-        if (ClientModelManager.SCALE_INFO.containsKey(this.mainModel)) {
-            return ClientModelManager.SCALE_INFO.get(this.mainModel)
+        ResourceLocation current = mainModelId();
+        if (ClientModelManager.SCALE_INFO.containsKey(current)) {
+            return ClientModelManager.SCALE_INFO.get(current)
                 .right()
                 .floatValue();
         }
@@ -232,7 +242,7 @@ public class CustomPlayerEntity implements IAnimatable {
     }
 
     public ResourceLocation getTexture() {
-        return texture;
+        return texture != null ? texture : CustomPlayerModel.getDefaultTexture();
     }
 
     public void setTexture(ResourceLocation texture) {

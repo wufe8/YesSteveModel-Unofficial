@@ -45,6 +45,8 @@ public class ModelButton extends GuiButton {
     // Cached DynamicTexture locations for foreground/background
     private ResourceLocation fgTextureLocation;
     private ResourceLocation bgTextureLocation;
+    private DynamicTexture fgTexture;
+    private DynamicTexture bgTexture;
 
     // Off-screen framebuffer cache for model preview — renders once, reuses texture.
     private final com.fox.ysmu.util.FboCache fboCache = new com.fox.ysmu.util.FboCache();
@@ -162,12 +164,16 @@ public class ModelButton extends GuiButton {
         // per model button that has GUI images (VRAM growth that never shrinks).
         Minecraft mc = Minecraft.getMinecraft();
         if (fgTextureLocation != null) {
-            mc.getTextureManager().deleteTexture(fgTextureLocation);
+            com.fox.ysmu.client.texture.GuiDynamicTextureRelease.release(
+                mc.getTextureManager(), fgTextureLocation, fgTexture);
             fgTextureLocation = null;
+            fgTexture = null;
         }
         if (bgTextureLocation != null) {
-            mc.getTextureManager().deleteTexture(bgTextureLocation);
+            com.fox.ysmu.client.texture.GuiDynamicTextureRelease.release(
+                mc.getTextureManager(), bgTextureLocation, bgTexture);
             bgTextureLocation = null;
+            bgTexture = null;
         }
         modelCacheDirty = true;
     }
@@ -183,6 +189,8 @@ public class ModelButton extends GuiButton {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(rawImage.data));
             if (img != null) {
                 DynamicTexture dynTex = new DynamicTexture(img);
+                if ("fg".equals(suffix)) fgTexture = dynTex;
+                else bgTexture = dynTex;
                 return mc.getTextureManager().getDynamicTextureLocation(key, dynTex);
             }
         } catch (IOException e) {
@@ -379,14 +387,19 @@ public class ModelButton extends GuiButton {
         }
 
         // Render text
-        List<String> split = font.listFormattedStringToWidth(this.displayString, 45);
+        // 卡片底部只有 20px（两行）。旧代码用 listFormattedStringToWidth 排版后**只画前两行**，
+        // 多出来的行直接被丢掉 —— 带空格的模型名会被切成更多行，于是"名字显示不全"；
+        // 而且它只在空格处断行，中文名（一整段没有空格）会超出卡片宽度。
+        // 现在统一走 GuiTextLayout：过宽的词按字符切，放不下时末行加 "..."。
+        List<String> split = com.fox.ysmu.util.GuiTextLayout.wrap(
+            font::getStringWidth, this.displayString, 45, 2);
         if (split.size() > 1) {
             this.drawCenteredString(font, split.get(0), this.xPosition + this.width / 2,
                 this.yPosition + this.height - 19, 0xF3EFE0);
             this.drawCenteredString(font, split.get(1), this.xPosition + this.width / 2,
                 this.yPosition + this.height - 10, 0xF3EFE0);
-        } else {
-            this.drawCenteredString(font, this.displayString, this.xPosition + this.width / 2,
+        } else if (!split.isEmpty()) {
+            this.drawCenteredString(font, split.get(0), this.xPosition + this.width / 2,
                 this.yPosition + this.height - 15, 0xF3EFE0);
         }
 

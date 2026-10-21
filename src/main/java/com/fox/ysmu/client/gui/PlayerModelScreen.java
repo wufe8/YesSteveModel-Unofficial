@@ -121,6 +121,11 @@ public class PlayerModelScreen extends GuiScreen {
         // clearWidgets() -> buttonList.clear()
         this.buttonList.clear();
         if (ClientModelManager.MODELS.isEmpty() && !this.requestedModelSync) {
+            // 模型列表为空 → 向服务端要一次重新同步。
+            // 注意：sendSyncModelMessage() 走的是 legacy 的 md5 列表包，服务端在
+            // OpenYSM 协议下以前会直接丢弃它（没有 legacy transfer），于是这个
+            // "自愈"重试会清空运行时缓存却收不到回复。此路径与 issue #3 一并排查；服务端现在
+            // 会用一次新的 OpenYSM 握手回应这个请求。
             this.requestedModelSync = true;
             ClientModelManager.sendSyncModelMessage();
         }
@@ -334,6 +339,21 @@ public class PlayerModelScreen extends GuiScreen {
         String pageInfo = String.format("%d/%d", page + 1, this.maxPage + 1);
         this.drawString(fontRendererObj, pageInfo, x + 138 + (282 - fontRendererObj.getStringWidth(pageInfo)) / 2, y + 223 - fontRendererObj.FONT_HEIGHT / 2, 0xF3EFE0);
 
+        // 列表为空时给一句人话提示：以前只有一个空白面板，用户既看不出"在同步"，
+        // 也看不出同步是否失败；提示可帮助补充 issue #3/#4 这类报告。
+        if (ClientModelManager.MODELS.isEmpty() && !showingPacks) {
+            String hint = ClientModelManager.SYNC_IN_PROGRESS
+                ? I18n.format("gui.yes_steve_model.model_manage.syncing")
+                : I18n.format("gui.yes_steve_model.model_manage.empty");
+            List<String> hintLines = com.fox.ysmu.util.GuiTextLayout.wrap(
+                fontRendererObj::getStringWidth, hint, 270, 12);
+            int hintY = y + 60;
+            for (String line : hintLines) {
+                this.drawCenteredString(fontRendererObj, line, x + 138 + 282 / 2, hintY, 0x777777);
+                hintY += fontRendererObj.FONT_HEIGHT + 1;
+            }
+        }
+
         // 预览刷新状态单独一行、放在版本号上面：两者原本拼在一行（"1.7.10-<版本> | preview FBO .."），
         // 从左下角一直伸到"前一页/后一页"按钮底下，被按钮挡住后恰好把频率读数盖掉。
         // 频率是这一页最常看的一个数，所以它单独占一行（约 20 字符，不会碰到按钮）。
@@ -446,7 +466,7 @@ public class PlayerModelScreen extends GuiScreen {
         }
     }
 
-    /** Releases off-screen FBOs of all preview buttons (ModelButton / TextureButton).
+    /** Releases off-screen FBOs and dynamic textures owned by the current buttons.
      *  Called before {@code buttonList.clear()} on page flips and on screen close. */
     private void disposePreviewButtons() {
         for (Object btn : this.buttonList) {
@@ -454,6 +474,8 @@ public class PlayerModelScreen extends GuiScreen {
                 mb.dispose();
             } else if (btn instanceof com.fox.ysmu.client.gui.button.TextureButton tb) {
                 tb.dispose();
+            } else if (btn instanceof PackFolderButton pb) {
+                pb.dispose();
             }
         }
     }
@@ -491,6 +513,7 @@ public class PlayerModelScreen extends GuiScreen {
         private final ClientModelManager.ClientPackData packData;
         @Nullable
         private ResourceLocation iconLocation;
+        private net.minecraft.client.renderer.texture.DynamicTexture iconTexture;
         /** Result of probing for ysm-pack.png on disk. Probed once (null = not yet):
          *  this fallback runs per visible pack button per frame, and the File.isFile()
          *  stat showed up in the per-frame GUI path of a client profile. The pack
@@ -505,6 +528,16 @@ public class PlayerModelScreen extends GuiScreen {
             this.packName = packName;
             this.modelCount = modelCount;
             this.packData = packData;
+        }
+
+        /** Releases only this button's dynamic icon, never the shared fallback icon. */
+        public void dispose() {
+            if (iconLocation != null) {
+                com.fox.ysmu.client.texture.GuiDynamicTextureRelease.release(
+                    Minecraft.getMinecraft().getTextureManager(), iconLocation, iconTexture);
+                iconLocation = null;
+                iconTexture = null;
+            }
         }
 
         @Override
@@ -532,9 +565,9 @@ public class PlayerModelScreen extends GuiScreen {
                     try {
                         java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(bis);
                         if (img != null) {
+                            iconTexture = new net.minecraft.client.renderer.texture.DynamicTexture(img);
                             iconLocation = mc.getTextureManager().getDynamicTextureLocation(
-                                "ysmu_pack_" + packName,
-                                new net.minecraft.client.renderer.texture.DynamicTexture(img));
+                                "ysmu_pack_" + packName, iconTexture);
                         }
                     } catch (java.io.IOException ignored) {}
                 }
@@ -556,9 +589,9 @@ public class PlayerModelScreen extends GuiScreen {
                         if (iconLocation == null) {
                             java.awt.image.BufferedImage img = javax.imageio.ImageIO.read(packIconFile);
                             if (img != null) {
+                                iconTexture = new net.minecraft.client.renderer.texture.DynamicTexture(img);
                                 iconLocation = mc.getTextureManager().getDynamicTextureLocation(
-                                    "ysmu_pack_fs_" + packName,
-                                    new net.minecraft.client.renderer.texture.DynamicTexture(img));
+                                    "ysmu_pack_fs_" + packName, iconTexture);
                             }
                         }
                         if (iconLocation != null) {
@@ -594,13 +627,15 @@ public class PlayerModelScreen extends GuiScreen {
 
             // 包名
             FontRenderer font = mc.fontRenderer;
-            List<String> split = font.listFormattedStringToWidth(this.displayString, 45);
+            // 同 ModelButton：两行放不下时末行加 "..."，过宽的包名按字符切而不是溢出卡片。
+            List<String> split = com.fox.ysmu.util.GuiTextLayout.wrap(
+                font::getStringWidth, this.displayString, 45, 2);
             int textY = this.yPosition + this.height - 28;
             if (split.size() > 1) {
                 this.drawCenteredString(font, split.get(0), cx, textY, 0xF3EFE0);
                 this.drawCenteredString(font, split.get(1), cx, textY + 10, 0xF3EFE0);
-            } else {
-                this.drawCenteredString(font, this.displayString, cx, textY + 5, 0xF3EFE0);
+            } else if (!split.isEmpty()) {
+                this.drawCenteredString(font, split.get(0), cx, textY + 5, 0xF3EFE0);
             }
 
             // 模型数量

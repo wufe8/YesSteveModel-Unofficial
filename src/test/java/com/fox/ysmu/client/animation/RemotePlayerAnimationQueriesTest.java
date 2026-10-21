@@ -14,6 +14,30 @@ import org.junit.jupiter.api.Test;
 class RemotePlayerAnimationQueriesTest {
 
     @Test
+    @SuppressWarnings("unchecked")
+    void guestRemovalPreservesOtherPlayers() throws Exception {
+        java.util.UUID leaving = java.util.UUID.randomUUID();
+        java.util.UUID staying = java.util.UUID.randomUUID();
+        for (Class<?> cache : new Class<?>[] {RemotePlayerAnimationQueries.class, RemotePlayerMotionStates.class}) {
+            java.lang.reflect.Field field = cache.getDeclaredField("STATES");
+            field.setAccessible(true);
+            java.util.Map<java.util.UUID, Object> states = (java.util.Map<java.util.UUID, Object>) field.get(null);
+            try {
+                states.put(leaving, (byte) 1);
+                states.put(staying, (byte) 2);
+                cache.getMethod("remove", java.util.UUID.class).invoke(null, leaving);
+                org.junit.jupiter.api.Assertions.assertFalse(states.containsKey(leaving));
+                assertEquals((byte) 2, states.get(staying));
+                cache.getMethod("remove", java.util.UUID.class).invoke(null, leaving);
+                assertEquals((byte) 2, states.get(staying));
+            } finally {
+                states.remove(leaving);
+                states.remove(staying);
+            }
+        }
+    }
+
+    @Test
     void stationaryPlayerHasZeroSpeed() {
         assertEquals(0.0F, RemotePlayerAnimationQueries.realGroundSpeed(0.0d, 0.0d), 0.0001F);
     }

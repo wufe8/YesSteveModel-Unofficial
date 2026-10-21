@@ -15,10 +15,9 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 **最新版本：`1.9a1-08.1`**（`perf/previewUI` 分支）
 
 > mod 版本号与 jar 名由 git tag 自动生成（`Tags.VERSION`），启动日志里会打印
-> `I am ysmu at version …`。需要人工维护的时效信息只有三处：本行、下面的变更历史表、
-> 以及「已知问题」小节。
+> `I am ysmu at version …`。发布时维护本行、变更历史、已知问题与活跃分支名。
 
-> 本次更新调整了模型缓存身份：首次启动会重建服务端模型缓存，首次同步会重新下载模型。之后源文件和序列化配置不变时仍可命中缓存。
+> `1.9a1-08.1` 调整了模型缓存身份：从更早版本升级时，首次启动会重建服务端模型缓存，首次同步会重新下载模型。之后源文件和序列化配置不变时仍可命中缓存。
 
 > [NOTE]
 > 项目仍处于 **Alpha 阶段**，部分功能可能不稳定, 欢迎提交 Issue
@@ -40,8 +39,8 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
   - Tinkers' Construct — 十字弩状态检测
   - [Baubles-Expanded](https://github.com/GTNewHorizons/Baubles-Expanded)（GTNH 随包自带）— `ysm.has_any_curios` 的 1.7.10 实现：Curios 在 1.7.10 上不存在，用其前身 Baubles 的槽位代替
 - **GTNH 兼容性**:
-  - GTNH 2.8.4 — 已测试
-  - GTNH 2.9.0-beta2 — 已测试
+  - GTNH 2.9.0-rc1 — 已测试可用
+  - GTNH 2.9.0-beta2、2.8.4 — 先前已测试
   - GTNH 2.7.3 — 理论兼容（GTNHLib 0.5.23 ≥ 0.5.14），未实际测试
   - GTNH ≤ 2.6.x — 不兼容（GTNHLib < 0.5.14 缺少 `EventBusSubscriber`）
 
@@ -157,7 +156,7 @@ git checkout perf/previewUI
 
 > 已修复的问题在下一次 release 时删除；机制与设计取舍的详细说明见 `docs/analysis/`。
 
-- 多人服务器未完整实测：集成服客人登出、双客户端同模型同时播放轮盘/CAP 音效 —— 可能出现会话误清理或互相打断。
+- 服务端运行已确认正常，但多人特定交互尚未完整验收：LAN 客人登出时其他玩家的飞行动画、双客户端同模型轮盘/CAP 音效隔离仍需实测。
 - 载具（`files.vehicles`）只解析、未接渲染：模型写了载具没有替换效果。
 - GUI 预览不执行动画控制脚本，且预览是水平镜像渲染（左右与游戏内相反）。
 - 本机轮盘锁对远端 EEP 动画的移动打断仍是全局行为。
@@ -171,7 +170,7 @@ git checkout perf/previewUI
 - `[SKIP]` WebP 解码器基于外部实现，未走纯 ImageIO。
 - `[SKIP]` 首次更新构建后启动偶发崩溃（SDL3.dll `0xc000041d`），重开即可，属 lwjgl3ify 上游问题。
 - `[NOTE]` Java 25 + ZGC 下 Distant Horizons 等可能导致 DirectBuffer 泄漏（有看门狗兜底，可关）。
-- `[NOTE]` 最新 Angelica（2.1.50）会让模型受原版亮度影响（亮度滑条调到 100）。
+- `[NOTE]` Angelica 2.1.50 环境曾观察到模型受原版亮度影响（可将亮度滑条调到 100）；不据此推断其他版本的表现。
 
 **机制与设计取舍**见 `docs/analysis/`：[Molang/控制脚本](docs/analysis/molang-custom-functions.md)、[控制器顺序与并行相加](docs/analysis/animation-controller-priority.md)、[`ysm.sync`](docs/analysis/ysm-sync.md)、[`v.roaming` 作用域](docs/analysis/roaming-variable-scope.md)。
 

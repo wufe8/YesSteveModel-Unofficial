@@ -73,7 +73,24 @@ public class SyncModelFiles implements IMessage {
             EntityPlayerMP sender = ctx.getServerHandler().playerEntity;
             if (sender != null) {
                 OpenYsmModelSyncServer.LegacyTransfer transfer = OpenYsmModelSyncServer.claimLegacyReply(sender);
-                if (transfer == null) return null;
+                if (transfer == null) {
+                    // 没有 legacy transfer = 服务端没让这个客户端走 legacy 同步，也就是
+                    // 当前是 OpenYSM 协议。客户端仍然会发这个包（模型列表为空时 GUI 的
+                    // 自动重试、legacy 路径的同步请求都走这里）。**不能直接丢弃**：丢弃
+                    // 会让这次恢复请求得不到回复。与 issue #3 一并排查，尚未确认报告根因。
+                    // 改成重新发起一次 OpenYSM 握手：
+                    // 服务端 → S2CVersionCheck17 → 客户端回 C2SVersionCheck17 → startSync。
+                    if (Config.ENABLE_SYNC_PROTOCOL) {
+                        // This is a client-initiated recovery, not a reply to a server request.
+                        // Share /ysm sync connection validation, cooldown and disable policy.
+                        if (OpenYsmModelSyncServer.requestResync(sender) == OpenYsmModelSyncServer.RESYNC_OK) {
+                            ysmu.LOG.info(
+                                "[YSMU-SYNC] {} requested model sync recovery; restarting the OpenYSM handshake",
+                                sender.getCommandSenderName());
+                        }
+                    }
+                    return null;
+                }
                 // Model sync starts here after RequestSyncModel asks the client for its cached MD5 names.
                 sendPassword(sender);
                 sendModelFiles(message.md5Info, sender, transfer);

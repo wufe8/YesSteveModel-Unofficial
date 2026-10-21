@@ -33,7 +33,7 @@ class MolangScopeSyncIncrementalTest {
     /** 作用域键用的是 {@code animatable.getMainModel()}，而那个 getter 在 geo 未加载时会
      *  退化成默认模型；测试里没有 GeckoLibCache，所以两边都必须用同一个默认值，
      *  否则 pass 与 {@code runWithVariableScope} 会落到不同的 ScopeState 上。 */
-    private static final ResourceLocation MODEL = CustomPlayerModel.DEFAULT_MAIN_MODEL;
+    private static final ResourceLocation MODEL = CustomPlayerModel.getDefaultMainModel();
 
     private static CustomPlayerEntity entity() {
         CustomPlayerEntity entity = new CustomPlayerEntity();

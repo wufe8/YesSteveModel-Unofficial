@@ -7,6 +7,7 @@
 ## 收录原则
 
 - 只写**跨模型、可复用**的结论：机制、决策、验证方式、已知限制。
+- 只写**已发布**的状态：不写下一步/待办/未发布草稿/发布检查单；这些放 `local/`，随 GitHub Release 发布。
 - **不写具体第三方模型的名字或路径**。需要举例时描述问题的形状（"某模型把可见性写在
   `pre_parallel6` 的 `scale` 上"），或者用随模组发布的模型 / `src/test` fixture。
 - 与时间点强相关的排查记录留在 `local/`（gitignored）：`local/analysis/` 是原始笔记，
@@ -16,6 +17,8 @@
 
 | 文档 | 内容 |
 | --- | --- |
+| [默认模型身份](<analysis/default-model-identity.md>) | 配置初始模型与内置兜底的区别、内部 ID 与同步代次 |
+| [模型更新与缓存](<analysis/model-cache-refresh.md>) | reload、sync、本地 load 与删除缓存的语义边界 |
 | [`analysis/particle-system.md`](analysis/particle-system.md) | 粒子系统架构：`particle()`/`abs_particle()` 参数语义、行为表、高版本资产回退、已知限制 |
 | [`analysis/animation-stride-matching.md`](analysis/animation-stride-matching.md) | 防滑步：动画播放倍速的算法、为什么不改 `query.ground_speed`、验证方法、配置项 |
 | [`analysis/controller-mod-dependencies.md`](analysis/controller-mod-dependencies.md) | 控制器与动画的模组依赖标记、并行控制器的槽位与隐式控制器机制、具名并行槽位的固定备用池与路由、排查方法 |

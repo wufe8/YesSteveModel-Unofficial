@@ -6,6 +6,7 @@ import net.minecraftforge.common.config.Configuration;
 import net.minecraftforge.common.config.Property;
 
 import com.fox.ysmu.util.ControllerUtils;
+import com.fox.ysmu.util.ModelIdUtil;
 
 public class Config {
     private static Configuration configuration;
@@ -18,6 +19,23 @@ public class Config {
     public static boolean DISABLE_SELF_HANDS = false;
     public static String DEFAULT_MODEL_ID = "default";
     public static String DEFAULT_MODEL_TEXTURE = "default.png";
+
+    /**
+     * The configured default model's <b>internal id</b>.
+     *
+     * <p>Model ids are encoded ({@link ModelIdUtil#getInternalModelId}) as soon as the name
+     * is not a "safe" id ({@code [a-z0-9._-]+}) — a name with a space, an upper-case letter
+     * or any non-ASCII character becomes {@code _name_<hex>}. Every comparison between the
+     * configured name and a <i>registered</i> model id must therefore go through this
+     * method; comparing the raw config value against an encoded id silently stops matching.
+     *
+     * <p>This id selects the player's initial model and its sync priority / residency.
+     * It is separate from the builtin rendering fallback, which always uses {@code default}.
+     * Investigated alongside issue #4; the report does not yet establish a root cause.
+     */
+    public static String getDefaultModelInternalId() {
+        return ModelIdUtil.getInternalModelId(DEFAULT_MODEL_ID);
+    }
 
     // Extra Player Screen Config
     public static boolean DISABLE_PLAYER_RENDER = false;
@@ -227,7 +245,10 @@ public class Config {
         DISABLE_SELF_MODEL = syncBoolean("DisableSelfModel", Configuration.CATEGORY_GENERAL, DISABLE_SELF_MODEL, "Prevents rendering of self player's model", load);
         DISABLE_OTHER_MODEL = syncBoolean("DisableOtherModel", Configuration.CATEGORY_GENERAL, DISABLE_OTHER_MODEL, "Prevents rendering of other player's model", load);
         DISABLE_SELF_HANDS = syncBoolean("DisableSelfHands", Configuration.CATEGORY_GENERAL, DISABLE_SELF_HANDS, "Prevents rendering of self player's hand", load);
-        DEFAULT_MODEL_ID = syncString("DefaultModelId", Configuration.CATEGORY_GENERAL, DEFAULT_MODEL_ID, "The default model ID when a player first enters the game", load);
+        DEFAULT_MODEL_ID = syncString("DefaultModelId", Configuration.CATEGORY_GENERAL, DEFAULT_MODEL_ID,
+            "The default model ID when a player first enters the game. The name must match the model folder under "
+                + "config/ysmu/custom or config/ysmu/builtin. Names that are not plain lower-case ([a-z0-9._-]) are "
+                + "encoded internally ('_name_<hex>'); that works, but the id then differs from the folder name.", load);
         DEFAULT_MODEL_TEXTURE = syncString("DefaultModelTexture", Configuration.CATEGORY_GENERAL, DEFAULT_MODEL_TEXTURE, "The default model texture when a player first enters the game", load);
 
         // Extra player render config values

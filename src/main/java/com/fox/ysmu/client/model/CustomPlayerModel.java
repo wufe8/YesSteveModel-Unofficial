@@ -39,11 +39,32 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 @SuppressWarnings("all")
 public class CustomPlayerModel extends AnimatedGeoModel {
 
-    public static final ResourceLocation DEFAULT_MAIN_MODEL = ModelIdUtil
-        .getMainId(new ResourceLocation(ysmu.MODID, "default"));
-    public static final ResourceLocation DEFAULT_MAIN_ANIMATION = ModelIdUtil
-        .getMainId(new ResourceLocation(ysmu.MODID, "default"));
-    public static final ResourceLocation DEFAULT_TEXTURE = new ResourceLocation(ysmu.MODID, "default/default.png");
+    /**
+     * The <b>builtin fallback</b> model's main-geo id.
+     *
+     * <p>This is the model loaded straight from {@code builtin/default} on disk (see
+     * {@code ClientModelManager.loadDefaultModel()}): it has no encrypted client cache, so
+     * it can never be restored once it is idle-evicted — which is why it is pinned against
+     * eviction. It is deliberately <b>not</b> derived from {@link Config#DEFAULT_MODEL_ID}:
+     * the configured default is "the model a player starts with", this one is "the model we
+     * fall back to when a geo is missing".
+     */
+    public static ResourceLocation getDefaultMainModel() {
+        return ModelIdUtil
+            .getMainId(new ResourceLocation(ysmu.MODID, ClientModelManager.BUILTIN_FALLBACK_MODEL_ID));
+    }
+
+    /** The builtin fallback model's animation id (same id as {@link #getDefaultMainModel()}). */
+    public static ResourceLocation getDefaultMainAnimation() {
+        return getDefaultMainModel();
+    }
+
+    /** The builtin fallback model's texture id ({@code default/default.png}). */
+    public static ResourceLocation getDefaultTexture() {
+        return new ResourceLocation(
+            ysmu.MODID,
+            ClientModelManager.BUILTIN_FALLBACK_MODEL_ID + "/default.png");
+    }
     public static float FIRST_PERSON_HEAD_POS;
     private final Map<IBone, HeadPoseOffset> headPoseOffsets = new IdentityHashMap<>();
     /** Cached bone names belonging to each model's preview animation. */
@@ -58,7 +79,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         if (object instanceof CustomPlayerEntity customPlayer) {
             return customPlayer.getMainModel();
         }
-        return DEFAULT_MAIN_MODEL;
+        return getDefaultMainModel();
     }
 
     @Override
@@ -67,7 +88,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         if (object instanceof CustomPlayerEntity customPlayer) {
             return customPlayer.getTexture();
         }
-        return DEFAULT_TEXTURE;
+        return getDefaultTexture();
     }
 
     @Override
@@ -76,7 +97,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         if (object instanceof CustomPlayerEntity customPlayer) {
             return customPlayer.getAnimation();
         }
-        return DEFAULT_MAIN_ANIMATION;
+        return getDefaultMainAnimation();
     }
 
     @Override

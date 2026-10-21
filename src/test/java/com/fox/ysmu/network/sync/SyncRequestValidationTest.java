@@ -34,6 +34,53 @@ class SyncRequestValidationTest {
     }
 
     @Test
+    void recoveryRequiresCurrentConnectionAndSharesCooldownAcrossHandshakes() {
+        ResyncRequestGate<Object> gate = new ResyncRequestGate<>();
+        UUID id = UUID.randomUUID();
+        Object oldConnection = new Object();
+        Object currentConnection = new Object();
+        java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
+        assertEquals(OpenYsmModelSyncServer.RESYNC_FAILED,
+            gate.request(id, oldConnection, 30, 1000L, requests::incrementAndGet));
+        gate.track(id, oldConnection);
+        assertEquals(OpenYsmModelSyncServer.RESYNC_OK,
+            gate.request(id, oldConnection, 30, 1000L, requests::incrementAndGet));
+        // Issuing the accepted recovery handshake tracks the same connection again.
+        gate.track(id, oldConnection);
+        assertEquals(OpenYsmModelSyncServer.RESYNC_COOLDOWN,
+            gate.request(id, oldConnection, 30, 1001L, requests::incrementAndGet));
+        assertEquals(30L, gate.remainingSeconds(id, 30, 1001L));
+        assertEquals(OpenYsmModelSyncServer.RESYNC_OK,
+            gate.request(id, oldConnection, 30, 31000L, requests::incrementAndGet));
+        gate.track(id, currentConnection);
+        assertEquals(OpenYsmModelSyncServer.RESYNC_FAILED,
+            gate.request(id, oldConnection, 30, 31001L, requests::incrementAndGet));
+        assertEquals(OpenYsmModelSyncServer.RESYNC_OK,
+            gate.request(id, currentConnection, 30, 31001L, requests::incrementAndGet));
+        gate.clear(id);
+        assertEquals(OpenYsmModelSyncServer.RESYNC_FAILED,
+            gate.request(id, currentConnection, 30, 62000L, requests::incrementAndGet));
+        assertEquals(3, requests.get(), "denied recoveries must not issue a handshake");
+    }
+
+    @Test
+    void recoveryHonorsDisabledAndUnlimitedSettings() {
+        ResyncRequestGate<Object> gate = new ResyncRequestGate<>();
+        UUID id = UUID.randomUUID();
+        Object connection = new Object();
+        java.util.concurrent.atomic.AtomicInteger requests = new java.util.concurrent.atomic.AtomicInteger();
+        gate.track(id, connection);
+        assertEquals(OpenYsmModelSyncServer.RESYNC_DISABLED,
+            gate.request(id, connection, -1, 1000L, requests::incrementAndGet));
+        assertEquals(0, requests.get());
+        assertEquals(OpenYsmModelSyncServer.RESYNC_OK,
+            gate.request(id, connection, 0, 1000L, requests::incrementAndGet));
+        assertEquals(OpenYsmModelSyncServer.RESYNC_OK,
+            gate.request(id, connection, 0, 1000L, requests::incrementAndGet));
+        assertEquals(2, requests.get(), "unlimited mode still permits legitimate empty-list recovery");
+    }
+
+    @Test
     void repeatedHashesAreSentOnceAndUnknownHashesCannotSelectFiles() {
         OpenYsmSyncInfo info = new OpenYsmSyncInfo("a", "cache-a", 1L, 2L, 32, false);
         Map<Long, Map<Long, OpenYsmSyncInfo>> allowed = new HashMap<>();

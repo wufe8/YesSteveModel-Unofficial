@@ -46,6 +46,10 @@ public final class RemotePlayerAnimationQueries {
         return state.update(renderTick, clampHeadYaw(rawHeadYaw), clampGroundSpeed(groundSpeed), clampYawSpeed(yawSpeed));
     }
 
+    public static void remove(UUID playerId) {
+        if (playerId != null) STATES.remove(playerId);
+    }
+
     public static void clear() {
         STATES.clear();
     }
