@@ -2,8 +2,9 @@
 
 YSM-wiki: `molang/script`（2.5.0 起）。官方把 `functions/*.molang` 当**脚本语言**执行
 （`args[]`、`t.*` 临时变量、闭包、`fn.*` 链式调用、`loop`/`for_each`、`return` 穿透、
-事件订阅 `函数名@事件名.molang`）。YSMU 没有解释器，只对**动画控制脚本**
-（`@player_ctrl_<控制器>.molang`，把 `.` 换成 `_ctrl_`）做静态提取 + 少量运行时提示。
+事件订阅 `函数名@事件名.molang`）。YSMU 有一个不依赖 Minecraft 的脚本解释器（见下文
+「二期解释器核心」），**动画控制脚本**（`@player_ctrl_<控制器>.molang`，把 `.` 换成 `_ctrl_`）
+既被静态提取成状态→动画映射，脚本正文也会执行。
 
 ## 已实现
 
@@ -53,8 +54,9 @@ wiki「自定义函数」页除事件订阅外的语法：
 （`fn.*` 可调用），`<名字>@player_init` / `@player_update` 会在
 `MolangPhysicsRuntime.begin()`（= GeckoLib 的 `preAnimationSetup`，「更新玩家动画之前」）触发，
 变量读写走 `OpenYsmScriptScope`（读复用控制器求值器、写与控制器的 onEntry/onExit 同一条路径）。
-`@sync` 与 `ysm.sync(...)` 仍未接入（要新网络包）；**动画控制脚本
-（`[@描述]@player_ctrl_<槽位>.molang`）仍然只做静态提取**，脚本正文不执行。
+`@sync` 与 `ysm.sync(...)` 已接入（`C2SMolangSync`/`S2CMolangSync`，见
+`analysis/ysm-sync.md`）；`[@描述]@player_ctrl_<槽位>.molang` 的脚本正文也会执行，静态提取
+只决定"没有脚本运行结果时用哪条动画"的兜底。
 
 **两条已知边界**（写下来是因为它们会在"接入"时才咬人）：
 
@@ -84,21 +86,11 @@ wiki「自定义函数」页除事件订阅外的语法：
 
 `docs/README.md` 的收录原则适用：这些都是跨模型的机制说明，具体第三方模型名不入库。
 
-## 下一步（如果要继续补）
+## 行为变化提醒
 
-1. ~~**把解释器接上**~~ **已完成**：`PreParsedModelBundle` 保留函数体 + 事件表，
-   `OpenYsmScriptRuntime` 在 `MolangPhysicsRuntime.begin()` 触发 `@player_init`/`@player_update`，
-   `OpenYsmScriptScope` 提供游戏侧读写。**必须实机确认**（`@player_init`/`@player_update`
-   与 `@player_ctrl_*` 各走一遍真机模型）。
-2. ~~二期剩下的语言特性~~ **已完成**（`fn.*` + 每层 `t.*` + 循环）。注意参考库里
-   `fn.` 只出现在 `motorSynth.molang` 的一句注释里、`loop`/`for_each` 一次都没用，
-   所以这几条特性目前只有 wiki 示例当规格（见 `MolangScriptCallAndLoopTest`）。
-3. ~~三期：`@sync` + `ysm.sync(...)`~~ **已完成**（`C2SMolangSync`/`S2CMolangSync`，id 28/29）；
-   ~~把动画控制脚本当控制器主体执行~~ **主槽位已完成**（`AnimationControlScripts`，配置项
-   `MolangControlScripts` 可关回静态提取）。剩余见上一节的表。
-4. 条件求值第一版只覆盖纯 `v.*` 快速路径 + 控制器求值器；注意它**改变了行为**：以前永远 false 的
-   分支会开始命中，需要实机确认那些模型的动画切换是否符合预期（内置 `wine_fox` 包的"低电量 /
-   电量过低"分支就是例子）。
+条件求值第一版只覆盖纯 `v.*` 快速路径 + 控制器求值器。接入后，以前永远 false 的分支会开始命中，
+所以旧模型里依赖"条件永远不成立"的写法可能改变动画切换（内置 `wine_fox` 包的"低电量 /
+电量过低"分支就是例子）。
 
 ## 验证方式
 

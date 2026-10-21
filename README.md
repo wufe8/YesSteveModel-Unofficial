@@ -62,7 +62,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 
 ### 动画
 - **控制器与并行动画**：状态机、blend transition（`AnimationTransitionTicks`，模型自带值优先）、timeline、`on_entry`/`on_exit`；数字与**具名**并行槽位（池大小可配置），高优先级 `parallel*` 对同一骨骼的旋转做相加
-- **额外动画轮盘**：可定制的 8 槽位轮盘，支持子菜单与翻页
+- **额外动画轮盘**：条目数量不限（每页 8 个，前 8 个可绑定快捷键 `extra0`..`extra7`），支持子菜单与翻页
 - **预览**：模型选择界面（Alt+Y）三栏布局（动画列表 + 3D 预览 + 贴图），支持暂停/复位/地面切换/拖拽旋转；HUD 自拍模型支持 FBO 缓存与跟随模式（Alt+P）
 - **状态与兼容修复**：攻击连击、剑/盾格挡条件动画、潜行动画四条降级路径、步幅匹配防滑步（默认关）、Root 骨骼过滤、骑乘退出检测
 
@@ -105,6 +105,7 @@ YSMU 是一个 Minecraft Forge 1.7.10 模组，将 YesSteveModel 移植回 1.7.1
 | `1.9a1-04` | 一系列性能优化、负尺寸cube修复 |
 | `1.9a1-05` | 动画预览界面、HUD FBO 缓存、深度性能优化与 Bug 修复 |
 | `1.9a1-06` | 统一模型加载、懒加载与显存优化、动画/Molang 修复、调试覆盖层 |
+| `1.9a1-06.1` | 热修复：把 vecmath/joml 打进 jar，干净服务端也能扫描模型 |
 | `1.9a1-07` | 粒子系统、HUD 跟随三模式、玩家模型优先加载、同步/内存优化、Molang 补全、跨模型变量隔离与预览缩放修复 |
 | `1.9a1-07.1` | 不可桥接的二进制模型的内置模型回退、预览 GUI 打开期间抑制闲置资源卸载 |
 | `1.9a1-08` | 控制器/并行动画与 Molang 脚本引擎的大批修复与新能力（`.molang` 控制脚本、具名并行槽位、`@sync`、有界 timeline）、弹射物/粒子链路修复、模型同步与断线会话加固、预览与 HUD 性能、跨玩家状态隔离 |
@@ -147,6 +148,15 @@ git checkout perf/previewUI
 - 至少一个 `.png` 贴图
 - 可选：`main.animation.json`、`arm.animation.json`、`extra.animation.json`
 
+### `ysm.json` 模型包
+同一个 `config/ysmu/custom/<文件夹>` 也可以是 YSM 2.5+ 的模型包（内置 `default` 就是这种结构）：
+- 根目录必须有 `ysm.json`（文件名和位置固定，UTF-8 无 BOM）；
+- 几何/动画/控制器/贴图由 `ysm.json` 的 `files` 段引用，因此不必叫 `main.json`/`arm.json`，也可以放在任意子目录；
+- 一个文件夹里可以放多个模型子目录或 `.ysm` 文件；
+- 再加 `ysm-pack.json`（包名/描述/多语言）和 `ysm-pack.png`（封面，宽高比 52:90）就是一个模型包，选择界面会先显示包、再进入包选模型。
+
+结构以官方文档为准：[项目结构](https://ysm.cfpa.team/wiki/struct/)、[模型打包](https://ysm.cfpa.team/wiki/model-pack/)。包内嵌的 `.zip`/`.7z` 归档暂不支持，请解压成文件夹。
+
 ### `.ysm` 二进制模型
 将 `.ysm` 文件放入 `config/ysmu/custom/`, 支持新版 format 32 格式(有问题详细描述issue)
 
@@ -164,7 +174,7 @@ git checkout perf/previewUI
 - 只有客户端装 YSMU 时，收到的同步握手会清空已注册模型；`ysm.sync` 静默失效。
 - 部分 `.ysm` 在服务端缓存重建时抛 `NoSuchElementException`（跳过，不阻塞加载）。
 - `/ysmclient load` 只添加启动扫描时发现的本地模型，不支持运行中本地源的增删改刷新；手动清理缓存不等于重载模型源，操作语义见 [模型更新与清理缓存](docs/analysis/model-cache-refresh.md)。
-- 部分控制器变量与 Molang 函数仍可能有 bug。
+- 部分 wiki 已列出的 Molang 函数/变量尚未实现（如 `query.rotation_to_camera`、`query.relative_block_has_all_tags`、`ysm.relative_block_name_any`、`ysm.has_any_curios_with_*`）：关键帧里用到未注册函数会让整条动画被丢弃；`ysm.texture_name` 目前恒为 0，用它判断可见性的部件不会显示。
 - `[SKIP]` `v.roaming` 长期变量不会永久保存。
 - `[SKIP]` battlegear2 盾牌位置不正确（以物品位置握持）。
 - `[SKIP]` WebP 解码器基于外部实现，未走纯 ImageIO。

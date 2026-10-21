@@ -249,10 +249,12 @@ public class Config {
             "The default model ID when a player first enters the game. The name must match the model folder under "
                 + "config/ysmu/custom or config/ysmu/builtin. Names that are not plain lower-case ([a-z0-9._-]) are "
                 + "encoded internally ('_name_<hex>'); that works, but the id then differs from the folder name.", load);
-        DEFAULT_MODEL_TEXTURE = syncString("DefaultModelTexture", Configuration.CATEGORY_GENERAL, DEFAULT_MODEL_TEXTURE, "The default model texture when a player first enters the game", load);
+        DEFAULT_MODEL_TEXTURE = syncString("DefaultModelTexture", Configuration.CATEGORY_GENERAL, DEFAULT_MODEL_TEXTURE,
+            "The texture file (relative to that model) a player starts with, used together with DefaultModelId. The builtin "
+                + "rendering fallback always uses its own default/default.png instead of this value.", load);
 
         // Extra player render config values
-        DISABLE_PLAYER_RENDER = syncBoolean("DisablePlayerRender", "extra_player_render", DISABLE_PLAYER_RENDER, "Whether to display player", load);
+        DISABLE_PLAYER_RENDER = syncBoolean("DisablePlayerRender", "extra_player_render", DISABLE_PLAYER_RENDER, "Prevents rendering of the extra (HUD / paperdoll) player model", load);
         PLAYER_POS_X = syncInt("PlayerPosX", "extra_player_render", PLAYER_POS_X, "Player position x in screen", 0, Integer.MAX_VALUE, load);
         PLAYER_POS_Y = syncInt("PlayerPosY", "extra_player_render", PLAYER_POS_Y, "Player position y in screen", 0, Integer.MAX_VALUE, load);
         PLAYER_SCALE = syncDouble("PlayerScale", "extra_player_render", PLAYER_SCALE, "Player scale in screen", 8.0, 360.0, load);
@@ -266,7 +268,7 @@ public class Config {
         GUI_MODEL_PREVIEW_REFRESH = syncInt("GuiModelPreviewRefresh", "gui", GUI_MODEL_PREVIEW_REFRESH, "Preview grid FBO refresh. -1 = auto (whole-page shared budget), 0 = static (only on interaction), 1-4 = refresh every N frames. Higher = smoother animation but more GPU load.", -1, 4, load);        GUI_HUD_PREVIEW_CACHE = syncBoolean("GuiHudPreviewCache", "gui", GUI_HUD_PREVIEW_CACHE, "HUD selfie model FBO cache. Disable for every-frame rendering (no performance gain).", load);
         // Local asset config values
         HIGH_VERSION_GAME_PATH = syncString("HighVersionGamePath", "local_assets", HIGH_VERSION_GAME_PATH, "Path to a high-version Minecraft game directory (e.g. C:/Users/x/AppData/Roaming/.minecraft). YSMU reads sounds.json and OGG files from here to play high-version sounds that Et-Futurum doesn't cover.", load);
-        HIGH_VERSION_ASSET_VERSION = syncString("HighVersionAssetVersion", "local_assets", HIGH_VERSION_ASSET_VERSION, "Asset version to use (e.g. '32'). Must match the version subfolder under assets/indexes/ in the game directory.", load);
+        HIGH_VERSION_ASSET_VERSION = syncString("HighVersionAssetVersion", "local_assets", HIGH_VERSION_ASSET_VERSION, "Asset version to use (e.g. '32'). Must match a version file name under assets/indexes/ in the game directory.", load);
         HIGH_VERSION_JAR_VERSION = syncString("HighVersionJarVersion", "local_assets", HIGH_VERSION_JAR_VERSION, "Version directory under <gamePath>/versions/ whose client jar holds textures/particles (e.g. '26.2'). Newer Minecraft versions keep textures inside the version jar; leave empty if not needed.", load);
 
         // Debug config values
@@ -291,7 +293,7 @@ public class Config {
 
         // Model sync config values
         RENDER_WEARABLE = syncBoolean("RenderWearable", "compatibility", RENDER_WEARABLE, "Whether to render external wearable models (e.g. AdventureBackpack2 backpack/copter/jetpack) on YSM model's back", load);
-        WEARABLE_RENDER_SCALE = syncDouble("WearableRenderScale", "compatibility", WEARABLE_RENDER_SCALE, "Scale factor for wearable model rendering (1.0 = default)", 0.1, 5.0, load);
+        WEARABLE_RENDER_SCALE = syncDouble("WearableRenderScale", "compatibility", WEARABLE_RENDER_SCALE, "Scale factor for wearable model rendering (0.8 = default)", 0.1, 5.0, load);
         ENABLE_DIRECT_BUFFER_WATCHDOG = syncBoolean("EnableDirectBufferWatchdog", "watchdog", ENABLE_DIRECT_BUFFER_WATCHDOG, "Safety-net: periodically check Direct Buffer usage and trigger GC when over threshold", load);
         DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB = syncInt("DirectBufferWatchdogThreshold", "watchdog", DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB, "Direct Buffer GC trigger threshold in MB", 128, 8192, load);
         ENABLE_SYNC_PROTOCOL = syncBoolean("EnableSyncProtocol", "ysm_sync", ENABLE_SYNC_PROTOCOL, "Use the unified model sync protocol (covers all model formats: folders, BOM+YSGP and legacy bare-YSGP .ysm). When disabled or version-mismatched, falls back to the legacy MD5/AES sync", load);
@@ -302,7 +304,7 @@ public class Config {
         BANDWIDTH_LIMIT = syncInt("BandwidthLimit", "ysm_sync", BANDWIDTH_LIMIT, "model sync bandwidth limit in bytes per second. 0 means unlimited", 0, Integer.MAX_VALUE, load);
         PLAYER_SYNC_TIMEOUT = syncInt("PlayerSyncTimeout", "ysm_sync", PLAYER_SYNC_TIMEOUT, "model sync timeout in seconds", 5, Integer.MAX_VALUE, load);
         RESYNC_COOLDOWN_SECONDS = syncInt("ResyncCooldownSeconds", "ysm_sync", RESYNC_COOLDOWN_SECONDS,
-            "Cooldown in seconds between player-triggered /ysm sync resyncs. -1 rejects the resync command entirely; 0 = no cooldown", -1, Integer.MAX_VALUE, load);
+            "Cooldown in seconds between client-triggered resyncs (/ysm sync and the automatic empty-model-list recovery). -1 rejects them entirely; 0 = no cooldown", -1, Integer.MAX_VALUE, load);
         LOW_BANDWIDTH_USAGE = syncBoolean("LowBandwidthUsage", "ysm_sync", LOW_BANDWIDTH_USAGE, "Whether sync should use smaller chunks and conservative throttling", load);
         ACCEPT_SOUND_FX = syncBoolean("AcceptSoundFX", "ysm_sync", ACCEPT_SOUND_FX, "Whether sync should accept model sound effect resources", load);
         TEXTURE_TARGET_SIZE = syncInt("TextureTargetSize", "ysm_sync", TEXTURE_TARGET_SIZE, "Target texture dimension (px) uploaded to VRAM. 0 = full resolution. Larger textures are downscaled by a power of two (result in [target, 2*target)).", 0, 8192, load);
