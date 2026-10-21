@@ -3,6 +3,7 @@ package com.fox.ysmu.network.message;
 import java.util.UUID;
 
 import com.fox.ysmu.client.ClientModelManager;
+import com.fox.ysmu.network.PacketReadUtil;
 
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
@@ -11,6 +12,9 @@ import cpw.mods.fml.relauncher.Side;
 import io.netty.buffer.ByteBuf;
 
 public class SendModelPassword implements IMessage {
+
+    /** The encrypted server password is a few dozen bytes; bound it before allocating. */
+    private static final int MAX_PASSWORD_BYTES = 4096;
 
     private UUID playerId;
     private byte[] password;
@@ -25,7 +29,9 @@ public class SendModelPassword implements IMessage {
     @Override
     public void fromBytes(ByteBuf buf) {
         this.playerId = new UUID(buf.readLong(), buf.readLong());
-        this.password = new byte[buf.readInt()];
+        int length = buf.readInt();
+        PacketReadUtil.requireLength(buf, length, MAX_PASSWORD_BYTES);
+        this.password = new byte[length];
         buf.readBytes(this.password);
     }
 

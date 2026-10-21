@@ -3,6 +3,7 @@ package com.fox.ysmu.network.message;
 import static org.junit.jupiter.api.Assertions.*;
 
 import java.util.Collections;
+import java.util.UUID;
 
 import net.minecraft.util.ResourceLocation;
 import org.junit.jupiter.api.Test;
@@ -49,6 +50,24 @@ class ServerboundValidationTest {
             roundTrip.readBytes(actual);
             assertArrayEquals(data, actual);
         }
+    }
+
+    @Test
+    void legacyPasswordPacketBoundsItsDeclaredLength() {
+        UUID id = UUID.randomUUID();
+        for (int length : new int[] { -1, Integer.MAX_VALUE, 4096 + 1, 32 }) {
+            ByteBuf buf = Unpooled.buffer()
+                .writeLong(id.getMostSignificantBits())
+                .writeLong(id.getLeastSignificantBits())
+                .writeInt(length);
+            assertThrows(IllegalArgumentException.class, () -> new SendModelPassword().fromBytes(buf));
+        }
+        ByteBuf oversized = Unpooled.buffer()
+            .writeLong(id.getMostSignificantBits())
+            .writeLong(id.getLeastSignificantBits())
+            .writeInt(4096 + 1)
+            .writeZero(4096 + 1);
+        assertThrows(IllegalArgumentException.class, () -> new SendModelPassword().fromBytes(oversized));
     }
 
     @Test
