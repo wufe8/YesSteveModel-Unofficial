@@ -1417,31 +1417,32 @@ public class ClientModelManager {
         // 缓存，被空闲回收后无法恢复 → 必须常驻（AssetManager.tick() 会把它钉住）。
         // 注意：这里刻意**不**跟着 Config.DefaultModelId 走 —— 配置里的默认模型是
         // 「玩家进游戏时用哪个模型」，而这里是「渲染兜底」，两者不是一回事。
-        final String defaultName = BUILTIN_FALLBACK_MODEL_ID;
-        final String defaultId = BUILTIN_FALLBACK_MODEL_ID;
+        // The folder name and the registered id are the same constant: the builtin fallback
+        // is always a "safe" name, so it is never encoded (see ModelIdUtil).
         // Try old format (FolderFormat) first, then fallback to new OpenYSM format.
         ModelData data = null;
         try {
-            data = FolderFormat.getModelData(ServerModelManager.CUSTOM, defaultName);
+            data = FolderFormat.getModelData(ServerModelManager.CUSTOM, BUILTIN_FALLBACK_MODEL_ID);
         } catch (IOException e) {
-            ysmu.LOG.info("Legacy default model not found at CUSTOM/{}, trying OpenYSM format...", defaultName);
+            ysmu.LOG.info(
+                "Legacy default model not found at CUSTOM/{}, trying OpenYSM format...", BUILTIN_FALLBACK_MODEL_ID);
         }
         if (data == null) {
             // Fallback: new OpenYSM format at BUILT/default/
-            Path builtinDefault = ServerModelManager.BUILT.resolve(defaultName);
+            Path builtinDefault = ServerModelManager.BUILT.resolve(BUILTIN_FALLBACK_MODEL_ID);
             if (Files.isDirectory(builtinDefault)) {
                 try (YSMFolderDeserializer deserializer = new YSMFolderDeserializer(builtinDefault)) {
                     RawYsmModel raw = deserializer.deserialize();
-                    raw.modelId = defaultId;
+                    raw.modelId = BUILTIN_FALLBACK_MODEL_ID;
                     // Record default_texture for the builtin default model (loaded
                     // outside the OpenYSM sync path that calls registerExtraWheel).
                     if (StringUtils.isNotBlank(raw.properties.defaultTexture)) {
                         DEFAULT_TEXTURE.put(
-                            ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, defaultId)),
+                            ModelIdUtil.getMainId(new ResourceLocation(ysmu.MODID, BUILTIN_FALLBACK_MODEL_ID)),
                             raw.properties.defaultTexture);
                     }
                     if (RawYsmModelAdapter.isBridgeable(raw)) {
-                        data = RawYsmModelAdapter.toLegacyModelData(raw, defaultId);
+                        data = RawYsmModelAdapter.toLegacyModelData(raw, BUILTIN_FALLBACK_MODEL_ID);
                     }
                 } catch (Exception e2) {
                     ysmu.LOG.warn("Failed to load default model from OpenYSM format", e2);

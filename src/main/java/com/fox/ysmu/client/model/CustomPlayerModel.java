@@ -40,6 +40,15 @@ import software.bernie.geckolib3.resource.GeckoLibCache;
 public class CustomPlayerModel extends AnimatedGeoModel {
 
     /**
+     * The builtin fallback model's internal id ({@code default}).
+     *
+     * <p>{@link ClientModelManager#BUILTIN_FALLBACK_MODEL_ID} is a compile-time constant, so
+     * these ids are built once here instead of allocating a {@link ResourceLocation} per
+     * render-thread call (the getters below are called several times per rendered player).
+     */
+    private static final String BUILTIN_FALLBACK_ID = ClientModelManager.BUILTIN_FALLBACK_MODEL_ID;
+
+    /**
      * The <b>builtin fallback</b> model's main-geo id.
      *
      * <p>This is the model loaded straight from {@code builtin/default} on disk (see
@@ -49,21 +58,26 @@ public class CustomPlayerModel extends AnimatedGeoModel {
      * the configured default is "the model a player starts with", this one is "the model we
      * fall back to when a geo is missing".
      */
+    private static final ResourceLocation DEFAULT_MAIN_MODEL = ModelIdUtil
+        .getMainId(new ResourceLocation(ysmu.MODID, BUILTIN_FALLBACK_ID));
+
+    /** The builtin fallback model's texture id ({@code default/default.png}). */
+    private static final ResourceLocation DEFAULT_TEXTURE = ModelIdUtil
+        .getSubModelId(new ResourceLocation(ysmu.MODID, BUILTIN_FALLBACK_ID), "default.png");
+
+    /** The builtin fallback model's main-geo id (see {@link #DEFAULT_MAIN_MODEL}). */
     public static ResourceLocation getDefaultMainModel() {
-        return ModelIdUtil
-            .getMainId(new ResourceLocation(ysmu.MODID, ClientModelManager.BUILTIN_FALLBACK_MODEL_ID));
+        return DEFAULT_MAIN_MODEL;
     }
 
     /** The builtin fallback model's animation id (same id as {@link #getDefaultMainModel()}). */
     public static ResourceLocation getDefaultMainAnimation() {
-        return getDefaultMainModel();
+        return DEFAULT_MAIN_MODEL;
     }
 
     /** The builtin fallback model's texture id ({@code default/default.png}). */
     public static ResourceLocation getDefaultTexture() {
-        return new ResourceLocation(
-            ysmu.MODID,
-            ClientModelManager.BUILTIN_FALLBACK_MODEL_ID + "/default.png");
+        return DEFAULT_TEXTURE;
     }
     public static float FIRST_PERSON_HEAD_POS;
     private final Map<IBone, HeadPoseOffset> headPoseOffsets = new IdentityHashMap<>();
