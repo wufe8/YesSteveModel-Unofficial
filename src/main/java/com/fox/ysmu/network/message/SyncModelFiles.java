@@ -18,6 +18,7 @@ import com.fox.ysmu.Config;
 import com.fox.ysmu.data.EncryptTools;
 import com.fox.ysmu.model.format.ServerModelInfo;
 import com.fox.ysmu.network.NetworkHandler;
+import com.fox.ysmu.network.PacketReadUtil;
 import com.fox.ysmu.network.sync.OpenYsmModelSyncServer;
 import com.fox.ysmu.util.ThreadTools;
 import com.fox.ysmu.util.UuidUtils;
@@ -29,7 +30,6 @@ import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
 import cpw.mods.fml.common.network.simpleimpl.MessageContext;
 import io.netty.buffer.ByteBuf;
-import com.fox.ysmu.network.PacketReadUtil;
 
 public class SyncModelFiles implements IMessage {
 

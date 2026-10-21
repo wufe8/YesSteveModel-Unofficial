@@ -49,8 +49,9 @@ public class CommonEventHandler {
     public static void onPlayerLoggedOut(cpw.mods.fml.common.gameevent.PlayerEvent.PlayerLoggedOutEvent event) {
         if (event.player instanceof EntityPlayerMP) {
             LAST_MOTION_STATES.remove(event.player.getUniqueID());
+            // Also drops the player's resync/connection gate entry, so the cooldown
+            // helper does not need a second call here.
             OpenYsmModelSyncServer.clear(event.player.getUniqueID());
-            OpenYsmModelSyncServer.clearResyncCooldown(event.player.getUniqueID());
         }
     }
 
