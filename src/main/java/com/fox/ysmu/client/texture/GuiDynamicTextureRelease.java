@@ -9,26 +9,36 @@ import net.minecraft.client.renderer.texture.ITextureObject;
 import net.minecraft.client.renderer.texture.TextureManager;
 import net.minecraft.util.ResourceLocation;
 
+import com.fox.ysmu.ysmu;
+
 import cpw.mods.fml.relauncher.ReflectionHelper;
 
 /** Main-thread teardown for dynamic textures owned by GUI buttons. */
 public final class GuiDynamicTextureRelease {
 
     private static Field textureObjects;
+    /** Field lookup is attempted once; a failure is reported once instead of per button. */
+    private static boolean reportedFailure;
 
     private GuiDynamicTextureRelease() {}
 
     @SuppressWarnings("unchecked")
     public static void release(TextureManager manager, ResourceLocation id, DynamicTexture owned) {
-        if (id == null || owned == null) return;
+        if (id == null || owned == null || manager == null) return;
         try {
             if (textureObjects == null) {
                 textureObjects = ReflectionHelper.findField(TextureManager.class, "mapTextureObjects", "field_110585_a");
             }
             releaseOwned((Map<ResourceLocation, ITextureObject>) textureObjects.get(manager), id, owned,
                 texture -> ((DynamicTexture) texture).deleteGlTexture());
-        } catch (IllegalAccessException e) {
-            throw new IllegalStateException("Cannot release owned GUI texture " + id, e);
+        } catch (ReflectiveOperationException | RuntimeException e) {
+            // Teardown runs from initGui()/onGuiClosed(): throwing here would abort the screen
+            // rebuild and leave it half-built, while a failed release only leaks one texture
+            // (freed on the next resource reload / restart). Report once, then keep going.
+            if (!reportedFailure) {
+                reportedFailure = true;
+                ysmu.LOG.warn("Cannot release owned YSM GUI texture {} — it stays allocated until restart", id, e);
+            }
         }
     }
 
