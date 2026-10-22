@@ -1,6 +1,6 @@
 # 几何/动画/贴图的动态卸载与重加载 —— 派生状态必须遵守的不变式
 
-这份笔记是**几何提交（渲染）优化前的冲突检查**：项目里已经有一整套"按空闲/容量动态释放
+客户端使用一套"按空闲/容量动态释放
 堆内存与显存、按需后台重加载"的机制，任何新的派生缓存（顶点缓冲、显示列表、烘焙结果、
 按模型的身份缓存）都必须与它对齐，否则会出现三类症状：**释放不干净（内存/显存涨）**、
 **重加载后用到旧几何（错位/闪一下）**、**绕过用户设定的显存预算**。
@@ -44,55 +44,22 @@
    两条路径现在共用 `isPlayerAnimationSourceKey()`；回归测试
    `PlayerAnimationMergeFilterTest`。
 
-## 3. 本次改动与这套机制的交叉检查
+## 3. 身份缓存与释放回调
 
-- `perf(anim): 作用域变量同步改成增量`（D2）：纯数据结构，无交叉。
-- `perf(anim): 骨骼登记按模型缓存`（D5）：`AnimationProcessor.registrations` 是
-  `WeakHashMap<GeoModel, ModelRegistration>`。**安全**，理由是实证的：`GeoBone` 不反向引用
-  `GeoModel`（只有 `parent`/`childBones`/`childCubes`），所以"值"不会把"键"钉住；模型被淘汰后
-  键不可达 → 条目消失。重加载解析出的是**新的 GeoModel 对象** → 身份缓存必然未命中 →
-  骨骼表重建，`GeoModelProvider.release()` 里"下一次 `getModel()` 会重建骨骼表"的注释依然成立。
-- `perf(anim): 控制器复用处理器的名字索引`（D3）：控制器每次 `process()` 都从处理器换成
-  **当前模型**的索引，换模型/重加载后不会继续用旧骨骼。
-- **发现两处"释放不彻底"**（都不随模型数增长，量级 ≈ 1 个模型，但值得修）：
-  - 既有：`AnimatedGeoModel.currentModel` 只被赋新值、从不置空 → 最后渲染过的那个 GeoModel
-    即使被 `DROP_HEAP` 淘汰，仍被强引用，它的几何堆并没有真正释放。
-  - D5 引入的 `currentRegistration`（以及控制器的 `boneNameToBone`）钉住的是**同一个对象**的
-    骨骼表，所以增量是 0；但它同样应该随释放一起丢掉。
-  - **已修**：`GeoModelProvider.release()` 已经拿到 `GeoModel` 实例，现在会在那里调用
-    `CustomPlayerModel.onGeoModelReleased(geo)` → `AnimationProcessor.forgetModel(geo)`
-    （丢登记、必要时换空的当前登记）+ 清 `AnimatedGeoModel.currentModel`。控制器的
-    `boneNameToBone` 会在下一次 `process()` 换成新模型的索引，所以那份几何在下一帧就不可达了。
-    单测：`AnimationProcessorRegistrationCacheTest#aReleasedModelDropsItsRegistration`。
+`AnimationProcessor.registrations` 使用 `WeakHashMap<GeoModel, ModelRegistration>`。弱键只有在值不反向引用键时才能释放：`GeoBone` 持有父子骨骼和 cubes，不反向持有 `GeoModel`。重加载产生新的几何对象，必须重新建立骨骼索引；控制器每次 `process()` 获取当前处理器的索引，不能沿用旧模型的表。
 
-## 4. 几何优化（D4）的约束清单
+`GeoModelProvider.release()` 把释放的对象交给 `CustomPlayerModel.onGeoModelReleased(geo)`，通知处理器丢弃登记，并按对象身份清理 provider、renderer 与头部姿态引用。释放旧对象不能误清已经切换到的新对象。全量会话清理也必须清 renderer 的玩家、模型和贴图引用，不能仅移除注册表条目。
 
-1. per-model 顶点缓冲/VBO：键用 `GeoModel` 身份（弱键），并在 `release()` 里删除 GL 对象。
-2. 显存要记账：扩展一个"几何显存字节"计数器，纳入同一套预算/上限，否则预算语义被绕过。
-3. 缓存要自带 LRU/上限（例如只保留当前可见的十几个预览），不能依赖 evict。
-4. 不要缓存跨模型共享的中间结果，除非能证明重加载后仍有效。
-5. 验收：单元测试只能覆盖预算/淘汰策略；实机检查"长时间翻页后堆与显存不涨"，
-   必要时加一个按模型/按类别的占用读数（现有 F3 只报 HUD/预览 FBO 的频率与耗时）。
+回归入口：`AnimationProcessorRegistrationCacheTest`、`CustomPlayerRendererLifecycleTest`；后者覆盖实际释放回调与完整 runtime clear。
 
-## 5. 几何提交优化的分批与它的资源影响
+## 4. 渲染优化的资源边界
 
-- **第一批（已做）**：只动 CPU 侧 —— cube 局部变换合成一次并去掉 cube 级 push/pop
-  （`MatrixStack.beginCube`，与旧三步序列数值等价，`MatrixStackCubeTransformTest` 锁住）、
-  `renderCube` 里把颜色提到 cube 级、法线提到面级、顶点变换展开成标量乘法。
-  **不新增任何 GPU 资源、不缓存任何几何派生数据**，所以与本文第 2 节的三条不变式没有交叉，
-  也不需要新的释放钩子。
-- **第二批（未做，视采样结果）**：把逐顶点 `Tessellator.addVertexWithUV` 换成向它的原始缓冲
-  批量写入（省掉每顶点的分支/游标维护）。这一步会**直接依赖 Tessellator 的内部布局**，
-  而且 Angelica 的 `TessellatorStreamingDrawer`/`VertexFormat` 也在读同一块缓冲，必须先确认
-  格式一致、并保留走 API 的退化路径。
-- 若将来引入 per-model 顶点缓冲（VBO），按第 2、4 节：弱键 + `release()` 里删 GL 对象 +
-  计入显存账 + 自带上限。
-- 顺带记一笔**渲染路径上的死开关**：`GeoBone.dontRender`（来自模型里的 `neverRender`）与
-  `cubesAreHidden`/`setCubesHidden` 目前都没有任何消费者（`grep` 只有定义处）。
-  实现它们会让"标了 neverRender 的骨骼"从此不渲染 —— 那是**可见的行为变化**，需要先对
-  官方客户端确认语义（当前模型库里实测 0 个 `neverRender`，所以不是现实问题）。
+- cube 局部变换合成与标量顶点变换属于 CPU 运算，不增加 GPU 资源；数值等价性由 `MatrixStackCubeTransformTest` 检查。
+- 直接访问 Tessellator 原始缓冲必须考虑 Angelica 等模组的格式布局；通过 API 提交和直接写内部布局不能未经验证就互换。
+- 引入 per-model VBO 等缓存时，必须遵守前述弱引用/显式释放、预算和容量约束，不能靠空闲淘汰掩盖无限增长。
+- 单元测试覆盖索引、预算与释放策略；堆/显存和真实重加载画面仍需在相同场景实机比较。
 
-## 6. 相关代码位置
+## 5. 相关代码位置
 
 - `client/asset/{AssetCache,AssetManager,AssetHandle,ReleaseMode}.java`、`asset/provider/{GeoModelProvider,AnimationProvider}.java`
 - `client/ClientModelManager.java`：`unloadUnusedCaches()`、`unloadIdleTextures()`、`isIdleEvictionSuppressed()`、`TEXTURE_*` 常量、`ensureTexturesLoaded()`、`restoreTextureData()`

@@ -3,7 +3,7 @@
 YSM-wiki: `molang/script`（2.5.0 起）。官方把 `functions/*.molang` 当**脚本语言**执行
 （`args[]`、`t.*` 临时变量、闭包、`fn.*` 链式调用、`loop`/`for_each`、`return` 穿透、
 事件订阅 `函数名@事件名.molang`）。YSMU 有一个不依赖 Minecraft 的脚本解释器（见下文
-「二期解释器核心」），**动画控制脚本**（`@player_ctrl_<控制器>.molang`，把 `.` 换成 `_ctrl_`）
+「脚本解释器」），**动画控制脚本**（`@player_ctrl_<控制器>.molang`，把 `.` 换成 `_ctrl_`）
 既被静态提取成状态→动画映射，脚本正文也会执行。
 
 ## 已实现
@@ -34,8 +34,12 @@ YSM-wiki: `molang/script`（2.5.0 起）。官方把 `functions/*.molang` 当**�
    "当前控制逻辑无操作，交回内置逻辑" → 该状态不出默认映射（块内条件分支的替代动画仍有效）。
    脚本**结尾**的 bypass 是整段脚本的兜底，含义正是"没提到的状态用内置逻辑"，而不提的状态
    本来就没有映射条目，所以无需额外处理。
+6. **控制脚本正文执行**：不只 `main`，`pre_main` / `parallel_N` / `use` 等非主槽位也已接入
+   `AnimationManager.applyControlScript()`。启用动画控制脚本且存在玩家上下文时，按实际槽位
+   执行脚本；脚本明确接管本帧才跳过后续控制器/内置逻辑。上述静态提取仍是回退映射，
+   不表示其余槽位只做静态提取，也不表示 GUI 预览会执行玩家控制脚本。
 
-## 二期解释器核心（已落地并**接入事件订阅**）
+## 脚本解释器
 
 `com.fox.ysmu.client.animation.molang` 下有一个不依赖 Minecraft 的脚本解释器核心，已覆盖
 wiki「自定义函数」页除事件订阅外的语法：
@@ -45,7 +49,7 @@ wiki「自定义函数」页除事件订阅外的语法：
 - `fn.*`：`fn.b;`（无参、整段就是它）与 `fn.x(a, b)`（**任意表达式里**都成立，因此递归
   `return n * fn.fact(n - 1);` 可用；带括号的形态走 mclib 的 `fn.` 函数名机制）；
   调用链上限 32，超过返回 0；
-- `t.*` **按调用帧隔离**（wiki：调用链每个节点各一层，只有 `v.*` 共享）；
+- `t.*` / `temp.*` 是同一套**按调用帧隔离**的临时变量（wiki：调用链每个节点各一层，只有 `v.*` 共享）；
 - `loop(n, {...})` / `for_each(t.x, args, {...})` / `break` / `continue`。
 
 表达式层仍复用 `MolangParser`，变量 / 函数 / 调用参数通过
@@ -70,17 +74,16 @@ wiki「自定义函数」页除事件订阅外的语法：
   `ScriptMolangParser.FrameVariable` 把 `set()` 改道到 `writeVariable`，两条路一致；
   回归测试见 `MolangScriptCallAndLoopTest`。
 
-## 未实现（按当前库里的实际用量排序）
+## 能力边界
 
-| 特性 | 库内用量（参考模型库） | 说明 |
-| --- | --- | --- |
-| `ctrl.state_pause` | 库内 **0 处** | **已确认不做**。GeckoLib 没有"暂停播放但不暂停时间轴"的原语：`tick` 由 `AnimationProcessor` 统一推进，骨骼关键帧与 timeline/音效/粒子事件共用一个 tick。要做得给控制器加"暂停"并让事件循环改用未暂停的 tick（vendored 变更，只能实机验证）。等真有模型用到再说 |
-| `ctrl.state_stop` 的**平滑**部分 | `state_stop` 2 文件 / 3 处 | **已确认不做**（只保留"中止"）。"平滑淡出"要改 vendored 的骨骼复位分支：`resetTickLength` 默认 1 且全仓无人调用 `setResetSpeedInTicks`，rotation/position 的 `mostRecentReset*Tick` 被写成 0（只有 scale 用了 `seekTime`，还留着"旋转问题相关"的 TODO）→ 改它会让**所有**控制器"骨骼不再被动画驱动"的复位从瞬变变成淡出，需要实机确认没有旋转问题回归 |
-| 非主槽位的动画控制脚本 | `pre_main`/`parallel_N`/`use` 等 | 求值器与注册表都已按槽位就绪，但只有主动画槽位接在 `AnimationManager` 上；其余槽位仍走静态提取 |
-| 条件里调用 `fn.*` / 读 `t.*` / `args[]` | 少量（都在自定义函数与事件订阅脚本里） | 条件求值（`AnimationManager` 的名称映射）走的是另一条路，会把这些当未定义（0） |
-| `fn.x` 写在更大的表达式里但不带括号 | — | 只有"整段就是 `fn.x`"才当调用；`1 + fn.x` 里的 `fn.x` 会当未定义变量（0）。需要那种写法就写 `fn.x()`（走 mclib 函数机制，任意位置都成立） |
+| 特性 | 约束 |
+| --- | --- |
+| `ctrl.state_pause` | 不提供暂停播放语义；GeckoLib 的骨骼关键帧和 timeline/音效/粒子共用时钟，不能只冻结其中一部分 |
+| `ctrl.state_stop` 的平滑部分 | 只保留中止，不提供平滑淡出；改变骨骼复位策略会影响全部控制器，不是单个脚本选项 |
+| 静态回退映射的条件里调用 `fn.*` / 读 `t.*` / `args[]` | 名称映射条件走独立求值路径，没有脚本调用帧；这不限制脚本正文内的条件 |
+| 大表达式中的无括号 `fn.x` | 只有整段 `fn.x` 才视为调用；其他位置使用 `fn.x()` |
 
-已补齐（原表里的这几条）：执行动画控制脚本、`@sync` + `ysm.sync`、`q.debug_output`/`ysm.dump_*`
+其他已接入的入口：`@sync` + `ysm.sync`、`q.debug_output` 与已注册的 `ysm.dump_*`
 调试输出、`ctrl.hold`/`ctrl.use`/`ctrl.swing`/`ctrl.armor`（关键帧与脚本路径，与控制器条件路径
 共用 `CtrlItemMatcher`）、`ctrl.reset`。
 

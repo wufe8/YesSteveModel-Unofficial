@@ -37,7 +37,7 @@ YSM 2.6.5 的观感。
 内置近似粒子（`falling_dripstone_water → dripWater`、`rain → droplet`、`snowflake → snowshovel`、
 `poof → smoke`、`explosion → largeexplode` 等），无映射则用原名交给 vanilla（未知名静默跳过）。
 
-当前覆盖 4 类：
+行为表覆盖以下类型（具体别名以 `ParticleBehaviors` 为准）：
 
 | 类别 | 粒子名 | 关键行为 |
 | --- | --- | --- |
@@ -45,6 +45,7 @@ YSM 2.6.5 的观感。
 | 水花 | `splash`、`rain` | 忽略外部速度、`initVy=0.1`、`gravity=0.4`、`scale=0.9`、lifetime 8 + 随机 0–32、渐隐、撞地/入液消失 |
 | 火焰 | `flame`、`small_flame`、`copper_fire_flame`、`soul_fire_flame` | 保留外部速度、`gravity=-0.05`（上升）、`scale=0.6`、lifetime 40 |
 | 雪花 | `snowflake`、`snow` | 忽略外部速度、`initVy=-0.04`、`scale=0.55`、lifetime 50、渐隐 |
+| 泡泡破裂 | `bubble_pop` | 保留外部速度、gravity 0.008、固定寿命 4 tick；按纹理序列随年龄切帧 |
 
 高版本纹理读取顺序：版本 jar（`versions/<jarVer>/<jarVer>.jar` 内 `assets/minecraft/...`）
 优先，其次 `assets/objects/<hash>`；先解析 `particles/<name>.json` 的 `textures` 字段，
@@ -81,10 +82,10 @@ YSM 2.6.5 的观感。
 
 ## 已知限制
 
-- 多帧纹理动画未实现（`splash_0..3`、`explosion 0..15` 等按整图 0..1 渲染，未按 age 切帧）。
+- 行为表支持的自定义粒子可读取 `particles/<name>.json` 的多纹理序列，并随 age 切帧；这不等于实现全部高版本粒子的行为，未覆盖的粒子仍走回退。
 - 水滴的"悬挂→下落"两阶段未实现（只有下落）。
 - `/particle` 的 `[viewers]` 选择器未实现（统一广播）。
-- 行为表只覆盖上述 4 类，其余高版本粒子走 vanilla 回退或静默跳过。
+- 行为表未覆盖的高版本粒子走 vanilla 回退或静默跳过。
 
 ## 常见坑
 

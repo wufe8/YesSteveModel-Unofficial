@@ -7,8 +7,8 @@
 | --- | --- | --- | --- |
 | ① 脚本函数 | `functions/名字.molang`、`functions/名字@事件.molang` | `MolangScriptInterpreter` + `OpenYsmScriptRuntime` | 已接入（含 `@sync`，见下） |
 | ② 关键帧值 | `animations/*.json` 的骨头 `position`/`rotation`/`scale` 写成 Molang 字符串 | `JsonKeyFrameUtils` → `KeyFrame` 持有 `IValue`，每帧求值 | 已支持 |
-| ③ 时间轴 | `animations/*.json` 的 `timeline` | `MolangInstructionExecutor`（GeckoLib 的 custom instruction keyframe） | 已支持（本次补注释剥离） |
-| ④ 动画控制脚本 | `functions/[@描述]@player_ctrl_<槽位>.molang` | `AnimationControlScripts` + `AnimationControlScope`，主槽位接在 `AnimationManager` | 已执行（`pause`/`stop`/`reset` 未接线） |
+| ③ 时间轴 | `animations/*.json` 的 `timeline` | `MolangInstructionExecutor`（GeckoLib 的 custom instruction keyframe） | 支持注释剥离 |
+| ④ 动画控制脚本 | `functions/[@描述]@player_ctrl_<槽位>.molang` | `AnimationControlScripts` + `AnimationControlScope`，按槽位接在 `AnimationManager` | 执行正文；reset/stop 中止，pause 回退内置逻辑 |
 
 ## ① 脚本函数与事件订阅
 
@@ -27,10 +27,9 @@
   + `v.roaming.*` 回写 `PENDING_ROAMING`）。脚本写的 `v.*` 当帧就对骨骼可见。
 - `@sync` + `ysm.sync(...)` 已接入网络链路，见下文“`@sync`（主动同步）”与[同步机制](<ysm-sync.md>)。
 - 提醒：`ysm.keyboard(...)` 读的是**本地**键盘。脚本对每个渲染中的玩家模型都会跑，
-  所以远端玩家的键盘类脚本会跟着本地按键走 —— 已知偏差，等真的遇到再说。
-- 性能：`@player_update` 的脚本每次调用都会重新解析（解释器没有 AST 缓存）。事件脚本通常只有
-  几行，没问题；如果将来有模型在 `@player_update` 里塞一整段脚本，再给解释器加按文本缓存。
-  通道 ③ 的 `MolangInstructionExecutor` 已经有指令级缓存，所以大 timeline 只付 `IValue.get()`。
+  所以远端玩家的键盘类脚本会跟着本地按键走 —— 这是本地输入与远端模型之间的能力边界。
+- 性能：解释器按预处理正文缓存 parser 与 AST，每线程独立且容量封顶。执行前换绑 scope 并重置调用帧；递归重入时使用独立 parser，不能复用外层正在使用的帧栈。
+  通道 ③ 的 `MolangInstructionExecutor` 另有指令级缓存。
 
 ## ② 关键帧值写成 Molang
 
@@ -87,7 +86,7 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
 
   | 脚本里写的 | 求值器捕获成 |
   | --- | --- |
-  | `ctrl.set_animation(名字[, ctrl.loop|play_once|hold_on_last_frame])` | 动画名 + 循环类型 |
+  | `ctrl.set_animation(名字[, 循环类型])`（loop / play_once / hold_on_last_frame） | 动画名 + 循环类型 |
   | `ctrl.set_beginning_transition_length(秒)` | 过渡秒数 |
   | `ctrl.indicate_reload`（带不带 `()` 都认） | reload 标志 |
   | `ctrl.reset`（同上） | reset 标志 |
@@ -113,12 +112,7 @@ Bedrock 允许把骨头的静态值写成 Molang：`"position": ["v.x","v.y",0]`
   （GeckoLib 没有暂停原语），`DebugController` 下每个 模型×槽位 记一条一次性日志，不假装支持。
   清控制器状态时按 `player.` 前缀/`_controller` 后缀归一化匹配，因此池承载的具名并行槽位
   （运行时键是 `player.<族>_<名字>`）也能被 `ctrl.reset` 重置到。
-- **`state_stop` 的"平滑"与 `state_pause`：已确认不做**（库内用量 `state_stop` 2 文件 3 处、
-  `state_pause` 0 处）。`state_stop` 的"平滑"要改 vendored 的骨骼复位分支：`resetTickLength`
-  默认 1 且全仓无人调用 `setResetSpeedInTicks`，rotation/position 的 `mostRecentReset*Tick` 被硬写成 0
-  （只有 scale 用了 `seekTime`，还留着"旋转问题相关"的 TODO），所以 `percentageReset` 第一帧就是 1；
-  改它会让**所有**控制器的复位从瞬变变成淡出。`state_pause` 要给控制器加暂停原语并让
-  timeline/音效/粒子事件循环改用未暂停的 tick。两者都只能实机验证，等真有模型用到再做。
+- **播放能力边界**：不提供 `state_stop` 平滑淡出或 `state_pause` 暂停语义。GeckoLib 的骨骼与 timeline/音效/粒子共用时钟；改变骨骼复位策略会影响全部控制器，不能当成单槽位选项。
 - **字符串实参**：`ScopeFunction` 用 `MolangStringPool.isStringId()` 把池化 id 还原成字符串，
   否则 `ctrl.set_animation('x')` 只能拿到数字；池 id 从 `1_000_000` 起编号正是为了让这个判断可靠。
 
