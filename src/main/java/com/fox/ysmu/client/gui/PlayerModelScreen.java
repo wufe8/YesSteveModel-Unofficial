@@ -120,7 +120,8 @@ public class PlayerModelScreen extends GuiScreen {
         disposePreviewButtons();
         // clearWidgets() -> buttonList.clear()
         this.buttonList.clear();
-        if (ClientModelManager.MODELS.isEmpty() && !this.requestedModelSync) {
+        if (ModelSyncRecoveryPolicy.shouldRequest(ClientModelManager.MODELS.isEmpty(),
+            ClientModelManager.SYNC_IN_PROGRESS, this.requestedModelSync)) {
             // 模型列表为空 → 向服务端要一次重新同步。
             // 注意：sendSyncModelMessage() 走的是 legacy 的 md5 列表包，服务端在
             // OpenYSM 协议下以前会直接丢弃它（没有 legacy transfer），于是这个

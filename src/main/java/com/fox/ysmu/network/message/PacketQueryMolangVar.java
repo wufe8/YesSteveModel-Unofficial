@@ -6,6 +6,7 @@ import java.util.List;
 import net.minecraft.util.ChatComponentText;
 
 import com.fox.ysmu.client.debug.MolangDebugSnapshot;
+import com.fox.ysmu.network.PacketReadUtil;
 
 import cpw.mods.fml.common.network.ByteBufUtils;
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
@@ -33,10 +34,12 @@ public class PacketQueryMolangVar implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        int size = buf.readInt();
+        // Every Forge UTF-8 string has at least its one-byte length prefix. Bound the
+        // list allocation by actual packet bytes, without inventing a new query quota.
+        int size = PacketReadUtil.readCount(buf, buf.readableBytes(), 1);
         varNames = new ArrayList<>(size);
         for (int i = 0; i < size; i++) {
-            varNames.add(ByteBufUtils.readUTF8String(buf));
+            varNames.add(PacketReadUtil.readString(buf, PacketReadUtil.MAX_ID_BYTES));
         }
     }
 

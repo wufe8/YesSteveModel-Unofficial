@@ -7,6 +7,13 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 import java.util.Collections;
+import java.util.Arrays;
+
+import net.minecraft.inventory.InventoryBasic;
+import net.minecraft.item.Item;
+import net.minecraft.item.ItemBow;
+import net.minecraft.item.ItemStack;
+import net.minecraft.item.ItemSword;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.Test;
@@ -22,6 +29,60 @@ import com.fox.ysmu.util.ModAvailability;
  * 否则戴着无关戒指也会命中断言。真实的 Baubles 调用不在单测范围内（没有游戏上下文）。</p>
  */
 class BaublesCompatTest {
+
+    @Test
+    void accessoryAllTagsMustBeSatisfiedByOneItemNotAcrossTwoItems() {
+        InventoryBasic inventory = new InventoryBasic("curio_fixture", true, 4);
+        inventory.setInventorySlotContents(1, new ItemStack(new ItemSword(Item.ToolMaterial.EMERALD)));
+        inventory.setInventorySlotContents(2, new ItemStack(new ItemBow()));
+        assertFalse(BaublesCompat.matchesTaggedInventory(inventory, new int[] { 1, 2 },
+            Arrays.asList("minecraft:swords", "minecraft:bows"), true));
+        assertTrue(BaublesCompat.matchesTaggedInventory(inventory, new int[] { 1, 2 },
+            Arrays.asList("minecraft:swords", "minecraft:bows"), false));
+        assertTrue(BaublesCompat.matchesTaggedInventory(inventory, new int[] { 1, 2 },
+            Arrays.asList("minecraft:swords", "sword"), true));
+    }
+
+    @Test
+    void accessoryTagMatchingDoesNotBroadenSlotsAndRejectsEmptyOrUnsupportedTags() {
+        InventoryBasic inventory = new InventoryBasic("curio_fixture", true, 4);
+        inventory.setInventorySlotContents(1, new ItemStack(new ItemSword(Item.ToolMaterial.EMERALD)));
+        assertFalse(BaublesCompat.matchesTaggedInventory(inventory, new int[] { 0 },
+            Collections.singletonList("minecraft:swords"), false));
+        assertFalse(BaublesCompat.matchesTaggedInventory(inventory, null,
+            Collections.singletonList("minecraft:swords"), false));
+        assertFalse(BaublesCompat.matchesTaggedInventory(inventory, new int[] { 1 }, Collections.emptyList(), true));
+        assertFalse(BaublesCompat.matchesTaggedInventory(inventory, new int[] { 1 },
+            Collections.singletonList("fixture:unknown_tag"), true));
+        assertFalse(BaublesCompat.matchesTaggedInventory(inventory, new int[] { -1, 99 },
+            Collections.singletonList("minecraft:swords"), false));
+    }
+
+    @Test
+    void accessoryDebugSnapshotDescribesOnlyActuallyEquippedSlots() {
+        InventoryBasic inventory = new InventoryBasic("curio_fixture", true, 4);
+        assertEquals("curios = <empty>", BaublesCompat.describeInventory(inventory));
+        inventory.setInventorySlotContents(2, new ItemStack(new ItemBow()));
+        String description = BaublesCompat.describeInventory(inventory);
+        assertTrue(description.contains("[2]"));
+        assertFalse(description.contains("[0]"));
+        assertTrue(description.contains("x1"));
+    }
+
+    @Test
+    void unsupportedAccessoryTagWarningsKeepNamespacesAndDoNotNeedDebug() {
+        boolean previous = com.fox.ysmu.Config.DEBUG_CONTROLLER;
+        try {
+            com.fox.ysmu.Config.DEBUG_CONTROLLER = false;
+            BaublesCompat.clearReported();
+            BaublesCompat.reportUnsupportedTags(Arrays.asList("fixture_a:unknown", "fixture_b:unknown"));
+            assertEquals(2, BaublesCompat.reportedCount());
+            BaublesCompat.reportUnsupportedTags(Collections.singletonList("fixture_a:unknown"));
+            assertEquals(2, BaublesCompat.reportedCount());
+        } finally {
+            com.fox.ysmu.Config.DEBUG_CONTROLLER = previous;
+        }
+    }
 
     @AfterEach
     void restoreProbe() {

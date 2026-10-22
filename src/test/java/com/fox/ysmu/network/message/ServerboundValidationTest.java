@@ -71,6 +71,89 @@ class ServerboundValidationTest {
     }
 
     @Test
+    void remainingSimpleClientboundFieldsRejectForgedLengthsBeforeAllocation() {
+        for (int length : new int[]{-1, Integer.MAX_VALUE, PacketReadUtil.MAX_ID_BYTES + 1, 48}) {
+            ByteBuf path = Unpooled.buffer().writeInt(length);
+            ByteBuf version = Unpooled.buffer().writeInt(0).writeInt(length);
+            ByteBuf particle = Unpooled.buffer().writeInt(length);
+            try {
+                assertThrows(IllegalArgumentException.class, () -> new SyncGamePath().fromBytes(path));
+                assertThrows(IllegalArgumentException.class, () -> new SyncGamePath().fromBytes(version));
+                assertThrows(IllegalArgumentException.class, () -> new SpawnParticleCommand().fromBytes(particle));
+            } finally {
+                path.release();
+                version.release();
+                particle.release();
+            }
+        }
+        ByteBuf oversized = Unpooled.buffer().writeInt(PacketReadUtil.MAX_ID_BYTES + 1)
+            .writeZero(PacketReadUtil.MAX_ID_BYTES + 1);
+        try {
+            assertThrows(IllegalArgumentException.class, () -> new SpawnParticleCommand().fromBytes(oversized));
+        } finally {
+            oversized.release();
+        }
+    }
+
+    @Test
+    void gamePathAndParticleKeepTheirFixedIntStringWireFormat() {
+        ByteBuf path = Unpooled.buffer();
+        ByteBuf particle = Unpooled.buffer();
+        ByteBuf roundTrip = Unpooled.buffer();
+        try {
+            SyncGamePath source = new SyncGamePath("H:/游戏/assets", "32");
+            source.toBytes(path);
+            assertEquals(source.getGamePath().getBytes(java.nio.charset.StandardCharsets.UTF_8).length, path.getInt(0));
+            SyncGamePath decoded = new SyncGamePath();
+            decoded.fromBytes(path);
+            assertEquals(source.getGamePath(), decoded.getGamePath());
+            assertEquals(source.getAssetVersion(), decoded.getAssetVersion());
+            assertFalse(path.isReadable());
+
+            new SpawnParticleCommand("minecraft:splash", 1, 2, 3, .1, .2, .3, .5f, 8).toBytes(particle);
+            byte[] original = new byte[particle.readableBytes()];
+            particle.getBytes(0, original);
+            SpawnParticleCommand decodedParticle = new SpawnParticleCommand();
+            decodedParticle.fromBytes(particle);
+            decodedParticle.toBytes(roundTrip);
+            byte[] actual = new byte[roundTrip.readableBytes()];
+            roundTrip.readBytes(actual);
+            assertArrayEquals(original, actual);
+        } finally {
+            path.release();
+            particle.release();
+            roundTrip.release();
+        }
+    }
+
+    @Test
+    void queryVariableCountAndNamesAreBoundedByActualBytes() {
+        for (int count : new int[]{-1, Integer.MAX_VALUE, 1}) {
+            ByteBuf truncated = Unpooled.buffer().writeInt(count);
+            try {
+                assertThrows(IllegalArgumentException.class, () -> new PacketQueryMolangVar().fromBytes(truncated));
+            } finally {
+                truncated.release();
+            }
+        }
+        ByteBuf oversizedName = Unpooled.buffer().writeInt(1);
+        ByteBuf valid = Unpooled.buffer();
+        try {
+            ByteBufUtils.writeUTF8String(oversizedName, String.join("", Collections.nCopies(PacketReadUtil.MAX_ID_BYTES + 1, "a")));
+            assertThrows(IllegalArgumentException.class, () -> new PacketQueryMolangVar().fromBytes(oversizedName));
+            java.util.List<String> names = java.util.Arrays.asList("q.health", "v.test", "");
+            new PacketQueryMolangVar(names).toBytes(valid);
+            PacketQueryMolangVar decoded = new PacketQueryMolangVar();
+            decoded.fromBytes(valid);
+            assertEquals(names, decoded.getVarNames());
+            assertFalse(valid.isReadable());
+        } finally {
+            oversizedName.release();
+            valid.release();
+        }
+    }
+
+    @Test
     void forgedLegacyCountIsRejectedBeforeAllocatingTheArray() {
         ByteBuf buf = Unpooled.buffer().writeInt(100000);
         assertThrows(IllegalArgumentException.class, () -> new SyncModelFiles().fromBytes(buf));

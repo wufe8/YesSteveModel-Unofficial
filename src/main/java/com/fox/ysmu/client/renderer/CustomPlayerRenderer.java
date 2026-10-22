@@ -295,6 +295,31 @@ public class CustomPlayerRenderer extends GeoReplacedEntityRenderer<CustomPlayer
         return this.animatable;
     }
 
+    /** Main-thread DROP_HEAP callback; a stale release must not clear a replacement geometry. */
+    public void onGeoModelReleased(GeoModel model) {
+        if (model == null) return;
+        if (geoModel == model) geoModel = null;
+        if (modelProvider != null) modelProvider.onModelReleased(model);
+    }
+
+    /** Full model sync/disconnect boundary; no player or last geometry survives into the next session. */
+    public void clearModelSession() {
+        onGeoModelReleased(geoModel);
+        if (modelProvider != null) onGeoModelReleased(modelProvider.getCurrentModel());
+        lastPlayerModel.clear();
+        missingGeoModelLogged.clear();
+        FIRST_LOCAL_RENDER_LOGGED.clear();
+        LOGGED_LAYERS_FIRST.clear();
+        SUPPRESSED_RENDER_ERRORS.clear();
+        if (animatable != null) {
+            animatable.setPlayer(null);
+            animatable.setMainModel(null);
+            animatable.setTexture(null);
+            animatable.clearPreviewAnimation();
+            animatable.setGuiBaseAnimation("");
+        }
+    }
+
     @Nullable
     public GeoModel getGeoModel() {
         return geoModel;

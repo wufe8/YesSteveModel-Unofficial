@@ -173,6 +173,56 @@ class GuiTextLayoutTest {
     }
 
     @Test
+    void explicitLineBreaksStaySeparateEvenWhenBothNamesFitTogether() {
+        assertEquals(java.util.Arrays.asList("A", "B"), GuiTextLayout.wrap(FIXED_WIDTH, "A\nB", 45, 2));
+        assertEquals(java.util.Arrays.asList("A", "B"), GuiTextLayout.wrap(FIXED_WIDTH, "A\r\nB", 45, 2));
+        assertEquals(java.util.Arrays.asList("A", "B"), GuiTextLayout.wrap(FIXED_WIDTH, "A\rB", 45, 2));
+    }
+
+    @Test
+    void explicitEmptyLinesIncludeLeadingConsecutiveAndTrailingBreaks() {
+        assertEquals(java.util.Arrays.asList("", "A"), GuiTextLayout.wrap(FIXED_WIDTH, "\nA", 45, 2));
+        assertEquals(java.util.Arrays.asList("A", "", "B"), GuiTextLayout.wrap(FIXED_WIDTH, "A\n\nB", 45, 3));
+        assertEquals(java.util.Arrays.asList("A", ""), GuiTextLayout.wrap(FIXED_WIDTH, "A\n", 45, 2));
+        assertEquals(java.util.Arrays.asList("", ""), GuiTextLayout.wrap(FIXED_WIDTH, "\n", 45, 2));
+    }
+
+    @Test
+    void hardBreaksBeyondTheBudgetEllipsizeTheLastAvailableLine() {
+        assertEquals(java.util.Arrays.asList("A", "B..."), GuiTextLayout.wrap(FIXED_WIDTH, "A\nB\nC", 45, 2));
+        assertEquals(java.util.Arrays.asList("A", "..."), GuiTextLayout.wrap(FIXED_WIDTH, "A\n\nB", 45, 2));
+        assertEquals(java.util.Arrays.asList("", "..."), GuiTextLayout.wrap(FIXED_WIDTH, "\n\n", 45, 2));
+        assertEquals(java.util.Arrays.asList("A..."), GuiTextLayout.wrap(FIXED_WIDTH, "A\nB", 45, 1));
+    }
+
+    @Test
+    void softAndHardBreaksShareOneBudget() {
+        assertEquals(java.util.Arrays.asList("aaaa", "bbbb", "cc"),
+            GuiTextLayout.wrap(FIXED_WIDTH, "aaaa bbbb\ncc", 24, 3));
+        assertEquals(java.util.Arrays.asList("aaaa", "b..."),
+            GuiTextLayout.wrap(FIXED_WIDTH, "aaaa bbbb\ncc", 24, 2));
+    }
+
+    @Test
+    void hardBreaksCarryFormattingThroughEmptyLinesAndSoftWraps() {
+        String format = "\u00a7a\u00a7l";
+        assertFormattedLines(45, GuiTextLayout.wrap(GuiTextLayoutTest::formattedWidth,
+            format + "A\n\nB", 45, 3), format + "A", format, format + "B");
+        assertFormattedLines(14, GuiTextLayout.wrap(GuiTextLayoutTest::formattedWidth,
+            format + "A\nBCDE", 14, 3), format + "A", format + "BC", format + "DE");
+        assertFormattedLines(45, GuiTextLayout.wrap(GuiTextLayoutTest::formattedWidth,
+            format + "A\n\u00a7rB\nC", 45, 3), format + "A", format + "\u00a7rB", "C");
+    }
+
+    @Test
+    void hardBreakTruncationPreservesUnicodeAndInheritedBoldWidth() {
+        String face = "\ud83d\ude00";
+        assertFormattedLines(35, GuiTextLayout.wrap(GuiTextLayoutTest::formattedWidth,
+            "\u00a7l" + face + "\n" + face + face + face + face + face + face, 35, 2),
+            "\u00a7l" + face, "\u00a7l" + face + face + "...");
+    }
+
+    @Test
     void emptyInputProducesNoLines() {
         assertTrue(GuiTextLayout.wrap(FIXED_WIDTH, "", 45, 2).isEmpty());
         assertTrue(GuiTextLayout.wrap(FIXED_WIDTH, null, 45, 2).isEmpty());

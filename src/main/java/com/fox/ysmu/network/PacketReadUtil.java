@@ -21,6 +21,15 @@ public final class PacketReadUtil {
         return text;
     }
 
+    /** Existing clientbound strings use a fixed int byte length, not the Forge varint format. */
+    public static String readIntString(ByteBuf buf, int maxBytes) {
+        int length = buf.readInt();
+        requireLength(buf, length, maxBytes);
+        String text = buf.toString(buf.readerIndex(), length, StandardCharsets.UTF_8);
+        buf.skipBytes(length);
+        return text;
+    }
+
     public static void requireLength(ByteBuf buf, int length, int maxBytes) {
         if (length < 0 || length > maxBytes || length > buf.readableBytes()) {
             throw new IllegalArgumentException("Invalid YSM packet field length: " + length);

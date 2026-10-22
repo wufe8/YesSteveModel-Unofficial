@@ -836,6 +836,31 @@ public final class OpenYsmControllerExpressionEvaluator {
                 return ParticleEffectUtil.handleParticle(player, id,
                     ox, oy, oz, dx, dy, dz, speed, count, lifetime, abs) ? TRUE : FALSE;
             }
+            // YSM-wiki: molang/ref + molang/misc — reuse the keyframe queries, not a second tag implementation.
+            if ("query.rotation_to_camera".equals(name) && !arguments.isEmpty()) {
+                return com.fox.ysmu.client.animation.molang.QueryRotationToCameraFunction
+                    .cameraRotation(arguments.get(0).asNumber());
+            }
+            if (("query.biome_has_all_tags".equals(name) || "query.biome_has_any_tag".equals(name))
+                && !arguments.isEmpty()) {
+                return com.fox.ysmu.client.animation.molang.QueryBiomeTagFunction
+                    .matchesTags(stringArguments(arguments, 0)) ? TRUE : FALSE;
+            }
+            if ("query.relative_block_has_all_tags".equals(name) && arguments.size() >= 4) {
+                return com.fox.ysmu.client.animation.molang.QueryBlockTagFunction.matches(player,
+                    argNumber(arguments, 0), argNumber(arguments, 1), argNumber(arguments, 2),
+                    stringArguments(arguments, 3), true) ? TRUE : FALSE;
+            }
+            if ("ysm.relative_block_name_any".equals(name) && arguments.size() >= 4) {
+                return com.fox.ysmu.client.animation.molang.RelativeBlockNameAnyFunction.matches(player,
+                    argNumber(arguments, 0), argNumber(arguments, 1), argNumber(arguments, 2),
+                    stringArguments(arguments, 3)) ? TRUE : FALSE;
+            }
+            if (("ysm.has_any_curios_with_all_tags".equals(name) || "ysm.has_any_curios_with_any_tag".equals(name))
+                && arguments.size() >= 2) {
+                return com.fox.ysmu.compat.BaublesCompat.hasAnyCurioWithTags(player, arguments.get(0).asString(),
+                    stringArguments(arguments, 1), name.endsWith("all_tags")) ? TRUE : FALSE;
+            }
             // ysm.has_any_curios(槽位, id...)：Curios 在 1.7.10 上用前身 Baubles(Baubles-Expanded)
             // 实现，与关键帧路径共用 BaublesCompat。
             if ("ysm.has_any_curios".equals(name) && !arguments.isEmpty()) {
@@ -921,6 +946,12 @@ public final class OpenYsmControllerExpressionEvaluator {
                 "func:" + name,
                 "Unsupported OpenYSM controller function: " + name);
             return FALSE;
+        }
+
+        private static List<String> stringArguments(List<Argument> args, int first) {
+            List<String> values = new ArrayList<>();
+            for (int i = first; i < args.size(); i++) values.add(args.get(i).asString());
+            return values;
         }
 
         private static double argNumber(List<Argument> args, int index) {
@@ -1180,6 +1211,9 @@ public final class OpenYsmControllerExpressionEvaluator {
 
         private double ysmValue(String name) {
             if (player == null) return FALSE;
+            if ("dump_curios".equals(name)) {
+                return com.fox.ysmu.client.animation.molang.YsmDebugDumpFunction.dumpCurios(player);
+            }
             if ("entity_type".equals(name)) {
                 // 控制器路径字符串比较（== 'player'）受 NaN 语义限制不可用（同 ctrl.tac_gun_type），
                 // 返回 NaN 表示"非空字符串"（玩家），避免 == '' 误判；检测分支请用 ysm.is_player。

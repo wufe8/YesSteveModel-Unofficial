@@ -2169,6 +2169,9 @@ public class ClientModelManager {
         DISABLE_PREVIEW_ROTATION.clear();
         GUI_NO_LIGHTING.clear();
         MODEL_STATS.clear();
+        // The renderer also retains the last geometry/player independently of the asset providers.
+        com.fox.ysmu.client.renderer.CustomPlayerRenderer renderer = ClientProxy.getInstance();
+        if (renderer != null) renderer.clearModelSession();
         // Release geo/anim through the lifecycle framework (frees GeckoLibCache too).
         AssetManager.clearAll();
         clearProjectileModelCaches();

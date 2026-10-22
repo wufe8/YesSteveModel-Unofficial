@@ -15,10 +15,13 @@ import com.eliotlash.mclib.math.IValue;
 import com.eliotlash.mclib.math.functions.Function;
 
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
+import com.fox.ysmu.compat.BaublesCompat;
 
 import cpw.mods.fml.common.Loader;
 import cpw.mods.fml.common.ModContainer;
 import software.bernie.geckolib3.core.molang.MolangStringPool;
+import software.bernie.geckolib3.core.molang.LazyVariable;
+import software.bernie.geckolib3.core.molang.MolangParser;
 
 /**
  * {@code ysm.dump_*} 系列调试函数的 mclib 实现（YSM-wiki: molang/ref 1.2.0）。
@@ -75,6 +78,25 @@ public class YsmDebugDumpFunction extends Function {
             }
         } catch (Exception ignored) {
             // 调试函数不能把表达式求值带崩。
+        }
+        return 0.0d;
+    }
+
+    public static void registerCuriosVariable(MolangParser parser) {
+        registerCuriosVariable(parser, () -> dumpCurios(ParticleEffectUtil.getCurrentEntity()));
+    }
+
+    static void registerCuriosVariable(MolangParser parser, Runnable dump) {
+        // YSM-wiki: molang/misc — dump_curios is a bare variable, not merely a callable function.
+        parser.register(new LazyVariable("ysm.dump_curios", () -> {
+            dump.run();
+            return 0.0d;
+        }));
+    }
+
+    public static double dumpCurios(Entity entity) {
+        if (MolangDebugOutput.isEnabled() && entity instanceof EntityPlayer) {
+            MolangDebugOutput.emit(BaublesCompat.describeEquippedCurios((EntityPlayer) entity));
         }
         return 0.0d;
     }

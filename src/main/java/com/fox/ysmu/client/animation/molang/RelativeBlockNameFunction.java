@@ -43,31 +43,25 @@ public class RelativeBlockNameFunction extends Function {
 
     @Override
     public double get() {
+        String blockName = blockNameAt(ParticleEffectUtil.getCurrentEntity(), getArg(0), getArg(1), getArg(2), MAX_RANGE);
+        return blockName == null ? 0.0d : MolangStringPool.intern(blockName);
+    }
+
+    static boolean validOffsets(double dx, double dy, double dz, double range) {
+        return Double.isFinite(dx) && Double.isFinite(dy) && Double.isFinite(dz)
+            && Math.abs(dx) <= range && Math.abs(dy) <= range && Math.abs(dz) <= range;
+    }
+
+    static String blockNameAt(Entity entity, double dx, double dy, double dz, double range) {
+        if (!validOffsets(dx, dy, dz, range) || entity == null || entity.worldObj == null) return null;
         try {
-            double dx = getArg(0);
-            double dy = getArg(1);
-            double dz = getArg(2);
-            if (Math.abs(dx) > MAX_RANGE || Math.abs(dy) > MAX_RANGE || Math.abs(dz) > MAX_RANGE) {
-                return 0.0d;
-            }
-            Entity entity = ParticleEffectUtil.getCurrentEntity();
-            if (entity == null || entity.worldObj == null) {
-                return 0.0d;
-            }
-            int x = (int) Math.round((entity.posX + dx) - 0.5d);
-            // OpenYSM 用 entity.getY()（脚底）；1.7.10 玩家 posY = 脚底 + yOffset(1.62)，
-            // 需用 boundingBox.minY（脚底）对齐，否则相对方块检测整体上移约一个眼睛高度
-            // （如站在 campfire 旁会检测到头顶的方块）。
-            int y = (int) Math.round((entity.boundingBox.minY + dy) - 0.5d);
-            int z = (int) Math.round((entity.posZ + dz) - 0.5d);
+            int x = (int) Math.round(entity.posX + dx - 0.5d);
+            int y = (int) Math.round(entity.boundingBox.minY + dy - 0.5d);
+            int z = (int) Math.round(entity.posZ + dz - 0.5d);
             Block block = entity.worldObj.getBlock(x, y, z);
-            String name = block == null ? null : Block.blockRegistry.getNameForObject(block);
-            if (name == null) {
-                return 0.0d;
-            }
-            return MolangStringPool.intern(name);
-        } catch (Exception e) {
-            return 0.0d;
+            return block == null ? null : Block.blockRegistry.getNameForObject(block);
+        } catch (Exception ignored) {
+            return null;
         }
     }
 }

@@ -823,9 +823,14 @@ public final class MolangScriptInterpreter {
         return Character.isLetterOrDigit(c) || c == '_' || c == '.';
     }
 
-    /** 是不是按调用帧隔离的 {@code t.*} 临时变量。 */
+    /** 是不是按调用帧隔离的 {@code t.*}/{@code temp.*} 临时变量。 */
     static boolean isLocalVariable(String name) {
-        return name != null && name.startsWith(LOCAL_PREFIX);
+        return name != null && (name.startsWith(LOCAL_PREFIX) || name.startsWith("temp."));
+    }
+
+    static String normalizeLocalVariableName(String name) {
+        // YSM-wiki: molang/var + molang/script — both aliases use the same isolated call-frame key.
+        return name != null && name.startsWith("temp.") ? LOCAL_PREFIX + name.substring(5) : name;
     }
 
     /**

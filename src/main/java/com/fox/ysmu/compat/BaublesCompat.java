@@ -14,6 +14,7 @@ import net.minecraft.inventory.IInventory;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 
+import com.fox.ysmu.client.animation.molang.ItemTagMatcher;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
 import com.fox.ysmu.util.ModAvailability;
 import com.fox.ysmu.ysmu;
@@ -262,6 +263,96 @@ public final class BaublesCompat {
                 + "' failed (" + e.getClass().getSimpleName() + "); treating as empty");
         }
         return false;
+    }
+
+    /**
+     * YSM-wiki: molang/misc — one equipped item must satisfy all/any tags in the specified slot.
+     * Unlike explicit item-id fallback, tag queries must not broaden an unknown slot to every slot.
+     */
+    public static boolean hasAnyCurioWithTags(EntityPlayer player, String curioSlot, List<String> tags,
+        boolean requireAll) {
+        if (player == null || tags == null || tags.isEmpty()) return false;
+        reportUnsupportedTags(tags);
+        if (!isLoaded()) {
+            reportOnce("missing|curio-tags", "curio tag queries are ineffective: Baubles is not installed");
+            return false;
+        }
+        String type = baubleTypeFor(curioSlot);
+        if (type == null) {
+            reportUnmappedSlot(curioSlot);
+            return false;
+        }
+        int[] slots = slotIndexesFor(type);
+        if (slots == null || slots.length == 0) {
+            reportOnce("tag-slot|" + type, "curio tag query cannot resolve Baubles slot type '" + type + "'; treating as empty");
+            return false;
+        }
+        try {
+            return matchesTaggedInventory(BaublesApi.getBaubles(player), slots, tags, requireAll);
+        } catch (Throwable error) {
+            reportOnce("tag-error|" + type, "curio tag query failed for '" + type + "' ("
+                + error.getClass().getSimpleName() + "); treating as empty");
+            return false;
+        }
+    }
+
+    static boolean matchesTaggedInventory(IInventory inventory, int[] slots, List<String> tags, boolean requireAll) {
+        if (inventory == null || slots == null || tags == null || tags.isEmpty()) return false;
+        for (int slot : slots) {
+            if (slot < 0 || slot >= inventory.getSizeInventory()) continue;
+            ItemStack stack = inventory.getStackInSlot(slot);
+            if (stack == null || stack.getItem() == null) continue;
+            boolean any = false;
+            boolean all = true;
+            for (String tag : tags) {
+                boolean matched = tag != null && !tag.trim().isEmpty() && ItemTagMatcher.matchesTag(stack, tag);
+                any |= matched;
+                all &= matched;
+            }
+            if (requireAll ? all : any) return true;
+        }
+        return false;
+    }
+
+    static void reportUnsupportedTags(List<String> tags) {
+        for (String tag : tags) {
+            if (tag == null || tag.trim().isEmpty() || ItemTagMatcher.isSupportedTag(tag)) continue;
+            String key = tag.trim().toLowerCase(Locale.ROOT);
+            reportOnce("curio-tag|" + key, "no 1.7.10 item-tag mapping for curio tag '" + key + "'; treating as false");
+        }
+    }
+
+    /** Debug snapshot of actual Baubles slots; no Curios slot identity is invented. */
+    public static String describeEquippedCurios(EntityPlayer player) {
+        if (player == null) return "curios = <no player>";
+        if (!isLoaded()) {
+            reportOnce("missing|dump-curios", "ysm.dump_curios cannot inspect accessories: Baubles is not installed");
+            return "curios = <Baubles unavailable>";
+        }
+        try {
+            return describeInventory(BaublesApi.getBaubles(player));
+        } catch (Throwable error) {
+            reportOnce("dump-error", "ysm.dump_curios could not inspect Baubles (" + error.getClass().getSimpleName() + ")");
+            return "curios = <unavailable>";
+        }
+    }
+
+    static String describeInventory(IInventory inventory) {
+        if (inventory == null) return "curios = <empty>";
+        StringBuilder message = new StringBuilder("curios (Baubles slots):");
+        int listed = 0;
+        for (int slot = 0; slot < inventory.getSizeInventory(); slot++) {
+            ItemStack stack = inventory.getStackInSlot(slot);
+            if (stack == null || stack.getItem() == null) continue;
+            if (listed++ >= 40) {
+                message.append(" ...");
+                break;
+            }
+            String id = registryNameOf(stack);
+            message.append(" [").append(slot).append("] ")
+                .append(id == null ? stack.getUnlocalizedName() : id).append(" x").append(stack.stackSize);
+        }
+        return listed == 0 ? "curios = <empty>" : message.toString();
     }
 
     /**

@@ -245,6 +245,30 @@ class MolangScriptInterpreterTest {
             "t.* 不能从上一次执行漏进来");
     }
 
+    @Test
+    void aCachedAstResetsBothTemporaryAliasesBetweenExecutions() {
+        String script = "temp.acc = t.acc + 1; (t.acc = temp.acc + 1) + 0; return temp.acc;";
+        FakeScope first = new FakeScope();
+        FakeScope second = new FakeScope();
+
+        assertEquals(2.0d, MolangScriptInterpreter.evaluate(script, first), 1.0e-9d);
+        assertEquals(2.0d, MolangScriptInterpreter.evaluate(script, first), 1.0e-9d);
+        assertEquals(2.0d, MolangScriptInterpreter.evaluate(script, second), 1.0e-9d);
+        assertTrue(first.writes.isEmpty(), "temporary writes must remain execution-local");
+        assertTrue(second.writes.isEmpty());
+    }
+
+    @Test
+    void preparedScriptsUseTheSameTemporaryAliasFrameAsDirectExecution() {
+        String script = "temp.x = args[0]; (t.x = temp.x + 2) + 0; return temp.x;";
+        String prepared = MolangScriptInterpreter.prepareCached(script);
+        FakeScope scope = new FakeScope().args(3);
+
+        assertEquals(5.0d, MolangScriptInterpreter.evaluate(script, scope), 1.0e-9d);
+        assertEquals(5.0d, MolangScriptInterpreter.evaluatePrepared(prepared, scope), 1.0e-9d);
+        assertTrue(scope.writes.isEmpty());
+    }
+
     /**
      * 非 {@code t.*} 名字的"本次执行覆盖层"也必须复位：宿主把变量改回原值后，
      * 上一次执行写下的覆盖值不能继续被读到。

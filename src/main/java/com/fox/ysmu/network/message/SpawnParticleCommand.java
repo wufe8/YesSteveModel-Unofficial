@@ -5,6 +5,7 @@ import java.nio.charset.StandardCharsets;
 import net.minecraft.client.Minecraft;
 
 import com.fox.ysmu.client.particle.ParticleEffectUtil;
+import com.fox.ysmu.network.PacketReadUtil;
 
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
@@ -49,10 +50,7 @@ public class SpawnParticleCommand implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        int len = buf.readInt();
-        byte[] bytes = new byte[len];
-        buf.readBytes(bytes);
-        this.name = new String(bytes, StandardCharsets.UTF_8);
+        this.name = PacketReadUtil.readIntString(buf, PacketReadUtil.MAX_ID_BYTES);
         this.x = buf.readDouble();
         this.y = buf.readDouble();
         this.z = buf.readDouble();

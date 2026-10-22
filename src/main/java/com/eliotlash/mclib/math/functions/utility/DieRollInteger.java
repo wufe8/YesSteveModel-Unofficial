@@ -32,9 +32,11 @@ public class DieRollInteger extends Function {
             high = swap;
         }
         int rolls = (int) Math.min(Math.max(0.0d, this.getArg(0)), 100.0d);
-        int total = 0;
+        // Promote before subtraction: the full int range has 2^32 possible values.
+        long width = (long) high - low + 1L;
+        long total = 0L;
         for (int i = 0; i < rolls; i++) {
-            total += low + (int) (Math.random() * (high - low + 1));
+            total += (long) low + (long) (Math.random() * width);
         }
         return total;
     }

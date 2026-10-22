@@ -82,6 +82,41 @@ class DieRollTest {
     }
 
     @Test
+    void dieRollIntegerSumDoesNotOverflowAtIntEndpoints() {
+        assertEquals(4294967294.0d, rollInteger(2, Integer.MAX_VALUE, Integer.MAX_VALUE));
+        assertEquals(-4294967296.0d, rollInteger(2, Integer.MIN_VALUE, Integer.MIN_VALUE));
+    }
+
+    @Test
+    void dieRollIntegerCountRemainsBoundedWithWideAccumulation() {
+        assertEquals(100.0d * Integer.MAX_VALUE,
+            rollInteger(1_000_000, Integer.MAX_VALUE, Integer.MAX_VALUE));
+        assertEquals(100.0d * Integer.MIN_VALUE,
+            rollInteger(1_000_000, Integer.MIN_VALUE, Integer.MIN_VALUE));
+    }
+
+    @Test
+    void dieRollIntegerSupportsRangesWiderThanIntMax() {
+        boolean differsFromLowerEndpoint = false;
+        for (int attempt = 0; attempt < 100; attempt++) {
+            double nonNegative = rollInteger(1, 0, Integer.MAX_VALUE);
+            assertTrue(nonNegative >= 0 && nonNegative <= Integer.MAX_VALUE,
+                "wide non-negative interval must not produce a negative roll: " + nonNegative);
+            assertEquals(Math.floor(nonNegative), nonNegative);
+
+            double fullRange = rollInteger(1, Integer.MIN_VALUE, Integer.MAX_VALUE);
+            assertTrue(fullRange >= Integer.MIN_VALUE && fullRange <= Integer.MAX_VALUE);
+            assertEquals(Math.floor(fullRange), fullRange);
+            differsFromLowerEndpoint |= fullRange != Integer.MIN_VALUE;
+
+            double reversed = rollInteger(1, Integer.MAX_VALUE, Integer.MIN_VALUE);
+            assertTrue(reversed >= Integer.MIN_VALUE && reversed <= Integer.MAX_VALUE);
+            assertEquals(Math.floor(reversed), reversed);
+        }
+        assertTrue(differsFromLowerEndpoint, "full-range width must not wrap to zero and always return its lower endpoint");
+    }
+
+    @Test
     void dieRollIntegerWithNoRollsIsZero() {
         assertEquals(0.0d, rollInteger(0, 1, 6), 1.0e-9);
     }

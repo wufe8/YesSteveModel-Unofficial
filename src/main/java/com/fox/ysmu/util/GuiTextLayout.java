@@ -7,7 +7,7 @@ import java.util.function.ToIntFunction;
 /**
  * 卡片里放不下的文字怎么排。
  *
- * <p>1.7.10 的 {@code FontRenderer.listFormattedStringToWidth} 只在**空格**处断行：
+ * <p>1.7.10 的 {@code FontRenderer.listFormattedStringToWidth} 支持显式换行，但自动换行主要按**空格**断词：
  * 一个超过行宽的"词"（中文模型名很常见）会整段留在一行里，渲染时溢出卡片；而模型名
  * 带空格时又会被切成更多行，卡片底部的两行放不下时**后面的行直接被丢掉** ——
  * 用户看到的现象就是"带空格的名字显示不全"。
@@ -25,7 +25,8 @@ public final class GuiTextLayout {
     /**
      * 把 {@code text} 排成最多 {@code maxLines} 行，每行不超过 {@code maxWidth} 像素。
      *
-     * <p>Formatting pairs and Unicode code points remain intact. An indivisible glyph wider than the
+     * <p>Hard line breaks preserve empty lines and inherit formatting, and count towards {@code maxLines}.
+     * Formatting pairs and Unicode code points remain intact. An indivisible glyph wider than the
      * limit is kept on its own line; a truncation marker is shortened if even three dots cannot fit.
      *
      * @param widthOf 文本宽度测量函数（通常是 {@code FontRenderer::getStringWidth}）
@@ -39,40 +40,50 @@ public final class GuiTextLayout {
         if (text == null || text.isEmpty() || maxWidth <= 0 || maxLines <= 0) {
             return lines;
         }
+        // Keep explicit empty lines (including a trailing one) inside the same line budget.
+        String[] paragraphs = text.split("\r\n|[\r\n]", -1);
         String line = "";
-        for (String word : text.split(" ")) {
-            if (word.isEmpty()) {
-                continue;
+        for (int paragraph = 0; paragraph < paragraphs.length; paragraph++) {
+            for (String word : paragraphs[paragraph].split(" ")) {
+                if (word.isEmpty()) {
+                    continue;
+                }
+                String separator = hasVisibleText(line) ? " " : "";
+                if (widthOf.applyAsInt(line + separator + word) <= maxWidth) {
+                    line += separator + word;
+                    continue;
+                }
+                if (hasVisibleText(line)) {
+                    if (addWrappedLine(widthOf, lines, line, maxWidth, maxLines)) {
+                        return lines;
+                    }
+                    line = activeFormatting(line);
+                }
+                // Measure with the inherited state: an otherwise short word may be too wide in bold.
+                String rest = word;
+                while (widthOf.applyAsInt(line + rest) > maxWidth) {
+                    int cut = fittingEnd(widthOf, line, rest, maxWidth);
+                    if (cut == rest.length()) {
+                        // A single indivisible glyph can exceed the available width; still make progress.
+                        break;
+                    }
+                    line += rest.substring(0, cut);
+                    rest = rest.substring(cut);
+                    if (addWrappedLine(widthOf, lines, line, maxWidth, maxLines)) {
+                        return lines;
+                    }
+                    line = activeFormatting(line);
+                }
+                line += rest;
             }
-            String separator = hasVisibleText(line) ? " " : "";
-            if (widthOf.applyAsInt(line + separator + word) <= maxWidth) {
-                line += separator + word;
-                continue;
-            }
-            if (hasVisibleText(line)) {
+            if (paragraph + 1 < paragraphs.length) {
                 if (addWrappedLine(widthOf, lines, line, maxWidth, maxLines)) {
                     return lines;
                 }
                 line = activeFormatting(line);
             }
-            // Measure with the inherited state: an otherwise short word may be too wide in bold.
-            String rest = word;
-            while (widthOf.applyAsInt(line + rest) > maxWidth) {
-                int cut = fittingEnd(widthOf, line, rest, maxWidth);
-                if (cut == rest.length()) {
-                    // A single indivisible glyph can exceed the available width; still make progress.
-                    break;
-                }
-                line += rest.substring(0, cut);
-                rest = rest.substring(cut);
-                if (addWrappedLine(widthOf, lines, line, maxWidth, maxLines)) {
-                    return lines;
-                }
-                line = activeFormatting(line);
-            }
-            line += rest;
         }
-        if (!line.isEmpty()) {
+        if (!line.isEmpty() || paragraphs.length > 1) {
             lines.add(line);
         }
         return lines;

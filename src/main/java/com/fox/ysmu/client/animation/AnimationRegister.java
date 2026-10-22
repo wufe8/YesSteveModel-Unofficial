@@ -30,6 +30,10 @@ import com.fox.ysmu.client.animation.molang.YsmDebugDumpFunction;
 import com.fox.ysmu.client.animation.molang.YsmEffectLevelFunction;
 import com.fox.ysmu.client.animation.molang.YsmSoundFunction;
 import com.fox.ysmu.client.animation.molang.QueryBlockTagFunction;
+import com.fox.ysmu.client.animation.molang.QueryBiomeTagFunction;
+import com.fox.ysmu.client.animation.molang.QueryCuriosTagFunction;
+import com.fox.ysmu.client.animation.molang.QueryRotationToCameraFunction;
+import com.fox.ysmu.client.animation.molang.RelativeBlockNameAnyFunction;
 import com.fox.ysmu.client.animation.molang.QueryDebugOutputFunction;
 import com.fox.ysmu.client.animation.molang.QueryDurabilityFunction;
 import com.fox.ysmu.client.animation.molang.QueryItemNameAnyFunction;
@@ -140,6 +144,10 @@ public class AnimationRegister {
             // query.relative_block_has_any_tag：只支持能原生回答的标签（minecraft:replaceable），
             // 其余返回 false —— 1.7.10 没有数据驱动的方块标签。
             functions.put("query.relative_block_has_any_tag", QueryBlockTagFunction.class);
+            functions.put("query.relative_block_has_all_tags", QueryBlockTagFunction.class);
+            functions.put("query.biome_has_all_tags", QueryBiomeTagFunction.class);
+            functions.put("query.biome_has_any_tag", QueryBiomeTagFunction.class);
+            functions.put("query.rotation_to_camera", QueryRotationToCameraFunction.class);
             // query.is_item_name_any：按槽位取物品注册名匹配（物品标签类查询仍不支持）。
             functions.put("query.is_item_name_any", QueryItemNameAnyFunction.class);
             // query.max_durability / query.remaining_durability(slotType)：YSM-wiki molang/ref 2.2.1。
@@ -147,7 +155,7 @@ public class AnimationRegister {
             functions.put("query.remaining_durability", QueryDurabilityFunction.class);
             // query.equipped_item_{any_tag,all_tags}(slotType, tag...)：1.7.10 没有数据驱动的物品
             // 标签，只回答能原生回答的（物品类型 + 矿物词典），其余 false。
-            // 必须注册：未注册函数会让整条关键帧表达式解析失败、整个动画被丢弃。
+            // 必须注册：未注册函数会使所在骨骼的缩放/位移/旋转通道解析失败并清空。
             functions.put("query.equipped_item_any_tag", QueryItemTagFunction.class);
             functions.put("query.equipped_item_all_tags", QueryItemTagFunction.class);
             // ysm.play_sound / stop_sound / stop_all_sounds：模型 Molang 音效播放（走 YSMSoundManager）。
@@ -163,6 +171,7 @@ public class AnimationRegister {
             functions.put("ysm.perlin_noise", PerlinNoiseFunction.class);
             // ysm.relative_block_name：返回玩家相对偏移处方块注册名（OpenYSM 语义，±5 格）。
             functions.put("ysm.relative_block_name", RelativeBlockNameFunction.class);
+            functions.put("ysm.relative_block_name_any", RelativeBlockNameAnyFunction.class);
             // ysm.equipped_enchantment_level：返回指定槽位物品上给定附魔的等级之和。
             functions.put("ysm.equipped_enchantment_level", EquippedEnchantmentLevelFunction.class);
             // ysm.effect_level：返回渲染实体身上给定药水效果的等级之和（1 级 = 1）。
@@ -180,7 +189,7 @@ public class AnimationRegister {
             // 实体上下文由 ParticleEffectUtil.setCurrentEntity 每帧写入。
             functions.put("ysm.particle", ParticleFunction.class);
             // ysm.abs_particle：与 ysm.particle 成对。漏注册时整条关键帧表达式解析失败、
-            // 整个 animation 被丢弃（与 query.equipped_item_*_tag 同一条约定），
+            // 所在骨骼通道被清空（与 query.equipped_item_*_tag 同一条约定），
             // 所以四个名字必须都在。ParticleFunction 按注册名里的 "abs_" 判定绝对模式。
             functions.put("ysm.abs_particle", ParticleFunction.class);
             functions.put("particle", ParticleFunction.class);
@@ -201,6 +210,8 @@ public class AnimationRegister {
             // Baubles-Expanded）实现；未安装时恒 false，槽位没有对应物时也会提示一次。
             functions.put("ysm.has_any_curios",
                 com.fox.ysmu.client.animation.molang.QueryHasAnyCuriosFunction.class);
+            functions.put("ysm.has_any_curios_with_all_tags", QueryCuriosTagFunction.class);
+            functions.put("ysm.has_any_curios_with_any_tag", QueryCuriosTagFunction.class);
         };
 
         // 2) `??` 运算符的"显式设置"判定（按当前渲染模型，防跨模型污染）。
@@ -337,6 +348,7 @@ public class AnimationRegister {
     }
 
     private static void registerYsmVariables(MolangParser parser) {
+        YsmDebugDumpFunction.registerCuriosVariable(parser);
         parser.register(new LazyVariable("ysm.head_yaw", 0));
         parser.register(new LazyVariable("ysm.head_pitch", 0));
         parser.register(new LazyVariable("ysm.has_helmet", MolangUtils.FALSE));

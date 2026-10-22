@@ -2,6 +2,7 @@ package com.fox.ysmu.network.message;
 
 import com.fox.ysmu.Config;
 import com.fox.ysmu.compat.LocalAssetProvider;
+import com.fox.ysmu.network.PacketReadUtil;
 
 import cpw.mods.fml.common.network.simpleimpl.IMessage;
 import cpw.mods.fml.common.network.simpleimpl.IMessageHandler;
@@ -28,15 +29,8 @@ public class SyncGamePath implements IMessage {
 
     @Override
     public void fromBytes(ByteBuf buf) {
-        int pathLen = buf.readInt();
-        byte[] pathBytes = new byte[pathLen];
-        buf.readBytes(pathBytes);
-        this.gamePath = new String(pathBytes, java.nio.charset.StandardCharsets.UTF_8);
-
-        int verLen = buf.readInt();
-        byte[] verBytes = new byte[verLen];
-        buf.readBytes(verBytes);
-        this.assetVersion = new String(verBytes, java.nio.charset.StandardCharsets.UTF_8);
+        this.gamePath = PacketReadUtil.readIntString(buf, PacketReadUtil.MAX_ID_BYTES);
+        this.assetVersion = PacketReadUtil.readIntString(buf, PacketReadUtil.MAX_ID_BYTES);
     }
 
     @Override

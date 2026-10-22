@@ -11,6 +11,7 @@ import java.util.Map;
 import java.util.UUID;
 
 import net.minecraft.entity.player.EntityPlayerMP;
+import net.minecraft.network.NetHandlerPlayServer;
 
 import org.apache.commons.io.FileUtils;
 
@@ -43,25 +44,29 @@ public final class OpenYsmModelSyncServer {
     /** Encrypted sync-index chunk size, safely under the ~32 KB custom-payload limit. */
     private static final int SYNC_INDEX_CHUNK_SIZE = 20000;
     private static final Map<UUID, PlayerSyncState> SYNC_STATES = Maps.newConcurrentMap();
-    private static final SyncReplyGate<EntityPlayerMP> EXPECTED_VERSION = new SyncReplyGate<>();
+    // Respawn replaces EntityPlayerMP but retains its handler; authorization belongs to the connection.
+    private static final SyncReplyGate<NetHandlerPlayServer> EXPECTED_VERSION = new SyncReplyGate<>();
     private static final Map<UUID, LegacyTransfer> LEGACY_TRANSFERS = Maps.newConcurrentMap();
 
     /** Only server-issued requests may start a handshake; replies belong to this connection. */
     public static void expectVersionReply(EntityPlayerMP player) {
+        if (player == null || player.playerNetServerHandler == null) return;
         UUID id = player.getUniqueID();
-        RESYNC_REQUESTS.track(id, player);
+        RESYNC_REQUESTS.track(id, player.playerNetServerHandler);
         SYNC_STATES.remove(id);
         LEGACY_TRANSFERS.remove(id);
-        EXPECTED_VERSION.expect(id, player);
+        EXPECTED_VERSION.expect(id, player.playerNetServerHandler);
     }
 
     public static boolean consumeVersionReply(EntityPlayerMP player) {
-        return EXPECTED_VERSION.consume(player.getUniqueID(), player);
+        return player != null && player.playerNetServerHandler != null
+            && EXPECTED_VERSION.consume(player.getUniqueID(), player.playerNetServerHandler);
     }
 
     public static LegacyTransfer expectLegacyReply(EntityPlayerMP player) {
+        if (player == null || player.playerNetServerHandler == null) return null;
         LegacyTransfer transfer = new LegacyTransfer(player);
-        RESYNC_REQUESTS.track(player.getUniqueID(), player);
+        RESYNC_REQUESTS.track(player.getUniqueID(), player.playerNetServerHandler);
         SYNC_STATES.remove(player.getUniqueID());
         EXPECTED_VERSION.clear(player.getUniqueID());
         LEGACY_TRANSFERS.put(player.getUniqueID(), transfer);
@@ -69,21 +74,24 @@ public final class OpenYsmModelSyncServer {
     }
 
     public static LegacyTransfer claimLegacyReply(EntityPlayerMP player) {
+        if (player == null || player.playerNetServerHandler == null) return null;
         LegacyTransfer transfer = LEGACY_TRANSFERS.get(player.getUniqueID());
-        return transfer != null && transfer.player == player && transfer.claimed.compareAndSet(false, true)
+        return transfer != null && transfer.connection == player.playerNetServerHandler && transfer.claimed.compareAndSet(false, true)
             ? transfer : null;
     }
 
     public static boolean isLegacyActive(LegacyTransfer transfer) {
-        return transfer != null && LEGACY_TRANSFERS.get(transfer.player.getUniqueID()) == transfer;
+        return transfer != null && LEGACY_TRANSFERS.get(transfer.playerId) == transfer;
     }
 
     public static final class LegacyTransfer {
-        private final EntityPlayerMP player;
+        private final UUID playerId;
+        private final NetHandlerPlayServer connection;
         private final java.util.concurrent.atomic.AtomicBoolean claimed = new java.util.concurrent.atomic.AtomicBoolean();
 
         private LegacyTransfer(EntityPlayerMP player) {
-            this.player = player;
+            this.playerId = player.getUniqueID();
+            this.connection = player.playerNetServerHandler;
         }
     }
     /**
@@ -105,7 +113,7 @@ public final class OpenYsmModelSyncServer {
      * 主动触发的重同步；进服握手路径（sendRequestSyncModelMessage → S2CVersionCheck17 →
      * startSync）不受影响。登出时在 CommonEventHandler.onPlayerLoggedOut 清理。
      */
-    private static final ResyncRequestGate<EntityPlayerMP> RESYNC_REQUESTS = new ResyncRequestGate<>();
+    private static final ResyncRequestGate<NetHandlerPlayServer> RESYNC_REQUESTS = new ResyncRequestGate<>();
 
     /** {@link #requestResync} 返回码。 */
     public static final int RESYNC_OK = 0;
@@ -119,12 +127,12 @@ public final class OpenYsmModelSyncServer {
      * 因此该入口必须限频，且冷却判定在服务端（客户端不可信）。
      */
     public static int requestResync(EntityPlayerMP player) {
-        if (player == null) {
+        if (player == null || player.playerNetServerHandler == null) {
             return RESYNC_FAILED;
         }
         // Keep authorization and handshake issuance atomic with logout/connection replacement.
         return RESYNC_REQUESTS.request(
-            player.getUniqueID(), player, Config.RESYNC_COOLDOWN_SECONDS, System.currentTimeMillis(),
+            player.getUniqueID(), player.playerNetServerHandler, Config.RESYNC_COOLDOWN_SECONDS, System.currentTimeMillis(),
             () -> ServerModelManager.sendRequestSyncModelMessage(player));
     }
 
@@ -162,7 +170,7 @@ public final class OpenYsmModelSyncServer {
      * 缺失），调用方应回退到 legacy 同步，保证模型仍能加载。
      */
     public static boolean startSync(EntityPlayerMP player) {
-        if (player == null || !Config.ENABLE_SYNC_PROTOCOL) {
+        if (player == null || player.playerNetServerHandler == null || !Config.ENABLE_SYNC_PROTOCOL) {
             return false;
         }
         byte[] serverKey = ServerModelManager.OPEN_YSM_SERVER_KEY;
@@ -204,7 +212,7 @@ public final class OpenYsmModelSyncServer {
     public static void handlePayload(EntityPlayerMP player, byte[] data) {
         UUID playerId = player == null ? null : player.getUniqueID();
         PlayerSyncState state = playerId == null ? null : SYNC_STATES.get(playerId);
-        if (state == null || state.player != player || data == null || data.length == 0) return;
+        if (state == null || state.connection != player.playerNetServerHandler || data == null || data.length == 0) return;
         synchronized (state) {
             // One processing packet and one queued successor; a fast legitimate packet04
             // may arrive before the packet02 worker has returned after sending packet03.
@@ -247,7 +255,7 @@ public final class OpenYsmModelSyncServer {
     public static void complete(EntityPlayerMP player, int status, int loaded, int downloaded, int cacheHits, String message) {
         UUID playerId = player == null ? null : player.getUniqueID();
         PlayerSyncState state = playerId == null ? null : SYNC_STATES.get(playerId);
-        if (state == null || state.player != player || !SYNC_STATES.remove(playerId, state)) {
+        if (state == null || state.connection != player.playerNetServerHandler || !SYNC_STATES.remove(playerId, state)) {
             return;
         }
         if (status == C2SCompleteFeedback17.STATUS_SUCCESS) {
@@ -489,7 +497,7 @@ public final class OpenYsmModelSyncServer {
             byte[] chunk = Arrays.copyOfRange(payload, offset, offset + length);
             NetworkHandler.sendToClientPlayer(
                 new S2CSyncIndexChunk17(total, offset, chunk, offset + length >= total),
-                state.player);
+                state.connection.playerEntity);
             offset += length;
             count++;
         }
@@ -573,7 +581,7 @@ public final class OpenYsmModelSyncServer {
 
     private static void sendPayload(UUID playerId, PlayerSyncState state, byte[] payload) {
         if (isActive(playerId, state)) {
-            NetworkHandler.sendToClientPlayer(new S2CModelSyncPayload17(payload), state.player);
+            NetworkHandler.sendToClientPlayer(new S2CModelSyncPayload17(payload), state.connection.playerEntity);
         }
     }
 
@@ -610,7 +618,7 @@ public final class OpenYsmModelSyncServer {
 
     private static final class PlayerSyncState {
 
-        private final EntityPlayerMP player;
+        private final NetHandlerPlayServer connection;
         private final String playerName;
         private final byte[] clientCacheKey;
         private final List<OpenYsmSyncInfo> allowedModels = new ArrayList<>();
@@ -624,7 +632,7 @@ public final class OpenYsmModelSyncServer {
         private long lastTouched = System.currentTimeMillis();
 
         private PlayerSyncState(EntityPlayerMP player, byte[] clientCacheKey) {
-            this.player = player;
+            this.connection = player.playerNetServerHandler;
             this.playerName = player.getCommandSenderName();
             this.clientCacheKey = clientCacheKey;
         }

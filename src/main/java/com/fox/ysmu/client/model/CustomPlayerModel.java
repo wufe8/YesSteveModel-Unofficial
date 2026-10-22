@@ -444,6 +444,15 @@ public class CustomPlayerModel extends AnimatedGeoModel {
         INJECTED_LOCATIONS.remove(location);
     }
 
+    @Override
+    public void onModelReleased(GeoModel model) {
+        if (model != null && getCurrentModel() == model) {
+            // Pose bookkeeping also holds bone references until the next rendered frame.
+            clearHeadPoseOffsets();
+        }
+        super.onModelReleased(model);
+    }
+
     /**
      * 资源框架释放一份几何（{@code ReleaseMode.DROP_HEAP}）时调用，把 {@code model}
      * 转达给渲染器持有的那一个模型实例，让它松手（丢骨骼登记 + 清 {@code currentModel}）。
@@ -463,10 +472,7 @@ public class CustomPlayerModel extends AnimatedGeoModel {
             if (renderer == null) {
                 return;
             }
-            AnimatedGeoModel provider = renderer.getGeoModelProvider();
-            if (provider != null) {
-                provider.onModelReleased(model);
-            }
+            renderer.onGeoModelReleased(model);
         } catch (Throwable ignored) {
             // 未初始化 / 正在关闭：没有需要松手的登记项。
         }

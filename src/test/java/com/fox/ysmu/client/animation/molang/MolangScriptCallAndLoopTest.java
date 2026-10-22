@@ -98,6 +98,92 @@ class MolangScriptCallAndLoopTest {
         assertEquals(111.0d, evaluate("fn.d;", scope), 0.0001d);
     }
 
+    @Test
+    void temporaryVariableAliasesShareTheSameCallFrame() {
+        ScriptedScope scope = new ScriptedScope();
+
+        assertEquals(3.0d, evaluate("temp.x = 3; return t.x;", scope), 0.0001d);
+        assertEquals(4.0d, evaluate("t.x = 4; return temp.x;", scope), 0.0001d);
+        assertEquals(9.0d,
+            evaluate("temp.deep.x = 5; t.deep.x = temp.deep.x + 4; return temp.deep.x;", scope), 0.0001d);
+        assertTrue(scope.writes.isEmpty(), "neither temporary alias may write to the host");
+    }
+
+    @Test
+    void temporaryAliasesIgnoreSameNamedHostVariables() {
+        ScriptedScope scope = new ScriptedScope();
+        scope.variables.put("temp.x", 90.0d);
+        scope.variables.put("t.x", 80.0d);
+
+        assertEquals(0.0d, evaluate("return temp.x + t.x;", scope), 0.0001d);
+        assertEquals(3.0d, evaluate("temp.x = 3; return t.x;", scope), 0.0001d);
+        assertEquals(90.0d, scope.variables.get("temp.x"), 0.0001d);
+        assertEquals(80.0d, scope.variables.get("t.x"), 0.0001d);
+        assertTrue(scope.writes.isEmpty(), "temporary aliases must not use the shared host layer");
+    }
+
+    @Test
+    void parenthesisedTemporaryAssignmentsWriteBackToTheSameFrame() {
+        ScriptedScope scope = new ScriptedScope();
+
+        double result = evaluate(
+            "t.x = 2; v.result = (temp.x = t.x + 3) + 0; (t.x = temp.x * 2) + 0; return temp.x + t.x;",
+            scope);
+
+        assertEquals(20.0d, result, 0.0001d);
+        assertEquals(5.0d, scope.variables.get("v.result"), 0.0001d);
+        assertEquals(1, scope.writes.size(), "only the explicit host variable may be written back");
+    }
+
+    @Test
+    void temporaryAliasesStayIsolatedAcrossNestedAndRepeatedCalls() {
+        ScriptedScope scope = new ScriptedScope()
+            .function("inner", "temp.x = 9; return t.x;")
+            .function("middle", "t.x = 7; v.inner = fn.inner(); return temp.x;");
+
+        assertEquals(3.0d, evaluate("temp.x = 3; fn.inner; return temp.x;", scope), 0.0001d);
+        assertTrue(scope.writes.isEmpty(), "the historical bare-call probe must not share temp.*");
+
+        double result = evaluate(
+            "temp.x = 3; v.first = fn.middle(); v.second = fn.middle(); return t.x;",
+            scope);
+
+        assertEquals(3.0d, result, 0.0001d, "nested calls must restore the outer temporary frame");
+        assertEquals(7.0d, scope.variables.get("v.first"), 0.0001d);
+        assertEquals(7.0d, scope.variables.get("v.second"), 0.0001d);
+        assertEquals(9.0d, scope.variables.get("v.inner"), 0.0001d);
+        assertEquals(3, scope.writes.size(), "only v.* is shared across the call chain");
+    }
+
+    @Test
+    void recursiveCallsPreserveMixedAliasTemporaryValues() {
+        ScriptedScope scope = new ScriptedScope().function(
+            "sum",
+            "temp.x = args[0]; args[0] <= 0 ? { return t.x; }; "
+                + "t.child = fn.sum(args[0] - 1); return temp.x + t.child;");
+
+        assertEquals(10.0d, evaluate("return fn.sum(4);", scope), 0.0001d);
+        assertTrue(scope.writes.isEmpty(), "recursive temporary frames must not escape to the host");
+    }
+
+    @Test
+    void repeatedCallsStartWithCleanTemporaryAliasFrames() {
+        ScriptedScope scope = new ScriptedScope().function("next", "temp.x = t.x + 1; return temp.x;");
+
+        assertEquals(2.0d, evaluate("return fn.next() + fn.next();", scope), 0.0001d);
+        assertTrue(scope.writes.isEmpty());
+    }
+
+    @Test
+    void forEachWritesItsLongTemporaryAliasIntoTheCurrentFrame() {
+        ScriptedScope scope = new ScriptedScope().args(1, 2, 3);
+
+        assertEquals(6.0d,
+            evaluate("t.sum = 0; for_each(temp.item, args, { temp.sum = t.sum + t.item; }); return t.sum;", scope),
+            0.0001d);
+        assertTrue(scope.writes.isEmpty());
+    }
+
     /** wiki：只有 {@code v.*} 可以在调用链上共享。 */
     @Test
     void hostVariablesAreSharedAcrossTheChain() {

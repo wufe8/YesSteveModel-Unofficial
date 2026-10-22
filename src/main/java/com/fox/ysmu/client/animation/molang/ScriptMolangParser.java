@@ -87,6 +87,7 @@ final class ScriptMolangParser extends MolangParser {
     // ---- 变量读写（t.* 走帧栈，其余走覆盖层 + 宿主） ----
 
     double readVariable(String name) {
+        name = MolangScriptInterpreter.normalizeLocalVariableName(name);
         if (MolangScriptInterpreter.isLocalVariable(name)) {
             Double local = this.localFrames.peek()
                 .get(name);
@@ -97,6 +98,7 @@ final class ScriptMolangParser extends MolangParser {
     }
 
     void writeVariable(String name, double value) {
+        name = MolangScriptInterpreter.normalizeLocalVariableName(name);
         if (MolangScriptInterpreter.isLocalVariable(name)) {
             this.localFrames.peek()
                 .put(name, value);
@@ -108,6 +110,7 @@ final class ScriptMolangParser extends MolangParser {
 
     @Override
     protected LazyVariable getVariable(String name) {
+        name = MolangScriptInterpreter.normalizeLocalVariableName(name);
         LazyVariable variable = this.variables.get(name);
         if (variable == null) {
             // 取值延迟到 eval 时按**当时的**帧解析，所以同一个 LazyVariable 在
