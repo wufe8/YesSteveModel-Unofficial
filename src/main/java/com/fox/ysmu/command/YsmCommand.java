@@ -219,7 +219,7 @@ public class YsmCommand extends CommandBase {
         EntityPlayerMP player = (EntityPlayerMP) sender;
         ExtendedModelInfo eep = ExtendedModelInfo.get(player);
         if (eep == null) {
-            player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cannot play animation: player data not found."));
+            player.addChatMessage(new ChatComponentText("§6§l[§aYSMU§6§l]§r Cannot play animation: player data not found."));
             return;
         }
         // 动画存在性校验**只在能回答的一侧做**。GeckoLibCache 的动画表由客户端解析模型时填充，
@@ -233,12 +233,12 @@ public class YsmCommand extends CommandBase {
             software.bernie.geckolib3.file.AnimationFile animFile = software.bernie.geckolib3.resource.GeckoLibCache
                 .getInstance().getAnimations().get(mainId);
             if (animFile != null && !animFile.animations.containsKey(animName)) {
-                player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Animation §e" + animName + "§r not found in current model."));
+                player.addChatMessage(new ChatComponentText("§6§l[§aYSMU§6§l]§r Animation §e" + animName + "§r not found in current model."));
                 return;
             }
         }
         eep.playAnimation(animName);
-        player.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
+        player.addChatMessage(new ChatComponentText("§6§l[§aYSMU§6§l]§r Play: " + animName));
     }
 
     /**
@@ -268,7 +268,7 @@ public class YsmCommand extends CommandBase {
         NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.S2CPlaySound(soundName), player);
         if (StringUtils.isBlank(soundName)) {
             player.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Querying cached sounds..."));
+                "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Querying cached sounds..."));
         }
     }
 
@@ -323,7 +323,7 @@ public class YsmCommand extends CommandBase {
         // Send a packet to the client to read MBeans and display buffer info
         com.fox.ysmu.network.NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.ShowBufferInfo(), player);
         player.addChatMessage(new net.minecraft.util.ChatComponentText(
-            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Querying buffer info..."));
+            "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Querying buffer info..."));
     }
 
     /**
@@ -381,14 +381,14 @@ public class YsmCommand extends CommandBase {
         }
         if (args.length < 2) {
             player.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug <query|overlay|eval>"));
+                "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Usage: /ysm debug <query|overlay|eval>"));
             return;
         }
         String sub = args[1].toLowerCase(java.util.Locale.ROOT);
         if ("query".equals(sub)) {
             if (args.length < 3) {
                 player.addChatMessage(new ChatComponentText(
-                    "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug query <variable> [variable2 ...]"));
+                    "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Usage: /ysm debug query <variable> [variable2 ...]"));
                 return;
             }
             java.util.ArrayList<String> varNames = new java.util.ArrayList<>();
@@ -406,7 +406,7 @@ public class YsmCommand extends CommandBase {
             // ysm 函数，含 particle/play_sound 等副作用函数，风险面最大）。
             if (args.length < 3) {
                 player.addChatMessage(new ChatComponentText(
-                    "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm debug eval <expression>"
+                    "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Usage: /ysm debug eval <expression>"
                         + "  (e.g. math.floor(3.7) or math.clamp(5,0,2)+1)"));
                 return;
             }
@@ -435,7 +435,7 @@ public class YsmCommand extends CommandBase {
             NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.S2CSetDebugOverlay(mode), player);
         } else {
             player.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub
+                "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Unknown debug subcommand: " + sub
                 + ". Use: query | overlay | eval"));
         }
     }
@@ -449,14 +449,14 @@ public class YsmCommand extends CommandBase {
     private void processReset(ICommandSender sender, String[] args) {
         if (args.length < 2) {
             sender.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysm reset <player|@a|@p>"
+                "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Usage: /ysm reset <player|@a|@p>"
                     + "  — or use §e/ysmclient reset§r for yourself."));
             return;
         }
         EntityPlayerMP target = getPlayer(sender, args[1]);
         NetworkHandler.CHANNEL.sendTo(new com.fox.ysmu.network.message.PacketResetMolang(), target);
         sender.addChatMessage(new ChatComponentText(
-            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Reset Molang variables for §e"
+            "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Reset Molang variables for §e"
                 + target.getCommandSenderName() + "§r."));
     }
 

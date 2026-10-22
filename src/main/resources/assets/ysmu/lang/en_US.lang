@@ -377,7 +377,7 @@ message.yes_steve_model.sync.complete=§6§l[§aYSMU§6§l] §aClient sync compl
 message.yes_steve_model.sync.complete_models=§6§l[§aYSMU§6§l] §aModel load finished: §e%d§a loaded, §e%d§a failed (total §e%d§a)
 
 # High-version asset config warnings (LocalAssetProvider). Values are plain
-# text; the [YSM] prefix, colors and the config hint are added in code.
+# text; the [YSMU] prefix, colors and the config hint are added in code.
 # To add a third-party language: copy this file to <lang>.lang (e.g. fr_FR.lang)
 # and translate the values. Use {nl} for a line break; %s for arguments (in order).
 message.yes_steve_model.asset.invalid_game_path=High-version game path is invalid: %s

@@ -25,7 +25,7 @@ public final class MolangDebugSnapshot {
     private MolangDebugSnapshot() {}
 
     /** 聊天前缀 */
-    public static final String CHAT_PREFIX = "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r";
+    public static final String CHAT_PREFIX = "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r";
 
     /**
      * 搜索别名展开：把开头的 "q."（不区分大小写）当作 "query." 处理，

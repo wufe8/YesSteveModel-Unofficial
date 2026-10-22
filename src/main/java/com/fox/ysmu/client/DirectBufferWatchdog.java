@@ -56,7 +56,7 @@ public class DirectBufferWatchdog {
 
             if (used > thresholdBytes) {
                 long usedMB = used / (1024L * 1024L);
-                ysmu.LOG.warn("[YSM-WATCHDOG] DirectBuffer usage {} MB exceeds threshold {} MB, triggering GC",
+                ysmu.LOG.warn("[YSMU-WATCHDOG] DirectBuffer usage {} MB exceeds threshold {} MB, triggering GC",
                     usedMB, Config.DIRECT_BUFFER_WATCHDOG_THRESHOLD_MB);
                 System.gc();
             }

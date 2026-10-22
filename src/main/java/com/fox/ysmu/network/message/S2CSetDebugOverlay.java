@@ -62,7 +62,7 @@ public class S2CSetDebugOverlay implements IMessage {
                         String status = com.fox.ysmu.client.gui.debug.DebugOverlay.isActive() ? "\u00a7aON"
                             : "\u00a77OFF";
                         mc.thePlayer.addChatMessage(new ChatComponentText(
-                            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Debug overlay: " + status));
+                            "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Debug overlay: " + status));
                     }
                     if (com.fox.ysmu.client.gui.debug.DebugOverlay.isActive()) {
                         com.fox.ysmu.client.gui.debug.DebugOverlay.tryShowToggleHint();

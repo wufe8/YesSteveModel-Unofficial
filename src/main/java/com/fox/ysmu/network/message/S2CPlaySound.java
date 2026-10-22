@@ -71,7 +71,7 @@ public class S2CPlaySound implements IMessage {
                     // 这正是命令语义（"播放这个名字的音效"），不需要知道当前模型。
                     YSMSoundManager.playSound(mc.thePlayer, soundName, null, 1.0f, 1.0f);
                     mc.thePlayer.addChatMessage(
-                        new ChatComponentText("§6§l[§aYSM§6§l]§r Playing sound: " + soundName));
+                        new ChatComponentText("§6§l[§aYSMU§6§l]§r Playing sound: " + soundName));
                 });
             return null;
         }
@@ -89,10 +89,10 @@ public class S2CPlaySound implements IMessage {
             Minecraft mc = Minecraft.getMinecraft();
             Map<String, byte[]> sounds = YSMSoundManager.getSoundFiles();
             if (sounds.isEmpty()) {
-                mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r No cached sounds."));
+                mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSMU§6§l]§r No cached sounds."));
                 return;
             }
-            mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Cached sounds (in-memory):"));
+            mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSMU§6§l]§r Cached sounds (in-memory):"));
             for (Map.Entry<String, byte[]> e : sounds.entrySet()) {
                 mc.thePlayer.addChatMessage(
                     new ChatComponentText("  §e" + e.getKey() + "§r → §7" + e.getValue().length + " bytes"));

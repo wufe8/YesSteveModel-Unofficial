@@ -35,7 +35,7 @@ public class ShowBufferInfo implements IMessage {
         public IMessage onMessage(ShowBufferInfo msg, MessageContext ctx) {
             if (ctx.side != Side.CLIENT) return null;
             try {
-                final String prefix = "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r ";
+                final String prefix = "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r ";
 
                 // 1. Direct Buffer Pool (java.nio:type=BufferPool,name=direct)
                 ObjectName directPool = new ObjectName("java.nio:type=BufferPool,name=direct");
@@ -93,17 +93,17 @@ public class ShowBufferInfo implements IMessage {
                     .addChatMessage(new ChatComponentText(line3));
 
                 // Also log for detailed analysis
-                ysmu.LOG.info("[YSM-BUFFER] Direct: {} MB ({} buffers, cap {} MB), "
+                ysmu.LOG.info("[YSMU-BUFFER] Direct: {} MB ({} buffers, cap {} MB), "
                     + "Mapped: {} MB, Heap: {} MB / {} MB",
                     directMB, directCount, directCapMB,
                     mappedMB, heapMB, heapMaxMB);
 
             } catch (Exception e) {
-                ysmu.LOG.error("[YSM-BUFFER] Failed to read buffer info", e);
+                ysmu.LOG.error("[YSMU-BUFFER] Failed to read buffer info", e);
                 if (net.minecraft.client.Minecraft.getMinecraft().thePlayer != null) {
                     net.minecraft.client.Minecraft.getMinecraft().thePlayer
                         .addChatMessage(new ChatComponentText(
-                            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r "
+                            "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r "
                             + "\u00a7cError reading buffer info: " + e.getMessage()));
                 }
             }

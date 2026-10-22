@@ -63,7 +63,7 @@ public class CommandYsmClient extends CommandBase {
     public void processCommand(ICommandSender sender, String[] args) {
         if (args.length < 1) {
             sender.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Usage: /ysmclient <load|reset>"));
+                "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Usage: /ysmclient <load|reset>"));
             return;
         }
         if ("load".equalsIgnoreCase(args[0])) {
@@ -72,7 +72,7 @@ public class CommandYsmClient extends CommandBase {
             processReset(sender);
         } else {
             sender.addChatMessage(new ChatComponentText(
-                "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Unknown subcommand: " + args[0]
+                "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Unknown subcommand: " + args[0]
                     + ". Use: load | reset"));
         }
     }
@@ -108,6 +108,6 @@ public class CommandYsmClient extends CommandBase {
         }
         MolangReset.resetSelf();
         mc.thePlayer.addChatMessage(new ChatComponentText(
-            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r Molang variables reset."));
+            "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r Molang variables reset."));
     }
 }

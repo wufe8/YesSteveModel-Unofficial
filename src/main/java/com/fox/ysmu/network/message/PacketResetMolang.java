@@ -39,7 +39,7 @@ public class PacketResetMolang implements IMessage {
                     MolangReset.resetSelf();
                     net.minecraft.client.Minecraft.getMinecraft().thePlayer.addChatMessage(
                         new ChatComponentText(
-                            "\u00a76\u00a7l[\u00a7aYSM\u00a76\u00a7l]\u00a7r "
+                            "\u00a76\u00a7l[\u00a7aYSMU\u00a76\u00a7l]\u00a7r "
                                 + "\u00a77Molang variables reset."));
                 }
             });

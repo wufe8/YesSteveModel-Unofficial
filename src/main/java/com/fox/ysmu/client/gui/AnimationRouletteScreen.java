@@ -453,7 +453,7 @@ public class AnimationRouletteScreen extends GuiScreen {
             com.fox.ysmu.client.animation.AnimationManager.setCurrentWheelAnimName(animName);
             NetworkHandler.CHANNEL.sendToServer(new SetPlayAnimation(animName));
             if (mc.thePlayer != null && Config.PRINT_ANIMATION_ROULETTE_MSG) {
-                mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSM§6§l]§r Play: " + animName));
+                mc.thePlayer.addChatMessage(new ChatComponentText("§6§l[§aYSMU§6§l]§r Play: " + animName));
             }
             mc.displayGuiScreen(null);
         }
