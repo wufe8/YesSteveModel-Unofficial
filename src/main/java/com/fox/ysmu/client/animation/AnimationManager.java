@@ -725,6 +725,10 @@ public final class AnimationManager {
             .isGamePaused()) {
             return PlayState.STOP;
         }
+        return predicateParallelUnpaused(event, animationName);
+    }
+
+    PlayState predicateParallelUnpaused(AnimationEvent<CustomPlayerEntity> event, String animationName) {
         CustomPlayerEntity animatable = event.getAnimatable();
         ResourceLocation animId = animatable != null ? animatable.getAnimation() : null;
         String geckoName = event.getController().getName();
@@ -745,14 +749,7 @@ public final class AnimationManager {
             }
             PlayState controllerState = OpenYsmPlayerControllerRuntime.tryApply(event);
             if (controllerState != null) {
-                // 梯子上跳过 parallel 控制器结果，防止 climbing_start 等动画的
-                // Root rotation [90,0,0] 覆盖主控制器的梯子姿态导致模型平躺过渡
-                if (geckoName != null && geckoName.startsWith("parallel_")) {
-                    EntityPlayer player = animatable != null ? animatable.getPlayer() : null;
-                    if (player != null && player.isOnLadder()) {
-                        return PlayState.STOP;
-                    }
-                }
+                // YSM-wiki: /wiki/animation/parallel/ — ladder poses must keep parallel visibility/scale layers active.
                 return controllerState;
             }
             // No matching OpenYSM controller. Only fall back to the raw legacy

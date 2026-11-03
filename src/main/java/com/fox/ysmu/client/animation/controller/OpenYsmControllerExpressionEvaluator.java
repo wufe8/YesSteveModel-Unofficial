@@ -606,6 +606,10 @@ public final class OpenYsmControllerExpressionEvaluator {
         return new Context(null, player, null).isControllerState(name) ? TRUE : FALSE;
     }
 
+    static boolean matchesCrawlFallback(boolean onGround, float limbSwingAmount, boolean movingOnly) {
+        return !onGround && (!movingOnly || Math.abs(limbSwingAmount) > 0.05f);
+    }
+
     /**
      * 净头偏航（渲染器同口径）：{@code wrapDegrees(rotationYawHead - renderYawOffset)}。
      * 关键帧路径的 {@code ysm.head_yaw}/{@code query.head_x_rotation} 取它的负值。
@@ -1441,8 +1445,10 @@ public final class OpenYsmControllerExpressionEvaluator {
             if ("swim".equals(name)) {
                 return player.isInWater() && limbSwingAmount() > 0.05f;
             }
+            // YSM-wiki: /wiki/animation/main/ — crawl is not ladder movement; match AnimationRegister's 1.7.10 fallback.
             if ("climb".equals(name) || "climbing".equals(name)) {
-                return player.isOnLadder();
+                return player.isInWater()
+                    && matchesCrawlFallback(isOnGround(), limbSwingAmount(), "climb".equals(name));
             }
             if ("ladder_up".equals(name)) {
                 return player.isOnLadder() && motionYState(0.1d) > 0;
