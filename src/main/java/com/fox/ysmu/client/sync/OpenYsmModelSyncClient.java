@@ -235,7 +235,7 @@ public final class OpenYsmModelSyncClient {
             int serverModelCount = buf.readVarInt();
             ClientModelManager.SYNC_TOTAL = progressTotal;
             ClientModelManager.SYNC_LOADED = 0;
-            ClientModelManager.SYNC_FAILED = 0;
+            ClientModelManager.resetSyncFailures();
             ClientModelManager.SYNC_IN_PROGRESS = true;
             // 进存档：把本地玩家当前选中的模型标记为 apply 优先，使其尽早完整注册
             // （几何/纹理/extra wheel/MODELS），不必等整批同步 apply 完才显示。
@@ -320,7 +320,7 @@ public final class OpenYsmModelSyncClient {
             if (type == 6) {
                 String reason = buf.readString();
                 if (cacheContext != null && cacheContext.publishable()) {
-                    ClientModelManager.SYNC_FAILED += Math.max(1, remainingTasks.get());
+                    ClientModelManager.recordSyncFailures(cacheContext.generation, Math.max(1, remainingTasks.get()));
                 }
                 ysmu.LOG.warn("OpenYSM server aborted model sync: {}", reason);
                 sendComplete(C2SCompleteFeedback17.STATUS_FAILED, reason);
@@ -376,29 +376,7 @@ public final class OpenYsmModelSyncClient {
                     // （与 cacheHit 路径的优先分支一致）；scheduleApply 会把它的 bundle
                     // 放进 PENDING_APPLY_DEFAULT 优先队列，主线程最先 apply。
                     final byte[] modelClearBytes = clearBytes;
-                    Runnable parseTask = () -> {
-                        try {
-                            if (parseAndRegisterModel(modelClearBytes, context, ctx)) {
-                                loadedModelsCount.incrementAndGet();
-                                downloadedModelsCount.incrementAndGet();
-                            }
-                            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-                                ysmu.LOG.info("OpenYSM client downloaded and cached {} to {}", context.modelId, outFile);
-                            }
-                        } catch (Exception e) {
-                            // A single corrupt/truncated model cache file must not abort the whole
-                            // sync (which previously failed the progress bar and left the library
-                            // unloaded). Log it, skip the model, and keep going.
-                            ysmu.LOG.warn("OpenYSM client failed to process downloaded model {} ({}): {}",
-                                context.modelId, uuid, e.getMessage());
-                            if (ctx.publishable()) {
-                                ClientModelManager.SYNC_FAILED++;
-                            }
-                        } finally {
-                            // 该模型解析已完成（成功或失败），计入总任务数；全部完成后触发完成信号。
-                            taskFinished();
-                        }
-                    };
+                    Runnable parseTask = () -> runParseTask(modelClearBytes, context, ctx, true);
                     if (isPriorityModel(context.modelId)) {
                         parseTask.run();
                     } else {
@@ -409,9 +387,7 @@ public final class OpenYsmModelSyncClient {
                     // 不再进入后台解析，但同样计入总任务数，避免完成信号永不到达。
                     ysmu.LOG.warn("OpenYSM client failed to decrypt downloaded model {} ({}): {}",
                         context.modelId, uuid, e.getMessage());
-                    if (ctx.publishable()) {
-                        ClientModelManager.SYNC_FAILED++;
-                    }
+                    recordModelFailure(ctx);
                     taskFinished();
                 }
             }
@@ -440,13 +416,25 @@ public final class OpenYsmModelSyncClient {
          * cacheHit 路径的「优先内联 / 后台并行」两分支共用。
          */
         private void parseInline(byte[] clearBytes, ServerModelContext context, CacheContext ctx) {
-            try {
-                if (parseAndRegisterModel(clearBytes, context, ctx)) {
+            runParseTask(clearBytes, context, ctx, false);
+        }
+
+        private void runParseTask(byte[] clearBytes, ServerModelContext context, CacheContext ctx, boolean downloaded) {
+            com.fox.ysmu.util.ModelLoadTask.run(
+                () -> parseAndRegisterModel(clearBytes, context, ctx),
+                () -> {
                     loadedModelsCount.incrementAndGet();
-                }
-            } finally {
-                taskFinished();
-            }
+                    if (downloaded) downloadedModelsCount.incrementAndGet();
+                },
+                error -> {
+                    if (!ctx.publishable()) return;
+                    recordModelFailure(ctx);
+                    if (error != null) {
+                        ysmu.LOG.warn("OpenYSM client failed to parse model {}: {}: {}",
+                            context.modelId, error.getClass().getSimpleName(), error.getMessage());
+                    }
+                },
+                this::taskFinished);
         }
 
         /**
@@ -713,6 +701,10 @@ public final class OpenYsmModelSyncClient {
 
 
 
+    private static void recordModelFailure(CacheContext ctx) {
+        ClientModelManager.recordSyncFailures(ctx.generation, 1);
+    }
+
     private static boolean parseAndRegisterModel(byte[] clearBytes, ServerModelContext context, CacheContext ctx) {
         // 发布闸门：解析在工作线程上进行，可能跨越一次 /ysm reload、重连或本地注册。
         // 此处是「解析完成 → 写注册表」的唯一入口，代际不等就直接放弃（此时还没有写
@@ -835,12 +827,6 @@ public final class OpenYsmModelSyncClient {
                     context.modelId);
                 return false;
             }
-            ModelData data = RawYsmModelAdapter.toLegacyModelData(raw, context.modelId);
-
-            if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_SYNC) {
-                ysmu.LOG.info("[YSMU-MODEL] Client registering model {}: models={}, textures={}, animations={}",
-                    context.modelId, data.getModel().keySet(), data.getTexture().keySet(), data.getAnimation().keySet());
-            }
 
             // Parse geometry on background thread, only register on main thread.
             // 优先模型（本地玩家自身/默认）：eager 解析——真实 GeoModel/AnimationFile
@@ -852,14 +838,11 @@ public final class OpenYsmModelSyncClient {
             boolean priority = isPriorityModel(context.modelId);
             com.fox.ysmu.client.model.PreParsedModelBundle bundle;
             try {
-                bundle = ClientModelManager.preParseModel(data, !priority);
+                bundle = ClientModelManager.preParseModel(raw, context.modelId, !priority);
                 bundle.localRegistration = ctx.local;
                 bundle.previewAnimation = raw.properties.previewAnimation;
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to pre-parse model {}: {}", context.modelId, e.getMessage(), e);
-                if (ctx.publishable()) {
-                    ClientModelManager.SYNC_FAILED++;
-                }
                 return false;
             }
             // Fold extra-wheel registration into the single apply task (previously a

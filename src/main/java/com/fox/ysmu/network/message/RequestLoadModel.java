@@ -85,7 +85,7 @@ public class RequestLoadModel implements IMessage {
                 if (password == null || passwordUuid == null) {
                     ysmu.LOG.warn("Timed out waiting for YSM model password before loading cache file {}", fileName);
                     if (generation == ClientModelManager.currentApplyGeneration()) {
-                        ClientModelManager.SYNC_FAILED++;
+                        ClientModelManager.recordSyncFailures(generation, 1);
                     }
                     return;
                 }
@@ -118,7 +118,7 @@ public class RequestLoadModel implements IMessage {
                 } catch (Exception e) {
                     ysmu.LOG.warn("Failed to pre-parse model {}: {}", fileName, e.getMessage());
                     if (generation == ClientModelManager.currentApplyGeneration()) {
-                        ClientModelManager.SYNC_FAILED++;
+                        ClientModelManager.recordSyncFailures(generation, 1);
                     }
                     return;
                 }
@@ -131,13 +131,13 @@ public class RequestLoadModel implements IMessage {
             } else {
                 ysmu.LOG.warn("Failed to decrypt YSM model cache file {}", fileName);
                 if (generation == ClientModelManager.currentApplyGeneration()) {
-                    ClientModelManager.SYNC_FAILED++;
+                    ClientModelManager.recordSyncFailures(generation, 1);
                 }
             }
         } catch (Exception e) {
             ysmu.LOG.warn("Failed to load YSM model cache file " + fileName, e);
             if (generation == ClientModelManager.currentApplyGeneration()) {
-                ClientModelManager.SYNC_FAILED++;
+                ClientModelManager.recordSyncFailures(generation, 1);
             }
         }
     }

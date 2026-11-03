@@ -38,6 +38,62 @@ class YsmResourceFormatTest {
     Path tempDir;
 
     @Test
+    void generatedDenseMeshesUseCompactUtf8WithoutChangingVertexData() throws Exception {
+        RawYsmModel.RawGeometry geometry = geometryWithFlatCube(1, "geometry.dense");
+        RawYsmModel.RawBone bone = geometry.bones.get(0);
+        RawYsmModel.RawCube cube = bone.cubes.get(0);
+        cube.faces.get(0).normal[2] = 1f;
+        for (int i = 1; i < 256; i++) bone.cubes.add(cube);
+        byte[] bytes = RawYsmModelAdapter.toGeometryJson(null, geometry, false);
+        String json = new String(bytes, StandardCharsets.UTF_8);
+        assertFalse(json.contains("\n"), "runtime geometry must not expand every mesh scalar onto a separate line");
+        JsonObject mesh = new JsonParser().parse(json).getAsJsonObject().getAsJsonArray("minecraft:geometry")
+            .get(0).getAsJsonObject().getAsJsonArray("bones").get(0).getAsJsonObject().getAsJsonObject("poly_mesh");
+        assertEquals(256 * 4 * 3, mesh.getAsJsonArray("positions").size());
+        assertEquals(256 * 4 * 3, mesh.getAsJsonArray("normals").size());
+        assertEquals(256 * 4 * 2, mesh.getAsJsonArray("uvs").size());
+        assertEquals("quad_list", mesh.get("polys").getAsString());
+    }
+
+    @Test
+    void lazyRawRegistrationOmitsMeshesButPreservesDescriptionsAndCounts() throws Exception {
+        RawYsmModel raw = new RawYsmModel();
+        raw.metadata.name = "Dense fixture";
+        raw.properties.widthScale = 0.8f;
+        raw.properties.heightScale = 0.9f;
+        raw.mainEntity.mainModel = geometryWithFlatCube(1, "geometry.lazy.main");
+        raw.mainEntity.armModel = geometryWithFlatCube(2, "geometry.lazy.arm");
+        RawYsmModel.RawBone bone = raw.mainEntity.mainModel.bones.get(0);
+        RawYsmModel.RawCube cube = bone.cubes.get(0);
+        for (int i = 1; i < 256; i++) bone.cubes.add(cube);
+        RawYsmModel.RawTexture texture = new RawYsmModel.RawTexture();
+        texture.name = "default";
+        texture.imageFormat = 2;
+        texture.data = PNG_1X1;
+        raw.mainEntity.textures.put(texture.name, texture);
+        ModelData metadata = RawYsmModelAdapter.toRegistrationModelData(raw, "dense_fixture");
+        ModelData full = RawYsmModelAdapter.toLegacyModelData(raw, "dense_fixture");
+        assertEquals(full.getAnimation().keySet(), metadata.getAnimation().keySet());
+        for (String key : full.getAnimation().keySet()) {
+            assertArrayEquals(full.getAnimation().get(key), metadata.getAnimation().get(key));
+        }
+        assertEquals(full.getTexture().keySet(), metadata.getTexture().keySet());
+        for (String key : full.getTexture().keySet()) {
+            assertArrayEquals(full.getTexture().get(key), metadata.getTexture().get(key));
+        }
+        assertTrue(metadata.getModel().get("main").length < 2048, "registration must not serialize mesh components");
+        JsonObject description = getDescription(metadata.getModel().get("main"));
+        assertEquals(0.8d, description.get("ysm_width_scale").getAsDouble(), 0.0001d);
+        assertEquals("Dense fixture", description.getAsJsonObject("ysm_extra_info").get("name").getAsString());
+        var bundle = com.fox.ysmu.client.ClientModelManager.preParseModel(raw, "dense_fixture", true);
+        assertTrue(bundle.lazyGeometry);
+        assertTrue(bundle.geoModels.isEmpty());
+        assertEquals(2, bundle.totalBones);
+        assertEquals(257, bundle.totalCubes);
+        assertEquals(1, bundle.textureIdList.size());
+    }
+
+    @Test
     void folderDeserializerReadsOpenYsmFolderAndBridgeablePlayerFiles() throws Exception {
         Path modelDir = tempDir.resolve("Fancy Model");
         Files.createDirectories(modelDir.resolve("models"));

@@ -31,6 +31,50 @@ import io.netty.buffer.Unpooled;
 class OpenYsmSyncProtocolTest {
 
     @Test
+    void modelTaskReportsResourceErrorsInsteadOfHidingThemInTheFuture() throws Exception {
+        for (Error error : new Error[] { new OutOfMemoryError("synthetic"), new StackOverflowError("synthetic"),
+            new NoClassDefFoundError("synthetic") }) {
+            var loaded = new java.util.concurrent.atomic.AtomicInteger();
+            var failed = new java.util.concurrent.atomic.AtomicInteger();
+            var remaining = new java.util.concurrent.atomic.AtomicInteger(1);
+            var observed = new java.util.concurrent.atomic.AtomicReference<Throwable>();
+            var future = new java.util.concurrent.FutureTask<Void>(() -> {
+                com.fox.ysmu.util.ModelLoadTask.run(() -> { throw error; }, loaded::incrementAndGet,
+                    failure -> { observed.set(failure); failed.incrementAndGet(); }, remaining::decrementAndGet);
+                return null;
+            });
+            future.run();
+            future.get();
+            assertSame(error, observed.get());
+            assertEquals(0, loaded.get());
+            assertEquals(1, failed.get());
+            assertEquals(0, remaining.get());
+        }
+    }
+
+    @Test
+    void modelTaskHasOneOutcomeAndDoesNotSwallowFatalVmErrors() {
+        var successes = new java.util.concurrent.atomic.AtomicInteger();
+        var failures = new java.util.concurrent.atomic.AtomicInteger();
+        var finished = new java.util.concurrent.atomic.AtomicInteger();
+        com.fox.ysmu.util.ModelLoadTask.run(() -> true, successes::incrementAndGet,
+            error -> failures.incrementAndGet(), finished::incrementAndGet);
+        com.fox.ysmu.util.ModelLoadTask.run(() -> false, successes::incrementAndGet,
+            error -> failures.incrementAndGet(), finished::incrementAndGet);
+        var death = new ThreadDeath();
+        assertSame(death, org.junit.jupiter.api.Assertions.assertThrows(ThreadDeath.class,
+            () -> com.fox.ysmu.util.ModelLoadTask.run(() -> { throw death; }, successes::incrementAndGet,
+                error -> failures.incrementAndGet(), finished::incrementAndGet)));
+        var fatal = new InternalError("synthetic");
+        assertSame(fatal, org.junit.jupiter.api.Assertions.assertThrows(InternalError.class,
+            () -> com.fox.ysmu.util.ModelLoadTask.run(() -> { throw fatal; }, successes::incrementAndGet,
+                error -> failures.incrementAndGet(), finished::incrementAndGet)));
+        assertEquals(1, successes.get());
+        assertEquals(1, failures.get());
+        assertEquals(4, finished.get());
+    }
+
+    @Test
     void modelSyncPayloadMessagesRoundTripOpaqueBytes() {
         byte[] payload = new byte[] { 1, 2, 3, 4, 5 };
 

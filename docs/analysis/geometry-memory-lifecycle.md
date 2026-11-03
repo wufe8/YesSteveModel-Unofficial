@@ -18,6 +18,17 @@
 | 常驻 | `default` 兜底模型：`GEO.touchIf/ANIM.touchIf` + `unloadIdleTextures` 跳过 | 它没有加密客户端缓存可恢复，释放后必然白模/崩溃 |
 | 抑制窗口 | `isIdleEvictionSuppressed()`：预览 GUI 打开时 **或** 关闭后 `GUI_POST_CLOSE_GRACE_SECONDS` 内，全部回收停止 | 避免"关一下再开"导致的反复重加载 |
 
+## 同步注册与几何实体化的边界
+
+二进制模型的非优先同步注册使用 `RawYsmModelAdapter.toRegistrationModelData()`:
+主模型和手臂只转换 description, 骨骼/方块统计直接读取 RawYsmModel, 不先把全部顶点
+展开成 JSON 再读回 DTO。此数据仅供 lazy 注册, 不能作为可渲染几何或保存为模型源。
+弹射物仍立即构建, 默认模型/当前玩家优先模型仍走 eager 路径。
+
+首次使用和空闲重载仍从加密缓存读取完整几何。生成几何时以紧凑 UTF-8 流写入 mesh
+标量, 避免每个分量的 JSON 树包装以及整份美化字符串的额外副本; 负体积 mesh 的独立
+剔除通道与顶点/UV 顺序保持不变。注册完成不等于首次几何构建或贴图上传完成。
+
 ## 2. 派生状态必须遵守的四条不变式
 
 1. **生命周期要跟着资源走**。派生缓存只有两种合法挂法：

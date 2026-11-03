@@ -21,6 +21,28 @@ class ClientModelApplyLifecycleTest {
     private static final ResourceLocation MAIN = ModelIdUtil.getMainId(MODEL);
 
     @Test
+    void failureAccountingDoesNotLoseConcurrentParseAndApplyFailures() throws Exception {
+        int previous = ClientModelManager.SYNC_FAILED;
+        long generation = ClientModelManager.currentApplyGeneration();
+        try {
+            ClientModelManager.resetSyncFailures();
+            Thread[] writers = new Thread[4];
+            for (int i = 0; i < writers.length; i++) {
+                writers[i] = new Thread(() -> {
+                    for (int j = 0; j < 2000; j++) ClientModelManager.recordSyncFailures(generation, 1);
+                });
+                writers[i].start();
+            }
+            for (Thread writer : writers) writer.join();
+            assertEquals(8000, ClientModelManager.SYNC_FAILED);
+            ClientModelManager.recordSyncFailures(generation - 1, 1);
+            assertEquals(8000, ClientModelManager.SYNC_FAILED, "superseded work must not charge the current sync");
+        } finally {
+            ClientModelManager.SYNC_FAILED = previous;
+        }
+    }
+
+    @Test
     void cachePathIsPublishedWithTheModelRatherThanByTheProducer() throws Exception {
         AtomicLong generation = field("APPLY_GENERATION");
         Field cleared = declared("clearedApplyGeneration");

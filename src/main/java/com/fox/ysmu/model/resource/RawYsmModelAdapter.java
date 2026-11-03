@@ -14,6 +14,8 @@ import java.awt.image.BufferedImage;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.Writer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -97,13 +99,24 @@ public final class RawYsmModelAdapter {
     }
 
     public static ModelData toLegacyModelData(RawYsmModel raw, String modelId) throws IOException {
+        return toLegacyModelData(raw, modelId, false);
+    }
+
+    /** Registration-only geometry descriptions; callers must defer main/arm geometry to the encrypted cache. */
+    public static ModelData toRegistrationModelData(RawYsmModel raw, String modelId) throws IOException {
+        return toLegacyModelData(raw, modelId, true);
+    }
+
+    private static ModelData toLegacyModelData(RawYsmModel raw, String modelId, boolean metadataOnly) throws IOException {
         if (!isBridgeable(raw)) {
             throw new IOException("RawYsmModel cannot be bridged to legacy ModelData");
         }
 
         Map<String, byte[]> model = new LinkedHashMap<>();
-        model.put("main", toGeometryJson(raw, raw.mainEntity.mainModel, true));
-        model.put("arm", toGeometryJson(raw, raw.mainEntity.armModel, false));
+        model.put("main", metadataOnly ? toGeometryDescriptionJson(raw, raw.mainEntity.mainModel, true)
+            : toGeometryJson(raw, raw.mainEntity.mainModel, true));
+        model.put("arm", metadataOnly ? toGeometryDescriptionJson(raw, raw.mainEntity.armModel, false)
+            : toGeometryJson(raw, raw.mainEntity.armModel, false));
 
         // Include projectile sub-entity geometries (e.g. #arrow model from minecraft:arrow)
         for (Map.Entry<String, RawYsmModel.RawSubEntity> entry : raw.projectiles.entrySet()) {
@@ -494,12 +507,10 @@ public final class RawYsmModelAdapter {
 
     public static byte[] toGeometryJson(RawYsmModel raw, RawYsmModel.RawGeometry geometry, boolean includeModelInfo)
         throws IOException {
-        JsonObject root;
-        if (geometry.sourceJson != null) {
-            root = parseJsonObject(geometry.sourceJson, geometry.identifier);
-        } else {
-            root = createGeometryJson(geometry);
+        if (geometry.sourceJson == null) {
+            return writeGeneratedGeometry(raw, geometry, includeModelInfo);
         }
+        JsonObject root = parseJsonObject(geometry.sourceJson, geometry.identifier);
 
         // Remove faces with zero uv_size — a common modelling technique to
         // hide faces. GeckoLib's GeoQuad does not handle zero-area UVs; they
@@ -510,7 +521,7 @@ public final class RawYsmModelAdapter {
         if (includeModelInfo) {
             applyOpenYsmModelInfo(raw, description);
         }
-        return ysmu.GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+        return compactJsonBytes(root);
     }
 
     /**
@@ -619,11 +630,59 @@ public final class RawYsmModelAdapter {
         return element.getAsJsonObject();
     }
 
-    private static JsonObject createGeometryJson(RawYsmModel.RawGeometry geometry) {
+    private static byte[] toGeometryDescriptionJson(RawYsmModel raw, RawYsmModel.RawGeometry geometry,
+        boolean includeModelInfo) throws IOException {
+        JsonObject description = geometry.sourceJson == null ? createGeometryDescription(geometry)
+            : getOrCreateDescription(parseJsonObject(geometry.sourceJson, geometry.identifier));
+        if (includeModelInfo) {
+            applyOpenYsmModelInfo(raw, description);
+        }
+        JsonObject model = new JsonObject();
+        model.add("description", description);
+        JsonArray models = new JsonArray();
+        models.add(model);
         JsonObject root = new JsonObject();
         root.addProperty("format_version", "1.12.0");
-        JsonArray geometries = new JsonArray();
-        JsonObject model = new JsonObject();
+        root.add("minecraft:geometry", models);
+        return compactJsonBytes(root);
+    }
+
+    private static byte[] compactJsonBytes(JsonObject root) {
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream();
+            Writer writer = new OutputStreamWriter(output, StandardCharsets.UTF_8)) {
+            ysmu.GSON.toJson(root, new com.google.gson.stream.JsonWriter(writer));
+            writer.flush();
+            return output.toByteArray();
+        } catch (IOException e) {
+            throw new java.io.UncheckedIOException(e);
+        }
+    }
+
+    private static byte[] writeGeneratedGeometry(RawYsmModel raw, RawYsmModel.RawGeometry geometry,
+        boolean includeModelInfo) throws IOException {
+        // Stream mesh scalars: a JSON tree boxes every vertex component and pretty printing
+        // adds another whole-model String, exhausting the heap before lazy loading can start.
+        try (ByteArrayOutputStream output = new ByteArrayOutputStream();
+            com.google.gson.stream.JsonWriter writer = new com.google.gson.stream.JsonWriter(
+                new OutputStreamWriter(output, StandardCharsets.UTF_8))) {
+            writer.beginObject().name("format_version").value("1.12.0");
+            writer.name("minecraft:geometry").beginArray().beginObject().name("description");
+            JsonObject description = createGeometryDescription(geometry);
+            if (includeModelInfo) {
+                applyOpenYsmModelInfo(raw, description);
+            }
+            ysmu.GSON.toJson(description, writer);
+            writer.name("bones").beginArray();
+            for (RawYsmModel.RawBone bone : geometry.bones) {
+                writeBoneJson(writer, bone);
+            }
+            writer.endArray().endObject().endArray().endObject();
+            writer.flush();
+            return output.toByteArray();
+        }
+    }
+
+    private static JsonObject createGeometryDescription(RawYsmModel.RawGeometry geometry) {
         JsonObject description = new JsonObject();
         description.addProperty(
             "identifier",
@@ -639,16 +698,7 @@ public final class RawYsmModelAdapter {
         if (geometry.visibleBoundsOffset != null && geometry.visibleBoundsOffset.length > 0) {
             description.add("visible_bounds_offset", floatArray(geometry.visibleBoundsOffset));
         }
-        model.add("description", description);
-
-        JsonArray bones = new JsonArray();
-        for (RawYsmModel.RawBone rawBone : geometry.bones) {
-            bones.add(createBoneJson(rawBone, geometry));
-        }
-        model.add("bones", bones);
-        geometries.add(model);
-        root.add("minecraft:geometry", geometries);
-        return root;
+        return description;
     }
 
     /**
@@ -732,14 +782,16 @@ public final class RawYsmModelAdapter {
         return new Vector3f(cx / 4f, cy / 4f, cz / 4f);
     }
 
-    private static JsonObject createBoneJson(RawYsmModel.RawBone rawBone, RawYsmModel.RawGeometry geometry) {
-        JsonObject bone = new JsonObject();
-        bone.addProperty("name", StringUtils.defaultIfBlank(rawBone.name, "bone"));
+    private static void writeBoneJson(com.google.gson.stream.JsonWriter writer, RawYsmModel.RawBone rawBone)
+        throws IOException {
+        writer.beginObject().name("name").value(StringUtils.defaultIfBlank(rawBone.name, "bone"));
         if (StringUtils.isNotBlank(rawBone.parentName)) {
-            bone.addProperty("parent", rawBone.parentName);
+            writer.name("parent").value(rawBone.parentName);
         }
-        bone.add("pivot", generatedPivotArray(rawBone.pivot));
-        bone.add("rotation", generatedRotationArray(rawBone.rotation));
+        writer.name("pivot");
+        ysmu.GSON.toJson(generatedPivotArray(rawBone.pivot), writer);
+        writer.name("rotation");
+        ysmu.GSON.toJson(generatedRotationArray(rawBone.rotation), writer);
 
         // Separate cubes into positive and negative volume groups.
         // Negative-volume cubes (inside-out shells) need a separate poly_mesh
@@ -755,66 +807,49 @@ public final class RawYsmModelAdapter {
             }
         }
 
-        JsonObject polyMesh = createPolyMeshFromCubes(posCubes, false);
-        if (polyMesh != null) {
-            bone.add("poly_mesh", polyMesh);
-        }
-        // Additional poly_mesh for negative-volume cubes — GeoBuilder will
-        // create a second GeoCube with hasNegSize=true from this field.
-        // Vertex winding is reversed because BlockBench negative-size cubes
-        // have CW winding; reversing to standard CCW makes CULL_FRONT
-        // correctly show only the far-side faces (outline effect).
-        JsonObject negMesh = createPolyMeshFromCubes(negCubes, true);
-        if (negMesh != null) {
-            bone.add("__ysm_neg_mesh", negMesh);
-        }
-        return bone;
+        writePolyMesh(writer, "poly_mesh", posCubes, false);
+        // The negative mesh retains its separate culling pass and reversed winding.
+        writePolyMesh(writer, "__ysm_neg_mesh", negCubes, true);
+        writer.endObject();
     }
 
     /** Builds a poly_mesh JSON object from a list of RawCubes.
      * @param reverseWinding if true, reverses vertex winding (swaps v2↔v3)
      *        so quads become standard CCW. Needed for negative-volume cubes
      *        whose BlockBench faces have CW winding from the .ysm exporter. */
-    private static JsonObject createPolyMeshFromCubes(List<RawYsmModel.RawCube> cubes, boolean reverseWinding) {
-        JsonArray positions = new JsonArray();
-        JsonArray normals = new JsonArray();
-        JsonArray uvs = new JsonArray();
-
-        // Vertex index order for each quad: normal=[0,1,2,3], reversed=[0,3,2,1]
-        // [0,3,2,1] walks the circular order backwards (v0→v3→v2→v1), reversing
-        // winding from CW→CCW. Both GL_QUADS decomposition triangles become CCW.
-        int[] order = reverseWinding ? new int[] { 0, 3, 2, 1 } : new int[] { 0, 1, 2, 3 };
-
-        for (RawYsmModel.RawCube rawCube : cubes) {
-            for (RawYsmModel.RawFace face : rawCube.faces) {
-                for (int idx = 0; idx < 4; idx++) {
-                    int i = order[idx];
-                    float[] position = face.positions[i];
-                    positions.add(new JsonPrimitive((double) getVectorValue(position, 0)));
-                    positions.add(new JsonPrimitive((double) getVectorValue(position, 1)));
-                    positions.add(new JsonPrimitive((double) getVectorValue(position, 2)));
-
-                    normals.add(new JsonPrimitive((double) getVectorValue(face.normal, 0)));
-                    normals.add(new JsonPrimitive((double) getVectorValue(face.normal, 1)));
-                    normals.add(new JsonPrimitive((double) getVectorValue(face.normal, 2)));
-
-                    uvs.add(new JsonPrimitive((double) face.u[i]));
-                    uvs.add(new JsonPrimitive((double) face.v[i]));
-                }
+    private static void writePolyMesh(com.google.gson.stream.JsonWriter writer, String name,
+        List<RawYsmModel.RawCube> cubes, boolean reverseWinding) throws IOException {
+        boolean hasFaces = false;
+        for (RawYsmModel.RawCube cube : cubes) {
+            if (!cube.faces.isEmpty()) {
+                hasFaces = true;
+                break;
             }
         }
-
-        if (positions.size() == 0) {
-            return null;
+        if (!hasFaces) return;
+        writer.name(name).beginObject().name("normalized_uvs").value(true).name("polys").value("quad_list");
+        // [0,3,2,1] reverses quad winding for inside-out shells without changing UV alignment.
+        int[] order = reverseWinding ? new int[] { 0, 3, 2, 1 } : new int[] { 0, 1, 2, 3 };
+        String[] channels = { "positions", "normals", "uvs" };
+        for (int channel = 0; channel < channels.length; channel++) {
+            writer.name(channels[channel]).beginArray();
+            for (RawYsmModel.RawCube cube : cubes) {
+                for (RawYsmModel.RawFace face : cube.faces) {
+                    for (int i : order) {
+                        if (channel == 2) {
+                            writer.value((double) face.u[i]).value((double) face.v[i]);
+                        } else {
+                            float[] vector = channel == 0 ? face.positions[i] : face.normal;
+                            for (int axis = 0; axis < 3; axis++) {
+                                writer.value((double) getVectorValue(vector, axis));
+                            }
+                        }
+                    }
+                }
+            }
+            writer.endArray();
         }
-
-        JsonObject mesh = new JsonObject();
-        mesh.addProperty("normalized_uvs", true);
-        mesh.addProperty("polys", "quad_list");
-        mesh.add("positions", positions);
-        mesh.add("normals", normals);
-        mesh.add("uvs", uvs);
-        return mesh;
+        writer.endObject();
     }
 
     private static JsonObject getOrCreateDescription(JsonObject root) {
@@ -1035,7 +1070,7 @@ public final class RawYsmModelAdapter {
             animations.add(animation.name, createAnimationJson(animation));
         }
         root.add("animations", animations);
-        return ysmu.GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+        return compactJsonBytes(root);
     }
 
     private static JsonObject createAnimationJson(RawYsmModel.RawAnimation animation) {
@@ -1269,7 +1304,7 @@ public final class RawYsmModelAdapter {
             controllers.add(controller.animationName, createControllerJson(controller));
         }
         root.add("animation_controllers", controllers);
-        return ysmu.GSON.toJson(root).getBytes(StandardCharsets.UTF_8);
+        return compactJsonBytes(root);
     }
 
     private static JsonObject createControllerJson(RawYsmModel.RawAnimationController controller) {

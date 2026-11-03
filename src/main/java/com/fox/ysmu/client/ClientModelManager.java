@@ -87,6 +87,16 @@ public class ClientModelManager {
     public static volatile int SYNC_LOADED = 0;
     /** Models that failed to load/apply during the sync (diagnostic). */
     public static volatile int SYNC_FAILED = 0;
+
+    public static synchronized void recordSyncFailures(long generation, int count) {
+        if (generation == currentApplyGeneration()) {
+            SYNC_FAILED += count;
+        }
+    }
+
+    public static synchronized void resetSyncFailures() {
+        SYNC_FAILED = 0;
+    }
     /** True while a model sync is in progress. */
     public static volatile boolean SYNC_IN_PROGRESS = false;
     /** Display name of the model currently being registered (for progress overlay). */
@@ -480,7 +490,7 @@ public class ClientModelManager {
                 applyPreParsed(bundle, false);
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to apply pre-parsed model {}: {}", bundle.modelId, e.getMessage());
-                SYNC_FAILED++;
+                recordSyncFailures(bundle.applyGeneration, 1);
             }
         });
         if (applied == 0) return;
@@ -532,6 +542,26 @@ public class ClientModelManager {
      *     {@code AssetManager.geo().get()}). Sync paths pass true; the built-in default
      *     model stays eager.
      */
+    public static PreParsedModelBundle preParseModel(RawYsmModel raw, String modelId, boolean lazy)
+        throws IOException {
+        // Lazy registration needs descriptions, not millions of mesh components serialized
+        // and parsed back into DTOs. Geometry is materialized from the cache on first use.
+        ModelData data = lazy ? RawYsmModelAdapter.toRegistrationModelData(raw, modelId)
+            : RawYsmModelAdapter.toLegacyModelData(raw, modelId);
+        PreParsedModelBundle bundle = preParseModel(data, lazy);
+        if (lazy) {
+            for (RawYsmModel.RawGeometry geometry : new RawYsmModel.RawGeometry[] {
+                raw.mainEntity.mainModel, raw.mainEntity.armModel }) {
+                if (geometry == null) continue;
+                bundle.totalBones += geometry.bones.size();
+                for (RawYsmModel.RawBone bone : geometry.bones) {
+                    bundle.totalCubes += bone.cubes.size();
+                }
+            }
+        }
+        return bundle;
+    }
+
     public static PreParsedModelBundle preParseModel(ModelData data, boolean lazy) {
         ResourceLocation modelId = getModelId(data);
         PreParsedModelBundle bundle = new PreParsedModelBundle(modelId);
@@ -1569,7 +1599,7 @@ public class ClientModelManager {
         clearCachedModelMd5();
         SYNC_TOTAL = -1;
         SYNC_LOADED = 0;
-        SYNC_FAILED = 0;
+        resetSyncFailures();
         SYNC_IN_PROGRESS = true;
         prepareForNewSync().thenRun(() -> {
             SYNC_IN_PROGRESS = true;
@@ -1619,11 +1649,18 @@ public class ClientModelManager {
      */
     @Nullable
     public static ModelData loadLegacyModelData(ResourceLocation mainModelId) {
+        return loadLegacyModelData(mainModelId, false);
+    }
+
+    @Nullable
+    private static ModelData loadLegacyModelData(ResourceLocation mainModelId, boolean metadataOnly) {
         if (OPENYSM_CACHE_FORMAT.contains(mainModelId)) {
             RawYsmModel raw = loadRawModelFromCache(mainModelId);
             if (raw == null) return null;
             try {
-                return com.fox.ysmu.model.resource.RawYsmModelAdapter.toLegacyModelData(raw, raw.modelId);
+                // Animation/texture reloads do not consume main/arm meshes.
+                return metadataOnly ? RawYsmModelAdapter.toRegistrationModelData(raw, raw.modelId)
+                    : RawYsmModelAdapter.toLegacyModelData(raw, raw.modelId);
             } catch (Exception e) {
                 ysmu.LOG.warn("Failed to bridge model data for {}: {}", mainModelId, e.getMessage());
                 return null;
@@ -1690,7 +1727,7 @@ public class ClientModelManager {
      */
     @Nullable
     public static AnimationFile parseAnimationFromCache(ResourceLocation mainId) {
-        ModelData data = loadLegacyModelData(mainId);
+        ModelData data = loadLegacyModelData(mainId, true);
         if (data == null) {
             reportAnimReload(mainId, "no cached model data");
             return null;
@@ -1842,7 +1879,7 @@ public class ClientModelManager {
     /** 供 {@link OuterFileTexture#upload} 在字节被懒释放时自我恢复（任何绑定路径都不白模）。 */
     public static void restoreTextureData(OuterFileTexture tex, ResourceLocation mainModelId, ResourceLocation texId) {
         try {
-            ModelData data = loadLegacyModelData(mainModelId);
+            ModelData data = loadLegacyModelData(mainModelId, true);
             if (data == null) {
                 if (Config.DEBUG_MODEL_LOAD && Config.DEBUG_MODEL_PARSE) {
                     ysmu.LOG.info("[YSMU-MODEL] Texture restore skipped for {} (model {}): no cache data", texId, mainModelId);
@@ -2220,7 +2257,7 @@ public class ClientModelManager {
         com.fox.ysmu.client.animation.controller.OpenYsmControllerExpressionEvaluator.clearCompiledCache();
         SYNC_TOTAL = -1;
         SYNC_LOADED = 0;
-        SYNC_FAILED = 0;
+        resetSyncFailures();
         SYNC_IN_PROGRESS = false;
         SYNC_CURRENT_MODEL = "";
         ysmu.LOG.info("YSM client runtime model caches cleared");
